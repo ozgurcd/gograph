@@ -51,7 +51,7 @@ It builds a compact graph of packages, symbols, calls, routes, config reads, tes
 brew install ozgurcd/tap/gograph
 
 # Or using Go:
-go install github.com/ozgurcd/gograph@latest
+go install github.com/ozgurcd/gograph/cmd/gograph@latest
 ```
 
 ## Usage
