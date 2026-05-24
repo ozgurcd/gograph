@@ -55,6 +55,22 @@ func main() {
 	// Use the compiled binary from the project root.
 	repoRoot, _ := filepath.Abs("../../")
 	binPath := filepath.Join(repoRoot, "bin", "gograph")
+
+	// Ensure bin directory exists
+	if err := os.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
+		t.Fatalf("failed to create bin directory: %v", err)
+	}
+
+	// Build the binary if it does not exist
+	if _, err := os.Stat(binPath); os.IsNotExist(err) {
+		cmd := exec.Command("go", "build", "-o", binPath, filepath.Join(repoRoot, "cmd", "gograph", "main.go"))
+		cmd.Dir = repoRoot
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("failed to build test binary: %v\nOutput: %s", err, string(out))
+		}
+	}
+
 	runCmd := func(args ...string) (string, error) {
 		cmd := exec.Command(binPath, args...)
 		cmd.Dir = tmpDir

@@ -8,3 +8,5 @@ docs/TODO.md
 
 # local agent instructions
 CLAUDE.md
+.DS_Store
+.cursor
