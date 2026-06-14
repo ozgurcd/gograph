@@ -10,6 +10,7 @@ import (
 	"go/parser"
 	"go/printer"
 	"go/token"
+	"net/url"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
@@ -29,6 +30,7 @@ type FileResult struct {
 	TestEdges   []graph.TestEdge
 	Mutations   []graph.MutationEdge
 	Literals    []graph.LiteralEdge
+	HttpCalls   []graph.HttpCallEdge
 }
 
 // ParseFile parses a single .go file and extracts its nodes.
@@ -546,6 +548,38 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 						break
 					}
 				}
+			}
+
+			// HTTP Client Call Extraction
+			if method, ok := extractHTTPMethod(callee, call); ok && len(call.Args) >= 1 {
+				urlExpr := call.Args[0]
+				var urlStr string
+				hasDynamic := true
+
+				if lit, ok2 := urlExpr.(*ast.BasicLit); ok2 && lit.Kind == token.STRING {
+					urlStr = strings.Trim(lit.Value, "\"")
+					hasDynamic = false
+				} else {
+					urlStr = exprName(urlExpr)
+					if urlStr == "" {
+						urlStr = "<dynamic>"
+					}
+				}
+
+				var staticSegments []string
+				if !hasDynamic {
+					staticSegments = extractStaticSegments(urlStr)
+				}
+
+				result.HttpCalls = append(result.HttpCalls, graph.HttpCallEdge{
+					SourceFile:     relPath,
+					SourceLine:     callPos.Line,
+					FunctionName:   callerName,
+					Method:         method,
+					URL:            urlStr,
+					StaticSegments: staticSegments,
+					HasDynamic:     hasDynamic,
+				})
 			}
 
 			// Test edge: record which production symbols a test calls.
@@ -1112,6 +1146,52 @@ func envRead(call *ast.CallExpr, callee string, line int, file, fn string) (grap
 		Line:     line,
 		Function: fn,
 	}, true
+}
+
+// extractHTTPMethod checks whether a call expression is an HTTP client call
+// and returns the HTTP method (GET, POST, etc.) if so.
+func extractHTTPMethod(callee string, call *ast.CallExpr) (string, bool) {
+	switch callee {
+	case "http.Get":
+		return "GET", true
+	case "http.Post":
+		return "POST", true
+	case "http.PostForm":
+		return "POST", true
+	case "http.Head":
+		return "HEAD", true
+	}
+	// Check for *http.Client method calls by method name suffix.
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return "", false
+	}
+	switch sel.Sel.Name {
+	case "Get":
+		return "GET", true
+	case "Post":
+		return "POST", true
+	case "PostForm":
+		return "POST", true
+	case "Head":
+		return "HEAD", true
+	case "Do":
+		return "GET", true
+	}
+	return "", false
+}
+
+// extractStaticSegments parses a URL string and returns non-empty path segments.
+func extractStaticSegments(rawURL string) []string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil
+	}
+	path := strings.Trim(u.Path, "/")
+	if path == "" {
+		return nil
+	}
+	return strings.Split(path, "/")
 }
 
 func resolveStringLiteral(body *ast.BlockStmt, identName string) (string, bool) {

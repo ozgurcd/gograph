@@ -30,6 +30,7 @@ type Graph struct {
 	Implements   []ImplementsEdge  `json:"implements,omitempty"`
 	Mutations    []MutationEdge    `json:"mutations,omitempty"`
 	Literals     []LiteralEdge     `json:"literals,omitempty"`
+	HttpCalls    []HttpCallEdge    `json:"http_calls,omitempty"`
 	Baseline     *GraphBaseline    `json:"baseline,omitempty"`
 }
 
@@ -74,6 +75,17 @@ type LiteralEdge struct {
 	Function string `json:"function"`
 	File     string `json:"file"`
 	Line     int    `json:"line"`
+}
+
+// HttpCallEdge represents a detected HTTP client call (net/http).
+type HttpCallEdge struct {
+	SourceFile     string   `json:"sourceFile"`
+	SourceLine     int      `json:"sourceLine"`
+	FunctionName   string   `json:"functionName"`
+	Method         string   `json:"method"`
+	URL            string   `json:"url"`
+	StaticSegments []string `json:"staticSegments"`
+	HasDynamic     bool     `json:"hasDynamic"`
 }
 
 // ImplementsEdge records absolute proof that a concrete type implements an interface.
