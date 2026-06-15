@@ -10,6 +10,7 @@ import (
 	"go/parser"
 	"go/printer"
 	"go/token"
+	"net/url"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
@@ -29,6 +30,7 @@ type FileResult struct {
 	TestEdges   []graph.TestEdge
 	Mutations   []graph.MutationEdge
 	Literals    []graph.LiteralEdge
+	HTTPCalls   []graph.HTTPCallEdge
 }
 
 // ParseFile parses a single .go file and extracts its nodes.
@@ -546,6 +548,38 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 						break
 					}
 				}
+			}
+
+			// HTTP Client Call Extraction
+			if method, ok := extractHTTPMethod(callee, call); ok && len(call.Args) >= 1 {
+				urlExpr := call.Args[0]
+				var urlStr string
+				hasDynamic := false
+
+				if lit, ok2 := urlExpr.(*ast.BasicLit); ok2 && lit.Kind == token.STRING {
+					urlStr = strings.Trim(lit.Value, "\"")
+				} else {
+					urlStr = exprName(urlExpr)
+					if urlStr == "" {
+						urlStr = "<dynamic>"
+					}
+					hasDynamic = true
+				}
+
+				var staticSegments []string
+				if !hasDynamic {
+					staticSegments = extractStaticSegments(urlStr)
+				}
+
+				result.HTTPCalls = append(result.HTTPCalls, graph.HTTPCallEdge{
+					SourceFile:     relPath,
+					SourceLine:     callPos.Line,
+					FunctionName:   callerName,
+					Method:         method,
+					URL:            urlStr,
+					StaticSegments: staticSegments,
+					HasDynamic:     hasDynamic,
+				})
 			}
 
 			// Test edge: record which production symbols a test calls.
@@ -1112,6 +1146,41 @@ func envRead(call *ast.CallExpr, callee string, line int, file, fn string) (grap
 		Line:     line,
 		Function: fn,
 	}, true
+}
+
+// extractHTTPMethod checks whether a call expression is a package-level
+// net/http client call and returns the HTTP method (GET, POST, etc.) if so.
+//
+// Only unambiguous package-level calls are detected (http.Get, http.Post, etc.).
+// *http.Client method calls (client.Get, client.Do) are not detected here
+// because they cannot be reliably distinguished from other types' methods
+// without go/types type information. Support for those may be added in a
+// future --precise mode enhancement.
+func extractHTTPMethod(callee string, call *ast.CallExpr) (string, bool) {
+	switch callee {
+	case "http.Get":
+		return "GET", true
+	case "http.Post":
+		return "POST", true
+	case "http.PostForm":
+		return "POST", true
+	case "http.Head":
+		return "HEAD", true
+	}
+	return "", false
+}
+
+// extractStaticSegments parses a URL string and returns non-empty path segments.
+func extractStaticSegments(rawURL string) []string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil
+	}
+	path := strings.Trim(u.Path, "/")
+	if path == "" {
+		return nil
+	}
+	return strings.Split(path, "/")
 }
 
 func resolveStringLiteral(body *ast.BlockStmt, identName string) (string, bool) {

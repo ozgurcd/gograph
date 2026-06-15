@@ -91,6 +91,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 		"coupling",
 		"context",
 		"hotspot",
+		"httpcalls",
 		"deps",
 		"dependents",
 		"changes",

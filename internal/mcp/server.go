@@ -154,6 +154,7 @@ func NewServer(g *graph.Graph, rebuild func() (*graph.Graph, error), buildGraph 
 				{"name": "gograph_envs", "purpose": "All os.Getenv/os.LookupEnv reads in the codebase. Filter by key name substring."},
 				{"name": "gograph_tests", "purpose": "Test functions that exercise a named symbol. Omit symbol to list all test edges."},
 				{"name": "gograph_hotspot", "purpose": "Functions ranked by fan-in (incoming call count). High fan-in = highest-risk change target."},
+				{"name": "gograph_httpcalls", "purpose": "All outbound HTTP client calls via net/http (Get, Post, PostForm, Head). Filter by method or URL."},
 				{"name": "gograph_changes", "purpose": "Symbols modified/added/deleted. Without git_ref: uncommitted changes. With git_ref: static diff vs that ref."},
 				{"name": "gograph_path", "purpose": "Shortest BFS call chain between two symbols. Confirms whether a handler reaches a given function."},
 				{"name": "gograph_complexity", "purpose": "Cyclomatic complexity per function, sorted highest first. Labels: LOW/MEDIUM/HIGH/VERY HIGH."},
@@ -1586,6 +1587,25 @@ func initNewTools(g *graph.Graph, rebuild func() (*graph.Graph, error), buildGra
 			}
 		}
 		results := search.Concurrency(g, term)
+		return formatResults(results), nil
+	})
+
+	// Tool: gograph_httpcalls
+	httpcallsTool := mcp.NewTool("gograph_httpcalls",
+		mcp.WithDescription("Find all outbound HTTP client calls detected in the codebase via net/http package-level functions: http.Get, http.Post, http.PostForm, http.Head. Requires .gograph/graph.json — run `gograph build .` first. Read-only; no side effects. Optional `term` filters by method, URL, or function name substring. WHEN TO USE: When auditing external API dependencies, understanding which services your code calls, or identifying all outbound HTTP traffic. NOT TO USE: For HTTP server route definitions (use gograph_routes). RETURNS: List of HTTP method, URL, static path segments, dynamic flag, calling function, and file/line; empty when no HTTP client calls match."),
+		mcp.WithString("term", mcp.Description("Optional filter term (matches method, URL, or function name — e.g., 'POST' or 'api.example.com')")),
+	)
+	addTool(httpcallsTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if newG, err := rebuild(); err == nil {
+			g = newG
+		}
+		term := ""
+		if args, ok := request.Params.Arguments.(map[string]any); ok {
+			if t, ok := args["term"].(string); ok {
+				term = t
+			}
+		}
+		results := search.HTTPCalls(g, term)
 		return formatResults(results), nil
 	})
 

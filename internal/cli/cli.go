@@ -292,6 +292,8 @@ func dispatch(args []string) int {
 		return 0
 	case "hook-guard":
 		return runHookGuard()
+	case "httpcalls":
+		return runHTTPCalls(args[1:])
 	case "help", "--help", "-h":
 		printHelp()
 		return 0
@@ -673,6 +675,7 @@ func BuildGraph(absRoot string) (*graph.Graph, error) {
 		g.TestEdges = append(g.TestEdges, result.TestEdges...)
 		g.Mutations = append(g.Mutations, result.Mutations...)
 		g.Literals = append(g.Literals, result.Literals...)
+		g.HTTPCalls = append(g.HTTPCalls, result.HTTPCalls...)
 
 		if _, ok := pkgMap[dir]; !ok {
 			pkgMap[dir] = &graph.PackageNode{
@@ -2321,6 +2324,21 @@ func runErrors(args []string) int {
 	}
 	results := search.Errors(g, term, includeTests)
 	return printResults("errors", term, results, "No custom errors or panics found.")
+}
+
+// runHTTPCalls lists all detected HTTP client calls in the graph.
+func runHTTPCalls(args []string) int {
+	term := ""
+	if len(args) > 0 {
+		term = args[0]
+	}
+	g, err := loadGraph(".")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	results := search.HTTPCalls(g, term)
+	return printResults("httpcalls", term, results, "No HTTP client calls found.")
 }
 
 // runSkeleton prints a stripped skeleton of the repository structure.

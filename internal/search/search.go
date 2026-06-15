@@ -1312,6 +1312,35 @@ func Envs(g *graph.Graph, term string) []Result {
 	return results
 }
 
+// HTTPCalls returns all detected HTTP client calls in the graph,
+// optionally filtered by a keyword term (matches method, URL, or function name).
+func HTTPCalls(g *graph.Graph, term string) []Result {
+	nl := strings.ToLower(term)
+	var results []Result
+	for _, h := range g.HTTPCalls {
+		if term == "" ||
+			strings.Contains(strings.ToLower(h.Method), nl) ||
+			strings.Contains(strings.ToLower(h.URL), nl) ||
+			strings.Contains(strings.ToLower(h.FunctionName), nl) {
+			detail := fmt.Sprintf("%s %s", h.Method, h.URL)
+			if h.HasDynamic {
+				detail += " [dynamic]"
+			}
+			detail += " in " + h.FunctionName
+			results = append(results, Result{
+				Kind:   "httpcall",
+				Name:   fmt.Sprintf("%s %s", h.Method, h.URL),
+				File:   h.SourceFile,
+				Line:   h.SourceLine,
+				Detail: detail,
+				Score:  10,
+			})
+		}
+	}
+	sortResults(results)
+	return results
+}
+
 // Interfaces returns all interfaces that the named struct satisfies,
 // using duck-typing: a struct satisfies an interface if it has all methods
 // listed in InterfaceMethods (by name). Only interfaces defined in the graph
