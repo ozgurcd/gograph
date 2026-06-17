@@ -2,7 +2,7 @@
 .agents/
 bin/
 bin/gograph-test
-gograph
+/gograph
 docs/ARCHITECTURAL_GUIDELINES.mdcoverage.out
 docs/FUTURE_IDEAS.md
 docs/TODO.md
