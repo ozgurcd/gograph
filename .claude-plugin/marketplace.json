@@ -1,0 +1,24 @@
+{
+  "name": "gograph",
+  "owner": {
+    "name": "ozgurcd",
+    "url": "https://github.com/ozgurcd"
+  },
+  "metadata": {
+    "description": "Marketplace hosting the gograph Claude Code plugin - Go repository intelligence via MCP."
+  },
+  "plugins": [
+    {
+      "name": "gograph",
+      "description": "Go repository intelligence for Claude Code. Replaces grep/rg/find and other text processing tools for Go symbol search with AST-aware call graphs, blast radius, impact analysis, and 57+ semantic queries via the gograph MCP server.",
+      "version": "0.1.0",
+      "author": {
+        "name": "ozgurcd",
+        "url": "https://github.com/ozgurcd"
+      },
+      "source": "./",
+      "category": "developer-tools",
+      "homepage": "https://gograph.identuum.ai"
+    }
+  ]
+}
