@@ -31,3 +31,4 @@ llm-wiki/concurrency.md
 llm-wiki/api-surface.md
 llm-wiki/packages/*
 !llm-wiki/packages/README.md
+opencode.json

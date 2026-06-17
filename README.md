@@ -105,6 +105,15 @@ gograph add-claude-plugin
 ```
 This registers the MCP server, injects `CLAUDE.md` steering rules, and installs a `PreToolUse` hook that redirects `grep` on Go symbols to `gograph` tools.
 
+**Alternative — install via Claude Code plugin marketplace:**
+```bash
+/plugin marketplace add ozgurcd/gograph
+/plugin install gograph@gograph
+```
+Discovers gograph through Claude Code's plugin marketplace and ships a `SKILL.md` that auto-activates on Go work, teaching the agent the mandatory workflow (`capabilities` → `build` → `plan` → `context` → `review`) and that `grep`/`rg`/`find` must not be used for Go symbol search.
+
+You still need the `gograph` binary installed (`brew install ozgurcd/tap/gograph` or `go install github.com/ozgurcd/gograph@latest`). Use `gograph add-claude-plugin` above for the full one-command bootstrap (MCP wiring + `CLAUDE.md` rules + `PreToolUse` hook). Use the plugin marketplace when you'd rather discover and install gograph from inside Claude Code's plugin UI.
+
 **Other agents** (Cursor, Copilot, Antigravity, etc.):
 ```bash
 gograph mcp .   # Run as MCP server over stdio
