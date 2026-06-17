@@ -16,6 +16,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/ozgurcd/gograph/internal/cli"
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/search"
 	"github.com/ozgurcd/gograph/internal/session"
@@ -53,10 +54,12 @@ var ExposeToolsForTesting map[string]func(context.Context, mcp.CallToolRequest) 
 
 // NewServer creates and returns the MCP server with all tools registered.
 func NewServer(g *graph.Graph, rebuild func() (*graph.Graph, error), buildGraph func(string) (*graph.Graph, error)) *server.MCPServer {
-	// TODO: Centralize version source with internal/cli.Version to avoid duplication.
+	// Use cli.Version as the single source of truth for the version string.
+	// The CLI injects the real release version via -ldflags at build time;
+	// local builds fall back to "dev" via the var initializer.
 	s := server.NewMCPServer(
 		"gograph",
-		"1.4.59",
+		cli.Version,
 		server.WithToolCapabilities(true),
 	)
 
