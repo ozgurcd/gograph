@@ -106,6 +106,7 @@ gograph doc <pkg[.Symbol]>       # go doc wrapper: signature + doc comment for a
                                  # Examples: gograph doc fmt.Errorf   gograph doc io.Reader
                                  #           gograph doc net/http.HandleFunc  [--json]
 gograph mcp <path>               # runs an MCP server over stdio
+gograph httpcalls [term]         # all outbound net/http calls (Get, Post, PostForm, Head); filter by method or URL substring
 gograph add-claude-plugin        # install MCP server + CLAUDE.md rules + PreToolUse hook (Claude Desktop & Claude Code)
 gograph hook-guard               # PreToolUse hook binary — reads tool call JSON from stdin, blocks Go symbol greps (invoked automatically by Claude Code)
 # --- CI ENFORCEMENT ---
@@ -717,12 +718,20 @@ The current tool suite includes:
 - **`gograph_boundaries`**: Verifies package architecture constraints. Returns structured output.
 - **`gograph_api`**: Compares public-facing contract and integration surface drift against a baseline git reference.
 - **`gograph_routes`**
+- **`gograph_node`**: AST metadata for a symbol: kind, file, line, signature, doc comment. Lighter than `gograph_source` when you only need metadata.
+- **`gograph_path`**: Shortest BFS call chain between two symbols. Use to confirm whether a handler actually reaches a given function.
+- **`gograph_changes`**: Symbols modified/added/deleted since last build. With `git_ref`, returns symbols in files changed since that ref (MODIFIED only).
 - **`gograph_context`**: Bundles node details, callers, callees, tests, and source code into one compact structured response.
 - **`gograph_plan`**: Pre-edit planning. Highlights likely affected tests, routes, env reads, SQL touches, and public API impact. Set `with_context=true` to bundle full context for every `inspect_first` symbol — eliminates follow-up `context` calls.
 - **`gograph_review`**: Post-edit review. Summarizes what changed and its risk profile in a structured JSON payload.
 - **`gograph_risk`**: Risk evaluation. Combines blast radius, complexity, test coverage, and SQL/env dependencies into a 0–100 risk score and verdict (SAFE/REVIEW/DANGER). Supports `symbol` or `uncommitted=true`.
 - **`gograph_errorflow`**: Traces likely error paths up to entry points (HTTP routes or CLI commands). (*Limitation: Uses heuristic static call-graph and AST reference analysis, not SSA data-flow tracking.*)
 - **`gograph_imports`**
+- **`gograph_envs`**: All `os.Getenv`/`os.LookupEnv` reads in the codebase. Filter by key name substring.
+- **`gograph_endpoint`**: Full vertical slice for one HTTP route: handler, BFS call chain (default depth 5), SQL, and env reads. Query by route pattern, path fragment, or handler name. Accepts `depth` parameter.
+- **`gograph_interfaces`**: Interfaces satisfied by a named struct — inverse of `gograph_implementers`. Use before refactoring a method to know which contracts break.
+- **`gograph_mutate`**: All assignment sites for a named struct field (direct, IncDec, and indirect via method calls). Use before adding field validation.
+- **`gograph_tests`**: Test functions that exercise a named symbol. Omit symbol to list all test edges.
 - **`gograph_sql`**
 - **`gograph_errors`**
 - **`gograph_embeds`**
@@ -732,6 +741,11 @@ The current tool suite includes:
 - **`gograph_usages`**: Find every place a named type appears in function signatures (param/return), struct fields, and interface method signatures. Run before changing an interface to see the full consumption blast radius.
 - **`gograph_returnusage`**: Show how each caller uses the return value of a function (discarded/assigned/partially_ignored/returned/passed). Run before changing a return signature to find callers that silently discard values.
 - **`gograph_arity`**: Find functions with too many arguments. Optional `min` parameter (default: 5).
+- **`gograph_complexity`**: Cyclomatic complexity per function, sorted highest first. Labels: LOW/MEDIUM/HIGH/VERY HIGH (McCabe thresholds: 5/10/20). Filter by symbol name substring.
+- **`gograph_coupling`**: Fan-in, fan-out, and instability per package. Instability = FanOut/(FanIn+FanOut). Range [0,1]. Filter to a specific package.
+- **`gograph_deps`**: Import dependency tree of a package. Set `transitive=true` for full BFS closure.
+- **`gograph_dependents`**: All packages that import the named package (inverse of `gograph_deps`). Essential before any package-level refactor.
+- **`gograph_hotspot`**: Functions ranked by fan-in (incoming call count). High fan-in = highest-risk change target. Optional `top` parameter (default: 10).
 - **`gograph_concurrency`**: Map goroutine spawns, channel operations, mutex locks, WaitGroups, and sync.Once. Optional filter by kind.
 - **`gograph_fixtures`**: Find test helper structs and functions in test files for a package.
 - **`gograph_godobj`**: Find god-object struct candidates. Optional thresholds: `methods`, `fields`, `calls`, `top`.
@@ -745,6 +759,12 @@ The current tool suite includes:
 - **`gograph_diagram`**: Mermaid architecture diagram of the repository package dependency graph. Parameters: `group_by` (package/module/service/file), `max_depth` (0=unlimited), `include_stdlib` (bool). Use for onboarding or communicating package structure.
 - **`gograph_check`**: Run static policy checks (boundaries, api_drift, max_arity, max_complexity, test_coverage, no_orphans). Parameters: `since` (git ref for api_drift baseline), `uncommitted` (bool), `config` (path to checks.json). Returns structured JSON with status (pass/warn/fail), findings, and summary counts. Use during PR review or pre-commit analysis. For CI enforcement with non-zero exit code, use CLI `gograph gate` instead.
 - **`gograph_wiki`**: Generate the `llm-wiki/` directory of machine-first markdown pages from the static graph. Pages: overview, architecture, hotspots, routes, env, errors, concurrency, api-surface, and one file per internal package. Optional `output` parameter to override directory. Run once per session for zero-cost orientation. Returns a JSON manifest of written page filenames.
+- **`gograph_summary`**: Single-call codebase briefing: top 3 hotspots, worst instability package, highest complexity function, orphan count, and god-object count. Replaces 5 separate tool calls.
+- **`gograph_untested`**: Production functions with callers but zero test edges — coverage gaps invisible to orphans or per-symbol test queries. Optional `pkg` filter. Replaces N `gograph_tests` calls.
+- **`gograph_doc`**: `go doc` wrapper — signature + doc comment for any stdlib or third-party symbol. **No graph required.** Use when a call chain leads outside the project. Examples: `fmt.Errorf`, `io.Reader`.
+- **`gograph_httpcalls`**: All outbound HTTP client calls via `net/http` (Get, Post, PostForm, Head) in the codebase. Filter by method or URL substring.
+
+> **Note — CLI-only commands (no MCP equivalent):** `build`, `gate`, `snapshot`, `add-claude-plugin`, `hook-guard`, `mcp`, `version`, `help` are intentionally CLI-only. `gate` and `snapshot` are CI/CD tools that write files or exit non-zero — unsuitable for MCP. `session` commands have MCP equivalents (`gograph_session_*`).
 
 ## Recommended project setup
 

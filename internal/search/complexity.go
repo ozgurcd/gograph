@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
@@ -126,7 +127,8 @@ func Complexity(g *graph.Graph, term string) []ComplexityResult {
 		}
 
 		// Parse the source file.
-		astf, err := parseFile(sym.File)
+		absPath := filepath.Join(g.Root, sym.File)
+		astf, err := parseFile(absPath)
 		if err != nil {
 			// If we can't parse the file, report complexity as -1.
 			results = append(results, ComplexityResult{

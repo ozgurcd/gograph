@@ -355,8 +355,8 @@ func NewServer(g *graph.Graph, rebuild func() (*graph.Graph, error), buildGraph 
 		if !ok {
 			return mcp.NewToolResultError("symbol must be a string"), nil
 		}
-		// MCP currently defaults to root = "."
-		code, err := search.Source(g, ".", sym)
+		// MCP currently defaults to root = g.Root
+		code, err := search.Source(g, g.Root, sym)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -393,7 +393,7 @@ func NewServer(g *graph.Graph, rebuild func() (*graph.Graph, error), buildGraph 
 
 		// --since <ref> mode
 		if ref, ok := args["since"].(string); ok && ref != "" {
-			root, _ := filepath.Abs(".")
+			root := g.Root
 			changes, err := search.ChangesByGitRef(g, root, ref)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -633,7 +633,7 @@ func NewServer(g *graph.Graph, rebuild func() (*graph.Graph, error), buildGraph 
 			return mcp.NewToolResultError("invalid arguments"), nil
 		}
 
-		root, _ := filepath.Abs(".")
+		root := g.Root
 
 		if u, _ := args["uncommitted"].(bool); u {
 			syms, err := search.UncommittedSymbols(g)
@@ -779,7 +779,7 @@ func NewServer(g *graph.Graph, rebuild func() (*graph.Graph, error), buildGraph 
 		}
 
 		if withContext {
-			root, _ := filepath.Abs(".")
+			root := g.Root
 			var contexts []inspectContext
 			for _, sym := range planRes.ReadFirst {
 				r := search.Context(g, root, sym.Name, false)
@@ -1412,7 +1412,7 @@ func initNewTools(g *graph.Graph, rebuild func() (*graph.Graph, error), buildGra
 		if newG, err := rebuild(); err == nil {
 			g = newG
 		}
-		root, _ := filepath.Abs(".")
+		root := g.Root
 		gitRef := ""
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if r, ok := args["git_ref"].(string); ok {
@@ -1484,7 +1484,7 @@ func initNewTools(g *graph.Graph, rebuild func() (*graph.Graph, error), buildGra
 		if newG, err := rebuild(); err == nil {
 			g = newG
 		}
-		absRoot, _ := filepath.Abs(".")
+		absRoot := g.Root
 		sr := search.Stale(g, absRoot)
 		data, err := json.MarshalIndent(sr, "", "  ")
 		if err != nil {

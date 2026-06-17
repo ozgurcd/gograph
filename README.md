@@ -69,7 +69,7 @@ All commands support `--json` for machine-readable output and `--files-only` for
 | **Change Analysis** | `plan`, `review`, `risk`, `impact [--uncommitted\|--since]`, `changes [--git]`, `api --since` | Pre-edit planning, post-edit review, risk analysis, blast radius, drift. |
 | **Architecture** | `boundaries`, `coupling`, `complexity`, `godobj`, `orphans`, `arity` | Quality gates, dead code, coupling, god objects. |
 | **Types & Structs** | `fields`, `implementers [--test-only]`, `interfaces`, `embeds`, `constructors`, `literals`, `usages`, `mutate`, `schema` | Struct fields, interface satisfaction, type usage. |
-| **Infrastructure** | `routes`, `sql`, `envs`, `errors`, `concurrency`, `globals`, `deps [--transitive]`, `dependents` | HTTP routes, SQL, env vars, concurrency, imports. |
+| **Infrastructure** | `routes`, `sql`, `envs`, `errors`, `concurrency`, `globals`, `httpcalls`, `deps [--transitive]`, `dependents`, `imports` | HTTP routes, SQL, env vars, concurrency, outbound HTTP calls, imports. |
 | **Testing** | `tests`, `fixtures`, `mocks` | Test coverage map, helpers, mock implementations. |
 | **Error Tracing** | `errorflow [--no-tests]`, `trace` | Reverse-BFS from error strings to HTTP entry points. |
 | **Diagnostics** | `hotspot`, `returnusage`, `skeleton`, `diagram`, `changes`, `public` | Hotspots, return usage, API signatures, Mermaid diagrams. |

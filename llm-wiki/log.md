@@ -114,3 +114,19 @@ Received a responsible-disclosure notice (scan date 2026-06-10) identifying thre
 - Created `security/path-traversal-prevention.md` with implementation invariants.
 - Updated `index.md` to link the new security page.
 - Updated `RELEASE_NOTES.md` with a v1.4.84 entry.
+
+## [2026-06-17] session | Working directory independence for MCP tools and complexity calculations
+
+- Identified and fixed path resolution issues where cyclomatic complexity calculations returned `-1` / `UNKNOWN` because of using relative paths from the graph without resolving against the project root.
+- Modified `internal/search/complexity.go` to prepend `g.Root` to `sym.File` in `Complexity` calculations.
+- Modified `internal/mcp/server.go` to use `g.Root` instead of relative/dynamic path resolution (`.` and `filepath.Abs(".")`) in tools `gograph_source`, `gograph_changes`, `gograph_context`, `gograph_plan`, `gograph_stale`, and `gograph_impact` to guarantee correct operation when the MCP server runs from a non-root directory.
+- Regenerated the LLM wiki pages via `gograph wiki`.
+- Verified that all unit, integration, lint, and security checks pass successfully.
+
+## [2026-06-17] session | Refine orphan detection logic to exclude internal package exports and tests
+
+- Modified [internal/search/advanced.go](file:///Users/odemir/Development/2025-11/identuum/gograph/internal/search/advanced.go) to add `isInternal` helper and exclude exported symbols in `internal/` packages from being roots (unless called).
+- Handled test files by treating `Test...`, `Benchmark...`, and `Fuzz...` functions as roots, and excluding symbols defined in `_test.go` files from reported orphans.
+- Added [internal/search/orphans_test.go](file:///Users/odemir/Development/2025-11/identuum/gograph/internal/search/orphans_test.go) with unit tests for the refined logic.
+- Removed temporary manual verification functions and ran full automated test/fuzz/linter verification.
+- Regenerated the LLM wiki pages via `gograph wiki`.

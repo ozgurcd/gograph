@@ -230,6 +230,16 @@ func Path(g *graph.Graph, from, to string, includeTests bool) []Result {
 	return nil
 }
 
+func isInternal(path string) bool {
+	parts := strings.Split(path, "/")
+	for _, p := range parts {
+		if p == "internal" {
+			return true
+		}
+	}
+	return false
+}
+
 // ReachableOrphans returns symbols that are truly unreachable from any program
 // entry point. Entry points are: main() functions, HTTP route handlers, and
 // exported functions (which may be called by external consumers).
@@ -240,6 +250,9 @@ func ReachableOrphans(g *graph.Graph) []Result {
 	roots := make(map[string]bool)
 
 	for _, s := range g.Symbols {
+		if s.Kind != graph.KindFunction && s.Kind != graph.KindMethod {
+			continue
+		}
 		// Entry points the Go runtime always invokes:
 		//   - main()  — program entry point
 		//   - init()  — runs at package load time, every package, every binary
@@ -248,9 +261,21 @@ func ReachableOrphans(g *graph.Graph) []Result {
 		if s.Name == "main" || s.Name == "init" {
 			roots[normalizeSymbolName(s.ID)] = true
 			roots[normalizeSymbolName(s.Name)] = true
+			continue
 		}
-		if (s.Kind == graph.KindFunction || s.Kind == graph.KindMethod) &&
-			len(s.Name) > 0 && s.Name[0] >= 'A' && s.Name[0] <= 'Z' {
+		if isTestFile(s.File) {
+			// Test/Benchmark/Fuzz functions in test files are roots
+			if strings.HasPrefix(s.Name, "Test") || strings.HasPrefix(s.Name, "Benchmark") || strings.HasPrefix(s.Name, "Fuzz") {
+				roots[normalizeSymbolName(s.ID)] = true
+				roots[normalizeSymbolName(s.Name)] = true
+			}
+			continue
+		}
+		if isInternal(s.File) || isInternal(s.ID) {
+			// Exported symbols inside internal packages are NOT roots
+			continue
+		}
+		if len(s.Name) > 0 && s.Name[0] >= 'A' && s.Name[0] <= 'Z' {
 			roots[normalizeSymbolName(s.ID)] = true
 			roots[normalizeSymbolName(s.Name)] = true
 		}
@@ -333,6 +358,10 @@ func ReachableOrphans(g *graph.Graph) []Result {
 	var results []Result
 	for _, s := range g.Symbols {
 		if s.Kind != graph.KindFunction && s.Kind != graph.KindMethod {
+			continue
+		}
+		// Exclude symbols declared in test files from being reported as orphans.
+		if isTestFile(s.File) {
 			continue
 		}
 		// Three reachability checks per symbol:

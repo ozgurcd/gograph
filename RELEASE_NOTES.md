@@ -1,5 +1,67 @@
 # Release Notes
 
+## v1.4.87 — 2026-06-17
+
+### Improvements
+
+#### Working Directory Independence for Cyclomatic Complexity and MCP Tools
+Resolved relative path issues in the search and MCP layers. Commands like `complexity` and MCP tools (`gograph_source`, `gograph_changes`, `gograph_context`, `gograph_plan`, `gograph_stale`, and `gograph_impact`) now correctly resolve paths against `g.Root` instead of raw working directory relative paths, ensuring consistent execution when run from subdirectories or external runtimes.
+
+#### MCP Import Cycle Resolution
+Fixed a compiler import cycle between the `cli` and `mcp` packages by passing the version string directly as a parameter to the MCP server on startup.
+
+### Fixes
+
+#### ReachableOrphans Refinement
+Refined the orphan detection logic to:
+- Stop treating exported functions inside `internal/` packages as automatic entry points (roots), since Go prevents them from being imported by external modules.
+- Treat `Test...`, `Benchmark...`, and `Fuzz...` functions in test files as roots.
+- Exclude all helper symbols and definitions in `_test.go` files from being reported as orphans.
+
+### Documentation
+
+| Target | Changes |
+|---|---|
+| `RELEASE_NOTES.md` | Added entries for v1.4.85, v1.4.86, and v1.4.87 |
+| `internal/cli/cli.go` | Added `httpcalls` documentation to help text and capabilities |
+
+---
+
+## v1.4.86 — 2026-06-17
+
+### Improvements
+
+#### Claude Code Integration Configuration
+Integrated plugin metadata (`.claude-plugin/plugin.json`) and marketplace configuration (`.claude-plugin/marketplace.json`) to allow seamless installation of `gograph` as a marketplace tool in Claude Code.
+
+### Documentation
+
+| Target | Changes |
+|---|---|
+| `README.md` | Documented installation instructions via Claude Code marketplace |
+| `RELEASE_NOTES.md` | Added entry for v1.4.86 |
+
+---
+
+## v1.4.85 — 2026-06-17
+
+### New Commands
+
+#### `gograph httpcalls` / MCP `gograph_httpcalls`
+Added the `gograph httpcalls` command and corresponding `gograph_httpcalls` MCP tool. It statically extracts all outbound HTTP client calls (`net/http` Get, Post, PostForm, and Head) in the codebase. Allows developers to filter results by HTTP method or URL substring.
+
+**Token-saving benefit:** Helps agents map outbound integrations and third-party dependencies in a single call instead of reading every file or parsing standard libraries.
+
+### Documentation
+
+| Target | Changes |
+|---|---|
+| `README.md` | Documented `httpcalls` in the infrastructure commands table |
+| `docs/coding-agent-usage.md` | Documented `httpcalls` in the cheat sheet and tool registry |
+| `RELEASE_NOTES.md` | Added entry for v1.4.85 |
+
+---
+
 ## v1.4.84 — 2026-06-14
 
 ### Security

@@ -511,6 +511,8 @@ trace <err_str>      : alias for errorflow (kept for compatibility)
 doc <pkg[.Symbol]>  : "go doc <query>" — signature + doc comment for any stdlib or third-party symbol.
                        No graph required. Examples: doc fmt.Errorf  doc net/http.HandleFunc  doc io.Reader
                        doc github.com/jackc/pgx/v5.Conn.QueryRow
+httpcalls [term]     : all outbound HTTP client calls via net/http (Get, Post, PostForm, Head).
+                       Filter by method or URL substring.
 untested [--pkg <n>] [--top N] : production functions with callers but zero test edges — coverage gaps
                        sorted by caller count (highest risk first). Replaces N 'tests <sym>' calls.
 check [--since ref]  : static policy checks (boundaries, api_drift, test requirements)
@@ -1318,6 +1320,8 @@ CODE QUALITY
 EXTRACTION
   routes                     All HTTP REST API routes and their handler functions.
   sql                        Raw SQL queries mapped to the functions that run them.
+  httpcalls [term]           All outbound HTTP client calls via net/http.
+                             Filter by method or URL substring.
   errorflow <term> [--no-tests]
                              Trace likely error paths up to entry points (AST heuristic, NO SSA).
                              --no-tests excludes test-file references from related-test collection.
