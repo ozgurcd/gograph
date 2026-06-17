@@ -56,11 +56,12 @@ type MCPResponse struct {
 var ExposeToolsForTesting map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)
 
 // NewServer creates and returns the MCP server with all tools registered.
-func NewServer(g *graph.Graph, rebuild func() (*graph.Graph, error), buildGraph func(string) (*graph.Graph, error)) *server.MCPServer {
-	// TODO: Centralize version source with internal/cli.Version to avoid duplication.
+// version is passed in by the caller (cli.Version) so this package does not
+// import internal/cli, which would create an import cycle.
+func NewServer(g *graph.Graph, rebuild func() (*graph.Graph, error), buildGraph func(string) (*graph.Graph, error), version string) *server.MCPServer {
 	s := server.NewMCPServer(
 		"gograph",
-		"1.4.59",
+		version,
 		server.WithToolCapabilities(true),
 	)
 
@@ -1090,8 +1091,8 @@ func NewServer(g *graph.Graph, rebuild func() (*graph.Graph, error), buildGraph 
 }
 
 // Serve runs the gograph MCP server over stdio.
-func Serve(g *graph.Graph, rebuild func() (*graph.Graph, error), buildGraph func(string) (*graph.Graph, error)) error {
-	s := NewServer(g, rebuild, buildGraph)
+func Serve(g *graph.Graph, rebuild func() (*graph.Graph, error), buildGraph func(string) (*graph.Graph, error), version string) error {
+	s := NewServer(g, rebuild, buildGraph, version)
 	return server.ServeStdio(s)
 }
 

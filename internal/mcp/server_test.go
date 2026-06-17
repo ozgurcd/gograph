@@ -37,13 +37,13 @@ func setupHandlers(t *testing.T, g *graph.Graph) map[string]func(context.Context
 		mcppkg.ExposeToolsForTesting = prev
 	})
 
-	mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph())
+	mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), "dev")
 	return m
 }
 
 func TestNewServer(t *testing.T) {
 	g := &graph.Graph{}
-	s := mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph())
+	s := mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), "dev")
 	if s == nil {
 		t.Fatal("expected NewServer to return a valid server instance")
 	}
@@ -90,7 +90,7 @@ func TestMCPResponseSerialization(t *testing.T) {
 
 func TestAllToolAnnotations(t *testing.T) {
 	g := &graph.Graph{}
-	s := mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph())
+	s := mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), "dev")
 
 	tools := s.ListTools()
 	if len(tools) == 0 {

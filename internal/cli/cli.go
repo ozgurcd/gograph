@@ -985,7 +985,7 @@ func runMCP(args []string) int {
 		return BuildGraph(absRoot)
 	}
 
-	if err := mcp.Serve(g, rebuild, BuildGraph); err != nil {
+	if err := mcp.Serve(g, rebuild, BuildGraph, Version); err != nil {
 		fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
 		return 1
 	}
