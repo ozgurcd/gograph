@@ -106,6 +106,7 @@ func ParseFile(fset *token.FileSet, path, relPath, pkgImportPath string) (*FileR
 				path := strings.Trim(lit.Value, "\"")
 				handler := ""
 				inlineBody := ""
+				handlerAppended := false
 				if len(call.Args) >= 2 {
 					switch h := call.Args[1].(type) {
 					case *ast.FuncLit:
@@ -137,24 +138,36 @@ func ParseFile(fset *token.FileSet, path, relPath, pkgImportPath string) (*FileR
 						// Fall back to the outer call's name only when no inner
 						// callable reference can be recovered (e.g. the handler is
 						// itself the call's *result*, not an argument — the factory
-						// pattern above).
+						// pattern above). In that case DynamicHandler is set so
+						// agents know the handler symbol can't be statically resolved.
 						if inner := extractHandlerRefs(h); len(inner) > 0 {
 							handler = inner[0]
 						} else {
 							handler = calleeString(h)
+							result.Routes = append(result.Routes, graph.HTTPRoute{
+								Method:         method,
+								Path:           path,
+								Handler:        handler,
+								DynamicHandler: true,
+								File:           relPath,
+								Line:           fset.Position(call.Pos()).Line,
+							})
+							handlerAppended = true
 						}
 					default:
 						handler = typeString(call.Args[1])
 					}
 				}
-				result.Routes = append(result.Routes, graph.HTTPRoute{
-					Method:     method,
-					Path:       path,
-					Handler:    handler,
-					InlineBody: inlineBody,
-					File:       relPath,
-					Line:       fset.Position(call.Pos()).Line,
-				})
+				if !handlerAppended {
+					result.Routes = append(result.Routes, graph.HTTPRoute{
+						Method:     method,
+						Path:       path,
+						Handler:    handler,
+						InlineBody: inlineBody,
+						File:       relPath,
+						Line:       fset.Position(call.Pos()).Line,
+					})
+				}
 			}
 		}
 		return true

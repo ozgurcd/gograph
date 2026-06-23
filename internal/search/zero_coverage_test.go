@@ -90,7 +90,54 @@ func TestRoutes(t *testing.T) {
 	if len(res) == 0 {
 		t.Error("expected Routes to return results")
 	}
+	// Normal route must NOT carry the dynamic handler annotation.
+	for _, r := range res {
+		if strings.Contains(r.Detail, "[dynamic handler") {
+			t.Errorf("expected no dynamic handler annotation on a static route, got Detail=%q", r.Detail)
+		}
+	}
 }
+
+func TestRoutes_DynamicHandlerAnnotation(t *testing.T) {
+	g := &graph.Graph{
+		Routes: []graph.HTTPRoute{
+			// A factory/opaque handler — DynamicHandler=true.
+			{Method: "GET", Path: "/metrics", Handler: "promhttp.Handler", DynamicHandler: true, File: "main.go", Line: 20},
+			// A normal named handler.
+			{Method: "GET", Path: "/health", Handler: "healthCheck", File: "main.go", Line: 25},
+		},
+	}
+
+	results := search.Routes(g)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 route results, got %d", len(results))
+	}
+
+	byPath := map[string]string{}
+	for _, r := range results {
+		byPath[r.Name] = r.Detail
+	}
+
+	metricsDetail, ok := byPath["GET /metrics"]
+	if !ok {
+		t.Fatal("expected a result for GET /metrics")
+	}
+	if !strings.Contains(metricsDetail, "[dynamic handler") {
+		t.Errorf("GET /metrics should carry the dynamic handler note, got %q", metricsDetail)
+	}
+	if !strings.Contains(metricsDetail, "promhttp.Handler") {
+		t.Errorf("GET /metrics detail should still contain the factory call name, got %q", metricsDetail)
+	}
+
+	healthDetail, ok := byPath["GET /health"]
+	if !ok {
+		t.Fatal("expected a result for GET /health")
+	}
+	if strings.Contains(healthDetail, "[dynamic handler") {
+		t.Errorf("GET /health must NOT carry the dynamic handler note, got %q", healthDetail)
+	}
+}
+
 
 func TestFields(t *testing.T) {
 	g := buildCoverageGraph()

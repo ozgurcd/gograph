@@ -1099,12 +1099,16 @@ func ImpactMultiple(g *graph.Graph, names []string, reason string, includeTests 
 func Routes(g *graph.Graph) []Result {
 	var results []Result
 	for _, r := range g.Routes {
+		detail := "handled by " + r.Handler
+		if r.DynamicHandler {
+			detail += " [dynamic handler — cannot be statically resolved]"
+		}
 		results = append(results, Result{
 			Kind:   "route",
 			Name:   fmt.Sprintf("%s %s", r.Method, r.Path),
 			File:   r.File,
 			Line:   r.Line,
-			Detail: "handled by " + r.Handler,
+			Detail: detail,
 			Score:  10,
 		})
 	}

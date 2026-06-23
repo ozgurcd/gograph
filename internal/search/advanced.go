@@ -386,9 +386,11 @@ func ReachableOrphans(g *graph.Graph) []Result {
 
 // StaleResult reports the freshness of graph.json relative to source files.
 type StaleResult struct {
-	IsStale      bool     `json:"is_stale"`
-	GraphAge     string   `json:"graph_age"`
-	ChangedFiles []string `json:"changed_files,omitempty"`
+	IsStale          bool     `json:"is_stale"`
+	GraphAge         string   `json:"graph_age"`
+	NewestSourceMtime string  `json:"newest_source_mtime,omitempty"`
+	NewestSourceFile  string  `json:"newest_source_file,omitempty"`
+	ChangedFiles     []string `json:"changed_files,omitempty"`
 }
 
 // GodObjectCandidate is a struct that exceeded at least one threshold.
@@ -405,9 +407,19 @@ type GodObjectCandidate struct {
 
 // Stale compares graph.json's GeneratedAt timestamp with the mtime of every
 // .go file under root. Pass the absolute repository root path.
+//
+// Returns:
+//   - is_stale:            true when any .go file is newer than the graph.
+//   - graph_age:           UTC timestamp of the graph build.
+//   - newest_source_mtime: UTC mtime of the newest .go file found (populated
+//                          regardless of staleness — useful for diagnosis).
+//   - newest_source_file:  repo-relative path of that newest file.
+//   - changed_files:       all .go files newer than the graph (stale case only).
 func Stale(g *graph.Graph, root string) StaleResult {
 	graphTime := g.GeneratedAt
 	var staleFiles []string
+	var newestMtime os.FileInfo
+	var newestPath string
 
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -423,6 +435,10 @@ func Stale(g *graph.Graph, root string) StaleResult {
 		if !strings.HasSuffix(path, ".go") {
 			return nil
 		}
+		if newestMtime == nil || info.ModTime().After(newestMtime.ModTime()) {
+			newestMtime = info
+			newestPath = path
+		}
 		if info.ModTime().After(graphTime) {
 			if rel, relErr := filepath.Rel(root, path); relErr == nil {
 				staleFiles = append(staleFiles, rel)
@@ -433,11 +449,20 @@ func Stale(g *graph.Graph, root string) StaleResult {
 		return nil
 	})
 
-	return StaleResult{
+	sr := StaleResult{
 		IsStale:      len(staleFiles) > 0,
 		GraphAge:     graphTime.Format("2006-01-02 15:04:05 UTC"),
 		ChangedFiles: staleFiles,
 	}
+	if newestMtime != nil {
+		sr.NewestSourceMtime = newestMtime.ModTime().UTC().Format("2006-01-02 15:04:05 UTC")
+		if rel, err := filepath.Rel(root, newestPath); err == nil {
+			sr.NewestSourceFile = rel
+		} else {
+			sr.NewestSourceFile = newestPath
+		}
+	}
+	return sr
 }
 
 // GodObjectParams holds the configurable thresholds for god-object detection.

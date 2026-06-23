@@ -10,7 +10,7 @@ Scrinium is the project memory and governance server. Treat `llm-wiki/` as the s
 
 ## Required Loop
 
-1. Start Scrinium MCP with command `scrinium` and args `/Users/odemir/Development/2025-11/identuum/gograph/scrinium.json`.
+1. Start Scrinium MCP with command `scrinium` and args `/Users/odemir/Development/identuum/gograph/scrinium.json`.
 2. After any harness or plugin bootstrap instructions are loaded, call Scrinium `capabilities` before project work or wiki writes.
 3. Call `begin_session` before project changes.
 4. Read `index.md` and `agent-rules.md` with `read_wiki_page`.

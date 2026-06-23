@@ -145,8 +145,15 @@ type HTTPRoute struct {
 	// Populated only when the handler is a *ast.FuncLit (closure), empty otherwise.
 	// Captured at build time via go/printer — no file I/O needed at query time.
 	InlineBody string `json:"inline_body,omitempty"`
-	File       string `json:"file"`
-	Line       int    `json:"line"`
+	// DynamicHandler is true when the handler argument is a factory call (e.g.,
+	// promhttp.Handler(), authMiddleware()) whose concrete type cannot be
+	// statically resolved by AST analysis. The route path is accurate; the
+	// handler field contains the factory call name as a best-effort label.
+	// Agents should not report these routes as "missed" — they ARE recorded,
+	// but the handler cannot be linked to a specific named symbol.
+	DynamicHandler bool   `json:"dynamic_handler,omitempty"`
+	File           string `json:"file"`
+	Line           int    `json:"line"`
 }
 
 // PackageNode represents a Go package found in the repository.

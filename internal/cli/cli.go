@@ -330,7 +330,7 @@ query fails. Build it once before anything else:
 
 After build: graph.json + GRAPH_REPORT.md are written to .gograph/.
   gograph stats   → counts (packages/files/symbols/calls/routes/SQL/tests)
-  gograph stale   → lists source files newer than graph.json
+  gograph stale   → lists source files newer than graph.json (shows newest source time/file)
 
 Rebuild whenever source files change. The graph does NOT auto-update.
 
@@ -437,7 +437,7 @@ INDEXING:
 build . [--precise]  : parse AST, write graph.json + GRAPH_REPORT.md to .gograph/
                        Skips .git, vendor, testdata, .claude, .cursor, .agents, and
                        any directories listed in .gitignore (via git check-ignore).
-stale                : list source files newer than graph.json
+stale                : list source files newer than graph.json (shows newest source time/file)
 stats                : schema version, build time, symbol/call/route counts
 
 QUERY COMMANDS:
@@ -467,7 +467,7 @@ orphans              : symbols unreachable from any entry point via BFS (main, r
 path <from> <to>     : shortest call chain between two symbols (BFS)
 public <pkg>         : exported symbols only
 query <str>          : broad search — symbols, files, packages, imports, call sites
-routes               : all HTTP REST routes
+routes               : all HTTP REST routes. Annotates unresolvable handlers.
 source <sym>         : exact source code — USE THIS instead of reading files
 sql                  : raw SQL queries mapped to their functions
 tests <sym>          : test functions exercising this symbol
@@ -1164,7 +1164,7 @@ INDEXING
                              Hierarchy Analysis (CHA) for more precise call edges.
                              AI worktree directories (.claude, .cursor, .agents) and
                              directories listed in .gitignore are automatically skipped.
-  stale                      Check if graph.json is older than any source file.
+  stale                      Check if graph.json is older than Go source files (shows newest source time/file).
                              Agents should run this before structural analysis.
   stats                      Compact index health summary: schema version, build
                              timestamp, and counts of packages, files, symbols,
@@ -1318,7 +1318,7 @@ CODE QUALITY
                              Run 'gograph build . --precise' before this for best results.
 
 EXTRACTION
-  routes                     All HTTP REST API routes and their handler functions.
+  routes                     All HTTP REST API routes and their handler functions. Annotates unresolvable handlers.
   sql                        Raw SQL queries mapped to the functions that run them.
   httpcalls [term]           All outbound HTTP client calls via net/http.
                              Filter by method or URL substring.

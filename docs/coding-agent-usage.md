@@ -220,7 +220,7 @@ Call path: CreateUser → sql
 This lets an agent confirm whether an HTTP handler actually reaches a given SQL call without reading every file in between.
 
 ### 9. Graph freshness check
-`gograph stale` compares `graph.json`'s `generated_at` timestamp against the `mtime` of every `.go` file. If any source file is newer, it lists the changed files and tells the agent to re-run `gograph build .`. Agents should run this before any structural analysis.
+`gograph stale` compares `graph.json`'s `generated_at` timestamp against the `mtime` of every `.go` file. It displays the graph age, the newest source file, and its modification time. If any source file is newer, it lists the changed files and tells the agent to re-run `gograph build .`. Agents should run this before any structural analysis.
 
 ### 10. Reading Internal Implementations (Mock Stubs, Algorithms)
 When you need to read the actual body of a method (e.g., to check if a mock repository has a `panic("not implemented")` stub), or when you need to see the **full list of method signatures in an interface**, **do not use `grep` to find the line number.** 
@@ -701,7 +701,7 @@ MCP agents should call `gograph_capabilities` first when they need to discover a
 
 The current tool suite includes:
 - **`gograph_capabilities`**: Discover available tools and workflows.
-- **`gograph_stale`**: Check whether `.gograph/graph.json` is outdated versus source files.
+- **`gograph_stale`**: Check whether `.gograph/graph.json` is outdated relative to Go source files. Returns JSON with `is_stale`, `graph_age`, `newest_source_mtime`, `newest_source_file`, and `changed_files[]`.
 - **`gograph_session_create`**: Start a telemetry audit session for tracking agent compliance and tool success metrics.
 - **`gograph_session_end`**: End the active telemetry session cleanly and write end-of-session logs.
 - **`gograph_session_audit`**: Review and grade agent compliance (Plan rule, Review rule, Composability/Efficiency) and tool success rates.
@@ -717,7 +717,7 @@ The current tool suite includes:
 - **`gograph_impact`**: Blast radius analysis. Supports three modes: single symbol, `uncommitted=true` for uncommitted changes, and `since=<ref>` for all changes since a git ref.
 - **`gograph_boundaries`**: Verifies package architecture constraints. Returns structured output.
 - **`gograph_api`**: Compares public-facing contract and integration surface drift against a baseline git reference.
-- **`gograph_routes`**
+- **`gograph_routes`**: Extract all HTTP REST API routes found in the codebase. Annotates routes using unresolvable factory handlers (e.g. `promhttp.Handler()`) with `[dynamic handler]` in the detail, setting `DynamicHandler: true`.
 - **`gograph_node`**: AST metadata for a symbol: kind, file, line, signature, doc comment. Lighter than `gograph_source` when you only need metadata.
 - **`gograph_path`**: Shortest BFS call chain between two symbols. Use to confirm whether a handler actually reaches a given function.
 - **`gograph_changes`**: Symbols modified/added/deleted since last build. With `git_ref`, returns symbols in files changed since that ref (MODIFIED only).
