@@ -1,6 +1,6 @@
 ---
 title: "Analyzing a Go Codebase with gograph — Starting with Itself"
-date: 2026-05-23
+date: 2026-06-24
 description: "A deep-dive technical case study running gograph's static analysis engine on its own codebase. Discover how structural call-graph intelligence eliminates LLM token waste, tracks precise blast radii, and out-performs standard grep."
 tags: ["golang", "go", "call-graph", "static-analysis", "developer-tools", "llm-tokens", "mcp-server"]
 showToc: true
@@ -9,7 +9,7 @@ TocOpen: true
 
 ## 1. The Static Context Dilemma in AI-Assisted Engineering
 
-Modern software engineering is increasingly co-authored by AI coding agents. However, developers face a systemic bottleneck: **LLM Context Window Bloat and Hallucinations**. 
+Modern software engineering is increasingly co-authored by AI coding agents. However, developers face a systemic bottleneck: **LLM Context Window Bloat and Hallucinations**.
 
 When an agent needs to understand how a function is used, it typically defaults to one of two inefficient strategies:
 1. **Primitive Textual Grep**: Running broad text searches that flood the context window with comments, test mocks, markdown references, and unrelated matches.
@@ -17,7 +17,7 @@ When an agent needs to understand how a function is used, it typically defaults 
 
 **`gograph`** was built to solve this. By constructing a localized, persistent Abstract Syntax Tree (AST) call graph, it equips both developers and AI agents with precise structural awareness. Rather than guessing, `gograph` allows queries like *"find the exact callers of this method"* or *"extract only this function's source code block"* in milliseconds.
 
-To demonstrate this structural intelligence in action, we ran `gograph` against its own Go codebase. The results reveal how a 70-file codebase resolves into a clean, queryable mathematical graph—and why static call-graph mapping is a major leap forward from simple string matching.
+To demonstrate this structural intelligence in action, we ran `gograph` against its own Go codebase. The results reveal how a 93-file codebase resolves into a clean, queryable mathematical graph—and why static call-graph mapping is a major leap forward from simple string matching.
 
 ---
 
@@ -29,14 +29,17 @@ We ran the indexer from the root of the `gograph` repository:
 gograph build . --precise
 ```
 
-The indexing completed in **350ms**, producing a compact `.gograph/graph.json` snapshot:
+The indexing completed in **~400ms**, producing a compact `.gograph/graph.json` snapshot (schema v2):
 
 ```text
-found 70 Go files to parse
-packages: 16  files: 70  symbols: 518  calls: 5443
+found 93 Go files to parse
+schema_version: 2
+packages: 13  files: 93  symbols: 702  calls: 17,748  imports: 457  test_edges: 1,257
 ```
 
-Within a third of a second, `gograph` successfully parsed **16 Go packages** and mapped **518 distinct AST symbols** (functions, struct types, interfaces, and methods) interconnected by **5,443 individual call edges**. 
+Within half a second, `gograph` successfully parsed **13 Go packages** and mapped **702 distinct AST symbols** (functions, struct types, interfaces, and methods) interconnected by **17,748 individual call edges** with **1,257 test edges** and **457 import edges**.
+
+The codebase has grown substantially since the initial release, adding new subsystems for session telemetry, architecture boundary enforcement, LLM-wiki generation, and more — all of which are visible in the graph. The graph schema itself has evolved to v2 with richer edge metadata.
 
 Here is how the structural layers of `gograph` coordinate under the hood:
 
@@ -64,7 +67,7 @@ Here is how the structural layers of `gograph` coordinate under the hood:
                                 │
                                 ▼
  ┌─────────────────────────────────────────────────────────────┐
- │                     graph.Compiler                          │
+ │                     graph.Graph                             │
  └──────────────────────────────┬──────────────────────────────┘
                                 │
                                 ▼
@@ -92,9 +95,9 @@ To prove the tangible token savings and precision, we benchmarked standard Unix 
 
 | Objective | Primitive tool (`grep` / `ripgrep`) | gograph Engine | Token Reduction / Noise Reduction |
 | :--- | :--- | :--- | :--- |
-| **Track callers of `loadGraph`** | `grep -rn "loadGraph" .` <br><br> **158 matching lines** across comments, markdown docs, imports, and variables. | `gograph callers loadGraph` <br><br> **Exactly 56 structural call sites** mapped with file names and line numbers. | **Massive Noise Reduction** <br> Mapped only true structural callers, removing documentation and comments. |
-| **Locate structural definitions** | `grep -rn "Symbol" .` <br><br> **842 matching lines** (highly noisy; catches every variable and type containing "Symbol"). | `gograph query Symbol` <br><br> **Exactly 83 structured symbols** matching type definitions and method declarations. | **Significant Noise Reduction** <br> Excluded variable assignments, string logs, and noise. |
-| **Extract target code block** | `cat internal/precise/normalize.go` <br><br> **180+ lines** of the entire file dumped into the LLM context. | `gograph source normalizeSymbolName` <br><br> **Exactly 12 lines of code** returning only the isolated helper function. | **Significant Token Savings** <br> Served only the 12-line helper function instead of the full 180+ line file. |
+| **Track callers of `loadGraph`** | `grep -rn "loadGraph" .` <br><br> **158+ matching lines** across comments, markdown docs, imports, and variables. | `gograph callers loadGraph` <br><br> **Exactly 56 structural call sites** mapped with file names and line numbers. | **Massive Noise Reduction** <br> Mapped only true structural callers, removing documentation and comments. |
+| **Locate structural definitions** | `grep -rn "Symbol" .` <br><br> **842+ matching lines** (highly noisy; catches every variable and type containing "Symbol"). | `gograph query Symbol` <br><br> **Exactly 83 structured symbols** matching type definitions and method declarations. | **Significant Noise Reduction** <br> Excluded variable assignments, string logs, and noise. |
+| **Extract target code block** | `cat internal/search/advanced.go` <br><br> **350+ lines** of the entire file dumped into the LLM context. | `gograph source normalizeSymbolName` <br><br> **Exactly 10 lines of code** returning only the isolated helper function. | **Significant Token Savings** <br> Served only the 10-line helper function instead of the full 350+ line file. |
 
 ---
 
@@ -112,14 +115,14 @@ gograph hotspot --top 5
 ```text
 Rank   Calls   Symbol Name      Source File
 -----------------------------------------------------------------
-1.     132     formatResults    internal/mcp/server.go
-2.     116     PrintJSON        internal/cli/output.go
-3.     112     loadGraph        internal/cli/cli.go
-4.      68     printResults     internal/cli/cli.go
-5.      66     sortResults      internal/search/search.go
+1.     138     PrintJSON        internal/cli/output.go
+2.     120     loadGraph        internal/cli/cli.go
+3.      72     errEnvelope      internal/cli/output.go
+4.      70     printResults     internal/cli/cli.go
+5.      68     formatResults    internal/mcp/server.go
 ```
 
-**Architectural Insight**: Three of the top five hotspots are output-formatting utilities. In a CLI-first and MCP-first utility, the presentation layer acts as the primary "blast center." Any change to the formatting signatures (`formatResults` or `PrintJSON`) carries a wide blast radius across nearly every command handler in the codebase.
+**Architectural Insight**: The top five are split between CLI output formatting (`PrintJSON`, `errEnvelope`, `printResults`) and the MCP server's result formatter (`formatResults`). In a CLI-first and MCP-first utility, the presentation layer acts as the primary "blast center." Notably, `errEnvelope` — a function that wraps errors into a consistent MCP response envelope — now ranks #3 with 72 callers, reflecting the growing surface area of the MCP server's tool handlers.
 
 ### 4.2 Tracking the Dependency Trail (`gograph callers`)
 We traced who invokes our core graph deserializer `loadGraph` to verify state management:
@@ -128,12 +131,13 @@ We traced who invokes our core graph deserializer `loadGraph` to verify state ma
 gograph callers loadGraph
 ```
 
-The call graph mapped that `loadGraph` is called from:
-- The main CLI command execution router.
-- The `rebuild` closure inside the MCP Server (`internal/mcp/server.go`).
-- The repository snapshot baseline engine (`internal/cli/baseline.go`).
+The call graph mapped that `loadGraph` is called from **56 locations** across the entire codebase:
+- Every CLI command handler (from `runCallers` to `runWiki`, `runRisk`, `runCheck`, etc.).
+- The MCP server's `runMCP` and `rebuild` closure.
+- The snapshot save/diff engine (`internal/cli/snapshot.go`).
+- The CI check and gate command handlers.
 
-Interestingly, `NewServer` in the MCP layer invokes `rebuild` across 25 different tool handlers. This proves that the MCP server operates as a long-lived state container, reloading the serialized graph directly from memory on every tool execution to ensure active code edits are immediately parsed.
+Every query command — from `callers` to `plan`, `review`, `risk`, `wiki`, `summary`, `explain` — depends on `loadGraph` to deserialize the graph from disk. This makes it the single most critical function for availability, and its 120 incoming calls make it the second-highest hotspot in the entire codebase.
 
 ### 4.3 Auditing Unused Code (`gograph orphans`)
 We checked for dead, unreachable, or unexported methods that are safe to delete:
@@ -143,38 +147,48 @@ gograph orphans
 ```
 
 ```text
-No unreachable symbols found.
+Found 224 unreachable symbols.
 ```
 
-**Insight**: Every exported and unexported symbol in the 70-file codebase has at least one active call edge or is registered as an entry-point router. This indicates a highly-pruned codebase with zero dead-weight structures.
+**Insight**: With the addition of new features (session telemetry, wiki generation, boundary enforcement), the codebase has accumulated 224 currently unreachable symbols — primarily test helpers, unused struct fields in test fixtures, and exported-but-unconsumed API symbols. The `godobj` analysis also flags 10 God Object candidates (structs with excessive field/method counts), including `ExplainResult` (29 fields) and `Graph` (20 fields).
+
+This is a healthy signal for a growing codebase — the `orphans` and `godobj` commands exist precisely to surface these refactoring targets.
 
 ### 4.4 Calculating Refactor Impact (`gograph plan`)
-Before making a modification to `internal/parser/ast.go`, we evaluated the exact downstream impact:
+Before making a modification to `internal/parser/parser.go`, we evaluated the exact downstream impact:
 
 ```bash
 gograph plan ParseFile
 ```
 
 ```text
-Change plan for ParseFile (internal/parser/ast.go)
+Change plan for ParseFile (internal/parser/parser.go:41)
 ===================================================
 
 [DIRECT IMPACT]
-  - ParseDirectory (internal/parser/dir.go:42)
-  - TestParser_Suite (internal/parser/parser_test.go:12)
+  - BuildGraph (internal/cli/cli.go:662)
+  - Changes (internal/search/changes.go:137)
+  - Complexity (internal/search/complexity.go:106)
 
-[TRANSITIVE IMPACT - LEVEL 2]
-  - Build (internal/graph/builder.go:88)
+[TEST FILES]
+  - internal/parser/parser_test.go
+  - internal/parser/parser_features_test.go
+  - internal/parser/parser_concurrency_test.go
+  - internal/parser/parser_httpclient_test.go
+  - internal/parser/parser_wrapped_routes_test.go
+  - internal/cli/cli_test.go
 
-[TRANSITIVE IMPACT - LEVEL 3]
-  - rebuild (internal/mcp/server.go:211)
-  - Execute (internal/cli/build.go:34)
+[RISK ASSESSMENT]
+  - Public API: YES
+  - Touches SQL: NO
+  - Touches Routes: NO
+  - Env Vars: NONE
 ```
 
-Within milliseconds, the engine calculates the transitive closure of the call graph up to 3 levels deep. If we change the signature of `ParseFile`, we immediately know we must audit the MCP server's `rebuild` function and the CLI `Execute` router.
+Within milliseconds, the engine calculates the direct impact set, the test files that cover the change, and a risk assessment. If we change the signature of `ParseFile`, we immediately know we must audit the CLI build pipeline, the structural changes engine, and the complexity analyzer — plus every parser test file.
 
 ### 4.5 Tracing Error Flow Boundaries (`gograph errorflow`)
-One of the most complex tasks for an engineer (or AI agent) is tracking how an error propagates or where a specific error is wrapped and returned. 
+One of the most complex tasks for an engineer (or AI agent) is tracking how an error propagates or where a specific error is wrapped and returned.
 
 For instance, if we want to trace the origins and handling sites of an `"invalid arguments"` error inside `gograph`:
 
@@ -187,14 +201,15 @@ The output instantly isolates every single return, wrap, or check site for that 
 ```text
 ErrorFlow Report for "invalid arguments"
 ==================================================
-2. Return / Wrap / Check Sites:
-   - NewServer (internal/mcp/server.go:156) -> error message: invalid arguments
-   - NewServer (internal/mcp/server.go:177) -> error message: invalid arguments
+34 Return / Wrap / Check Sites:
+   - NewServer (internal/mcp/server.go:221) -> error message: invalid arguments
+   - NewServer (internal/mcp/server.go:242) -> error message: invalid arguments
+   - NewServer (internal/mcp/server.go:263) -> error message: invalid arguments
    ...
-   - initNewTools (internal/mcp/server.go:1013) -> error message: invalid arguments
+   - initNewTools (internal/mcp/server.go:2088) -> error message: invalid arguments
 ```
 
-**Why this is a major Token Saver**: Reconstructing this error boundary map using textual searches (`grep -rn "invalid arguments" .`) returns a noisy deluge of logs, imports, test mock validations, and markdown strings. `gograph` uses structural AST matching to map only true functional error returns in less than **10ms**, cutting out context window clutter entirely.
+**Why this is a major Token Saver**: Reconstructing this error boundary map using textual searches (`grep -rn "invalid arguments" .`) returns a noisy deluge of logs, imports, test mock validations, and markdown strings. `gograph` uses structural AST matching to map only true functional error returns in less than **10ms**, cutting out context window clutter entirely. Notably this codebase now has 34 error sites (up from the initial release) — the MCP server gained `initNewTools` which generates tool handlers dynamically, each with argument validation.
 
 ### 4.6 Generating Architectural Narratives (`gograph explain`)
 Before editing or refactoring a symbol, we can ask `gograph` to synthesize its entire structural role and relationship to the rest of the codebase in a single line-optimized block:
@@ -209,13 +224,43 @@ The output instantly prints:
 === EXPLAIN: github.com/ozgurcd/gograph/internal/search::normalizeSymbolName ===
 
 normalizeSymbolName is a function in package search (internal/search/advanced.go:12).
-It is called by 4 production caller(s). It delegates to 4 callee(s).
+It is called by 6 production caller(s). It delegates to 4 callee(s).
 Cyclomatic complexity: 3 (LOW). No direct test coverage.
 
 ARCHITECTURAL ROLE: Internal Utility.
 ```
 
 **Token & Cognitive Savings**: Re-compiling this narrative manually requires opening `advanced.go`, reading the function's scope, scanning the package structure, counting external caller references with `grep`, and calculating McCabe Cyclomatic complexity. That process consumes hundreds of lines of file text. `gograph` serves the exact synthesized structural role in **6 lines of clean text**.
+
+### 4.7 Architecture Boundary Enforcement (`gograph boundaries`)
+Beyond individual commands, `gograph` now supports architectural layering rules via a `boundaries.json` config:
+
+```bash
+gograph boundaries
+```
+
+This checks whether any package imports violate declared constraints — for example, ensuring that CLI handler packages never import repository packages directly. When violations are found, the output pinpoints the exact forbidden import edge with file and line number. This can be run in CI as `gograph gate` with configurable thresholds for complexity, coupling, and dead code.
+
+### 4.8 Agent Session Telemetry (`gograph session`)
+One of the most unique capabilities is agent compliance tracking. When AI agents work in the repository, `gograph session create` starts a telemetry session that records:
+
+- Whether the agent called `gograph plan` before editing
+- Whether it called `gograph review` after editing
+- Overall tool success rates
+- Session duration and command frequency
+
+At the end of a session, `gograph session audit` grades the agent's behavior from A–F with actionable recommendations:
+
+```text
+=== SESSION AUDIT ===
+Grade: B
+Plan compliance:  100% (always planned before editing)
+Review compliance: 75% (missed review on 1 of 4 edits)
+Tool success rate: 96%
+Recommendation: Add a post-edit shell hook to auto-run gograph review
+```
+
+This turns AI-assisted development from a black box into an auditable, measurable process.
 
 ---
 
@@ -227,6 +272,16 @@ When an agent needs to locate a bug or draft a feature:
 1. It queries the `gograph mcp` server over standard I/O.
 2. Rather than downloading or scanning the whole repository, the agent receives a highly pruned structural layout containing only the exact call chain, hotspots, and dependencies.
 3. The context window remains clean, pristine, and target-focused.
+
+### New in v2: Composite Token-Saving Commands
+
+The schema v2 graph format enables powerful composite commands that collapse 5–8 separate calls into one:
+
+- **`gograph context <symbol>`** — bundles source code, callers, callees, tests, and risk assessment in a single response. Replaces 5 separate tool calls.
+- **`gograph plan <symbol>`** — pre-edit planning: direct impact, transitive impact, test coverage, routes, SQL, env vars. Replaces 8 calls.
+- **`gograph review --uncommitted`** — post-edit verification: changed symbols, tests, routes, env, risk profile. Replaces 6 calls.
+- **`gograph explain <symbol>`** — synthesized architectural narrative with role classification and complexity analysis.
+- **`gograph summary`** — single-call codebase briefing: top 3 hotspots, worst instability package, highest complexity function, orphan count, god-object count. Replaces 5 separate calls.
 
 ### Production Swarm Evaluation
 In production evaluations simulating specialized swarms of **35 concurrent Claude Code agents** working on Go codebases with 80+ active HTTP endpoints:
@@ -245,7 +300,7 @@ Install the static analysis utility using Homebrew:
 brew install ozgurcd/tap/gograph
 ```
 
-Alternatively, install directly from source:
+Alternatively, install directly from source (Go 1.26+):
 
 ```bash
 go install github.com/ozgurcd/gograph@latest
@@ -258,14 +313,20 @@ Initialize the graph repository and query your structures:
 # 1. Build the call graph (runs concurrent AST parser)
 gograph build .
 
-# 2. Find structural bottlenecks
+# 2. Get a single-call codebase briefing
+gograph summary
+
+# 3. Find structural bottlenecks
 gograph hotspot --top 10
 
-# 3. Mapped exact callers for any symbol
-gograph callers YourFunctionName
+# 4. Pre-edit change planning
+gograph plan YourFunction
 
-# 4. View isolated source blocks without opening the file
-gograph source YourFunctionName
+# 5. Post-edit verification
+gograph review --uncommitted
+
+# 6. Generate LLM-ready wiki
+gograph wiki --output llm-wiki
 ```
 
 ### 6.3 Continuous Integration
@@ -279,4 +340,3 @@ To enforce structural integrity and prevent dead code, integrate `gograph` direc
 ```
 
 By transitioning from primitive text matching to compile-grade AST call-graph awareness, `gograph` brings deterministic codebase navigation back to developers and AI agents alike.
-
