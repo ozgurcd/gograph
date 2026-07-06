@@ -233,7 +233,7 @@ gograph build . This walks every .go file, extracts the AST, and writes:
   </header>
   <div class="entry-content">
     <p>This reference documents every command available in the gograph CLI, compiled directly from the production source code.
-Indexing &amp; Core Commands build gograph build [path] [--precise] Walks and parses a Go repository. Generates the structured graph at .gograph/graph.json and nine targeted Markdown reports in .gograph/.
+Indexing &amp; Core Commands build gograph build [path] [--precise] Walks and parses a Go repository. Generates the structured graph at .gograph/graph.json and nine targeted Markdown reports in .gograph/. Adds .gograph/ to the Git repository root .gitignore when available; outside Git, falls back to the build target .gitignore. If no Go files are found after ignore filtering, exits without writing artifacts.
 Arguments: path (optional, defaults to .) Flags: --precise: Enables type-checked Class Hierarchy Analysis (CHA) using Go’s type-checker to resolve dynamic interface dispatches to concrete caller/callee relationships. Slower, requires code to be compilable. stale gograph stale Checks if any .go source files in the repository are newer than .gograph/graph.json. Returns a list of files that have been modified since the last build.
 ...</p>
   </div>

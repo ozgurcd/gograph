@@ -328,7 +328,10 @@ query fails. Build it once before anything else:
   gograph build .            fast, tolerates broken code — use during development
   gograph build . --precise  type-checked CHA — use before refactors (needs compilable code)
 
-After build: graph.json + GRAPH_REPORT.md are written to .gograph/.
+After build: graph.json + Markdown reports are written to .gograph/.
+The .gograph/ ignore entry is appended to the Git repository root .gitignore
+when available; outside Git, the build target .gitignore is used.
+If no Go files are found after ignore filtering, build exits before writing artifacts.
   gograph stats   → counts (packages/files/symbols/calls/routes/SQL/tests)
   gograph stale   → lists source files newer than graph.json (shows newest source time/file)
 
@@ -623,6 +626,9 @@ func BuildGraph(absRoot string) (*graph.Graph, error) {
 		fmt.Fprintf(os.Stderr, "  warning: %v\n", e)
 	}
 	fmt.Fprintf(os.Stderr, "  found %d Go files to parse\n", len(files))
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no Go files in %s", absRoot)
+	}
 
 	g := &graph.Graph{
 		Version:     graph.Version,
@@ -1026,7 +1032,7 @@ func writeJSON(path string, v any) error {
 }
 
 func writeGitignore(root string) error {
-	giPath := filepath.Join(root, ".gitignore")
+	giPath := filepath.Join(gitWorktreeRoot(root), ".gitignore")
 	const entry = ".gograph/"
 	existing, err := os.ReadFile(giPath)
 	if err != nil && !os.IsNotExist(err) {
@@ -1048,6 +1054,19 @@ func writeGitignore(root string) error {
 	}
 	_, err = fmt.Fprintf(f, "%s%s\n", prefix, entry)
 	return err
+}
+
+func gitWorktreeRoot(root string) string {
+	cmd := exec.Command("git", "-C", root, "rev-parse", "--show-toplevel")
+	out, err := cmd.Output()
+	if err != nil {
+		return root
+	}
+	gitRoot := strings.TrimSpace(string(out))
+	if gitRoot == "" {
+		return root
+	}
+	return gitRoot
 }
 
 func parseDependencies(absRoot string) ([]graph.Dependency, error) {
@@ -1159,6 +1178,9 @@ GLOBAL FLAGS
 INDEXING
   build [path]               Walk and parse a Go repository. Generates graph.json
                              and 9 targeted Markdown reports in .gograph/.
+                             Adds .gograph/ to the Git repository root .gitignore
+                             when available; outside Git, uses the target .gitignore.
+                             If no Go files are found, exits without writing artifacts.
                              Run after any major code change. Default path: .
                              Supports --precise to perform type-checked Class
                              Hierarchy Analysis (CHA) for more precise call edges.
@@ -1368,6 +1390,7 @@ OUTPUTS (after 'build')
   .gograph/graph-sql.md      .gograph/graph-concurrency.md
   .gograph/graph-tests.md    .gograph/graph-deps.md
   .gograph/graph-errors.md   .gograph/graph-config.md
+  .gitignore                 Appends .gograph/ at Git repository root when available.
 `
 
 func printHelp() {

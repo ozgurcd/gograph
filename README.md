@@ -33,6 +33,11 @@ gograph context "ValidateToken"
 gograph plan "ValidateToken"
 ```
 
+Build artifacts are written under the target `.gograph/` directory. `gograph`
+adds `.gograph/` to the enclosing Git repository root `.gitignore` when
+available, falls back to the build target `.gitignore` outside Git, and exits
+without writing artifacts if no Go files are found after ignore filtering.
+
 ## Why gograph?
 
 *Benchmarked on gograph's own codebase (70 files, 518 symbols, 16 packages):*

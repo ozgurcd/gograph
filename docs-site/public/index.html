@@ -2,7 +2,7 @@
 <html lang="en" dir="auto" data-theme="auto">
 
 <head>
-	<meta name="generator" content="Hugo 0.162.1"><meta charset="utf-8">
+	<meta name="generator" content="Hugo 0.163.3"><meta charset="utf-8">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <meta name="robots" content="index, follow">
@@ -202,7 +202,7 @@
 </span></span><span style="display:flex;"><span>sudo make install
 </span></span></code></pre></div><h2 id="how-it-works">How it works<a hidden class="anchor" aria-hidden="true" href="#how-it-works">#</a></h2>
 <ol>
-<li><strong><code>gograph build .</code></strong> — walks all <code>.go</code> files concurrently, extracts symbols, call edges, imports, HTTP routes, SQL queries, environment reads, struct fields, error declarations, and concurrency primitives. Writes everything to <code>.gograph/graph.json</code> and nine Markdown reports.</li>
+<li><strong><code>gograph build .</code></strong> — walks all <code>.go</code> files concurrently, extracts symbols, call edges, imports, HTTP routes, SQL queries, environment reads, struct fields, error declarations, and concurrency primitives. Writes everything under the target <code>.gograph/</code> directory, adds <code>.gograph/</code> to the enclosing Git repository root <code>.gitignore</code> when available, falls back to the build target <code>.gitignore</code> outside Git, and exits without artifacts if no Go files remain after ignore filtering.</li>
 <li><strong>Query commands</strong> — read from <code>graph.json</code> in memory. All queries are millisecond-fast regardless of repository size.</li>
 <li><strong><code>--precise</code> mode</strong> — runs the full Go type checker (CHA) on top of the AST pass for accurate interface dispatch resolution. Slower, requires compilable code.</li>
 </ol>
@@ -321,7 +321,7 @@ gograph build . This walks every .go file, extracts the AST, and writes:
   </header>
   <div class="entry-content">
     <p>This reference documents every command available in the gograph CLI, compiled directly from the production source code.
-Indexing &amp; Core Commands build gograph build [path] [--precise] Walks and parses a Go repository. Generates the structured graph at .gograph/graph.json and nine targeted Markdown reports in .gograph/.
+Indexing &amp; Core Commands build gograph build [path] [--precise] Walks and parses a Go repository. Generates the structured graph at .gograph/graph.json and nine targeted Markdown reports in .gograph/. Adds .gograph/ to the Git repository root .gitignore when available; outside Git, falls back to the build target .gitignore. If no Go files are found after ignore filtering, exits without writing artifacts.
 Arguments: path (optional, defaults to .) Flags: --precise: Enables type-checked Class Hierarchy Analysis (CHA) using Go’s type-checker to resolve dynamic interface dispatches to concrete caller/callee relationships. Slower, requires code to be compilable. stale gograph stale Checks if any .go source files in the repository are newer than .gograph/graph.json. Returns a list of files that have been modified since the last build.
 ...</p>
   </div>

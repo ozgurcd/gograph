@@ -1,13 +1,17 @@
 package cli_test
 
 import (
+	"bytes"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/ozgurcd/gograph/internal/cli"
@@ -57,6 +61,113 @@ func main() {
 	}
 	if !foundCall {
 		t.Error("expected to find fmt.Println call in the graph")
+	}
+}
+
+func TestBuildCommandRejectsDirectoryWithoutGoFiles(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+
+	binPath := filepath.Join(t.TempDir(), "gograph")
+	build := exec.Command("go", "build", "-o", binPath, filepath.Join(repoRoot, "cmd", "gograph", "main.go"))
+	build.Dir = repoRoot
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build test binary: %v\n%s", err, out)
+	}
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/empty\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	emptyGraphDir := filepath.Join(root, ".gograph")
+	if err := os.MkdirAll(emptyGraphDir, 0o755); err != nil {
+		t.Fatalf("mkdir empty .gograph dir: %v", err)
+	}
+
+	cmd := exec.Command(binPath, "build", "--precise", ".")
+	cmd.Dir = emptyGraphDir
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+
+	err = cmd.Run()
+	if err == nil {
+		t.Fatalf("expected build to fail for directory without Go files, got success:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "no Go files") {
+		t.Fatalf("expected no-Go-files error, got:\n%s", out.String())
+	}
+
+	nestedOutputDir := filepath.Join(emptyGraphDir, ".gograph")
+	if _, err := os.Stat(nestedOutputDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no nested output dir at %s, stat err: %v", nestedOutputDir, err)
+	}
+	if _, err := os.Stat(filepath.Join(emptyGraphDir, ".gitignore")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no .gitignore side effect, stat err: %v", err)
+	}
+}
+
+func TestBuildCommandWritesGitignoreAtRepositoryRoot(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+
+	binPath := filepath.Join(t.TempDir(), "gograph")
+	build := exec.Command("go", "build", "-o", binPath, filepath.Join(repoRoot, "cmd", "gograph", "main.go"))
+	build.Dir = repoRoot
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build test binary: %v\n%s", err, out)
+	}
+
+	root := t.TempDir()
+	initGit := exec.Command("git", "init")
+	initGit.Dir = root
+	if out, err := initGit.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/root\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatalf("write root go.mod: %v", err)
+	}
+
+	nested := filepath.Join(root, "e2e")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("mkdir nested module: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte("module example.com/e2e\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatalf("write nested go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatalf("write nested main.go: %v", err)
+	}
+
+	cmd := exec.Command(binPath, "build", nested)
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("build nested module: %v\n%s", err, out)
+	}
+
+	rootGitignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read root .gitignore: %v", err)
+	}
+	if !strings.Contains(string(rootGitignore), ".gograph/") {
+		t.Fatalf("expected root .gitignore to contain .gograph/, got:\n%s", rootGitignore)
+	}
+	checkIgnore := exec.Command("git", "check-ignore", "--quiet", filepath.Join(nested, ".gograph", "graph.json"))
+	checkIgnore.Dir = root
+	if out, err := checkIgnore.CombinedOutput(); err != nil {
+		t.Fatalf("expected root .gitignore to ignore nested graph output: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(nested, ".gitignore")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no nested .gitignore, stat err: %v", err)
 	}
 }
 

@@ -130,3 +130,9 @@ Received a responsible-disclosure notice (scan date 2026-06-10) identifying thre
 - Added [internal/search/orphans_test.go](file:///Users/odemir/Development/2025-11/identuum/gograph/internal/search/orphans_test.go) with unit tests for the refined logic.
 - Removed temporary manual verification functions and ran full automated test/fuzz/linter verification.
 - Regenerated the LLM wiki pages via `gograph wiki`.
+- 2026-07-06 — Fixed GitHub issue #25: gograph build now errors with no Go files in <path> when the scanner finds zero Go files, before precise analysis or writing .gograph artifacts. Added TestBuildCommandRejectsDirectoryWithoutGoFiles and verified go test ./... -count=1.
+- 2026-07-06 — Implemented GitHub issue #24 enhancement: gograph build now appends .gograph/ to the enclosing Git repository root .gitignore while keeping graph artifacts under the requested build target, with fallback to target .gitignore outside Git. Added TestBuildCommandWritesGitignoreAtRepositoryRoot and updated docs/coding-agent-usage.md.
+- 2026-07-06 — Updated app help and user-facing documentation for GitHub issues #24 and #25. CLI help/capabilities, command-reference docs, getting-started docs, coding-agent usage docs, generated docs-site pages, and RELEASE_NOTES now describe repository-root .gitignore updates and empty-target build failures.
+
+- 2026-07-06 — Verified documentation/help updates for GitHub issues #24 and #25. CLI help/capabilities, command-reference docs, getting-started docs, coding-agent usage docs, generated docs-site pages, and RELEASE_NOTES describe repository-root .gitignore updates and empty-target build failures.
+- 2026-07-06 — Extended the documentation/help update for issues #24 and #25 to README.md and the docs-site home page source/public output, so the main project overview now matches CLI help and command-reference behavior.

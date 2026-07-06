@@ -70,7 +70,7 @@ sudo make install
 
 ## How it works
 
-1. **`gograph build .`** — walks all `.go` files concurrently, extracts symbols, call edges, imports, HTTP routes, SQL queries, environment reads, struct fields, error declarations, and concurrency primitives. Writes everything to `.gograph/graph.json` and nine Markdown reports.
+1. **`gograph build .`** — walks all `.go` files concurrently, extracts symbols, call edges, imports, HTTP routes, SQL queries, environment reads, struct fields, error declarations, and concurrency primitives. Writes everything under the target `.gograph/` directory, adds `.gograph/` to the enclosing Git repository root `.gitignore` when available, falls back to the build target `.gitignore` outside Git, and exits without artifacts if no Go files remain after ignore filtering.
 2. **Query commands** — read from `graph.json` in memory. All queries are millisecond-fast regardless of repository size.
 3. **`--precise` mode** — runs the full Go type checker (CHA) on top of the AST pass for accurate interface dispatch resolution. Slower, requires compilable code.
 
@@ -100,4 +100,3 @@ Standard tooling — `grep`, `find`, language servers — answer file-level ques
 - Is this function **reachable** from any entry point, or is it dead code?
 
 These questions require a full in-memory call graph. gograph builds that graph and lets you query it directly from the terminal or from an AI agent via MCP.
-

@@ -15,6 +15,8 @@ This reference documents every command available in the `gograph` CLI, compiled 
 gograph build [path] [--precise]
 ```
 Walks and parses a Go repository. Generates the structured graph at `.gograph/graph.json` and nine targeted Markdown reports in `.gograph/`.
+Adds `.gograph/` to the Git repository root `.gitignore` when available; outside Git, falls back to the build target `.gitignore`.
+If no Go files are found after ignore filtering, exits without writing artifacts.
 - **Arguments**: `path` (optional, defaults to `.`)
 - **Flags**: 
   - `--precise`: Enables type-checked Class Hierarchy Analysis (CHA) using Go's type-checker to resolve dynamic interface dispatches to concrete caller/callee relationships. Slower, requires code to be compilable.
@@ -425,8 +427,6 @@ Installs the gograph MCP tool as a Claude plugin. Configures a smart `PreToolUse
 gograph hook-guard
 ```
 Called by the `PreToolUse` hook. Intercepts incoming agent tool calls over `stdin`. If it detects the agent executing a raw `grep` or `find` over Go symbol names, it blocks the tool call and instructs the agent to use `gograph` instead to prevent hallucination.
-
-
 
 
 

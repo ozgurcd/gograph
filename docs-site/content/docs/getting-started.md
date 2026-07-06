@@ -51,7 +51,9 @@ This walks every `.go` file, extracts the AST, and writes:
 - `.gograph/graph-config.md` — environment reads
 - `.gograph/graph-tests.md` — test edge mapping
 
-`.gograph/` is automatically added to `.gitignore`.
+`.gograph/` is automatically added to the Git repository root `.gitignore`.
+Outside a Git worktree, `gograph` falls back to the build target `.gitignore`.
+If no Go files are found after ignore filtering, the build exits without writing artifacts.
 
 ### Precise mode
 

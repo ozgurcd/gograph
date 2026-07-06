@@ -778,7 +778,7 @@ The current tool suite includes:
    cd /path/to/your-go-repo
    gograph build .
    ```
-   This writes `.gograph/graph.json` and `.gograph/GRAPH_REPORT.md`, and adds them to `.gitignore` non-destructively.
+   This writes `.gograph/graph.json` and `.gograph/GRAPH_REPORT.md`, and adds `.gograph/` to the Git repository root `.gitignore` non-destructively. If no Go files are found after ignore filtering, the build exits without writing artifacts.
 
 3. **Tell the agent to use it.** You don't need a huge instruction template anymore. Just add this to `CLAUDE.md`, `.cursorrules`, `.github/copilot-instructions.md`, or whatever file your agent reads:
 
@@ -879,7 +879,7 @@ gograph session cleanup
 - **Generated files skipped** — `.pb.go`, `_generated.go`, files with `// Code generated` headers are excluded so they don't pollute the map.
 - **AI agent worktrees excluded** — `.claude/`, `.cursor/`, `.agents/` directories are skipped entirely by the scanner, preventing duplicate symbols from AI agent worktrees (e.g. `.claude/worktrees/agent-*/`). Directories listed in `.gitignore` are also skipped via `git check-ignore`.
 - **Subdirectory aware** — all query commands auto-discover the project root by walking up to the nearest `.gograph/` directory. Agents do not need to `cd` back to the repo root before running `plan`, `review`, or any other query.
-- **Non-destructive** — output files are mode `0640`; `.gitignore` is appended to, never overwritten.
+- **Non-destructive** — output files are mode `0640`; the Git repository root `.gitignore` is appended to, never overwritten.
 
 The agent gains a structural view of the repo without gaining any new attack surface or data-exfiltration vector.
 
@@ -908,6 +908,4 @@ Numbers vary by repo, but the order-of-magnitude win is consistent: structural q
 ## TL;DR
 
 `gograph` turns "agent re-reads the repo every conversation" into "agent reads one map file, then issues targeted queries." For Go projects worked on by coding agents, it materially reduces context cost and improves structural accuracy, without adding any network, execution, or data-leak risk.
-
-
 

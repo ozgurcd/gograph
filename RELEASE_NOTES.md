@@ -1,5 +1,23 @@
 # Release Notes
 
+## Unreleased
+
+### Improvements
+
+#### Repository-Root `.gitignore` Updates for Nested Modules
+`gograph build` now appends `.gograph/` to the enclosing Git repository root `.gitignore` when the build target is inside a Git worktree. Graph artifacts are still written under the requested build target. Outside Git, the previous fallback behavior remains: the build target `.gitignore` is updated.
+
+### Fixes
+
+#### Empty Build Targets Do Not Write Artifacts
+`gograph build` now exits with `no Go files in <path>` before running precise analysis or writing artifacts when the scanner finds zero Go files after ignore filtering.
+
+### Documentation
+
+Updated CLI help, capabilities output, README, docs-site home page, command-reference docs, getting-started docs, and coding-agent usage docs for the repository-root `.gitignore` behavior and empty-target build failure.
+
+---
+
 ## v1.4.87 — 2026-06-17
 
 ### Improvements
