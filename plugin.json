@@ -2,7 +2,7 @@
   "name": "gograph",
   "display_name": "Gograph \u2014 Go Repository Intelligence",
   "description": "AST-aware Go code analysis for AI agents. Provides 57 semantic query tools covering call graph traversal, blast radius analysis, interface resolution, type usage, architecture boundary enforcement, static policy checks, Mermaid architecture diagrams, error flow tracing, and workflow telemetry. Replaces grep-based file exploration with precise, token-efficient structural queries over your Go repository. Respects .gitignore and skips AI agent worktree directories automatically.",
-  "version": "1.4.89",
+  "version": "1.4.90",
   "author": "ozgurcd",
   "repository": "https://github.com/ozgurcd/gograph",
   "homepage": "https://github.com/ozgurcd/gograph",
