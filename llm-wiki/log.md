@@ -158,3 +158,8 @@ Received a responsible-disclosure notice (scan date 2026-06-10) identifying thre
 ## [2026-07-11] maintenance | Normalize verification log formatting
 
 - Removed the extra trailing blank line left by the previous governed append; no project facts changed.
+## [2026-07-11] maintenance | Fix Hugo CI and action deprecations
+
+- Diagnosed Actions run 29145461614: Hugo 0.147.6 could not evaluate the newer Language Direction/Locale template APIs.
+- Pinned Hugo 0.164.0 and upgraded checkout, setup-go, Pages upload/deploy, and GoReleaser actions to Node 24 major releases.
+- Verified a warning-free 32-page Hugo build, full Go tests, YAML parsing, and clean diff checks.
