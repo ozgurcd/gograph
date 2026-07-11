@@ -17,6 +17,7 @@ type StatsResult struct {
 	SQLs          int    `json:"sqls"`
 	EnvReads      int    `json:"env_reads"`
 	TestEdges     int    `json:"test_edges"`
+	FlowFunctions int    `json:"flow_functions"`
 	BuildStatus   string `json:"build_status"`
 	ScannedFiles  int    `json:"scanned_files,omitempty"`
 	ParsedFiles   int    `json:"parsed_files,omitempty"`
@@ -38,6 +39,7 @@ func Stats(g *graph.Graph) StatsResult {
 		SQLs:          len(g.SQLs),
 		EnvReads:      len(g.EnvReads),
 		TestEdges:     len(g.TestEdges),
+		FlowFunctions: len(g.FlowFunctions),
 		BuildStatus:   "unknown",
 	}
 	if g.Build != nil {

@@ -35,6 +35,7 @@ Replacing broad text searches with AST-derived, symbol-focused responses reduces
 | **Find callers of a method** | `grep -rn "Update" .` <br>*(Scans mocks, comments, other types)* | `gograph callers UserStore.Update` <br>*(AST-derived call edges)* | Broad source context vs. compact caller rows | Text noise vs. best-effort structural matching |
 | **Find interface implementers** | Multi-step searches of method receivers and method sets | `gograph implementers Connection` | Many file reads vs. concrete type rows | Heuristic AST mode; package-qualified precise mode when available |
 | **Trace wrapped errors** | String searches inside formatting blocks | `gograph errorflow "invalid token"` | Broad scans vs. structured candidate paths | Navigation heuristic, not SSA data-flow proof |
+| **Review untrusted-data paths** | Repeated searches for request reads and sensitive APIs | `gograph flow --no-tests` | One structured source-to-sink report | Interprocedural heuristic with explicit confidence, not exploitability proof |
 
 ---
 
@@ -99,6 +100,8 @@ To start the MCP JSON-RPC server over standard I/O:
 gograph mcp [path]
 ```
 If `.gograph/graph.json` does not exist, startup creates an in-memory AST graph; it does not publish CLI build artifacts. Source-analysis tools check freshness per call and rebuild only after edits. Persisted-index tools use the disk snapshot, and precise CHA/SSA remains active only while source is unchanged.
+
+The server exposes 65 endpoints: 61 CLI-equivalent query, analysis, and workflow tools plus four session lifecycle tools. `gograph_flow` matches the CLI `flow` filters (`term`, `source`, `sink`, `config`, and `no_tests`) and returns structured source, sink, severity, confidence, and path data.
 
 ---
 
@@ -207,5 +210,6 @@ When `add-claude-plugin` runs, it adds these explicit directives to `CLAUDE.md` 
 - NEVER use general bash `grep`, `find`, or `sed` to locate Go symbols, structs, or callers.
 - ALWAYS use the native gograph MCP tools (`gograph_query`, `gograph_callers`, `gograph_source`, etc.).
 - ALWAYS run `gograph_plan` prior to editing any symbol to discover downstream caller risks.
+- For security reviews, use `gograph_flow` before broad source searches; inspect every reported path because it is static, path-insensitive evidence rather than proof.
 - After editing, run CLI `gograph build . --precise`, then run `gograph_review` with `uncommitted=true`.
 ```

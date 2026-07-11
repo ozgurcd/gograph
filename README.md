@@ -8,7 +8,7 @@
 
 **Stop burning tokens on `grep`. Give your AI agent a graph.**
 
-`gograph` builds a local, AST-aware call graph of your Go repository and exposes **60 query, analysis, and workflow capabilities** through CLI and MCP so coding agents can navigate packages, symbols, call chains, routes, SQL, env vars, and tests without broad file reads.
+`gograph` builds a local, AST-aware call graph of your Go repository and exposes **61 query, analysis, and workflow capabilities** through CLI and MCP so coding agents can navigate packages, symbols, call chains, routes, SQL, env vars, security flows, and tests without broad file reads.
 
 ![Gograph Demo](gograph-demo.gif)
 
@@ -31,6 +31,9 @@ gograph context "ValidateToken"
 
 # Change plan before editing (callers, tests, routes, SQL, env risk)
 gograph plan "ValidateToken"
+
+# Find potential untrusted-data paths to security-sensitive operations
+gograph flow --no-tests
 ```
 
 Build artifacts are written under the target `.gograph/` directory. `gograph`
@@ -52,7 +55,7 @@ scanner policy for building, freshness checks, and change detection.
 
 ## Key Features
 
-**60 Query and Analysis Capabilities** — callers, callees, impact, context, plan, review, errorflow, orphans, hotspot, coupling, and more. The MCP server registers 64 endpoints including four session lifecycle tools. Full [command reference →](https://gograph.identuum.ai/docs/command-reference/)
+**61 Query and Analysis Capabilities** — callers, callees, impact, context, plan, review, flow, errorflow, orphans, hotspot, coupling, and more. The MCP server registers 65 endpoints including four session lifecycle tools. Full [command reference →](https://gograph.identuum.ai/docs/command-reference/)
 
 **Native MCP Server** — every query and analysis capability has an MCP endpoint for Claude, Cursor, Copilot, and other MCP clients. Host integration and CI artifact commands (`build`, `gate`, `snapshot`, plugin/hook installation, server startup, help, and version) remain CLI-only.
 
@@ -63,6 +66,8 @@ scanner policy for building, freshness checks, and change detection.
 **Narrow by Design** — never runs target repository binaries or tests and does not read `.env`, key, certificate, or credential files. AI worktree directories (`.claude/`, `.cursor/`, `.agents/`) are excluded. Precise analysis and external documentation use the installed Go toolchain.
 
 **Architecture Enforcement** — boundary rules, API drift detection, complexity gates, dead code sweeps, god-object detection, coupling analysis. Run in CI with `gograph gate`.
+
+**Security Flow Analysis** — `flow` follows potential HTTP request, decoded JSON, and environment data across assignments and function calls to SQL query text, process execution, filesystem paths, and outbound HTTP targets. Findings include severity, confidence, and source-to-sink path steps; MCP exposes the same analysis as `gograph_flow`.
 
 **Integrity-Aware Indexing** — `graph.json` is atomically replaced only after a successful parse, records complete/partial build health, and exposes parsed/scanned counts through `gograph stats`. `gate` refuses to evaluate a stale graph.
 
@@ -81,6 +86,7 @@ Query and composed-analysis commands support `--json`; result-list queries also 
 | **Architecture** | `boundaries`, `coupling`, `complexity`, `godobj`, `orphans`, `arity` | Quality gates, dead code, coupling, god objects. |
 | **Types & Structs** | `fields`, `implementers [--test-only]`, `interfaces`, `embeds`, `constructors`, `literals`, `usages`, `mutate`, `schema` | Struct fields, interface satisfaction, type usage. |
 | **Infrastructure** | `routes`, `sql`, `envs`, `errors`, `concurrency`, `globals`, `httpcalls`, `deps [--transitive]`, `dependents`, `imports` | HTTP routes, SQL, env vars, concurrency, outbound HTTP calls, imports. |
+| **Security** | `flow [term] [--source kind] [--sink kind] [--config path] [--no-tests]` | Potential untrusted-data paths to SQL, process, filesystem, and outbound HTTP sinks. |
 | **Testing** | `tests`, `fixtures`, `mocks` | Test coverage map, helpers, mock implementations. |
 | **Error Tracing** | `errorflow [--no-tests]`, `trace` | Reverse-BFS from error strings to HTTP entry points. |
 | **Diagnostics** | `hotspot`, `returnusage`, `skeleton`, `diagram`, `changes`, `public` | Hotspots, return usage, API signatures, Mermaid diagrams. |
@@ -106,6 +112,23 @@ Define boundaries in `.gograph/boundaries.json`:
 }
 ```
 Run `gograph boundaries` — exits with code 1 on violation. Works in CI/CD.
+</details>
+
+<details>
+<summary><strong>Security flow sanitizer policy</strong></summary>
+
+`gograph flow` includes test files by default; add `--no-tests` for production-only results. It automatically reads `.gograph/flow.json` when present, or accepts `--config <path>` for another JSON file inside the graph root. Sanitizers apply to a function's return value and can be scoped to selected sink kinds:
+
+```json
+{
+  "sanitizers": [
+    { "function": "security.CleanPath", "for": ["filesystem"] },
+    { "function": "security.ValidateURL", "for": ["outbound_http"] }
+  ]
+}
+```
+
+Omit `for` to trust the return value for every sink kind. `function` accepts the call spelling or a fully-qualified symbol ID; use the fully-qualified form when names collide. A validator that returns only `bool` or `error` does not sanitize the original input; wrap validation in a function that returns the trusted value if that is the intended policy.
 </details>
 
 ## AI Agent Integration
@@ -183,6 +206,7 @@ When you run `gograph build .`, the generated `GRAPH_REPORT.md` gives your AI a 
 - Mutation queries ignore ordinary local assignments and retain owning type information when statically known, so `Type.Field` disambiguates same-named fields.
 - Synchronization extraction requires a receiver tied to a known `sync` type. Error messages come from `panic`, `errors.New`, and `fmt.Errorf`, including import aliases.
 - Heuristic extractors (routes, SQL, tests, and error mapping) are navigation aids, not authoritative program analysis.
+- Security flow analysis is interprocedural and path-insensitive, with call/return matching across up to 16 nested repository calls. Default graphs resolve direct local/imported functions; `build . --precise` supplies stronger method/interface targets. It does not model reflection, globals, arbitrary heap aliases, or every dynamic call. Unresolved external transformations are retained with low confidence; every finding requires source review.
 </details>
 
 <details>

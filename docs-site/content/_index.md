@@ -14,6 +14,7 @@ gograph build . --precise              # type-checked CHA — use before refacto
 gograph callers ValidateToken          # who calls this?
 gograph plan HandleLogin               # safe-edit plan before changing a function
 gograph errorflow "invalid token"      # trace an error to the HTTP layer
+gograph flow --no-tests                # potential untrusted-data security paths
 gograph changes --git main             # what changed since main?
 ```
 
@@ -88,6 +89,7 @@ sudo make install
 | Concurrency primitives | `go func`, `sync.Mutex`, channel ops, `WaitGroup` |
 | Test edges (test → tested symbol) | `_test.go` call analysis |
 | Composite literal sites | `StructName{...}` |
+| Security flow facts | Sources, assignments, calls, returns, and sensitive sinks for query-time analysis |
 
 ## Why use it?
 
@@ -98,5 +100,6 @@ Standard tooling — `grep`, `find`, language servers — answer file-level ques
 - What **errors** can this HTTP handler return, and where do they originate?
 - Which symbols changed **since my last commit** and what tests cover them?
 - Is this function **reachable** from any entry point, or is it dead code?
+- Can HTTP, decoded JSON, or environment data reach a **security-sensitive sink**?
 
 These questions require a full in-memory call graph. gograph builds that graph and lets you query it directly from the terminal or from an AI agent via MCP.

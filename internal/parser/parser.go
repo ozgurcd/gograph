@@ -18,19 +18,20 @@ import (
 
 // FileResult holds everything extracted from one source file.
 type FileResult struct {
-	File        graph.FileNode
-	Symbols     []graph.SymbolNode
-	Imports     []graph.ImportEdge
-	Calls       []graph.CallEdge
-	Env         []graph.EnvRead
-	Routes      []graph.HTTPRoute
-	SQLs        []graph.SQLEdge
-	Errors      []graph.ErrorEdge
-	Concurrency []graph.ConcurrencyNode
-	TestEdges   []graph.TestEdge
-	Mutations   []graph.MutationEdge
-	Literals    []graph.LiteralEdge
-	HTTPCalls   []graph.HTTPCallEdge
+	File          graph.FileNode
+	Symbols       []graph.SymbolNode
+	Imports       []graph.ImportEdge
+	Calls         []graph.CallEdge
+	Env           []graph.EnvRead
+	Routes        []graph.HTTPRoute
+	SQLs          []graph.SQLEdge
+	Errors        []graph.ErrorEdge
+	Concurrency   []graph.ConcurrencyNode
+	TestEdges     []graph.TestEdge
+	Mutations     []graph.MutationEdge
+	Literals      []graph.LiteralEdge
+	HTTPCalls     []graph.HTTPCallEdge
+	FlowFunctions []graph.FlowFunction
 }
 
 // ParseFile parses a single .go file and extracts its nodes.
@@ -75,6 +76,7 @@ func ParseFile(fset *token.FileSet, path, relPath, pkgImportPath string) (*FileR
 			}
 		}
 	}
+	result.FlowFunctions = append(result.FlowFunctions, extractFlowLiterals(fset, f, relPath, pkgImportPath, resolver)...)
 
 	// Imports.
 	for _, imp := range f.Imports {
@@ -836,6 +838,7 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 	// Extract call edges, env reads, concurrency, and test edges from the body.
 	if d.Body != nil {
 		functionResolver := resolver.forFunction(d)
+		result.FlowFunctions = append(result.FlowFunctions, extractFlowFunction(fset, d, relPath, sym, resolver))
 		mutationTypes := mutationValueTypes(d)
 		callerName := d.Name.Name
 		if receiver != "" {

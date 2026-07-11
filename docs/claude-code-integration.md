@@ -76,6 +76,12 @@ Here is how Claude Code behaves before and after `gograph`:
 5. Claude: `gograph check --uncommitted`
 6. Claude: *Verifies that the changes didn't break architectural boundaries, test requirements, or introduce too much complexity.*
 
+### Scenario: Reviewing untrusted-data paths
+
+1. Claude runs `gograph flow --no-tests` or invokes MCP `gograph_flow` with `no_tests=true`.
+2. Claude receives structured HTTP/JSON/environment source paths to SQL query text, process execution, filesystem, and outbound HTTP sinks.
+3. Claude uses `gograph source <symbol>` to inspect each finding. Flow results are path-insensitive review leads with bounded call-site matching, not proof of exploitability.
+
 ## 4. MCP Integration (Native Plugins)
 
 Instead of passing CLI instructions via `CLAUDE.md`, you can give Claude native superpowers by installing `gograph` as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) plugin. This exposes all of `gograph`'s capabilities as native LLM tools (e.g., `mcp_gograph_query`, `mcp_gograph_impact`), allowing the agent to invoke them automatically.

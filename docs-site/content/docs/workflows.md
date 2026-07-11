@@ -82,3 +82,17 @@ Before splitting, merging, or moving a Go package, execute this check:
    gograph public <package>
    ```
    Ensure you know exactly what symbols are exported and consumed externally.
+
+---
+
+## Workflow 4: Security Flow Review
+
+Use the production-only scan first, then narrow by sink or source and inspect each reported path in source:
+
+```bash
+gograph flow --no-tests
+gograph flow --sink process_execution --no-tests
+gograph flow --source decoded_json --sink sql_query --no-tests --json
+```
+
+Treat findings as review leads. The analysis is interprocedural and path-insensitive, with call/return matching across up to 16 nested repository calls. When a project has a function that returns a validated or normalized value, declare it in `.gograph/flow.json`; scope it to the sink kind it actually protects. Do not mark a boolean/error-only validator as a sanitizer for an unchanged input value.

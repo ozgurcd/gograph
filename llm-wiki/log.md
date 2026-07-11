@@ -168,3 +168,9 @@ Received a responsible-disclosure notice (scan date 2026-06-10) identifying thre
 - Diagnosed CI run 29145724492: the plugin installer test hardcoded the macOS Claude Desktop path on Ubuntu.
 - Isolated HOME, USERPROFILE, and APPDATA and selected the expected Desktop config path by GOOS.
 - Focused, full, race, vet, staticcheck, and golangci-lint verification passed.
+## 2026-07-11 — Security flow analysis
+
+Implemented CLI `gograph flow` and MCP `gograph_flow`; persisted AST flow facts, interprocedural query-time propagation, sink-scoped sanitizer policy, config containment, tests, and public documentation. Updated project capability counts to 61 CLI-equivalent tools and 65 MCP endpoints. Added `security/flow-analysis.md`.
+Flow self-analysis found and fixed external/local same-name resolution, multi-return contamination, and cross-caller return leakage. Indexed return values plus bounded 16-frame call-site matching reduced self-scan findings from 160 fabricated/noisy paths to 53 coherent review leads.
+Verification: full tests and race tests passed; go vet, staticcheck, golangci-lint, go mod tidy -diff, govulncheck, grype, Hugo, make build, precise self-build, live text/JSON flow queries, and MCP/CLI parity contracts passed. Final precise index parsed 106/106 files and stored 1,013 flow functions. Policy check had zero errors and 74 pre-existing boundary warnings.
+Normalized the security-flow page link into the index's Schemas and Security section after the initial governed append placed it below Logs.

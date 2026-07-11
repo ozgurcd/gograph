@@ -51,6 +51,8 @@ This walks every `.go` file, extracts the AST, and writes:
 - `.gograph/graph-config.md` — environment reads
 - `.gograph/graph-tests.md` — test edge mapping
 
+`graph.json` also stores compact security-flow facts used by `gograph flow`; findings and sanitizer policy are evaluated when queried rather than written as a Markdown report.
+
 `.gograph/` is automatically added to the Git repository root `.gitignore`.
 Outside a Git worktree, `gograph` falls back to the build target `.gitignore`.
 Files and directories ignored by Git are excluded consistently from builds,
@@ -124,6 +126,9 @@ gograph impact ValidateToken
 
 # Before editing it
 gograph plan ValidateToken
+
+# Review potential production source-to-sink security paths
+gograph flow --no-tests
 ```
 
 ### Example: Reading Symbol Source Code

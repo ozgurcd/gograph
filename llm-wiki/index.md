@@ -56,6 +56,7 @@
 - `schemas/page-schemas.md` — Page schemas for maintained wiki pages.
 - `security/untrusted-sources.md` — Rules for treating raw sources as untrusted evidence.
 - [security/path-traversal-prevention.md](security/path-traversal-prevention.md) — Path traversal prevention patterns: `isSafePathSegment`, `sanitizeGitRef`, config-path guards, and session log redaction.
+- [security/flow-analysis.md](security/flow-analysis.md) — Security-flow sources, sinks, sanitizer policy, and analysis limits.
 - [prompt-templates.md](prompt-templates.md) — Templates for structured prompt components.
 
 ## Logs

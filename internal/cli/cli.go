@@ -204,6 +204,8 @@ func dispatch(args []string) int {
 		return runErrors(args[1:])
 	case "errorflow":
 		return runErrorFlow(args[1:])
+	case "flow":
+		return runFlow(args[1:])
 	case "path":
 		return runPath(args[1:])
 	case "stale":
@@ -357,6 +359,7 @@ until source changes and rebuilding it after edits.
   PR / branch scope review     → changes --git main
   HTTP endpoint deep-dive      → endpoint <handler>  (route + call chain + SQL + env)
   Error root-cause trace       → errorflow <err_str>
+  Security source/sink scan    → flow [term] [--source kind] [--sink kind]
   Dead code sweep              → orphans
   Test coverage gaps (codebase) → untested  (callers but zero test edges — one sweep, sorted by risk)
   External symbol signature    → doc <pkg.Symbol>  (stdlib/third-party — no graph required)
@@ -407,6 +410,13 @@ ERRORS — two different questions:
   errors              where are all errors defined and returned in the codebase?
   errorflow <term>    how does this specific error reach the HTTP layer? (definition → return sites → entry point)
 
+SECURITY FLOW — potential untrusted data paths:
+  flow [term]         HTTP request / decoded JSON / environment → SQL query text,
+                      process execution, filesystem path, or outbound HTTP target
+  --source / --sink   restrict to one documented source or sink kind
+  --no-tests          production-only scan (tests are included by default)
+  --config <path>     sanitizer-return policy; defaults to .gograph/flow.json when present
+
 ━━━ OUTPUT FORMAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Result-list queries support text, JSON, and files-only output. Composed commands
 document JSON individually; operational commands remain text. Mermaid is limited
@@ -429,6 +439,12 @@ Know these before trusting results:
                         'build . --precise' was used (enables type-checked CHA call graph)
   errorflow             heuristic AST traversal — NOT SSA/data-flow. Useful for navigation,
                         not proof. Confidence rating (HIGH/MEDIUM) is a heuristic estimate.
+  flow                  interprocedural, path-insensitive AST taint analysis with call/return
+                        matching across at most 16 nested repository calls. Findings are review
+                        leads, not proof; globals, reflection, arbitrary heap aliases, and some
+                        dynamic calls are not modeled. Use a precise build for stronger method/
+                        interface targets. External calls lower confidence.
+                        Sanitizers apply to return values only.
   endpoint              route patterns only resolve flat string literals. Gin/Echo/Chi
                         Group() prefixes are lost at AST level — always search by handler
                         symbol name, not route string.
@@ -505,6 +521,12 @@ deps <pkg> [--transitive]: import dependency tree (add --transitive for full BFS
 endpoint <handler>   : route + handler + full call chain + SQL + env reads
                        INPUT: handler symbol name (always works) or flat route string (flat routers only)
 errorflow <term> [--no-tests]: error definition → return sites → likely HTTP entry point path
+flow [term] [--source kind] [--sink kind] [--config path] [--no-tests]
+                     : potential HTTP/JSON/env input paths to SQL, process, file, or HTTP sinks
+                       source: http_request | decoded_json | environment
+                       sink: sql_query | process_execution | filesystem | outbound_http
+                       tests are included by default; sanitizer policy is evaluated at query time
+                       flow.json: {"sanitizers":[{"function":"pkg.Clean","for":["filesystem"]}]}
 explain <sym>        : narrative summary — role, complexity, SQL, env, routes, interfaces, tests
                        (use explain for understanding; use context for raw data to act on)
 fixtures <pkg>       : test helper structs and functions in test files
@@ -710,6 +732,7 @@ func BuildGraph(absRoot string) (*graph.Graph, error) {
 		g.Mutations = append(g.Mutations, result.Mutations...)
 		g.Literals = append(g.Literals, result.Literals...)
 		g.HTTPCalls = append(g.HTTPCalls, result.HTTPCalls...)
+		g.FlowFunctions = append(g.FlowFunctions, result.FlowFunctions...)
 
 		if _, ok := pkgMap[dir]; !ok {
 			pkgMap[dir] = &graph.PackageNode{
@@ -1430,6 +1453,12 @@ func sortGraph(g *graph.Graph) {
 		}
 		return g.HTTPCalls[i].URL < g.HTTPCalls[j].URL
 	})
+	sort.Slice(g.FlowFunctions, func(i, j int) bool {
+		if g.FlowFunctions[i].ID != g.FlowFunctions[j].ID {
+			return g.FlowFunctions[i].ID < g.FlowFunctions[j].ID
+		}
+		return g.FlowFunctions[i].File < g.FlowFunctions[j].File
+	})
 }
 
 func dedupeCalls(calls []graph.CallEdge) []graph.CallEdge {
@@ -1494,7 +1523,7 @@ INDEXING
   stats                      Compact index health summary: schema version, build
                              timestamp, and counts of packages, files, symbols,
                              calls, imports, routes, SQL queries, env reads, and
-                             test edges, build completeness, and parse failures. Zero
+                             test edges, flow functions, build completeness, and parse failures. Zero
                              re-parsing — reads graph.json only.
 
 AGENT WORKFLOW RULES (CRITICAL)
@@ -1577,6 +1606,16 @@ CODE QUALITY
                              Subcommands: save <name>, diff <name>, list, drop <name>.
   boundaries [--config]      Verify package architecture constraints using boundaries.json.
   boundaries --create        Auto-generate a baseline boundaries.json from the current repo.
+  flow [term] [--source kind] [--sink kind] [--config path] [--no-tests]
+                             Find potential untrusted-data paths to SQL query text,
+                             process execution, filesystem access, or outbound HTTP.
+                             Sources: http_request, decoded_json, environment.
+                             Sinks: sql_query, process_execution, filesystem, outbound_http.
+                             Tests are included by default; --no-tests excludes them.
+                             Optional return-value sanitizer policy: .gograph/flow.json.
+                             Policy changes apply without rebuilding graph.json.
+                             Schema: {"sanitizers":[{"function":"pkg.Clean",
+                               "for":["filesystem"]}]}; omit "for" for all sinks.
   complexity [symbol]        Cyclomatic complexity per function, highest first.
                              Filter by symbol name substring. Labels: LOW / MEDIUM /
                              HIGH / VERY HIGH (McCabe thresholds: 5 / 10 / 20).
@@ -1750,6 +1789,92 @@ func printCommandHelp(cmd string) {
 	}
 }
 
+func runFlow(args []string) int {
+	options := search.FlowOptions{IncludeTests: true}
+	usage := "usage: gograph flow [term] [--source http_request|decoded_json|environment] [--sink sql_query|process_execution|filesystem|outbound_http] [--config path] [--no-tests]"
+	fail := func(message string) int {
+		if jsonMode {
+			return PrintJSON(errEnvelope("flow", message))
+		}
+		fmt.Fprintln(os.Stderr, message)
+		return 1
+	}
+
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		switch argument {
+		case "--no-tests":
+			options.IncludeTests = false
+		case "--source", "--sink", "--config":
+			if index+1 >= len(args) {
+				return fail(fmt.Sprintf("%s requires a value\n%s", argument, usage))
+			}
+			index++
+			switch argument {
+			case "--source":
+				options.Source = args[index]
+			case "--sink":
+				options.Sink = args[index]
+			case "--config":
+				options.ConfigPath = args[index]
+			}
+		default:
+			switch {
+			case strings.HasPrefix(argument, "--source="):
+				options.Source = strings.TrimPrefix(argument, "--source=")
+			case strings.HasPrefix(argument, "--sink="):
+				options.Sink = strings.TrimPrefix(argument, "--sink=")
+			case strings.HasPrefix(argument, "--config="):
+				options.ConfigPath = strings.TrimPrefix(argument, "--config=")
+			case strings.HasPrefix(argument, "-"):
+				return fail(fmt.Sprintf("unknown flow flag: %s\n%s", argument, usage))
+			case options.Term == "":
+				options.Term = argument
+			default:
+				return fail(usage)
+			}
+		}
+	}
+
+	g, err := loadGraph(".")
+	if err != nil {
+		return fail(err.Error())
+	}
+	results, err := search.Flow(g, options)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if jsonMode {
+		return PrintJSON(okEnvelope("flow", options.Term, results, len(results)))
+	}
+	if len(results) == 0 {
+		fmt.Println("No potential untrusted-data flows found.")
+		return 0
+	}
+	if filesOnlyMode {
+		seen := make(map[string]bool)
+		for _, result := range results {
+			for _, path := range []string{result.Source.File, result.Sink.File} {
+				if path != "" && !seen[path] {
+					fmt.Println(path)
+					seen[path] = true
+				}
+			}
+		}
+		return 0
+	}
+
+	fmt.Printf("Potential security flows (%d):\n\n", len(results))
+	for _, result := range results {
+		fmt.Println(result.String())
+		for _, step := range result.Path {
+			fmt.Printf("  %-13s %s: %s  (%s:%d)\n", step.Kind, step.Function, step.Detail, step.File, step.Line)
+		}
+		fmt.Println()
+	}
+	return 0
+}
+
 // runPath finds the shortest call chain between two symbols via BFS.
 func runPath(args []string) int {
 	if len(args) < 2 {
@@ -1827,6 +1952,7 @@ func runStats() int {
 	fmt.Printf("sqls           : %d\n", st.SQLs)
 	fmt.Printf("env_reads      : %d\n", st.EnvReads)
 	fmt.Printf("test_edges     : %d\n", st.TestEdges)
+	fmt.Printf("flow_functions : %d\n", st.FlowFunctions)
 	fmt.Printf("build_status   : %s\n", st.BuildStatus)
 	if st.BuildStatus != "unknown" {
 		fmt.Printf("parsed_files   : %d/%d\n", st.ParsedFiles, st.ScannedFiles)

@@ -12,27 +12,28 @@ const Version = "2"
 
 // Graph is the top-level data structure written to .gograph/graph.json.
 type Graph struct {
-	Version      string            `json:"version"`
-	GeneratedAt  time.Time         `json:"generated_at"`
-	Root         string            `json:"root"`
-	Packages     []PackageNode     `json:"packages"`
-	Files        []FileNode        `json:"files"`
-	Symbols      []SymbolNode      `json:"symbols"`
-	Imports      []ImportEdge      `json:"imports"`
-	Calls        []CallEdge        `json:"calls"`
-	EnvReads     []EnvRead         `json:"env_reads"`
-	Dependencies []Dependency      `json:"dependencies"`
-	Routes       []HTTPRoute       `json:"routes,omitempty"`
-	SQLs         []SQLEdge         `json:"sqls,omitempty"`
-	Errors       []ErrorEdge       `json:"errors,omitempty"`
-	Concurrency  []ConcurrencyNode `json:"concurrency,omitempty"`
-	TestEdges    []TestEdge        `json:"test_edges,omitempty"`
-	Implements   []ImplementsEdge  `json:"implements,omitempty"`
-	Mutations    []MutationEdge    `json:"mutations,omitempty"`
-	Literals     []LiteralEdge     `json:"literals,omitempty"`
-	HTTPCalls    []HTTPCallEdge    `json:"http_calls,omitempty"`
-	Baseline     *GraphBaseline    `json:"baseline,omitempty"`
-	Build        *BuildMetadata    `json:"build,omitempty"`
+	Version       string            `json:"version"`
+	GeneratedAt   time.Time         `json:"generated_at"`
+	Root          string            `json:"root"`
+	Packages      []PackageNode     `json:"packages"`
+	Files         []FileNode        `json:"files"`
+	Symbols       []SymbolNode      `json:"symbols"`
+	Imports       []ImportEdge      `json:"imports"`
+	Calls         []CallEdge        `json:"calls"`
+	EnvReads      []EnvRead         `json:"env_reads"`
+	Dependencies  []Dependency      `json:"dependencies"`
+	Routes        []HTTPRoute       `json:"routes,omitempty"`
+	SQLs          []SQLEdge         `json:"sqls,omitempty"`
+	Errors        []ErrorEdge       `json:"errors,omitempty"`
+	Concurrency   []ConcurrencyNode `json:"concurrency,omitempty"`
+	TestEdges     []TestEdge        `json:"test_edges,omitempty"`
+	Implements    []ImplementsEdge  `json:"implements,omitempty"`
+	Mutations     []MutationEdge    `json:"mutations,omitempty"`
+	Literals      []LiteralEdge     `json:"literals,omitempty"`
+	HTTPCalls     []HTTPCallEdge    `json:"http_calls,omitempty"`
+	FlowFunctions []FlowFunction    `json:"flow_functions,omitempty"`
+	Baseline      *GraphBaseline    `json:"baseline,omitempty"`
+	Build         *BuildMetadata    `json:"build,omitempty"`
 }
 
 // BuildMetadata records whether every scanned source file contributed to the
@@ -103,6 +104,38 @@ type HTTPCallEdge struct {
 	URL            string   `json:"url"`
 	StaticSegments []string `json:"staticSegments"`
 	HasDynamic     bool     `json:"hasDynamic"`
+}
+
+// FlowFunction contains the compact, AST-derived facts used by security-flow
+// queries. Facts are stored instead of final findings so query-time sanitizer
+// policies can be changed without rebuilding graph.json.
+type FlowFunction struct {
+	ID     string          `json:"id"`
+	Name   string          `json:"name"`
+	File   string          `json:"file"`
+	Params []FlowParameter `json:"params,omitempty"`
+	Facts  []FlowFact      `json:"facts,omitempty"`
+}
+
+type FlowParameter struct {
+	Name string `json:"name"`
+	Type string `json:"type,omitempty"`
+}
+
+// FlowFact is one operation in a function's path-insensitive taint model.
+// Kind is source, transfer, call, return, or sink. Return and multi-result call
+// targets use :N suffixes so status/error values do not contaminate data values.
+type FlowFact struct {
+	Kind       string     `json:"kind"`
+	Target     string     `json:"target,omitempty"`
+	Inputs     []string   `json:"inputs,omitempty"`
+	Arguments  [][]string `json:"arguments,omitempty"`
+	Callee     string     `json:"callee,omitempty"`
+	SourceKind string     `json:"source_kind,omitempty"`
+	SinkKind   string     `json:"sink_kind,omitempty"`
+	Detail     string     `json:"detail,omitempty"`
+	Line       int        `json:"line"`
+	Column     int        `json:"column,omitempty"`
 }
 
 // ImplementsEdge records absolute proof that a concrete type implements an interface.

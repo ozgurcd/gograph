@@ -50,7 +50,7 @@ gograph concurrency [term]      # map goroutines, channels, mutexes, waitgroups,
 gograph tests [symbol]          # find which test functions exercise a named symbol
 gograph path <from> <to>        # shortest call chain between two symbols (BFS traversal)
 gograph stale                   # check if graph.json is out of date vs source files
-gograph stats                   # compact index health summary: schema version, build timestamp, counts of packages/files/symbols/calls/routes/SQL/env/test edges
+gograph stats                   # compact index health summary: schema/build status and package/file/symbol/call/route/SQL/env/test/flow-function counts
 gograph godobj                  # find god-object struct candidates (default thresholds)
 gograph godobj --methods 10 --fields 12 --calls 30 --top 5  # custom thresholds
 gograph complexity              # cyclomatic complexity for all functions, highest first
@@ -76,6 +76,7 @@ gograph changes                  # new/modified/deleted symbols since last build
 gograph changes --git <ref>      # symbols in files changed since a git ref (MODIFIED only; e.g. --git main, --git HEAD~5, --git v1.4.50)
 gograph errorflow "parse failed" --no-tests  # trace error path to entry points, excluding test references
 gograph trace "parse failed"     # alias for errorflow (kept for compatibility)
+gograph flow --no-tests          # potential HTTP/JSON/env paths to SQL, process, filesystem, or outbound HTTP sinks
 gograph diagram                  # Mermaid architecture diagram of package dependency graph [--group-by package|module|service|file] [--max-depth N] [--include-stdlib]
 gograph check                    # run static policy checks (.gograph/checks.json): boundaries, api_drift, max_arity, max_complexity, test_coverage
 gograph check --uncommitted      # include uncommitted code in check scope
@@ -444,6 +445,33 @@ Example:
 gograph errorflow ErrInvalidToken
 ```
 
+### Security flow analysis
+
+`gograph flow [term]` follows potential untrusted data across assignments, return values, and repository function calls. It recognizes typed HTTP request/framework contexts, decoded JSON/framework binding targets, and environment/config reads as sources. It reports paths into SQL query text, `os/exec` arguments, filesystem paths, and outbound HTTP targets.
+
+```bash
+gograph flow --no-tests
+gograph flow --source decoded_json --sink sql_query --no-tests
+gograph flow "CreateUser" --json
+```
+
+Test files are included by default; use `--no-tests` for a production-only review. Text output shows severity, confidence, and path steps. `--json` returns structured findings, and `--files-only` returns the deduplicated source and sink files.
+
+Sanitizer policy is read from `.gograph/flow.json` at query time, so policy edits do not require `gograph build`:
+
+```json
+{
+  "sanitizers": [
+    { "function": "security.CleanPath", "for": ["filesystem"] },
+    { "function": "security.ValidateURL", "for": ["outbound_http"] }
+  ]
+}
+```
+
+Use `--config <path>` for another JSON file inside the graph root. Omitting `for` applies a sanitizer to all sink kinds. `function` accepts the call spelling or a fully-qualified symbol ID; use the fully-qualified form when names collide. Sanitizers describe trusted return values; a function that returns only `bool` or `error` does not sanitize the unchanged input.
+
+This is interprocedural, path-insensitive static analysis with call/return matching across up to 16 nested repository calls. Default graphs resolve direct local/imported functions; run `gograph build . --precise` for stronger method/interface targets. It does not model reflection, globals, arbitrary heap aliases, or every dynamic call. Unresolved external transformations lower confidence. Treat every result as a source-review lead, not proof of exploitability.
+
 ### 20. Hotspot ranking
 `gograph hotspot [--top N]` ranks all functions by how many call sites depend on them (fan-in). The top hotspots are the most load-bearing code in the codebase — the functions an agent must understand before making any structural change.
 
@@ -711,7 +739,7 @@ so parallel MCP traffic never replaces process-global stdout.
 
 ### Registered MCP Tools
 
-The current suite registers 64 MCP endpoints: 60 query, analysis, and workflow tools plus four session lifecycle tools. The live `gograph_capabilities` payload is tested against the server registry.
+The current suite registers 65 MCP endpoints: 61 query, analysis, and workflow tools plus four session lifecycle tools. The live `gograph_capabilities` payload is tested against the server registry.
 - **`gograph_capabilities`**: Discover available tools and workflows.
 - **`gograph_stale`**: Check whether `.gograph/graph.json` is outdated relative to Go source files. Returns JSON with `is_stale`, `graph_age`, `newest_source_mtime`, `newest_source_file`, and `changed_files[]`.
 - **`gograph_session_create`**: Start a telemetry audit session for tracking agent compliance and tool success metrics.
@@ -739,6 +767,7 @@ The current suite registers 64 MCP endpoints: 60 query, analysis, and workflow t
 - **`gograph_review`**: Post-edit review. Summarizes what changed and its risk profile in a structured JSON payload.
 - **`gograph_risk`**: Risk evaluation. Combines blast radius, complexity, test coverage, and SQL/env dependencies into a 0–100 risk score and verdict (SAFE/REVIEW/DANGER). Supports `symbol` or `uncommitted=true`.
 - **`gograph_errorflow`**: Traces likely error paths up to entry points (HTTP routes or CLI commands). (*Limitation: Uses heuristic static call-graph and AST reference analysis, not SSA data-flow tracking.*)
+- **`gograph_flow`**: Potential source-to-sink security paths with severity, confidence, and path steps. Optional parameters: `term`, `source`, `sink`, `config`, and `no_tests`. Source kinds are `http_request`, `decoded_json`, and `environment`; sink kinds are `sql_query`, `process_execution`, `filesystem`, and `outbound_http`. Uses `.gograph/flow.json` by default when present.
 - **`gograph_imports`**
 - **`gograph_envs`**: All `os.Getenv`/`os.LookupEnv` reads in the codebase. Filter by key name substring.
 - **`gograph_endpoint`**: Full vertical slice for one HTTP route: handler, BFS call chain (default depth 5), SQL, and env reads. Query by route pattern, path fragment, or handler name. Accepts `depth` and `include_tests`.
@@ -767,7 +796,7 @@ The current suite registers 64 MCP endpoints: 60 query, analysis, and workflow t
 - **`gograph_globals`**
 - **`gograph_mocks`**
 - **`gograph_explain`**: LLM-ready architectural summary. Synthesizes callers (prod vs test), callees, complexity, SQL, env, routes, concurrency, test coverage, interface satisfaction, and an opinionated role classification into one structured narrative.
-- **`gograph_stats`**: Compact index health summary. Returns schema version, build timestamp, complete/partial build status, parsed/scanned file counts, parse-failure count, and graph entity counts. Use this as a quick sanity check at the start of any analysis session.
+- **`gograph_stats`**: Compact index health summary. Returns schema version, build timestamp, complete/partial build status, parsed/scanned file counts, parse-failure count, and graph entity counts including persisted flow functions. Use this as a quick sanity check at the start of any analysis session.
 - **`gograph_trace`**: Alias for `gograph_errorflow`. Kept for backward compatibility — prefer `gograph_errorflow` directly.
 - **`gograph_diagram`**: Mermaid architecture diagram of the repository package dependency graph. Parameters: `group_by` (package/module/service/file), `max_depth` (0=unlimited), `include_stdlib` (bool). Use for onboarding or communicating package structure.
 - **`gograph_check`**: Run static policy checks (`boundaries`, `api_drift`, `require_tests_for_changed_routes`, `require_tests_for_changed_exported_symbols`, `test_coverage`, `no_orphans`, `new_globals`, `max_arity`, and `max_complexity`). Parameters: `since` (Git baseline), `uncommitted` (bool), `config` (path to checks.json). CLI and MCP share one validated Git baseline builder. Changed-route checks map by handler identity and include body-only changes. Returns structured JSON with status, findings, and summary counts. For CI enforcement with non-zero exit codes, use CLI `gograph gate`.
@@ -887,7 +916,7 @@ gograph session cleanup
 
 - **No target-code execution** — gograph never runs the repository's binaries, tests, or application entry points. Default indexing uses Go AST parsing. Precise mode invokes the local Go loading/type/SSA toolchain, and `doc` invokes `go doc`; those commands follow the user's configured module cache and network policy.
 - **Local stdio MCP transport** — the server opens no listening port and sends no data to a gograph service. Optional session telemetry is local metadata under `.gograph/sessions/`; raw query results are not logged.
-- **Project metadata reads** — in addition to `.go` files, gograph reads `go.mod`, `.gitignore`, Git state, `.gograph/graph.json`, and user-selected gograph JSON/YAML configs. It does not intentionally read `.env`, key, certificate, kubeconfig, or tfstate files.
+- **Project metadata reads** — in addition to `.go` files, gograph reads `go.mod`, `.gitignore`, Git state, `.gograph/graph.json`, and user-selected gograph JSON/YAML configs, including `.gograph/flow.json`. It does not intentionally read `.env`, key, certificate, kubeconfig, or tfstate files.
 - **Targeted source output** — `source` and `context` return requested Go source, and inline route-handler bodies are stored in `graph.json` so endpoint analysis can return them. Other graph data is structural metadata.
 - **Generated files skipped** — `.pb.go`, `_generated.go`, files with `// Code generated` headers are excluded so they don't pollute the map.
 - **AI agent worktrees and ignored paths excluded** — `.claude/`, `.cursor/`, `.agents/` directories are skipped entirely, and both individual files and directories listed in `.gitignore` are excluded via `git check-ignore`. The same scanner policy powers build, stale, and changes.
@@ -916,6 +945,7 @@ Numbers vary by repo, but the order-of-magnitude win is consistent: structural q
   1. Use standard Go **package-qualified dot-notation** (e.g. `service.GenerateRequest`, `graph.Graph` or `graph.Graph.Build`). All query commands support package-qualified dot notation dynamically.
   2. For precise target matching with no same-name conflation, pass the fully-qualified symbol ID (e.g., `gograph callers 'github.com/foo/bar/internal/auth::(*Service).Validate'`). The same FQ-ID syntax works for `callees`, `impact`, and `path` (both endpoints). Requires `--precise` mode at build time.
 - **No cross-repo / module-external edges.** External dependencies are extracted from `go.mod` to summarize the tech stack, but call edges into third-party packages are not resolved.
+- **Security flow is a conservative heuristic.** It is path-insensitive, uses field/root approximation, and matches call/return context for at most 16 nested repository calls. Default graphs have weaker method/interface resolution than precise graphs. Reflection, globals, arbitrary heap aliases, and unresolved dynamic calls can cause misses or false positives. External-call propagation is marked low confidence. A finding is not an exploitability claim.
 - **CLI snapshot vs MCP refresh.** CLI analysis reflects the last `gograph build`. MCP source-analysis tools check freshness per call and rebuild in memory only after source changes, while MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot. A precise graph remains active until source changes.
 
 ## TL;DR

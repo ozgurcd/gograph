@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Security Flow Analysis
+
+- Added `gograph flow [term]` and MCP `gograph_flow` for interprocedural static source-to-sink analysis. Sources cover typed HTTP request/framework contexts, `encoding/json` decoding and recognized framework binders, and environment/config reads. Sinks cover dynamic SQL query text, `os/exec` process arguments, filesystem paths, and outbound HTTP targets.
+- Flow facts are extracted with the normal tolerant AST build and persisted in `graph.json`; sanitizer policies are evaluated at query time, so editing `.gograph/flow.json` does not require rebuilding the graph. `--source`, `--sink`, `--config`, and `--no-tests` have matching MCP arguments.
+- Findings return severity, medium/low confidence, source and sink locations, and path steps. The analysis is path-insensitive, while bounded call-site frames prevent returns from leaking across unrelated callers. Unresolved external transformations lower confidence, and results are review leads rather than exploitability proof.
+- Added sink-scoped return-value sanitizers, repository-root config confinement (including symlink targets), parameterized-SQL safeguards, indexed multi-return propagation, import-aware helper resolution, bounded call-site frames, function-literal extraction, and parser/search/CLI/MCP regression coverage.
+- CLI/MCP parity now covers 61 query, analysis, and workflow capabilities; MCP registers 65 endpoints including four session lifecycle tools.
+
 ### Graph Correctness and Integrity
 
 - Call extraction now separates real calls from inferred callback references, rejects identifiers known to be ordinary variables, retains inferred references only when they resolve to repository callables, and deterministically deduplicates serialized edges.
@@ -34,7 +42,7 @@
 
 - MCP callers/callees now expose CLI-equivalent depth and test filtering; callers/context expose exact matching; errors exposes test filtering; endpoint exposes test-edge inclusion.
 - Added `gograph_boundaries_create`, the MCP equivalent of CLI `boundaries --create`, with mutating/non-idempotent annotations and repository-root path containment.
-- `gograph_capabilities` now lists every live registered tool, including trace, diagram, check, and boundary creation. A regression test compares the payload to the exact server registry (64 endpoints total).
+- `gograph_capabilities` now lists every live registered tool, including flow, trace, diagram, check, and boundary creation. A regression test compares the payload to the exact server registry (65 endpoints total).
 - CLI help now documents every canonical command and implemented mode, including summary, untested, doc, gate initialization, exact context/caller lookup, filtered SQL, coupling scope, hotspot test edges, and contextual plans. Regression tests cover both command names and these option surfaces in help and capabilities output.
 - Claude integration installation exits non-zero on partial failure instead of reporting success when required files could not be written.
 

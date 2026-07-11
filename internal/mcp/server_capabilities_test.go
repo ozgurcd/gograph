@@ -61,6 +61,7 @@ func TestGographCapabilities(t *testing.T) {
 	expectedTools := []string{
 		"gograph_capabilities", "gograph_context", "gograph_plan", "gograph_review",
 		"gograph_errorflow", "gograph_api", "gograph_boundaries",
+		"gograph_flow",
 	}
 	for _, tool := range expectedTools {
 		if !strings.Contains(toolsStr, tool) {

@@ -16,13 +16,14 @@ This document outlines the core architectural philosophy, constraints, and devel
 - **Default Mode (Heuristic):** The default `gograph build .` uses raw Go AST parsing (`go/ast`, `go/parser`). It uses duck-typing and structural heuristics. It **must** tolerate incomplete, uncompilable, or messy codebases.
 - **Precise Mode (Type-Checked):** The `gograph build . --precise` command uses `go/types` for Class Hierarchy Analysis (CHA) and exact interface satisfaction. It is allowed to fail or drop precision if the target codebase does not compile.
 - **Navigation Aids, Not Proofs:** Heuristic extractors (such as REST route mappers, SQL query extractors, or test edge mappers) are strictly navigation aids for AI agents. They are not guaranteed to find every dynamic invocation. Do not use hyperbolic language (e.g., "cryptographic proof") to describe AST analysis.
+- **Security Flow Contract:** Flow analysis may be interprocedural but must remain bounded, deterministic, tolerant of broken code, and explicit about path insensitivity and call-context limits. Persist reusable AST facts in the graph and apply sanitizer policy at query time. Report confidence and never describe a finding as proof of exploitability.
 
 ## 3. Package Architecture
 
 The codebase is organized into strict domains:
 - **`internal/graph`**: Defines the core data models (`SymbolNode`, `MutationEdge`, `Dependency`, etc.). Keep this lightweight and easily serializable to JSON.
-- **`internal/parser`**: Handles AST inspection, scope resolution, and metadata extraction. All logic for extracting structural data (functions, globals, concurrency primitives) belongs here.
-- **`internal/search`**: Contains query processing, graph traversal, duck-typing, and filtering. Most functions are graph-pure; filesystem/Git-backed functions must accept an explicit graph root and use shared scanner/baseline rules.
+- **`internal/parser`**: Handles AST inspection, scope resolution, and metadata extraction. All logic for extracting structural data (functions, globals, concurrency primitives, and security-flow facts) belongs here.
+- **`internal/search`**: Contains query processing, graph traversal, duck-typing, filtering, and query-time security-flow propagation/policy. Most functions are graph-pure; filesystem/Git-backed functions must accept an explicit graph root and use shared scanner/baseline rules.
 - **`internal/cli`**: Orchestrates the user-facing commands, argument parsing, and CLI formatting.
 - **`internal/mcp`**: Handles the Model Context Protocol stdio server wrapper around the search functions.
 
@@ -37,3 +38,4 @@ The codebase is organized into strict domains:
   4. `gograph --help` (`internal/cli/cli.go`)
   5. `llm-wiki/README.md` — update the generated pages table if a new page type is added
   6. `llm-wiki/agent-contract.md` — update tool selection rules if a new command changes workflow
+  7. `RELEASE_NOTES.md` and the public docs-site command reference

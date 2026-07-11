@@ -464,6 +464,44 @@ func TestGographErrorFlow(t *testing.T) {
 	}
 }
 
+func TestGographFlowStructured(t *testing.T) {
+	g := &graph.Graph{Root: t.TempDir(), FlowFunctions: []graph.FlowFunction{{
+		ID: "example.com/app::Run", Name: "Run", File: "run.go",
+		Facts: []graph.FlowFact{
+			{Kind: "source", Target: "command", SourceKind: "environment", Detail: "os.Getenv(RUN_COMMAND)", Line: 4},
+			{Kind: "sink", Inputs: []string{"command"}, Callee: "exec.Command", SinkKind: "process_execution", Detail: "exec.Command(command)", Line: 5},
+		},
+	}}}
+	handler := setupHandlers(t, g)["gograph_flow"]
+	if handler == nil {
+		t.Fatal("gograph_flow handler not found")
+	}
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"source": "environment", "sink": "process_execution", "no_tests": true}
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("gograph_flow: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("gograph_flow returned error: %+v", result.Content)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	var response struct {
+		Count    int                 `json:"count"`
+		Findings []search.FlowResult `json:"findings"`
+	}
+	if err := json.Unmarshal([]byte(text), &response); err != nil {
+		t.Fatalf("decode gograph_flow response: %v\n%s", err, text)
+	}
+	if response.Count != 1 || len(response.Findings) != 1 {
+		t.Fatalf("expected one flow finding, got %+v", response)
+	}
+	finding := response.Findings[0]
+	if finding.Source.Kind != "environment" || finding.Sink.Kind != "process_execution" || finding.Confidence != "medium" {
+		t.Fatalf("unexpected flow finding: %+v", finding)
+	}
+}
+
 func TestGographBoundaries_Structured(t *testing.T) {
 	handlers := setupHandlers(t, &graph.Graph{})
 	handler := handlers["gograph_boundaries"]

@@ -64,6 +64,13 @@ func main() { _ = Work() }
 		Mutations:   []graph.MutationEdge{{TypeName: "Config", Field: "Root", Function: "Work", File: "main.go", Line: 4}},
 		Literals:    []graph.LiteralEdge{{TypeName: "Config", Function: "NewConfig", File: "main.go", Line: 4}},
 		HTTPCalls:   []graph.HTTPCallEdge{{SourceFile: "main.go", SourceLine: 4, FunctionName: "Work", Method: "GET", URL: "https://example.test/work"}},
+		FlowFunctions: []graph.FlowFunction{{
+			ID: "example.com/audit::Work", Name: "Work", File: "main.go",
+			Facts: []graph.FlowFact{
+				{Kind: "source", Target: "token", SourceKind: "environment", Detail: "os.Getenv(AUDIT_TOKEN)", Line: 4},
+				{Kind: "sink", Inputs: []string{"token"}, Callee: "os.WriteFile", SinkKind: "filesystem", Detail: "os.WriteFile(token, nil, 0600)", Line: 4},
+			},
+		}},
 	}
 	data, err := json.Marshal(g)
 	if err != nil {
@@ -92,6 +99,7 @@ func main() { _ = Work() }
 		"gograph_review":            {"symbol": "Work"},
 		"gograph_risk":              {"symbol": "Work"},
 		"gograph_errorflow":         {"query": "audit failed", "no_tests": true},
+		"gograph_flow":              {"source": "environment", "sink": "filesystem", "no_tests": true},
 		"gograph_imports":           {"package": "fmt"},
 		"gograph_dependents":        {"package": "fmt"},
 		"gograph_sql":               {"term": "SELECT"},
@@ -137,7 +145,7 @@ func main() { _ = Work() }
 		called++
 		callTool(t, handler, args[name])
 	}
-	if called != 60 {
-		t.Fatalf("executed %d non-session MCP tools, want 60", called)
+	if called != 61 {
+		t.Fatalf("executed %d non-session MCP tools, want 61", called)
 	}
 }

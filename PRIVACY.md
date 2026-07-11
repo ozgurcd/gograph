@@ -17,7 +17,7 @@ Gograph collects **no data**. Specifically:
 
 ## Repository Data
 
-When you run `gograph build .`, it reads selected Go source plus project metadata such as `go.mod`, `.gitignore`, and Git ignore state. Other commands may read graph/config JSON or YAML and Git state. It writes `.gograph/graph.json`, Markdown reports, snapshots, boundary/check configuration, wiki pages, and optional session logs locally. `source`/`context` return requested Go source, and inline route-handler bodies may be stored in the graph.
+When you run `gograph build .`, it reads selected Go source plus project metadata such as `go.mod`, `.gitignore`, and Git ignore state. Other commands may read graph/config JSON or YAML and Git state; `flow` reads `.gograph/flow.json` when present or a user-selected sanitizer policy inside the graph root. It writes `.gograph/graph.json`, Markdown reports, snapshots, boundary/check configuration, wiki pages, and optional session logs locally. `source`/`context` return requested Go source, inline route-handler bodies may be stored in the graph, and compact source/transfer/sink facts are stored for query-time security-flow analysis.
 
 ## Third-Party Services
 

@@ -1,7 +1,7 @@
 {
   "name": "gograph",
   "display_name": "Gograph \u2014 Go Repository Intelligence",
-  "description": "AST-aware Go code analysis for AI agents. Provides 60 query, analysis, and workflow capabilities (64 MCP endpoints including session lifecycle) covering call graphs, blast radius, interfaces, type usage, architecture boundaries, policy checks, diagrams, error flow, and local workflow telemetry. Replaces broad grep-based exploration with token-efficient structural queries. Respects .gitignore and skips AI agent worktree directories automatically.",
+  "description": "AST-aware Go code analysis for AI agents. Provides 61 query, analysis, and workflow capabilities (65 MCP endpoints including session lifecycle) covering call graphs, blast radius, interfaces, type usage, security flow analysis, architecture boundaries, policy checks, diagrams, error flow, and local workflow telemetry. Replaces broad grep-based exploration with token-efficient structural queries. Respects .gitignore and skips AI agent worktree directories automatically.",
   "version": "1.4.93",
   "author": "ozgurcd",
   "repository": "https://github.com/ozgurcd/gograph",
@@ -31,6 +31,7 @@
     "architecture-diagram",
     "mermaid",
     "workflow-telemetry",
+    "security-flow",
     "blast-radius",
     "code-quality"
   ]

@@ -326,6 +326,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 		"api",
 		"contract",
 		"errorflow",
+		"flow",
 		"fixtures",
 		"plan",
 		"review",
@@ -453,7 +454,7 @@ func TestHelpDocumentsEveryCanonicalCommand(t *testing.T) {
 		"fixtures", "check", "gate", "snapshot", "boundaries", "complexity", "diagram",
 		"coupling", "context", "explain", "hotspot", "summary", "untested", "endpoint",
 		"deps", "dependents", "changes", "godobj", "plan", "review", "risk", "api",
-		"routes", "sql", "httpcalls", "errorflow", "errors", "envs", "concurrency", "tests",
+		"routes", "sql", "httpcalls", "errorflow", "flow", "errors", "envs", "concurrency", "tests",
 		"capabilities", "wiki", "doc", "mcp", "session", "add-claude-plugin", "hook-guard",
 		"version", "help",
 	}
@@ -480,6 +481,10 @@ func TestHelpDocumentsImplementedModes(t *testing.T) {
 		"plan <symbol> [--with-context]",
 		"plan --uncommitted [--with-context]",
 		"sql [term]",
+		"flow [term] [--source kind] [--sink kind] [--config path] [--no-tests]",
+		"Sources: http_request, decoded_json, environment.",
+		"Sinks: sql_query, process_execution, filesystem, outbound_http.",
+		"Tests are included by default; --no-tests excludes them.",
 	} {
 		if !strings.Contains(help, mode) {
 			t.Errorf("gograph --help does not document implemented mode %q", mode)
@@ -504,6 +509,10 @@ func TestCapabilitiesDocumentsImplementedModes(t *testing.T) {
 		"plan <sym> [--with-context]",
 		"plan --uncommitted [--with-context]",
 		"sql [term]",
+		"flow [term] [--source kind] [--sink kind] [--config path] [--no-tests]",
+		"source: http_request | decoded_json | environment",
+		"sink: sql_query | process_execution | filesystem | outbound_http",
+		"tests are included by default; sanitizer policy is evaluated at query time",
 	} {
 		if !strings.Contains(capabilities, want) {
 			t.Errorf("gograph capabilities does not document implemented mode %q", want)

@@ -44,6 +44,7 @@ Provides a zero-parse index health summary derived entirely from `.gograph/graph
   - `sqls`
   - `env_reads`
   - `test_edges`
+  - `flow_functions`
   - `build_status` (`complete`, `partial`, or `unknown` for older graphs)
   - `scanned_files`
   - `parsed_files`
@@ -285,6 +286,36 @@ gograph httpcalls [term]
 ```
 Lists package-level `net/http` client calls (`Get`, `Post`, `PostForm`, `Head`). The optional filter matches method, URL, or function context.
 
+### flow
+```bash
+gograph flow [term] [--source http_request|decoded_json|environment] [--sink sql_query|process_execution|filesystem|outbound_http] [--config path] [--no-tests]
+```
+Finds potential paths from untrusted inputs to security-sensitive operations. Test files are included by default; `--no-tests` limits analysis to production files.
+
+- **Sources**:
+  - `http_request`: parameters typed as `*net/http.Request` or recognized Gin, Echo, Fiber, and fasthttp contexts.
+  - `decoded_json`: `encoding/json.Unmarshal`, `encoding/json.NewDecoder(...).Decode`, and recognized framework binding methods.
+  - `environment`: `os.Getenv`, `os.LookupEnv`, and supported Viper package reads.
+- **Sinks**:
+  - `sql_query`: the query-text argument to `Query`, `QueryRow`, `Exec`, `Prepare`, and `Raw` variants. Parameter values are not treated as query text.
+  - `process_execution`: command and argument values passed to `os/exec.Command` or `CommandContext`.
+  - `filesystem`: path arguments to common `os` file operations.
+  - `outbound_http`: URL/request arguments passed to package-level `net/http` calls, request constructors, and `Do` methods.
+- **Output**: Severity, confidence, source and sink locations, and source-to-sink path steps. `--json` returns structured `FlowResult` objects; `--files-only` returns deduplicated source and sink files.
+- **Sanitizers**: The command automatically reads `.gograph/flow.json` when present. `--config` selects another JSON file inside the graph root. Policies apply to return values and may be sink-scoped:
+
+  ```json
+  {
+    "sanitizers": [
+      { "function": "security.CleanPath", "for": ["filesystem"] },
+      { "function": "security.ValidateURL", "for": ["outbound_http"] }
+    ]
+  }
+  ```
+
+  Omit `for` to apply a sanitizer to every sink kind. `function` accepts the call spelling or a fully-qualified symbol ID; use the fully-qualified form for duplicate names. Validators that only return `bool` or `error` do not sanitize the original value.
+- **Limitations**: Interprocedural and path-insensitive, with call/return matching across at most 16 nested repository calls. Default graphs resolve direct local/imported functions; run `build . --precise` for stronger method/interface targets. Reflection, globals, arbitrary heap aliases, and unresolved dynamic calls may be missed or over-approximated. Unresolved external transformations lower confidence. Findings require source review and do not prove exploitability.
+
 ### tests
 ```bash
 gograph tests [symbol]
@@ -489,7 +520,7 @@ gograph mcp [path]
 ```
 Starts a Model Context Protocol (MCP) server over `stdio`, exposing all gograph capabilities as native tools for integration with AI clients (e.g., Claude Code, Cursor).
 - **Freshness**: If `graph.json` is missing, startup builds an in-memory AST graph. Source-analysis tools check freshness per call and rebuild only after edits; MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot. A precise graph is preserved until source changes.
-- **Parity**: 60 query, analysis, and workflow capabilities have CLI equivalents; four additional endpoints manage sessions.
+- **Parity**: 61 query, analysis, and workflow capabilities have CLI equivalents; four additional endpoints manage sessions (65 endpoints total).
 
 ### wiki
 ```bash

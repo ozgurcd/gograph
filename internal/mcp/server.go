@@ -226,6 +226,7 @@ func NewServer(
 				{"name": "gograph_endpoint", "purpose": "Full vertical slice for one HTTP route: handler, BFS call chain, SQL, env reads. Query by route pattern, path fragment, or handler name."},
 				{"name": "gograph_api", "purpose": "API drift detection: compares exported symbols between current tree and a git baseline ref. Returns added/removed/changed."},
 				{"name": "gograph_routes", "purpose": "All HTTP routes in the codebase: method, path, handler. Use before gograph_endpoint."},
+				{"name": "gograph_flow", "purpose": "Find potential paths from HTTP requests, decoded JSON, or environment values to SQL query text, process execution, filesystem access, or outbound HTTP."},
 				{"name": "gograph_errorflow", "purpose": "Trace error sentinel propagation: definition sites, return sites, and upstream call chains to entry points."},
 				{"name": "gograph_imports", "purpose": "All files and packages that import a specific package by exact import path."},
 				{"name": "gograph_dependents", "purpose": "All packages that import the named package (inverse of gograph_deps). Essential before package-level refactors."},
@@ -266,17 +267,19 @@ func NewServer(
 				{"name": "gograph_wiki", "purpose": "Generate the llm-wiki/ directory: machine-first markdown pages covering overview, architecture, hotspots, routes, env, errors, concurrency, per-package docs, and API surface."},
 			},
 			"recommended_workflows": map[string][]string{
-				"session_start": {"READ llm-wiki/README.md", "READ llm-wiki/project.md", "READ llm-wiki/rules.md", "READ llm-wiki/agent-contract.md", "gograph_summary", "gograph_stale"},
-				"before_edit":   {"gograph_context", "gograph_plan"},
-				"after_edit":    {"gograph_review", "gograph_risk", "gograph_api", "gograph_boundaries"},
-				"error_changes": {"gograph_errorflow", "gograph_review"},
-				"api_changes":   {"gograph_api", "gograph_review"},
+				"session_start":  {"READ llm-wiki/README.md", "READ llm-wiki/project.md", "READ llm-wiki/rules.md", "READ llm-wiki/agent-contract.md", "gograph_summary", "gograph_stale"},
+				"before_edit":    {"gograph_context", "gograph_plan"},
+				"after_edit":     {"gograph_review", "gograph_risk", "gograph_api", "gograph_boundaries"},
+				"error_changes":  {"gograph_errorflow", "gograph_review"},
+				"security_audit": {"gograph_flow", "gograph_source", "gograph_callers"},
+				"api_changes":    {"gograph_api", "gograph_review"},
 			},
 			"limitations": []string{
 				"gograph is static analysis.",
 				"MCP tools do not execute target repository code.",
 				"The MCP transport is local stdio. Default AST analysis does not call application services; precise analysis and gograph_doc invoke the local Go toolchain, which follows the user's configured module/cache/network policy.",
 				"Errorflow uses heuristic static call-graph and AST reference analysis. It does not perform SSA or full data-flow tracking.",
+				"Security flow analysis is interprocedural and path-insensitive, with call/return matching across at most 16 nested repository calls. Findings are review leads, not proof; unresolved external calls lower confidence.",
 				"Ambiguous short names can be disambiguated using standard Go dot-separated package-qualified notation (e.g. 'pkg.Struct.Method' or 'pkg.Struct') or fully-qualified symbol IDs (e.g., 'pkg/path::(*Struct).Method'). All search-based MCP tools fully support these formats.",
 				"Nested route-group prefixes (e.g. Gin/Echo/Chi Group()) are lost at the static AST level. HTTP routes are registered under their final path suffix (e.g., '/users' instead of '/api/v1/users'). Always search by final suffix or by the handler function symbol name.",
 			},
@@ -1027,6 +1030,75 @@ func NewServer(
 		}
 
 		data, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultText(string(data)), nil
+	})
+
+	// Tool: gograph_errorflow
+	flowTool := mcp.NewTool("gograph_flow",
+		mcp.WithDescription("Find potential untrusted-data paths from HTTP request objects, decoded JSON values, or environment variables to SQL query text, process execution arguments, filesystem paths, or outbound HTTP targets. The MCP server refreshes source analysis before this call; run `gograph build . --precise` first for stronger method/interface targets. Read-only; no side effects. WHEN TO USE: During a security review or before changing request parsing, command execution, file access, SQL construction, or URL handling. NOT TO USE: As proof of exploitability; the analysis is path-insensitive and matches call/return context for at most 16 nested repository calls. RETURNS: Structured findings with source, sink, severity, confidence, and path steps. Configure trusted return-value sanitizers in .gograph/flow.json or with config."),
+		mcp.WithString("term", mcp.Description("Optional substring filter matched against functions, files, endpoints, and path steps")),
+		mcp.WithString("source", mcp.Description("Optional source kind: http_request, decoded_json, or environment")),
+		mcp.WithString("sink", mcp.Description("Optional sink kind: sql_query, process_execution, filesystem, or outbound_http")),
+		mcp.WithString("config", mcp.Description("Sanitizer policy path inside the graph root (default .gograph/flow.json when present)")),
+		mcp.WithBoolean("no_tests", mcp.Description("Exclude functions in *_test.go files")),
+	)
+	addTool(flowTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if newG, err := rebuild(); err == nil {
+			g = newG
+		} else {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
+		}
+		args, ok := request.Params.Arguments.(map[string]any)
+		if !ok {
+			return mcp.NewToolResultError("invalid arguments"), nil
+		}
+		stringOption := func(name string) (string, error) {
+			value, exists := args[name]
+			if !exists {
+				return "", nil
+			}
+			text, ok := value.(string)
+			if !ok {
+				return "", fmt.Errorf("%s must be a string", name)
+			}
+			return text, nil
+		}
+		term, err := stringOption("term")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		source, err := stringOption("source")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		sink, err := stringOption("sink")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		config, err := stringOption("config")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		results, err := search.Flow(g, search.FlowOptions{
+			Term: term, Source: source, Sink: sink, ConfigPath: config,
+			IncludeTests: !boolArg(args, "no_tests"),
+		})
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		response := struct {
+			Query       string              `json:"query,omitempty"`
+			Count       int                 `json:"count"`
+			Findings    []search.FlowResult `json:"findings"`
+			Limitations []string            `json:"limitations"`
+		}{
+			Query: term, Count: len(results), Findings: results,
+			Limitations: []string{"Path-insensitive static analysis with at most 16 nested call-site frames; review findings in source before acting."},
+		}
+		data, err := json.MarshalIndent(response, "", "  ")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

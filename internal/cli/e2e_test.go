@@ -138,6 +138,80 @@ func main() {
 	}
 }
 
+func TestE2E_FlowAnalysis(t *testing.T) {
+	root := t.TempDir()
+	source := `package sample
+
+import (
+	"net/http"
+	"os"
+	"os/exec"
+)
+
+func cleanPath(path string) string { return path }
+
+func handle(request *http.Request) {
+	path := cleanPath(request.URL.Path)
+	_ = os.WriteFile(path, nil, 0600)
+	_ = exec.Command(os.Getenv("RUN_COMMAND")).Run()
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/flow\n\ngo 1.24\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	binPath := buildTestBinary(t)
+	run := func(args ...string) (string, error) {
+		cmd := exec.Command(binPath, args...)
+		cmd.Dir = root
+		output, err := cmd.CombinedOutput()
+		return string(output), err
+	}
+	if output, err := run("build", "."); err != nil {
+		t.Fatalf("flow fixture build failed: %v\n%s", err, output)
+	}
+
+	output, err := run("flow", "--no-tests")
+	if err != nil {
+		t.Fatalf("flow failed: %v\n%s", err, output)
+	}
+	for _, want := range []string{"http_request -> filesystem", "environment -> process_execution"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("flow output missing %q:\n%s", want, output)
+		}
+	}
+
+	jsonOutput, err := run("--json", "flow", "--sink", "filesystem", "--no-tests")
+	if err != nil {
+		t.Fatalf("JSON flow failed: %v\n%s", err, jsonOutput)
+	}
+	var envelope struct {
+		Status string `json:"status"`
+		Count  int    `json:"count"`
+	}
+	if err := json.Unmarshal([]byte(jsonOutput), &envelope); err != nil {
+		t.Fatalf("decode JSON flow output: %v\n%s", err, jsonOutput)
+	}
+	if envelope.Status != "ok" || envelope.Count != 1 {
+		t.Fatalf("unexpected JSON flow envelope: %+v\n%s", envelope, jsonOutput)
+	}
+
+	config := `{"sanitizers":[{"function":"cleanPath","for":["filesystem"]}]}`
+	if err := os.WriteFile(filepath.Join(root, ".gograph", "flow.json"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output, err = run("flow", "--sink", "filesystem", "--no-tests")
+	if err != nil {
+		t.Fatalf("sanitized flow failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "No potential untrusted-data flows found.") {
+		t.Fatalf("query-time sanitizer config was not applied:\n%s", output)
+	}
+}
+
 // TestE2E_HTTPCalls verifies the full httpcalls pipeline: build a Go project
 // with HTTP client calls, then query them via the CLI command.
 func TestE2E_HTTPCalls(t *testing.T) {

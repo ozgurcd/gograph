@@ -1,7 +1,7 @@
 ---
 name: gograph
 version: "0.1.0"
-description: "Go repository intelligence for Claude Code. Use whenever the user is reading, navigating, editing, reviewing, or refactoring a Go codebase. Replaces grep/rg/find for Go symbols with AST-aware call graphs, blast radius analysis, impact analysis, and 60 query and analysis capabilities via the local gograph MCP server. Mandatory for Go work whenever the gograph MCP server is connected."
+description: "Go repository intelligence for Claude Code. Use whenever the user is reading, navigating, editing, reviewing, or refactoring a Go codebase. Replaces grep/rg/find for Go symbols with AST-aware call graphs, blast radius analysis, impact and security flow analysis, and 61 query and analysis capabilities via the local gograph MCP server. Mandatory for Go work whenever the gograph MCP server is connected."
 argument-hint: "gograph status | gograph plan UserService.Login | gograph review"
 allowed-tools: Bash, Read
 homepage: https://gograph.identuum.ai
@@ -13,7 +13,7 @@ user-invocable: true
 
 # gograph: Go Repository Intelligence
 
-`gograph` is a local, AST-aware Go code intelligence engine that exposes 60 query, analysis, and workflow capabilities over the Model Context Protocol (64 endpoints including session lifecycle). It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) structural awareness of a Go codebase without broad grep passes. One `gograph_context` call replaces 4-5 separate Read / Grep tool calls.
+`gograph` is a local, AST-aware Go code intelligence engine that exposes 61 query, analysis, and workflow capabilities over the Model Context Protocol (65 endpoints including session lifecycle). It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) structural awareness of a Go codebase without broad grep passes. One `gograph_context` call replaces 4-5 separate Read / Grep tool calls.
 
 `gopls` is optimized for human IDEs. `gograph` is optimized for AI coding agents that pay for every token of context.
 
@@ -71,11 +71,12 @@ Verify with `gograph --version`. The MCP server registration ships with the plug
 | `gograph_coupling` | Package coupling / instability scores |
 | `gograph_diagram` | Mermaid architecture diagrams |
 | `gograph_errors` / `gograph_errorflow` | Error propagation paths |
+| `gograph_flow` | Potential HTTP/JSON/env paths to SQL, process, filesystem, and outbound HTTP sinks |
 | `gograph_changes` | Diff what changed since the last build |
 | `gograph_tests` | Tests connected to a symbol |
 | `gograph_check` | Policy checks, including changed-route tests, coverage, orphans, API drift, arity, and complexity |
 
-The live surface is 64 MCP endpoints; `gograph_capabilities` is the tested source of truth.
+The live surface is 65 MCP endpoints; `gograph_capabilities` is the tested source of truth. `gograph_flow` is path-insensitive with bounded call-site matching; use it for security review leads, not exploitability proof.
 
 ## Privacy
 
