@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -299,15 +300,32 @@ func TestE2E_ClaudePluginInstall(t *testing.T) {
 	binPath := buildTestBinary(t)
 	home := t.TempDir()
 	project := t.TempDir()
+	appData := filepath.Join(home, "AppData", "Roaming")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("APPDATA", appData)
+
+	var desktopConfig string
+	switch runtime.GOOS {
+	case "darwin":
+		desktopConfig = filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
+	case "linux":
+		desktopConfig = filepath.Join(home, ".config", "Claude", "claude_desktop_config.json")
+	case "windows":
+		desktopConfig = filepath.Join(appData, "Claude", "claude_desktop_config.json")
+	default:
+		t.Skipf("Claude Desktop config path is unsupported on %s", runtime.GOOS)
+	}
+
 	cmd := exec.Command(binPath, "add-claude-plugin")
 	cmd.Dir = project
-	cmd.Env = append(os.Environ(), "HOME="+home)
+	cmd.Env = os.Environ()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("add-claude-plugin failed: %v\n%s", err, out)
 	}
 	wantFiles := []string{
-		filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json"),
+		desktopConfig,
 		filepath.Join(home, ".claude", "CLAUDE.md"),
 		filepath.Join(home, ".claude", "hooks", "gograph-guard.sh"),
 		filepath.Join(home, ".claude", "settings.json"),

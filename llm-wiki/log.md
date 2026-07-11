@@ -163,3 +163,8 @@ Received a responsible-disclosure notice (scan date 2026-06-10) identifying thre
 - Diagnosed Actions run 29145461614: Hugo 0.147.6 could not evaluate the newer Language Direction/Locale template APIs.
 - Pinned Hugo 0.164.0 and upgraded checkout, setup-go, Pages upload/deploy, and GoReleaser actions to Node 24 major releases.
 - Verified a warning-free 32-page Hugo build, full Go tests, YAML parsing, and clean diff checks.
+## [2026-07-11] maintenance | Fix cross-platform plugin installer E2E
+
+- Diagnosed CI run 29145724492: the plugin installer test hardcoded the macOS Claude Desktop path on Ubuntu.
+- Isolated HOME, USERPROFILE, and APPDATA and selected the expected Desktop config path by GOOS.
+- Focused, full, race, vet, staticcheck, and golangci-lint verification passed.
