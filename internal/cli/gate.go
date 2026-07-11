@@ -7,6 +7,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/ozgurcd/gograph/internal/rootfind"
 	"github.com/ozgurcd/gograph/internal/search"
 )
 
@@ -27,6 +28,7 @@ const gateConfigTemplate = `# .gograph.yml — quality gates enforced by 'gograp
 # Each setting below is OPTIONAL: omit a line to disable that gate.
 # Run 'gograph gate' from a working tree where 'gograph build .' has
 # already produced .gograph/graph.json.
+# The gate fails closed when source files are newer than graph.json.
 
 # max_complexity: fail if any function's cyclomatic complexity exceeds N.
 # Calibrate by running 'gograph complexity' once and reading the top score;
@@ -61,7 +63,8 @@ func runGate(args []string) int {
 		return runGateInit()
 	}
 
-	configPath := ".gograph.yml"
+	root := rootfind.FindRoot()
+	configPath := filepath.Join(root, ".gograph.yml")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -87,10 +90,12 @@ func runGate(args []string) int {
 		return 1
 	}
 
-	absRoot, _ := filepath.Abs(".")
-	sr := search.Stale(g, absRoot)
+	root = graphRoot(g)
+	sr := search.Stale(g, root)
 	if sr.IsStale {
-		fmt.Fprintf(os.Stderr, "warning: graph is stale compared to source files. run 'gograph build .' for accurate results.\n")
+		fmt.Fprintf(os.Stderr, "error: graph is stale compared to %d source file(s); refusing to evaluate outdated data.\n", len(sr.ChangedFiles))
+		fmt.Fprintln(os.Stderr, "Run 'gograph build .' and retry.")
+		return 1
 	}
 
 	violations := 0
@@ -99,16 +104,10 @@ func runGate(args []string) int {
 	if cfg.MaxComplexity != nil {
 		worstScore := 0
 		worstName := ""
-		for _, s := range g.Symbols {
-			if s.Kind != "function" && s.Kind != "method" {
-				continue
-			}
-			res := search.Complexity(g, s.Name)
-			for _, r := range res {
-				if r.Score > worstScore {
-					worstScore = r.Score
-					worstName = r.Symbol
-				}
+		for _, r := range search.Complexity(g, "") {
+			if r.Score > worstScore {
+				worstScore = r.Score
+				worstName = r.Symbol
 			}
 		}
 		if worstScore > *cfg.MaxComplexity {
@@ -173,7 +172,7 @@ func runGate(args []string) int {
 		if g.Baseline == nil {
 			fmt.Println("checkmark  orphans        0 new (skipped: no baseline exists yet)")
 		} else {
-			currOrphans := len(search.Orphans(g))
+			currOrphans := len(search.ReachableOrphans(g))
 			if currOrphans > g.Baseline.OrphanCount {
 				fmt.Printf("cross      orphans        %d new unreachable symbols (baseline %d)  VIOLATION\n", currOrphans-g.Baseline.OrphanCount, g.Baseline.OrphanCount)
 				violations++
@@ -210,12 +209,12 @@ func runGate(args []string) int {
 	return 1
 }
 
-// runGateInit scaffolds a .gograph.yml template in the current directory.
+// runGateInit scaffolds a .gograph.yml template in the project root.
 // Refuses to overwrite an existing file — the user should `--force` or
 // edit by hand. Conservative defaults; the template documents each
 // threshold so users can tune without consulting external docs.
 func runGateInit() int {
-	configPath := ".gograph.yml"
+	configPath := filepath.Join(rootfind.FindRoot(), ".gograph.yml")
 	if _, err := os.Stat(configPath); err == nil {
 		fmt.Fprintf(os.Stderr, "error: %s already exists in the current directory.\n", configPath)
 		fmt.Fprintln(os.Stderr, "Refusing to overwrite. Edit the existing file or remove it first.")

@@ -5,7 +5,7 @@ description: "Explore installation, CLI command references, AI agent MCP integra
 
 Welcome to the `gograph` documentation portal! 
 
-gograph is a developer and AI agent tool built to index, trace, and query Go codebases using AST-accurate call graphs and dependency maps.
+gograph is a developer and AI agent tool built to index, trace, and query Go codebases using AST-derived call graphs and dependency maps.
 
 ---
 
@@ -22,8 +22,8 @@ An exhaustive command manual detailing all gograph capabilities.
 - **Topics**: Indexing commands, Search & Navigation, Call Graph traversal, Interface resolution, Packages & Imports, Concurrency mapping, custom error flows, and composite literals mapping.
 
 ### 🤖 [AI Agent Integration](/docs/agent-integration/)
-Connect gograph with AI coding assistants (like Claude Code, Cursor, and custom LLM workflows) to save context tokens and drop hallucination rates.
-- **Topics**: Model Context Protocol (MCP) server stdio setup, auto-building, Claude desktop plugin installation, and the smart Pre-Tool-Use hook guard.
+Connect gograph with AI coding assistants (like Claude Code, Cursor, and custom LLM workflows) to reduce broad file reads and unsupported structural guesses.
+- **Topics**: MCP stdio setup, in-memory refresh behavior, Claude Desktop/plugin configuration, and the Claude Code PreToolUse hook guard.
 
 ### ⚙️ [Agent Workflows](/docs/workflows/)
 Discover safe development workflows and optimization protocols.

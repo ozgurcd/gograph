@@ -32,6 +32,22 @@ type Graph struct {
 	Literals     []LiteralEdge     `json:"literals,omitempty"`
 	HTTPCalls    []HTTPCallEdge    `json:"http_calls,omitempty"`
 	Baseline     *GraphBaseline    `json:"baseline,omitempty"`
+	Build        *BuildMetadata    `json:"build,omitempty"`
+}
+
+// BuildMetadata records whether every scanned source file contributed to the
+// graph. Partial graphs remain queryable, but consumers can detect omissions.
+type BuildMetadata struct {
+	ScannedFiles int            `json:"scanned_files"`
+	ParsedFiles  int            `json:"parsed_files"`
+	Complete     bool           `json:"complete"`
+	Failures     []BuildFailure `json:"failures,omitempty"`
+	Warnings     []string       `json:"warnings,omitempty"`
+}
+
+type BuildFailure struct {
+	File  string `json:"file"`
+	Error string `json:"error"`
 }
 
 // GraphBaseline stores metrics from the previous build for gate comparisons.
@@ -61,6 +77,7 @@ type GraphBaseline struct {
 // non-precise builds only see direct assignments.
 type MutationEdge struct {
 	Field    string `json:"field"`
+	TypeName string `json:"type_name,omitempty"`
 	Function string `json:"function"`
 	File     string `json:"file"`
 	Line     int    `json:"line"`
@@ -90,8 +107,10 @@ type HTTPCallEdge struct {
 
 // ImplementsEdge records absolute proof that a concrete type implements an interface.
 type ImplementsEdge struct {
-	Interface string `json:"interface"`
-	Concrete  string `json:"concrete"`
+	Interface   string `json:"interface"`
+	Concrete    string `json:"concrete"`
+	InterfaceID string `json:"interface_id,omitempty"`
+	ConcreteID  string `json:"concrete_id,omitempty"`
 }
 
 // SQLEdge represents an extracted SQL query.
@@ -243,6 +262,10 @@ type CallEdge struct {
 	// Values: "discarded", "assigned", "partially_ignored", "returned",
 	//         "goroutine", "deferred", "" (nested/passed as argument).
 	ReturnUsage string `json:"return_usage,omitempty"`
+	// Potential marks a best-effort function value found in a call argument or
+	// assignment. BuildGraph resolves these candidates against repository
+	// function and method symbols before serializing the graph.
+	Potential bool `json:"-"`
 }
 
 // ImportEdge records an import statement in a file.

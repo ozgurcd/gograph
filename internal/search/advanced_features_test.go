@@ -1,6 +1,9 @@
 package search_test
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -27,6 +30,23 @@ func repoRoot(t *testing.T) string {
 	return filepath.Join(filepath.Dir(file), "..", "..")
 }
 
+func functionLine(t *testing.T, path, name string) int {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Name.Name == name {
+			return fset.Position(fn.Pos()).Line
+		}
+	}
+	t.Fatalf("function %s not found in %s", name, path)
+	return 0
+}
+
 // buildGraphWithRealFiles returns a minimal Graph that points at real source
 // files in the repository so that Complexity can parse them.
 func buildGraphWithRealFiles(t *testing.T) *graph.Graph {
@@ -44,7 +64,7 @@ func buildGraphWithRealFiles(t *testing.T) *graph.Graph {
 				Name: "Query",
 				Kind: graph.KindFunction,
 				File: searchFile,
-				Line: 58, // line where func Query starts in search.go
+				Line: functionLine(t, searchFile, "Query"),
 			},
 		},
 	}
@@ -108,8 +128,8 @@ func TestComplexity_SortedDescending(t *testing.T) {
 	g := &graph.Graph{
 		Symbols: []graph.SymbolNode{
 			// Query has many branches; Node has fewer.
-			{ID: "search.Query", Name: "Query", Kind: graph.KindFunction, File: searchFile, Line: 58},
-			{ID: "search.Node", Name: "Node", Kind: graph.KindFunction, File: searchFile, Line: 119},
+			{ID: "search.Query", Name: "Query", Kind: graph.KindFunction, File: searchFile, Line: functionLine(t, searchFile, "Query")},
+			{ID: "search.Node", Name: "Node", Kind: graph.KindFunction, File: searchFile, Line: functionLine(t, searchFile, "Node")},
 		},
 	}
 
@@ -147,7 +167,7 @@ func TestComplexityLabel(t *testing.T) {
 	for _, tc := range tests {
 		g := &graph.Graph{
 			Symbols: []graph.SymbolNode{
-				{ID: "search.Query", Name: "Query", Kind: graph.KindFunction, File: searchFile, Line: 47},
+				{ID: "search.Query", Name: "Query", Kind: graph.KindFunction, File: searchFile, Line: functionLine(t, searchFile, "Query")},
 			},
 		}
 		results := search.Complexity(g, "Query")

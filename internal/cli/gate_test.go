@@ -136,3 +136,30 @@ max_new_coupling_edges: 5
 		t.Fatalf("expected gate to fail, got exit code %d", code)
 	}
 }
+
+func TestGateRefusesStaleGraph(t *testing.T) {
+	tmpDir := t.TempDir()
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	if err := os.MkdirAll(".gograph", 0o750); err != nil {
+		t.Fatal(err)
+	}
+	g := &graph.Graph{Version: graph.Version, GeneratedAt: time.Now().Add(-time.Hour), Root: tmpDir}
+	if err := writeJSON(".gograph/graph.json", g); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(".gograph.yml", []byte("max_complexity: 100\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("main.go", []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if code := runGate(nil); code != 1 {
+		t.Fatalf("stale gate exit code = %d, want 1", code)
+	}
+}

@@ -192,9 +192,18 @@ func Explain(g *graph.Graph, term string) *ExplainResult {
 	ifaceSet := make(map[string]bool)
 	for _, impl := range g.Implements {
 		match := false
-		if sym.Kind == graph.KindStruct && strings.EqualFold(impl.Concrete, sym.Name) {
+		if impl.ConcreteID != "" && sym.Kind == graph.KindStruct && strings.EqualFold(impl.ConcreteID, sym.ID) {
 			match = true
-		} else if sym.Receiver != "" && strings.EqualFold(impl.Concrete, sym.Receiver) {
+		} else if impl.ConcreteID != "" && sym.Receiver != "" {
+			pkg := sym.ID
+			if idx := strings.Index(pkg, "::"); idx >= 0 {
+				pkg = pkg[:idx]
+			}
+			receiverID := pkg + "::" + strings.TrimPrefix(sym.Receiver, "*")
+			match = strings.EqualFold(impl.ConcreteID, receiverID)
+		} else if impl.ConcreteID == "" && sym.Kind == graph.KindStruct && strings.EqualFold(impl.Concrete, sym.Name) {
+			match = true
+		} else if impl.ConcreteID == "" && sym.Receiver != "" && strings.EqualFold(impl.Concrete, sym.Receiver) {
 			match = true
 		}
 		if match && !ifaceSet[impl.Interface] {

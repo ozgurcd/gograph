@@ -3,32 +3,48 @@ package cli_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
-// buildTestBinary compiles the gograph binary once per test run and returns
-// the path.  It uses the project's bin/gograph-test name to avoid conflicts
-// with the production binary.
+var (
+	testBinaryOnce sync.Once
+	testBinaryPath string
+	testBinaryErr  error
+)
+
+// buildTestBinary always compiles the current source once per package test run.
 func buildTestBinary(t *testing.T) string {
 	t.Helper()
-	repoRoot, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatalf("resolve repo root: %v", err)
-	}
-	binPath := filepath.Join(repoRoot, "bin", "gograph-test")
-	if _, err := os.Stat(binPath); os.IsNotExist(err) {
-		cmd := exec.Command("go", "build", "-o", binPath, filepath.Join(repoRoot, "cmd", "gograph", "main.go"))
+	testBinaryOnce.Do(func() {
+		repoRoot, err := filepath.Abs("../..")
+		if err != nil {
+			testBinaryErr = fmt.Errorf("resolve repo root: %w", err)
+			return
+		}
+		binDir, err := os.MkdirTemp("", "gograph-test-bin-*")
+		if err != nil {
+			testBinaryErr = fmt.Errorf("create test bin dir: %w", err)
+			return
+		}
+		testBinaryPath = filepath.Join(binDir, "gograph")
+		cmd := exec.Command("go", "build", "-o", testBinaryPath, filepath.Join(repoRoot, "cmd", "gograph", "main.go"))
 		cmd.Dir = repoRoot
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Fatalf("build test binary: %v\nOutput: %s", err, out)
+			testBinaryErr = fmt.Errorf("build test binary: %w\nOutput: %s", err, out)
 		}
+	})
+	if testBinaryErr != nil {
+		t.Fatal(testBinaryErr)
 	}
-	return binPath
+	return testBinaryPath
 }
 
 // setupGraphFixture creates a minimal Go project in a temp directory, builds
@@ -124,6 +140,90 @@ func TestReviewFromSubdirectory(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "Code Review for RunAudit") {
 		t.Errorf("expected review output from subdirectory, got:\n%s", out)
+	}
+}
+
+func TestFilesystemCommandsFromSubdirectory(t *testing.T) {
+	root, bin := setupGraphFixture(t)
+	subDir := filepath.Join(root, "internal", "sub")
+
+	for _, args := range [][]string{{"source", "RunAudit"}, {"context", "RunAudit"}} {
+		cmd := exec.Command(bin, args...)
+		cmd.Dir = subDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("gograph %v from subdirectory: %v\n%s", args, err, out)
+		}
+		if !strings.Contains(string(out), "func RunAudit() error") {
+			t.Fatalf("gograph %v did not read source from the graph root:\n%s", args, out)
+		}
+	}
+
+	mainGo := filepath.Join(root, "main.go")
+	future := time.Now().Add(time.Hour)
+	if err := os.Chtimes(mainGo, future, future); err != nil {
+		t.Fatalf("mark main.go newer: %v", err)
+	}
+	for _, args := range [][]string{{"stale"}, {"changes"}} {
+		cmd := exec.Command(bin, args...)
+		cmd.Dir = subDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("gograph %v from subdirectory: %v\n%s", args, err, out)
+		}
+		if !strings.Contains(string(out), "main.go") {
+			t.Fatalf("gograph %v did not inspect the graph root:\n%s", args, out)
+		}
+	}
+}
+
+func TestGitCommandsFromSubdirectory(t *testing.T) {
+	root, bin := setupGraphFixture(t)
+	subDir := filepath.Join(root, "internal", "sub")
+
+	gitCommands := [][]string{
+		{"init", "--quiet"},
+		{"config", "user.email", "test@example.com"},
+		{"config", "user.name", "Test User"},
+		{"add", "."},
+		{"commit", "--quiet", "-m", "baseline"},
+	}
+	for _, args := range gitCommands {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	mainGo := filepath.Join(root, "main.go")
+	data, err := os.ReadFile(mainGo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.Replace(string(data), "return nil", "return fmt.Errorf(\"changed\")", 1))
+	if err := os.WriteFile(mainGo, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(bin, "changes", "--git", "HEAD")
+	cmd.Dir = subDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("gograph changes from subdirectory: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "RunAudit") {
+		t.Fatalf("changes did not map root Git changes to symbols:\n%s", out)
+	}
+
+	cmd = exec.Command(bin, "impact", "--since", "HEAD")
+	cmd.Dir = subDir
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("gograph impact from subdirectory: %v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "No Go symbol changes found") {
+		t.Fatalf("impact did not inspect Git changes at the graph root:\n%s", out)
 	}
 }
 

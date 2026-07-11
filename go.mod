@@ -1,6 +1,6 @@
 module github.com/ozgurcd/gograph
 
-go 1.26
+go 1.26.5
 
 require (
 	github.com/mark3labs/mcp-go v0.52.0

@@ -6,7 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/ozgurcd/gograph/internal/graph"
@@ -27,7 +30,22 @@ func mockBuildGraph() func(string) (*graph.Graph, error) {
 	}
 }
 
+func mockBuildBaseline() func(context.Context, string) (*graph.Graph, error) {
+	return func(context.Context, string) (*graph.Graph, error) {
+		return &graph.Graph{}, nil
+	}
+}
+
 func setupHandlers(t *testing.T, g *graph.Graph) map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return setupHandlersWithBuilders(t, g, mockBuildGraph(), mockBuildBaseline())
+}
+
+func setupHandlersWithBuilders(
+	t *testing.T,
+	g *graph.Graph,
+	buildGraph func(string) (*graph.Graph, error),
+	buildBaseline func(context.Context, string) (*graph.Graph, error),
+) map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	t.Helper()
 
 	prev := mcppkg.ExposeToolsForTesting
@@ -37,16 +55,141 @@ func setupHandlers(t *testing.T, g *graph.Graph) map[string]func(context.Context
 		mcppkg.ExposeToolsForTesting = prev
 	})
 
-	mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), "dev")
+	mcppkg.NewServer(g, mockRebuild(g), buildGraph, buildBaseline, "dev")
 	return m
 }
 
 func TestNewServer(t *testing.T) {
 	g := &graph.Graph{}
-	s := mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), "dev")
+	s := mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), mockBuildBaseline(), "dev")
 	if s == nil {
 		t.Fatal("expected NewServer to return a valid server instance")
 	}
+}
+
+func callTool(t *testing.T, handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error), args map[string]any) string {
+	t.Helper()
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = args
+	res, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("tool handler returned error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("tool returned error result: %s", res.Content[0].(mcp.TextContent).Text)
+	}
+	return res.Content[0].(mcp.TextContent).Text
+}
+
+func TestMCPCallTraversalOptionsMatchCLI(t *testing.T) {
+	g := &graph.Graph{
+		Symbols: []graph.SymbolNode{
+			{ID: "example::A", Name: "A", Kind: graph.KindFunction, File: "a.go"},
+			{ID: "example::B", Name: "B", Kind: graph.KindFunction, File: "b.go"},
+			{ID: "example::C", Name: "C", Kind: graph.KindFunction, File: "c.go"},
+			{ID: "example::TestC", Name: "TestC", Kind: graph.KindFunction, File: "c_test.go"},
+		},
+		Calls: []graph.CallEdge{
+			{CallerSymbolID: "example::A", CallerName: "A", CalleeSymbolID: "example::B", CalleeRaw: "B", File: "a.go"},
+			{CallerSymbolID: "example::B", CallerName: "B", CalleeSymbolID: "example::C", CalleeRaw: "C", File: "b.go"},
+			{CallerSymbolID: "example::TestC", CallerName: "TestC", CalleeSymbolID: "example::C", CalleeRaw: "C", File: "c_test.go"},
+		},
+	}
+	handlers := setupHandlers(t, g)
+
+	callers := callTool(t, handlers["gograph_callers"], map[string]any{
+		"function": "C",
+		"depth":    float64(2),
+		"no_tests": true,
+		"exact":    true,
+	})
+	for _, want := range []string{"A", "B"} {
+		if !strings.Contains(callers, want) {
+			t.Errorf("depth-2 callers missing %q: %s", want, callers)
+		}
+	}
+	if strings.Contains(callers, "TestC") {
+		t.Errorf("no_tests callers included TestC: %s", callers)
+	}
+
+	callees := callTool(t, handlers["gograph_callees"], map[string]any{
+		"function": "A",
+		"depth":    float64(2),
+	})
+	for _, want := range []string{"B", "C"} {
+		if !strings.Contains(callees, want) {
+			t.Errorf("depth-2 callees missing %q: %s", want, callees)
+		}
+	}
+}
+
+func TestMCPStaleInspectsPersistedIndexWithoutRefresh(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g := &graph.Graph{Root: root, GeneratedAt: time.Now().Add(-time.Hour)}
+
+	prev := mcppkg.ExposeToolsForTesting
+	handlers := make(map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error))
+	mcppkg.ExposeToolsForTesting = handlers
+	t.Cleanup(func() { mcppkg.ExposeToolsForTesting = prev })
+	var rebuilds atomic.Int32
+	mcppkg.NewServer(g, func() (*graph.Graph, error) {
+		rebuilds.Add(1)
+		return &graph.Graph{Root: root, GeneratedAt: time.Now()}, nil
+	}, mockBuildGraph(), mockBuildBaseline(), "dev")
+
+	text := callTool(t, handlers["gograph_stale"], nil)
+	if !strings.Contains(text, `"is_stale": true`) {
+		t.Fatalf("expected stale persisted index, got %s", text)
+	}
+	if got := rebuilds.Load(); got != 0 {
+		t.Fatalf("gograph_stale rebuilt %d time(s), want 0", got)
+	}
+}
+
+func TestMCPSummaryUsesReachabilityOrphans(t *testing.T) {
+	g := &graph.Graph{
+		Symbols: []graph.SymbolNode{
+			{ID: "example::main", Name: "main", Kind: graph.KindFunction, File: "main.go"},
+			{ID: "example::live", Name: "live", Kind: graph.KindFunction, File: "main.go"},
+			{ID: "example::deadA", Name: "deadA", Kind: graph.KindFunction, File: "main.go"},
+			{ID: "example::deadB", Name: "deadB", Kind: graph.KindFunction, File: "main.go"},
+		},
+		Calls: []graph.CallEdge{
+			{CallerSymbolID: "example::main", CallerName: "main", CalleeSymbolID: "example::live", CalleeRaw: "live", File: "main.go"},
+			{CallerSymbolID: "example::deadA", CallerName: "deadA", CalleeSymbolID: "example::deadB", CalleeRaw: "deadB", File: "main.go"},
+		},
+	}
+	text := callTool(t, setupHandlers(t, g)["gograph_summary"], nil)
+	var out map[string]any
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("decode summary: %v\n%s", err, text)
+	}
+	if got := int(out["orphan_count"].(float64)); got != 2 {
+		t.Fatalf("summary orphan_count = %d, want 2 reachability orphans", got)
+	}
+}
+
+func TestMCPBoundaryCreateAndSessionsUseGraphRoot(t *testing.T) {
+	root := t.TempDir()
+	g := &graph.Graph{Root: root}
+	handlers := setupHandlers(t, g)
+
+	created := callTool(t, handlers["gograph_boundaries_create"], nil)
+	if !strings.Contains(created, `"created": true`) {
+		t.Fatalf("unexpected boundaries_create response: %s", created)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".gograph", "boundaries.json")); err != nil {
+		t.Fatalf("boundary config was not written under graph root: %v", err)
+	}
+
+	callTool(t, handlers["gograph_session_create"], map[string]any{"custom_word": "rooted"})
+	if _, err := os.Stat(filepath.Join(root, ".gograph", "active_session.json")); err != nil {
+		t.Fatalf("session pointer was not written under graph root: %v", err)
+	}
+	callTool(t, handlers["gograph_session_end"], nil)
 }
 
 func TestMCPResponseSerialization(t *testing.T) {
@@ -90,27 +233,92 @@ func TestMCPResponseSerialization(t *testing.T) {
 
 func TestAllToolAnnotations(t *testing.T) {
 	g := &graph.Graph{}
-	s := mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), "dev")
+	s := mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), mockBuildBaseline(), "dev")
 
 	tools := s.ListTools()
 	if len(tools) == 0 {
 		t.Fatal("no tools registered")
 	}
 
+	expectedMutating := map[string]struct {
+		destructive bool
+		idempotent  bool
+	}{
+		"gograph_boundaries_create": {destructive: false, idempotent: false},
+		"gograph_session_create":    {destructive: false, idempotent: false},
+		"gograph_session_end":       {destructive: false, idempotent: false},
+		"gograph_session_cleanup":   {destructive: true, idempotent: true},
+		"gograph_wiki":              {destructive: true, idempotent: true},
+	}
 	for name, st := range tools {
 		ann := st.Tool.Annotations
-		if ann.ReadOnlyHint == nil || !*ann.ReadOnlyHint {
-			t.Errorf("tool %q: ReadOnlyHint must be true, got %v", name, ann.ReadOnlyHint)
+		behavior, mutating := expectedMutating[name]
+		if ann.ReadOnlyHint == nil || *ann.ReadOnlyHint == mutating {
+			t.Errorf("tool %q: ReadOnlyHint = %v, mutating = %t", name, ann.ReadOnlyHint, mutating)
 		}
-		if ann.DestructiveHint == nil || *ann.DestructiveHint {
-			t.Errorf("tool %q: DestructiveHint must be false, got %v", name, ann.DestructiveHint)
+		wantDestructive := mutating && behavior.destructive
+		if ann.DestructiveHint == nil || *ann.DestructiveHint != wantDestructive {
+			t.Errorf("tool %q: DestructiveHint = %v, want %t", name, ann.DestructiveHint, wantDestructive)
 		}
-		if ann.IdempotentHint == nil || !*ann.IdempotentHint {
-			t.Errorf("tool %q: IdempotentHint must be true, got %v", name, ann.IdempotentHint)
+		wantIdempotent := true
+		if mutating {
+			wantIdempotent = behavior.idempotent
 		}
-		if ann.OpenWorldHint == nil || *ann.OpenWorldHint {
-			t.Errorf("tool %q: OpenWorldHint must be false, got %v", name, ann.OpenWorldHint)
+		if ann.IdempotentHint == nil || *ann.IdempotentHint != wantIdempotent {
+			t.Errorf("tool %q: IdempotentHint = %v, want %t", name, ann.IdempotentHint, wantIdempotent)
 		}
+		wantOpenWorld := name == "gograph_doc"
+		if ann.OpenWorldHint == nil || *ann.OpenWorldHint != wantOpenWorld {
+			t.Errorf("tool %q: OpenWorldHint = %v, want %t", name, ann.OpenWorldHint, wantOpenWorld)
+		}
+	}
+}
+
+func TestConcurrentHandlersSerializeGraphRefresh(t *testing.T) {
+	prev := mcppkg.ExposeToolsForTesting
+	handlers := make(map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error))
+	mcppkg.ExposeToolsForTesting = handlers
+	t.Cleanup(func() { mcppkg.ExposeToolsForTesting = prev })
+
+	var active atomic.Int32
+	var maxActive atomic.Int32
+	rebuild := func() (*graph.Graph, error) {
+		current := active.Add(1)
+		for {
+			observed := maxActive.Load()
+			if current <= observed || maxActive.CompareAndSwap(observed, current) {
+				break
+			}
+		}
+		defer active.Add(-1)
+		time.Sleep(5 * time.Millisecond)
+		return &graph.Graph{}, nil
+	}
+	mcppkg.NewServer(&graph.Graph{}, rebuild, mockBuildGraph(), mockBuildBaseline(), "dev")
+	handler := handlers["gograph_routes"]
+	if handler == nil {
+		t.Fatal("gograph_routes handler not found")
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 12)
+	for range 12 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := handler(context.Background(), mcp.CallToolRequest{})
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Errorf("handler returned error: %v", err)
+		}
+	}
+	if got := maxActive.Load(); got != 1 {
+		t.Fatalf("maximum concurrent graph rebuilds = %d, want 1", got)
 	}
 }
 
@@ -178,6 +386,40 @@ func TestGographAPI_Validation(t *testing.T) {
 				t.Errorf("expected safe input %q to pass validation, but got: %s", input, text)
 			}
 		}
+	}
+}
+
+func TestGographCheckUsesBaselineBuilderForGitRefs(t *testing.T) {
+	graphBuildCalls := 0
+	buildGraph := func(string) (*graph.Graph, error) {
+		graphBuildCalls++
+		return &graph.Graph{}, nil
+	}
+	var baselineRef string
+	buildBaseline := func(_ context.Context, ref string) (*graph.Graph, error) {
+		baselineRef = ref
+		return &graph.Graph{}, nil
+	}
+	root := t.TempDir()
+	handlers := setupHandlersWithBuilders(t, &graph.Graph{Root: root}, buildGraph, buildBaseline)
+	handler := handlers["gograph_check"]
+	if handler == nil {
+		t.Fatal("gograph_check handler not found")
+	}
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"since": "HEAD~1"}
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("gograph_check: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("gograph_check returned error: %+v", result.Content)
+	}
+	if baselineRef != "HEAD~1" {
+		t.Fatalf("baseline builder received %q, want HEAD~1", baselineRef)
+	}
+	if graphBuildCalls != 0 {
+		t.Fatalf("directory graph builder was called %d time(s) for a Git ref", graphBuildCalls)
 	}
 }
 

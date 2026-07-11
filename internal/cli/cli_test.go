@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -61,6 +62,103 @@ func main() {
 	}
 	if !foundCall {
 		t.Error("expected to find fmt.Println call in the graph")
+	}
+}
+
+func TestBuildGraphRejectsAllParseFailures(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "broken.go"), []byte("package broken\nfunc {\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	g, err := cli.BuildGraph(root)
+	if err == nil {
+		t.Fatalf("expected all-parse-failures error, got graph %+v", g)
+	}
+	if !strings.Contains(err.Error(), "none of 1 Go files parsed successfully") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuildGraphReportsPartialParseFailures(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "valid.go"), []byte("package sample\nfunc Valid() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "broken.go"), []byte("package sample\nfunc {\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	g, err := cli.BuildGraph(root)
+	if err != nil {
+		t.Fatalf("BuildGraph: %v", err)
+	}
+	if g.Build == nil || g.Build.Complete || g.Build.ScannedFiles != 2 || g.Build.ParsedFiles != 1 || len(g.Build.Failures) != 1 {
+		t.Fatalf("unexpected build metadata: %+v", g.Build)
+	}
+}
+
+func TestBuildGraphFiltersNonCallableArgumentsAndDedupesCallbacks(t *testing.T) {
+	root := t.TempDir()
+	source := `package sample
+
+import (
+	"fmt"
+	"os"
+)
+
+type handler struct{}
+
+func callback() {}
+func (h *handler) serve() {}
+func register(...any) {}
+
+func run(h *handler, err error, g any, root string) {
+	fmt.Fprintf(os.Stderr, "%v", err)
+	register(callback)
+	register(h.serve)
+	register(g)
+	register(root)
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "sample.go"), []byte(source), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	g, err := cli.BuildGraph(root)
+	if err != nil {
+		t.Fatalf("BuildGraph: %v", err)
+	}
+
+	forbidden := map[string]bool{
+		"err":       true,
+		"g":         true,
+		"root":      true,
+		"os.Stderr": true,
+	}
+	seen := make(map[string]int)
+	for _, call := range g.Calls {
+		if forbidden[call.CalleeRaw] {
+			t.Errorf("ordinary argument %q was emitted as a call", call.CalleeRaw)
+		}
+		key := fmt.Sprintf("%s|%s|%s|%d|%s", call.CallerSymbolID, call.CalleeRaw, call.File, call.Line, call.CalleeSymbolID)
+		seen[key]++
+		if seen[key] > 1 {
+			t.Errorf("duplicate call edge %s", key)
+		}
+	}
+
+	for _, want := range []string{"fmt.Fprintf", "register", "callback", "h.serve"} {
+		found := false
+		for _, call := range g.Calls {
+			if call.CalleeRaw == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected call edge %q, got %+v", want, g.Calls)
+		}
 	}
 }
 
@@ -326,5 +424,89 @@ func TestAllCommandsRegistered(t *testing.T) {
 	if len(extra) > 0 {
 		sort.Strings(extra)
 		t.Errorf("the following cases exist in Run() but are NOT in the canonical want list in this test:\n  %v\nAdd them to the want slice above.", extra)
+	}
+}
+
+func TestHelpDocumentsEveryCanonicalCommand(t *testing.T) {
+	cmd := exec.Command(buildTestBinary(t), "--help")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("gograph --help: %v\n%s", err, out)
+	}
+	documented := make(map[string]bool)
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.HasPrefix(line, "  ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		name := strings.TrimSuffix(fields[0], ",")
+		documented[name] = true
+	}
+	want := []string{
+		"build", "stale", "stats", "query", "focus", "node", "source", "public",
+		"fields", "embeds", "imports", "mutate", "arity", "skeleton", "callers",
+		"callees", "impact", "path", "trace", "orphans", "implementers", "interfaces",
+		"constructors", "literals", "returnusage", "usages", "schema", "globals", "mocks",
+		"fixtures", "check", "gate", "snapshot", "boundaries", "complexity", "diagram",
+		"coupling", "context", "explain", "hotspot", "summary", "untested", "endpoint",
+		"deps", "dependents", "changes", "godobj", "plan", "review", "risk", "api",
+		"routes", "sql", "httpcalls", "errorflow", "errors", "envs", "concurrency", "tests",
+		"capabilities", "wiki", "doc", "mcp", "session", "add-claude-plugin", "hook-guard",
+		"version", "help",
+	}
+	for _, name := range want {
+		if !documented[name] {
+			t.Errorf("gograph --help does not document %q", name)
+		}
+	}
+}
+
+func TestHelpDocumentsImplementedModes(t *testing.T) {
+	cmd := exec.Command(buildTestBinary(t), "--help")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("gograph --help: %v\n%s", err, out)
+	}
+
+	help := string(out)
+	for _, mode := range []string{
+		"callers <function> [--no-tests] [--depth N] [--exact]",
+		"coupling [package] [--include-stdlib] [--internal-only]",
+		"context <symbol> [--limit N] [--exact]",
+		"hotspot [--top N] [--include-tests]",
+		"plan <symbol> [--with-context]",
+		"plan --uncommitted [--with-context]",
+		"sql [term]",
+	} {
+		if !strings.Contains(help, mode) {
+			t.Errorf("gograph --help does not document implemented mode %q", mode)
+		}
+	}
+}
+
+func TestCapabilitiesDocumentsImplementedModes(t *testing.T) {
+	cmd := exec.Command(buildTestBinary(t), "capabilities")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("gograph capabilities: %v\n%s", err, out)
+	}
+
+	capabilities := string(out)
+	for _, want := range []string{
+		"build . --precise  then  review --uncommitted",
+		"callers <fn> [--no-tests] [--depth N] [--exact]",
+		"coupling [pkg] [--include-stdlib] [--internal-only]",
+		"context <sym> [--limit N] [--exact]",
+		"hotspot [--top N] [--include-tests]",
+		"plan <sym> [--with-context]",
+		"plan --uncommitted [--with-context]",
+		"sql [term]",
+	} {
+		if !strings.Contains(capabilities, want) {
+			t.Errorf("gograph capabilities does not document implemented mode %q", want)
+		}
 	}
 }

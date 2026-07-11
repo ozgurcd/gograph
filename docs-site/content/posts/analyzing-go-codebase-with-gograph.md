@@ -17,7 +17,7 @@ When an agent needs to understand how a function is used, it typically defaults 
 
 **`gograph`** was built to solve this. By constructing a localized, persistent Abstract Syntax Tree (AST) call graph, it equips both developers and AI agents with precise structural awareness. Rather than guessing, `gograph` allows queries like *"find the exact callers of this method"* or *"extract only this function's source code block"* in milliseconds.
 
-To demonstrate this structural intelligence in action, we ran `gograph` against its own Go codebase. The results reveal how a 93-file codebase resolves into a clean, queryable mathematical graph—and why static call-graph mapping is a major leap forward from simple string matching.
+To demonstrate this structural intelligence in action, we ran `gograph` against its own Go codebase. The numerical results below are a snapshot from 2026-06-24; the repository and counts have continued to evolve.
 
 ---
 
@@ -137,7 +137,7 @@ The call graph mapped that `loadGraph` is called from **56 locations** across th
 - The snapshot save/diff engine (`internal/cli/snapshot.go`).
 - The CI check and gate command handlers.
 
-Every query command — from `callers` to `plan`, `review`, `risk`, `wiki`, `summary`, `explain` — depends on `loadGraph` to deserialize the graph from disk. This makes it the single most critical function for availability, and its 120 incoming calls make it the second-highest hotspot in the entire codebase.
+At the time of this snapshot, persisted CLI analysis commands — from `callers` to `plan`, `review`, `risk`, `wiki`, `summary`, and `explain` — depended on `loadGraph` to deserialize the graph. The MCP server has a distinct freshness model: source-analysis tools refresh an in-memory AST graph, while persisted-index tools retain snapshot semantics.
 
 ### 4.3 Auditing Unused Code (`gograph orphans`)
 We checked for dead, unreachable, or unexported methods that are safe to delete:
@@ -150,7 +150,7 @@ gograph orphans
 Found 224 unreachable symbols.
 ```
 
-**Insight**: With the addition of new features (session telemetry, wiki generation, boundary enforcement), the codebase has accumulated 224 currently unreachable symbols — primarily test helpers, unused struct fields in test fixtures, and exported-but-unconsumed API symbols. The `godobj` analysis also flags 10 God Object candidates (structs with excessive field/method counts), including `ExplainResult` (29 fields) and `Graph` (20 fields).
+**Insight**: In this historical snapshot, reachability analysis reported 224 unreachable production functions or methods. Test-file declarations and non-callable fields are not orphan candidates. `godobj` separately reported 10 structs exceeding at least one enabled method, field, or outgoing-call threshold, including `ExplainResult` and `Graph`.
 
 This is a healthy signal for a growing codebase — the `orphans` and `godobj` commands exist precisely to surface these refactoring targets.
 
@@ -283,11 +283,8 @@ The schema v2 graph format enables powerful composite commands that collapse 5�
 - **`gograph explain <symbol>`** — synthesized architectural narrative with role classification and complexity analysis.
 - **`gograph summary`** — single-call codebase briefing: top 3 hotspots, worst instability package, highest complexity function, orphan count, god-object count. Replaces 5 separate calls.
 
-### Production Swarm Evaluation
-In production evaluations simulating specialized swarms of **35 concurrent Claude Code agents** working on Go codebases with 80+ active HTTP endpoints:
-- **Baseline (Standard Grep/File Scans)**: The average hallucination rate (where agents guessed field names or method signatures) was **~12%** due to noisy context windows.
-- **Enabled (gograph AST Mappings)**: By serving deterministic call boundaries and precise field definitions, the hallucination rate dropped down to **~2%**.
-- **Context Savings**: Mapped call paths resulted in significant reductions in token usage, dramatically lowering prompt costs and reducing response latency.
+### Evaluation Guidance
+The defensible benefit is measurable at the tool boundary: fewer search calls and fewer irrelevant source lines returned for structural questions. Accuracy still depends on the analysis mode and feature limitations; teams should evaluate task success and token use on their own repositories rather than treating static-analysis output as runtime proof.
 
 ---
 

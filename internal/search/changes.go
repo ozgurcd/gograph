@@ -6,10 +6,10 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/scanner"
 )
 
 // ChangeStatus classifies a symbol relative to the current graph.
@@ -60,60 +60,43 @@ func Changes(g *graph.Graph, root string) *ChangesResult {
 	graphTime := g.GeneratedAt
 	result := &ChangesResult{GraphAge: graphTime}
 
-	// Step 1: Walk source tree to find changed and deleted files.
+	// Step 1: Scan the same source set used by graph construction. This keeps
+	// generated, vendored, and gitignored files out of freshness reports.
 	changedFiles := make(map[string]bool)
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	existingFiles := make(map[string]bool)
+	files, _ := scanner.Walk(root)
+	for _, path := range files {
+		info, err := os.Stat(path)
 		if err != nil {
-			return nil
+			continue
 		}
-		if info.IsDir() {
-			base := info.Name()
-			if base == ".gograph" || base == "vendor" || base == ".git" || base == "node_modules" {
-				return filepath.SkipDir
-			}
-			return nil
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			continue
 		}
-		if !strings.HasSuffix(path, ".go") {
-			return nil
-		}
+		rel = filepath.Clean(rel)
+		existingFiles[rel] = true
 		if info.ModTime().After(graphTime) {
-			if rel, err := filepath.Rel(root, path); err == nil {
-				changedFiles[rel] = true
-				result.ChangedFiles = append(result.ChangedFiles, rel)
-			}
+			changedFiles[rel] = true
+			result.ChangedFiles = append(result.ChangedFiles, rel)
 		}
-		return nil
-	})
+	}
 	sortStrings(result.ChangedFiles)
 
-	// Step 2: Build a set of all files that exist on disk (needed for deleted detection).
-	existingFiles := make(map[string]bool)
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
-		}
-		if strings.HasSuffix(path, ".go") {
-			if rel, err := filepath.Rel(root, path); err == nil {
-				existingFiles[rel] = true
-			}
-		}
-		return nil
-	})
-
-	// Step 3: Build a set of graph symbols keyed by (name, file).
+	// Step 2: Build a set of graph symbols keyed by (name, file).
 	type symKey struct{ name, file string }
 	graphSymbols := make(map[symKey]bool)
 	for _, s := range g.Symbols {
-		rel, _ := filepath.Rel(root, s.File)
+		rel := graphFileRelative(root, s.File)
 		graphSymbols[symKey{s.Name, rel}] = true
 		graphSymbols[symKey{s.Name, s.File}] = true
 	}
 
-	// Step 4: For each changed file, collect graph symbols (modified) and
+	// Step 3: For each changed file, collect graph symbols (modified) and
 	// parse for new declarations not in the graph.
 	seenModified := make(map[symKey]bool)
 	for _, s := range g.Symbols {
-		rel, _ := filepath.Rel(root, s.File)
+		rel := graphFileRelative(root, s.File)
 		if !changedFiles[rel] && !changedFiles[s.File] {
 			continue
 		}
@@ -171,15 +154,17 @@ func Changes(g *graph.Graph, root string) *ChangesResult {
 		}
 	}
 
-	// Step 5: Detect deleted symbols — graph symbols whose files are gone.
+	// Step 4: Detect deleted symbols — graph symbols whose files are gone.
 	for _, s := range g.Symbols {
-		// Check existence via os.Stat on the absolute path first.
-		if _, statErr := os.Stat(s.File); statErr == nil {
+		rel := graphFileRelative(root, s.File)
+		path := s.File
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(root, path)
+		}
+		if _, statErr := os.Stat(path); statErr == nil {
 			continue // file exists
 		}
-		// Also try relative resolution from root.
-		rel, relErr := filepath.Rel(root, s.File)
-		if relErr == nil && existingFiles[rel] {
+		if existingFiles[rel] {
 			continue
 		}
 		result.Symbols = append(result.Symbols, ChangedSymbol{
@@ -191,4 +176,13 @@ func Changes(g *graph.Graph, root string) *ChangesResult {
 	}
 
 	return result
+}
+
+func graphFileRelative(root, path string) string {
+	if filepath.IsAbs(path) {
+		if rel, err := filepath.Rel(root, path); err == nil {
+			return filepath.Clean(rel)
+		}
+	}
+	return filepath.Clean(path)
 }

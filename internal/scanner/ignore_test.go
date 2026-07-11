@@ -2,6 +2,7 @@ package scanner_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -87,6 +88,28 @@ func TestWalk_SkipsIgnoredDirs(t *testing.T) {
 	}
 	if len(paths) != 1 {
 		t.Fatalf("expected 1 path, got %d: %v", len(paths), paths)
+	}
+}
+
+func TestWalk_SkipsGitIgnoredFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	root := t.TempDir()
+	cmd := exec.Command("git", "init", "--quiet", root)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	mustWrite(t, filepath.Join(root, ".gitignore"), "ignored.go\n")
+	mustWrite(t, filepath.Join(root, "keep.go"), "package main\n")
+	mustWrite(t, filepath.Join(root, "ignored.go"), "package main\n")
+
+	paths, errs := scanner.Walk(root)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if len(paths) != 1 || filepath.Base(paths[0]) != "keep.go" {
+		t.Fatalf("expected only keep.go, got %v", paths)
 	}
 }
 

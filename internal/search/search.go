@@ -2,6 +2,7 @@
 package search
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -690,10 +691,18 @@ func Implementers(g *graph.Graph, interfaceName string) []Result {
 	// 1. Precise Fast-Path (if --precise was used)
 	if len(g.Implements) > 0 {
 		for _, edge := range g.Implements {
-			if strings.ToLower(edge.Interface) == nl {
+			interfaceMatches := edge.InterfaceID != "" && strings.EqualFold(edge.InterfaceID, iface.ID)
+			if edge.InterfaceID == "" {
+				interfaceMatches = strings.ToLower(edge.Interface) == nl || strings.EqualFold(edge.Interface, iface.Name)
+			}
+			if interfaceMatches {
 				// Find the concrete symbol
 				for _, s := range g.Symbols {
-					if s.Kind == graph.KindStruct && s.Name == edge.Concrete {
+					concreteMatches := edge.ConcreteID != "" && strings.EqualFold(edge.ConcreteID, s.ID)
+					if edge.ConcreteID == "" {
+						concreteMatches = s.Name == edge.Concrete
+					}
+					if s.Kind == graph.KindStruct && concreteMatches {
 						results = append(results, Result{
 							Kind:   "struct",
 							Name:   s.Name,
@@ -879,6 +888,8 @@ func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
 	}
 
 	var results []string
+	var readErrs []error
+	extractedCount := 0
 	limit := 5
 	for i, target := range targets {
 		if i >= limit {
@@ -887,14 +898,14 @@ func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
 		}
 
 		if !isSafePathSegment(target.File) || strings.Contains(target.File, "..") || strings.Contains(target.File, "\\") {
-			results = append(results, fmt.Sprintf("// WARNING: skipping unsafe path in file %s", target.File))
+			readErrs = append(readErrs, fmt.Errorf("unsafe source path %q", target.File))
 			continue
 		}
 
 		absPath := filepath.Join(rootDir, target.File)
 		data, err := os.ReadFile(absPath)
 		if err != nil {
-			results = append(results, fmt.Sprintf("// Error reading file %s: %v", target.File, err))
+			readErrs = append(readErrs, fmt.Errorf("read source file %s: %w", target.File, err))
 			continue
 		}
 
@@ -909,12 +920,16 @@ func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
 			end = len(lines)
 		}
 		if start >= end {
-			results = append(results, fmt.Sprintf("// Error: invalid line range %d to %d for %s", target.Line, target.EndLine, target.ID))
+			readErrs = append(readErrs, fmt.Errorf("invalid line range %d to %d for %s", target.Line, target.EndLine, target.ID))
 			continue
 		}
 
 		extracted := strings.Join(lines[start:end], "\n")
 		results = append(results, fmt.Sprintf("// %s (%s:%d-%d)\n%s", target.ID, target.File, target.Line, target.EndLine, extracted))
+		extractedCount++
+	}
+	if extractedCount == 0 {
+		return "", fmt.Errorf("source for %q is unavailable: %w", symbolName, errors.Join(readErrs...))
 	}
 
 	return strings.Join(results, "\n\n---\n\n"), nil
@@ -1351,14 +1366,29 @@ func HTTPCalls(g *graph.Graph, term string) []Result {
 // are checked.
 func Interfaces(g *graph.Graph, structName string) []Result {
 	var results []Result
+	var targetStruct *graph.SymbolNode
+	for i := range g.Symbols {
+		if g.Symbols[i].Kind == graph.KindStruct && MatchSymbol(g.Symbols[i], structName) {
+			targetStruct = &g.Symbols[i]
+			break
+		}
+	}
 
 	// 1. Precise Fast-Path (if --precise was used)
-	if len(g.Implements) > 0 {
+	if len(g.Implements) > 0 && targetStruct != nil {
 		for _, edge := range g.Implements {
-			if strings.EqualFold(edge.Concrete, structName) {
+			concreteMatches := edge.ConcreteID != "" && strings.EqualFold(edge.ConcreteID, targetStruct.ID)
+			if edge.ConcreteID == "" {
+				concreteMatches = strings.EqualFold(edge.Concrete, targetStruct.Name)
+			}
+			if concreteMatches {
 				// Find the interface symbol
 				for _, s := range g.Symbols {
-					if s.Kind == graph.KindInterface && s.Name == edge.Interface {
+					interfaceMatches := edge.InterfaceID != "" && strings.EqualFold(edge.InterfaceID, s.ID)
+					if edge.InterfaceID == "" {
+						interfaceMatches = s.Name == edge.Interface
+					}
+					if s.Kind == graph.KindInterface && interfaceMatches {
 						results = append(results, Result{
 							Kind:   "interface",
 							Name:   s.Name,

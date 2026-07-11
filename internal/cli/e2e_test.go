@@ -51,25 +51,7 @@ func main() {
 		t.Fatalf("failed to write dummy source: %v", err)
 	}
 
-	// Go run cmd/gograph/main.go ...
-	// Use the compiled binary from the project root.
-	repoRoot, _ := filepath.Abs("../../")
-	binPath := filepath.Join(repoRoot, "bin", "gograph")
-
-	// Ensure bin directory exists
-	if err := os.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
-		t.Fatalf("failed to create bin directory: %v", err)
-	}
-
-	// Build the binary if it does not exist
-	if _, err := os.Stat(binPath); os.IsNotExist(err) {
-		cmd := exec.Command("go", "build", "-o", binPath, filepath.Join(repoRoot, "cmd", "gograph", "main.go"))
-		cmd.Dir = repoRoot
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("failed to build test binary: %v\nOutput: %s", err, string(out))
-		}
-	}
+	binPath := buildTestBinary(t)
 
 	runCmd := func(args ...string) (string, error) {
 		cmd := exec.Command(binPath, args...)
@@ -213,20 +195,7 @@ func main() {
 		t.Fatalf("failed to write go.mod: %v", err)
 	}
 
-	// Build the test binary if needed.
-	repoRoot, _ := filepath.Abs("../../")
-	binPath := filepath.Join(repoRoot, "bin", "gograph-test")
-	if err := os.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
-		t.Fatalf("failed to create bin directory: %v", err)
-	}
-	if _, err := os.Stat(binPath); os.IsNotExist(err) {
-		cmd := exec.Command("go", "build", "-o", binPath, filepath.Join(repoRoot, "cmd", "gograph", "main.go"))
-		cmd.Dir = repoRoot
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("failed to build test binary: %v\nOutput: %s", err, string(out))
-		}
-	}
+	binPath := buildTestBinary(t)
 
 	runCmd := func(args ...string) (string, error) {
 		cmd := exec.Command(binPath, args...)
@@ -323,5 +292,48 @@ func main() {
 	}
 	if !strings.Contains(out, "No HTTP client calls found") {
 		t.Errorf("expected empty results message, got:\n%s", out)
+	}
+}
+
+func TestE2E_ClaudePluginInstall(t *testing.T) {
+	binPath := buildTestBinary(t)
+	home := t.TempDir()
+	project := t.TempDir()
+	cmd := exec.Command(binPath, "add-claude-plugin")
+	cmd.Dir = project
+	cmd.Env = append(os.Environ(), "HOME="+home)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("add-claude-plugin failed: %v\n%s", err, out)
+	}
+	wantFiles := []string{
+		filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json"),
+		filepath.Join(home, ".claude", "CLAUDE.md"),
+		filepath.Join(home, ".claude", "hooks", "gograph-guard.sh"),
+		filepath.Join(home, ".claude", "settings.json"),
+	}
+	for _, path := range wantFiles {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("expected installer output %s: %v", path, err)
+		}
+	}
+}
+
+func TestE2E_HookGuard(t *testing.T) {
+	binPath := buildTestBinary(t)
+	cmd := exec.Command(binPath, "hook-guard")
+	cmd.Stdin = strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"rg UserService --include=*.go"}}`)
+	out, err := cmd.CombinedOutput()
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 2 {
+		t.Fatalf("hook-guard exit = %v, want 2\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "blocked grep") || !strings.Contains(string(out), `gograph_context "UserService"`) {
+		t.Fatalf("hook-guard did not provide the documented redirect:\n%s", out)
+	}
+
+	allow := exec.Command(binPath, "hook-guard")
+	allow.Stdin = strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"rg TODO --include=*.go"}}`)
+	if out, err := allow.CombinedOutput(); err != nil {
+		t.Fatalf("hook-guard should allow comment search: %v\n%s", err, out)
 	}
 }

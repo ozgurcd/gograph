@@ -53,7 +53,10 @@ This walks every `.go` file, extracts the AST, and writes:
 
 `.gograph/` is automatically added to the Git repository root `.gitignore`.
 Outside a Git worktree, `gograph` falls back to the build target `.gitignore`.
-If no Go files are found after ignore filtering, the build exits without writing artifacts.
+Files and directories ignored by Git are excluded consistently from builds,
+freshness checks, and change detection. If no Go files are found, or every Go
+file fails to parse, the build exits without replacing an existing graph.
+Partial parse failures are retained in `graph.json` build metadata.
 
 ### Precise mode
 
@@ -61,7 +64,7 @@ If no Go files are found after ignore filtering, the build exits without writing
 gograph build . --precise
 ```
 
-Runs the full Go type checker on top of the AST pass. This enables Class Hierarchy Analysis (CHA) for accurate interface dispatch resolution — calls through interface variables are resolved to their concrete implementations. Slower, requires compilable code. Use before major refactors or blast-radius analysis.
+Attempts Go type loading plus CHA/SSA enrichment on top of the AST pass. Compilable packages are required for precise data; if enrichment fails, gograph warns and retains the AST graph. Use before major refactors or blast-radius analysis.
 
 **When to use which:**
 
@@ -90,13 +93,16 @@ routes:         38
 sqls:           29
 env_reads:      14
 test_edges:     522
+build_status:   complete
+parsed_files:   187/187
+parse_failures: 0
 ```
 
 ```bash
 gograph stale
 ```
 
-Lists source files that are newer than `graph.json`. Run this before any structural analysis to confirm the index is current. Rebuild if any files are listed.
+Lists indexed source files that are newer than `graph.json`. It uses the same ignore policy as `build`, and all filesystem-backed commands resolve the repository root recorded in the graph, so it works identically from subdirectories. Rebuild if any files are listed.
 
 ## Step 3 — First queries
 
@@ -144,19 +150,19 @@ func normalizeSymbolName(name string) string {
 
 ## Output formats
 
-All query commands support three output modes:
+Result-list queries support text, JSON, and files-only output:
 
 ```bash
 gograph callers Foo              # text: [kind] Name — detail  (file:line)
-gograph callers Foo --json       # JSON envelope: {"ok":true,"cmd":"callers","query":"Foo","count":N,"data":[...]}
+gograph callers Foo --json       # {"schema_version":"1","command":"callers","status":"ok","query":"Foo","count":N,"results":[...]}
 gograph callers Foo --files-only # flat list of unique file paths
 ```
 
-Use `--json` for scripting and AI agent pipelines. Use `--files-only` to get a checklist of affected files without printing every result.
+Composed-analysis commands also support JSON where documented. Operational commands (`build`, `wiki`, `gate`, `snapshot`, sessions, installation, help, and version) remain text. Use `--files-only` only for result-list queries.
 
 ## Rebuilding
 
-The graph does **not** auto-update. Rebuild whenever source files change:
+CLI analysis does **not** auto-update. Rebuild whenever source files change:
 
 ```bash
 gograph build .           # fast rebuild, tolerates broken code
@@ -168,3 +174,5 @@ You can check whether a rebuild is needed:
 ```bash
 gograph stale
 ```
+
+The MCP server checks source freshness per analysis call and rebuilds its in-memory AST graph only after edits. MCP `stale`, default `changes`, and `stats` still inspect the persisted graph. A precise graph is preserved until source changes.

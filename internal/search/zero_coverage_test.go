@@ -68,6 +68,17 @@ func TestMutate(t *testing.T) {
 	}
 }
 
+func TestMutateHonorsQualifiedType(t *testing.T) {
+	g := &graph.Graph{Mutations: []graph.MutationEdge{
+		{TypeName: "Graph", Field: "Root", Function: "loadGraph", File: "graph.go", Line: 10},
+		{TypeName: "gitIgnoreChecker", Field: "root", Function: "init", File: "ignore.go", Line: 20},
+	}}
+	results := search.Mutate(g, "Graph.Root")
+	if len(results) != 1 || results[0].Name != "loadGraph" {
+		t.Fatalf("qualified mutate results = %+v, want only Graph.Root", results)
+	}
+}
+
 func TestImpact(t *testing.T) {
 	g := buildCoverageGraph()
 	res := search.Impact(g, "(*Server).Start", true)
@@ -137,7 +148,6 @@ func TestRoutes_DynamicHandlerAnnotation(t *testing.T) {
 		t.Errorf("GET /health must NOT carry the dynamic handler note, got %q", healthDetail)
 	}
 }
-
 
 func TestFields(t *testing.T) {
 	g := buildCoverageGraph()

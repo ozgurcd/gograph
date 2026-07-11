@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/rootfind"
 	"github.com/ozgurcd/gograph/internal/search"
 )
 
@@ -26,7 +27,7 @@ type Snapshot struct {
 }
 
 func getSnapshotDir() string {
-	return filepath.Join(".gograph", "snapshots")
+	return filepath.Join(rootfind.FindRoot(), ".gograph", "snapshots")
 }
 
 func runSnapshot(args []string) int {
@@ -69,20 +70,14 @@ func calculateSnapshot(g *graph.Graph, name string) *Snapshot {
 		Name:          name,
 		Timestamp:     time.Now().UTC().Format(time.RFC3339),
 		TotalSymbols:  len(g.Symbols),
-		OrphanCount:   len(search.Orphans(g)),
+		OrphanCount:   len(search.ReachableOrphans(g)),
 		CouplingEdges: len(g.Imports),
 	}
 
 	// MaxComplexity
-	for _, sym := range g.Symbols {
-		if sym.Kind != "function" && sym.Kind != "method" {
-			continue
-		}
-		res := search.Complexity(g, sym.Name)
-		for _, r := range res {
-			if r.Score > s.MaxComplexity {
-				s.MaxComplexity = r.Score
-			}
+	for _, result := range search.Complexity(g, "") {
+		if result.Score > s.MaxComplexity {
+			s.MaxComplexity = result.Score
 		}
 	}
 

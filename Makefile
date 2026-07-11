@@ -3,7 +3,7 @@ BUILD_DIR = bin
 CMD       = ./cmd/gograph
 INSTALL   = /usr/local/bin
 
-.PHONY: build test run-build clean bump-patch bump-minor bump-major install release
+.PHONY: build test format-check run-build clean bump-patch bump-minor bump-major install release
 
 build:
 	$(eval VERSION := $(shell grep '^current_version' .bumpversion.cfg | awk '{print $$3}'))
@@ -25,15 +25,25 @@ install:
 	sudo cp $(BUILD_DIR)/$(BINARY) $(INSTALL)/
 	@echo "Installed $(BINARY) to $(INSTALL)/"
 
-test: build
+format-check:
+	@unformatted="$$(gofmt -l .)"; \
+	if [ -n "$$unformatted" ]; then \
+		echo "The following Go files are not formatted:"; \
+		echo "$$unformatted"; \
+		exit 1; \
+	fi
+
+test: build format-check
 	@echo "Running all unit tests and e2e integration tests..."
 	go test -v ./...
+	@echo "Running race detector..."
+	go test -race ./...
 	@echo "Running linter..."
 	golangci-lint run ./...
 	@echo "Running static analysis..."
 	staticcheck ./...
 	@echo "Running vulnerability check..."
-	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./...
 	@echo "Running dependency vulnerability scan..."
 	grype dir:. --fail-on high
 

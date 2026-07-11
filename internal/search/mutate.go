@@ -11,21 +11,26 @@ import (
 func Mutate(g *graph.Graph, query string) []Result {
 	parts := strings.Split(query, ".")
 	field := query
+	typeName := ""
 	if len(parts) > 1 {
 		field = parts[len(parts)-1]
+		typeName = strings.Join(parts[:len(parts)-1], ".")
 	}
 	field = strings.ToLower(field)
 
 	var results []Result
 	for _, m := range g.Mutations {
-		if strings.ToLower(m.Field) == field {
+		if strings.ToLower(m.Field) == field && mutationTypeMatches(m.TypeName, typeName) {
 			detail := "mutates field " + m.Field
+			if m.TypeName != "" {
+				detail = "mutates field " + m.TypeName + "." + m.Field
+			}
 			// Indirect mutations carry Via — the name of the mutating
 			// method or "chan<-" for sends. Surface it so the reader can
 			// tell `s.field = x` from `s.field.Store(x)` without opening
 			// the file.
 			if m.Via != "" {
-				detail = "mutates field " + m.Field + " via " + m.Via
+				detail += " via " + m.Via
 			}
 			results = append(results, Result{
 				Kind:   "mutation",
@@ -40,4 +45,22 @@ func Mutate(g *graph.Graph, query string) []Result {
 
 	sortResults(results)
 	return results
+}
+
+func mutationTypeMatches(actual, requested string) bool {
+	if requested == "" {
+		return true
+	}
+	if actual == "" {
+		return false
+	}
+	normalize := func(value string) string {
+		value = strings.TrimSpace(value)
+		value = strings.TrimPrefix(value, "*")
+		value = strings.Trim(value, "()")
+		return strings.ToLower(value)
+	}
+	a := normalize(actual)
+	r := normalize(requested)
+	return a == r || strings.HasSuffix(a, "."+r) || strings.HasSuffix(r, "."+a)
 }

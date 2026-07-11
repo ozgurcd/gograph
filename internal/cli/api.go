@@ -35,7 +35,7 @@ func runAPI(args []string) int {
 		return 1
 	}
 
-	baselineGraph, err := BuildBaselineGraphFromGitRef(baselineRef, BuildGraph)
+	baselineGraph, err := BuildBaselineGraphFromGitRefAtRoot(graphRoot(currentGraph), baselineRef, BuildGraph)
 	if err != nil {
 		if jsonMode {
 			return PrintJSON(errEnvelope("api", err.Error()))

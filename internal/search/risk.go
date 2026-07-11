@@ -8,24 +8,24 @@ import (
 )
 
 type RiskDetail struct {
-	Symbol           string `json:"symbol"`
-	File             string `json:"file"`
-	Line             int    `json:"line"`
-	Score            int    `json:"score"`
-	Verdict          string `json:"verdict"` // "SAFE", "REVIEW", "DANGER"
-	Callers          int    `json:"callers"`
-	UntestedCallers  int    `json:"untested_callers"`
-	Complexity       int    `json:"complexity"`
-	SQLCount         int    `json:"sql_count"`
-	EnvCount         int    `json:"env_count"`
-	PublicAPI        bool   `json:"public_api"`
+	Symbol          string `json:"symbol"`
+	File            string `json:"file"`
+	Line            int    `json:"line"`
+	Score           int    `json:"score"`
+	Verdict         string `json:"verdict"` // "SAFE", "REVIEW", "DANGER"
+	Callers         int    `json:"callers"`
+	UntestedCallers int    `json:"untested_callers"`
+	Complexity      int    `json:"complexity"`
+	SQLCount        int    `json:"sql_count"`
+	EnvCount        int    `json:"env_count"`
+	PublicAPI       bool   `json:"public_api"`
 	// Detailed breakdown scores
-	BlastRadiusScore int    `json:"blast_radius_score"`
-	ComplexityScore  int    `json:"complexity_score"`
-	TestScore        int    `json:"test_score"`
-	PublicAPIScore   int    `json:"public_api_score"`
-	SQLScore         int    `json:"sql_score"`
-	EnvScore         int    `json:"env_score"`
+	BlastRadiusScore int `json:"blast_radius_score"`
+	ComplexityScore  int `json:"complexity_score"`
+	TestScore        int `json:"test_score"`
+	PublicAPIScore   int `json:"public_api_score"`
+	SQLScore         int `json:"sql_score"`
+	EnvScore         int `json:"env_score"`
 }
 
 type RiskReport struct {

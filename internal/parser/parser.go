@@ -60,6 +60,21 @@ func ParseFile(fset *token.FileSet, path, relPath, pkgImportPath string) (*FileR
 			Lines:       lineCount,
 		},
 	}
+	resolver := newFileResolver(f)
+	packageValues := make(map[string]bool)
+	for _, decl := range f.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || (gen.Tok != token.VAR && gen.Tok != token.CONST) {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			if values, ok := spec.(*ast.ValueSpec); ok {
+				for _, name := range values.Names {
+					packageValues[name.Name] = true
+				}
+			}
+		}
+	}
 
 	// Imports.
 	for _, imp := range f.Imports {
@@ -82,7 +97,7 @@ func ParseFile(fset *token.FileSet, path, relPath, pkgImportPath string) (*FileR
 		case *ast.GenDecl:
 			extractGenDecl(fset, d, relPath, pkgName, pkgImportPath, result)
 		case *ast.FuncDecl:
-			extractFuncDecl(fset, d, relPath, pkgName, pkgImportPath, result)
+			extractFuncDecl(fset, d, relPath, pkgName, pkgImportPath, result, resolver, packageValues)
 		}
 	}
 
@@ -176,6 +191,332 @@ func ParseFile(fset *token.FileSet, path, relPath, pkgImportPath string) (*FileR
 	return result, nil
 }
 
+type syncPrimitive string
+
+const (
+	syncMutex     syncPrimitive = "mutex"
+	syncRWMutex   syncPrimitive = "rwmutex"
+	syncWaitGroup syncPrimitive = "waitgroup"
+	syncOnce      syncPrimitive = "once"
+)
+
+type fileResolver struct {
+	imports        map[string]string
+	dotImports     map[string]bool
+	packageVars    map[string]syncPrimitive
+	fields         map[string]syncPrimitive
+	fieldConflicts map[string]bool
+	structFields   map[string]map[string]syncPrimitive
+}
+
+type functionResolver struct {
+	file           *fileResolver
+	variables      map[string]syncPrimitive
+	receiverName   string
+	receiverFields map[string]syncPrimitive
+}
+
+func newFileResolver(file *ast.File) *fileResolver {
+	r := &fileResolver{
+		imports:        make(map[string]string),
+		dotImports:     make(map[string]bool),
+		packageVars:    make(map[string]syncPrimitive),
+		fields:         make(map[string]syncPrimitive),
+		fieldConflicts: make(map[string]bool),
+		structFields:   make(map[string]map[string]syncPrimitive),
+	}
+	for _, imp := range file.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		name := path
+		if idx := strings.LastIndex(path, "/"); idx >= 0 {
+			name = path[idx+1:]
+		}
+		if imp.Name != nil {
+			name = imp.Name.Name
+		}
+		if name == "." {
+			r.dotImports[path] = true
+		} else if name != "_" {
+			r.imports[name] = path
+		}
+	}
+
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			typeSpec, ok := spec.(*ast.TypeSpec)
+			if !ok {
+				continue
+			}
+			st, ok := typeSpec.Type.(*ast.StructType)
+			if !ok {
+				continue
+			}
+			fields := make(map[string]syncPrimitive)
+			for _, field := range st.Fields.List {
+				kind, isSyncField := r.primitiveType(field.Type)
+				for _, name := range field.Names {
+					if !isSyncField {
+						delete(r.fields, name.Name)
+						r.fieldConflicts[name.Name] = true
+						continue
+					}
+					fields[name.Name] = kind
+					if r.fieldConflicts[name.Name] {
+						continue
+					}
+					if previous, exists := r.fields[name.Name]; !exists || previous == kind {
+						r.fields[name.Name] = kind
+					} else {
+						delete(r.fields, name.Name)
+						r.fieldConflicts[name.Name] = true
+					}
+				}
+			}
+			r.structFields[typeSpec.Name.Name] = fields
+		}
+	}
+
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.VAR {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			if valueSpec, ok := spec.(*ast.ValueSpec); ok {
+				r.collectValueSpec(r.packageVars, valueSpec)
+			}
+		}
+	}
+	return r
+}
+
+func (r *fileResolver) primitiveType(expr ast.Expr) (syncPrimitive, bool) {
+	switch value := expr.(type) {
+	case *ast.StarExpr:
+		return r.primitiveType(value.X)
+	case *ast.ParenExpr:
+		return r.primitiveType(value.X)
+	case *ast.SelectorExpr:
+		pkg, ok := value.X.(*ast.Ident)
+		if !ok || pkg.Obj != nil || r.imports[pkg.Name] != "sync" {
+			return "", false
+		}
+		return primitiveName(value.Sel.Name)
+	case *ast.Ident:
+		if r.dotImports["sync"] && value.Obj == nil {
+			return primitiveName(value.Name)
+		}
+	}
+	return "", false
+}
+
+func primitiveName(name string) (syncPrimitive, bool) {
+	switch name {
+	case "Mutex":
+		return syncMutex, true
+	case "RWMutex":
+		return syncRWMutex, true
+	case "WaitGroup":
+		return syncWaitGroup, true
+	case "Once":
+		return syncOnce, true
+	default:
+		return "", false
+	}
+}
+
+func (r *fileResolver) collectValueSpec(dst map[string]syncPrimitive, spec *ast.ValueSpec) {
+	if kind, ok := r.primitiveType(spec.Type); ok {
+		for _, name := range spec.Names {
+			dst[name.Name] = kind
+		}
+		return
+	}
+	if spec.Type != nil {
+		for _, name := range spec.Names {
+			delete(dst, name.Name)
+		}
+		return
+	}
+	for i, name := range spec.Names {
+		if i < len(spec.Values) {
+			if kind, ok := r.primitiveValue(spec.Values[i], dst); ok {
+				dst[name.Name] = kind
+			} else {
+				delete(dst, name.Name)
+			}
+		}
+	}
+}
+
+func (r *fileResolver) primitiveValue(expr ast.Expr, variables map[string]syncPrimitive) (syncPrimitive, bool) {
+	switch value := expr.(type) {
+	case *ast.CompositeLit:
+		return r.primitiveType(value.Type)
+	case *ast.UnaryExpr:
+		return r.primitiveValue(value.X, variables)
+	case *ast.ParenExpr:
+		return r.primitiveValue(value.X, variables)
+	case *ast.Ident:
+		kind, ok := variables[value.Name]
+		return kind, ok
+	case *ast.CallExpr:
+		if id, ok := value.Fun.(*ast.Ident); ok && id.Name == "new" && len(value.Args) == 1 {
+			return r.primitiveType(value.Args[0])
+		}
+	}
+	return "", false
+}
+
+func (r *fileResolver) forFunction(decl *ast.FuncDecl) *functionResolver {
+	fr := &functionResolver{file: r, variables: make(map[string]syncPrimitive)}
+	for name, kind := range r.packageVars {
+		fr.variables[name] = kind
+	}
+	collectFields := func(fields *ast.FieldList) {
+		if fields == nil {
+			return
+		}
+		for _, field := range fields.List {
+			kind, ok := r.primitiveType(field.Type)
+			for _, name := range field.Names {
+				if ok {
+					fr.variables[name.Name] = kind
+				} else {
+					delete(fr.variables, name.Name)
+				}
+			}
+		}
+	}
+	collectFields(decl.Type.Params)
+	collectFields(decl.Type.Results)
+	if decl.Recv != nil && len(decl.Recv.List) > 0 {
+		receiver := decl.Recv.List[0]
+		if len(receiver.Names) > 0 {
+			fr.receiverName = receiver.Names[0].Name
+		}
+		typeName := strings.TrimPrefix(receiverString(receiver.Type), "*")
+		fr.receiverFields = r.structFields[typeName]
+	}
+	if decl.Body != nil {
+		ast.Inspect(decl.Body, func(node ast.Node) bool {
+			switch value := node.(type) {
+			case *ast.FuncLit:
+				return false
+			case *ast.DeclStmt:
+				if gen, ok := value.Decl.(*ast.GenDecl); ok && gen.Tok == token.VAR {
+					for _, spec := range gen.Specs {
+						if valueSpec, ok := spec.(*ast.ValueSpec); ok {
+							r.collectValueSpec(fr.variables, valueSpec)
+						}
+					}
+				}
+			case *ast.AssignStmt:
+				if value.Tok == token.DEFINE {
+					for i, lhs := range value.Lhs {
+						id, ok := lhs.(*ast.Ident)
+						if !ok || i >= len(value.Rhs) {
+							continue
+						}
+						if kind, ok := r.primitiveValue(value.Rhs[i], fr.variables); ok {
+							fr.variables[id.Name] = kind
+						} else {
+							delete(fr.variables, id.Name)
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+	return fr
+}
+
+func (r *functionResolver) receiverPrimitive(expr ast.Expr) (syncPrimitive, bool) {
+	switch value := expr.(type) {
+	case *ast.Ident:
+		kind, ok := r.variables[value.Name]
+		return kind, ok
+	case *ast.SelectorExpr:
+		if base, ok := value.X.(*ast.Ident); ok && base.Name == r.receiverName {
+			kind, found := r.receiverFields[value.Sel.Name]
+			return kind, found
+		}
+		kind, ok := r.file.fields[value.Sel.Name]
+		return kind, ok
+	case *ast.ParenExpr:
+		return r.receiverPrimitive(value.X)
+	case *ast.StarExpr:
+		return r.receiverPrimitive(value.X)
+	}
+	return "", false
+}
+
+func (r *functionResolver) concurrencyKind(call *ast.CallExpr) (string, bool) {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return "", false
+	}
+	primitive, ok := r.receiverPrimitive(selector.X)
+	if !ok {
+		return "", false
+	}
+	switch primitive {
+	case syncMutex:
+		switch selector.Sel.Name {
+		case "Lock":
+			return "mutex_lock", true
+		case "Unlock":
+			return "mutex_unlock", true
+		}
+	case syncRWMutex:
+		switch selector.Sel.Name {
+		case "Lock", "RLock":
+			return "rwmutex_lock", true
+		case "Unlock", "RUnlock":
+			return "rwmutex_unlock", true
+		}
+	case syncWaitGroup:
+		switch selector.Sel.Name {
+		case "Add":
+			return "waitgroup_add", true
+		case "Wait":
+			return "waitgroup_wait", true
+		}
+	case syncOnce:
+		if selector.Sel.Name == "Do" {
+			return "once_do", true
+		}
+	}
+	return "", false
+}
+
+func (r *fileResolver) isErrorConstructor(call *ast.CallExpr) bool {
+	if id, ok := call.Fun.(*ast.Ident); ok {
+		return id.Obj == nil && (id.Name == "panic" || (id.Name == "New" && r.dotImports["errors"]))
+	}
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	if !ok || pkg.Obj != nil {
+		return false
+	}
+	switch r.imports[pkg.Name] {
+	case "fmt":
+		return selector.Sel.Name == "Errorf"
+	case "errors":
+		return selector.Sel.Name == "New"
+	default:
+		return false
+	}
+}
+
 // extractGenDecl handles type declarations (structs, interfaces).
 func extractGenDecl(fset *token.FileSet, d *ast.GenDecl, relPath, pkgName, pkgImportPath string, result *FileResult) {
 	for _, spec := range d.Specs {
@@ -237,12 +578,13 @@ func extractGenDecl(fset *token.FileSet, d *ast.GenDecl, relPath, pkgName, pkgIm
 						// Same function-value-as-arg handling as in function
 						// bodies (Bug 1) — initializers can also pass method
 						// values to constructors / registry calls.
-						for _, ref := range extractHandlerRefs(call) {
+						for _, ref := range extractCallableRefs(call) {
 							result.Calls = append(result.Calls, graph.CallEdge{
 								CallerName: "init",
 								CalleeRaw:  ref,
 								File:       relPath,
 								Line:       callPos.Line,
+								Potential:  true,
 							})
 						}
 						return true
@@ -259,6 +601,7 @@ func extractGenDecl(fset *token.FileSet, d *ast.GenDecl, relPath, pkgName, pkgIm
 							CalleeRaw:  ref,
 							File:       relPath,
 							Line:       fset.Position(v.Pos()).Line,
+							Potential:  true,
 						})
 					}
 				}
@@ -345,8 +688,100 @@ func extractGenDecl(fset *token.FileSet, d *ast.GenDecl, relPath, pkgName, pkgIm
 	}
 }
 
+func mutationTypeName(expr ast.Expr) string {
+	switch value := expr.(type) {
+	case *ast.Ident:
+		return value.Name
+	case *ast.SelectorExpr:
+		prefix := mutationTypeName(value.X)
+		if prefix == "" {
+			return value.Sel.Name
+		}
+		return prefix + "." + value.Sel.Name
+	case *ast.StarExpr:
+		return mutationTypeName(value.X)
+	case *ast.ParenExpr:
+		return mutationTypeName(value.X)
+	case *ast.IndexExpr:
+		return mutationTypeName(value.X)
+	case *ast.IndexListExpr:
+		return mutationTypeName(value.X)
+	default:
+		return ""
+	}
+}
+
+func mutationValueName(expr ast.Expr) string {
+	switch value := expr.(type) {
+	case *ast.Ident:
+		return value.Name
+	case *ast.StarExpr:
+		return mutationValueName(value.X)
+	case *ast.ParenExpr:
+		return mutationValueName(value.X)
+	default:
+		return ""
+	}
+}
+
+func inferredMutationType(expr ast.Expr) string {
+	switch value := expr.(type) {
+	case *ast.CompositeLit:
+		return mutationTypeName(value.Type)
+	case *ast.UnaryExpr:
+		return inferredMutationType(value.X)
+	case *ast.ParenExpr:
+		return inferredMutationType(value.X)
+	default:
+		return ""
+	}
+}
+
+func mutationValueTypes(d *ast.FuncDecl) map[string]string {
+	typesByName := make(map[string]string)
+	addFields := func(fields *ast.FieldList) {
+		if fields == nil {
+			return
+		}
+		for _, field := range fields.List {
+			typeName := mutationTypeName(field.Type)
+			for _, name := range field.Names {
+				typesByName[name.Name] = typeName
+			}
+		}
+	}
+	addFields(d.Recv)
+	addFields(d.Type.Params)
+	ast.Inspect(d.Body, func(node ast.Node) bool {
+		switch value := node.(type) {
+		case *ast.ValueSpec:
+			typeName := mutationTypeName(value.Type)
+			for _, name := range value.Names {
+				if typeName != "" {
+					typesByName[name.Name] = typeName
+				}
+			}
+		case *ast.AssignStmt:
+			if value.Tok != token.DEFINE || len(value.Lhs) != len(value.Rhs) {
+				return true
+			}
+			for i, lhs := range value.Lhs {
+				name, ok := lhs.(*ast.Ident)
+				if !ok {
+					continue
+				}
+				if typeName := inferredMutationType(value.Rhs[i]); typeName != "" {
+					typesByName[name.Name] = typeName
+				}
+			}
+		}
+		return true
+	})
+	return typesByName
+}
+
 // extractFuncDecl handles function and method declarations.
-func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkgImportPath string, result *FileResult) {
+func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkgImportPath string, result *FileResult, resolver *fileResolver, packageValues map[string]bool) {
 	pos := fset.Position(d.Pos())
 	endPos := fset.Position(d.End())
 
@@ -400,6 +835,8 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 
 	// Extract call edges, env reads, concurrency, and test edges from the body.
 	if d.Body != nil {
+		functionResolver := resolver.forFunction(d)
+		mutationTypes := mutationValueTypes(d)
 		callerName := d.Name.Name
 		if receiver != "" {
 			callerName = fmt.Sprintf("(%s).%s", receiver, d.Name.Name)
@@ -440,60 +877,9 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 			callPos := fset.Position(call.Pos())
 			callee := calleeString(call)
 
-			// Sync primitive detection using suffix matching so "w.mu.Lock",
-			// "s.mu.Lock", etc. are all caught regardless of receiver variable name.
-			switch {
-			case strings.HasSuffix(callee, ".Lock") && !strings.HasSuffix(callee, ".RLock"):
+			if kind, ok := functionResolver.concurrencyKind(call); ok {
 				result.Concurrency = append(result.Concurrency, graph.ConcurrencyNode{
-					Kind:     "mutex_lock",
-					Function: callerName,
-					File:     relPath,
-					Line:     callPos.Line,
-					Detail:   callee,
-				})
-			case strings.HasSuffix(callee, ".RLock"):
-				result.Concurrency = append(result.Concurrency, graph.ConcurrencyNode{
-					Kind:     "mutex_lock",
-					Function: callerName,
-					File:     relPath,
-					Line:     callPos.Line,
-					Detail:   callee,
-				})
-			case strings.HasSuffix(callee, ".Unlock") && !strings.HasSuffix(callee, ".RUnlock"):
-				result.Concurrency = append(result.Concurrency, graph.ConcurrencyNode{
-					Kind:     "mutex_unlock",
-					Function: callerName,
-					File:     relPath,
-					Line:     callPos.Line,
-					Detail:   callee,
-				})
-			case strings.HasSuffix(callee, ".RUnlock"):
-				result.Concurrency = append(result.Concurrency, graph.ConcurrencyNode{
-					Kind:     "mutex_unlock",
-					Function: callerName,
-					File:     relPath,
-					Line:     callPos.Line,
-					Detail:   callee,
-				})
-			case strings.HasSuffix(callee, ".Add"):
-				result.Concurrency = append(result.Concurrency, graph.ConcurrencyNode{
-					Kind:     "waitgroup_add",
-					Function: callerName,
-					File:     relPath,
-					Line:     callPos.Line,
-					Detail:   callee,
-				})
-			case strings.HasSuffix(callee, ".Wait"):
-				result.Concurrency = append(result.Concurrency, graph.ConcurrencyNode{
-					Kind:     "waitgroup_wait",
-					Function: callerName,
-					File:     relPath,
-					Line:     callPos.Line,
-					Detail:   callee,
-				})
-			case strings.HasSuffix(callee, ".Do"):
-				result.Concurrency = append(result.Concurrency, graph.ConcurrencyNode{
-					Kind:     "once_do",
+					Kind:     kind,
 					Function: callerName,
 					File:     relPath,
 					Line:     callPos.Line,
@@ -549,7 +935,7 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 			}
 
 			// Error/Panic Extraction
-			if callee == "panic" || strings.Contains(callee, "Errorf") || strings.Contains(callee, "New") {
+			if resolver.isErrorConstructor(call) {
 				for _, arg := range call.Args {
 					if lit, ok := arg.(*ast.BasicLit); ok && lit.Kind == token.STRING {
 						result.Errors = append(result.Errors, graph.ErrorEdge{
@@ -635,13 +1021,14 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 			// the recovery logic in one place — the helper recursively walks
 			// nested call expressions, so `wrap1(wrap2(h.method))` correctly
 			// yields an edge to `h.method`.
-			for _, ref := range extractHandlerRefs(call) {
+			for _, ref := range extractCallableRefs(call) {
 				result.Calls = append(result.Calls, graph.CallEdge{
 					CallerSymbolID: sym.ID,
 					CallerName:     callerName,
 					CalleeRaw:      ref,
 					File:           relPath,
 					Line:           callPos.Line,
+					Potential:      true,
 				})
 			}
 			return true
@@ -673,6 +1060,7 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 						CalleeRaw:      ref,
 						File:           relPath,
 						Line:           fset.Position(assign.Pos()).Line,
+						Potential:      true,
 					})
 				}
 			}
@@ -681,13 +1069,15 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 
 			for _, lhs := range assign.Lhs {
 				if sel, ok := lhs.(*ast.SelectorExpr); ok {
+					typeName := mutationTypes[mutationValueName(sel.X)]
 					result.Mutations = append(result.Mutations, graph.MutationEdge{
 						Field:    sel.Sel.Name,
+						TypeName: typeName,
 						Function: callerName,
 						File:     relPath,
 						Line:     fset.Position(assign.Pos()).Line,
 					})
-				} else if id, ok := lhs.(*ast.Ident); ok && !isDecl {
+				} else if id, ok := lhs.(*ast.Ident); ok && !isDecl && packageValues[id.Name] {
 					result.Mutations = append(result.Mutations, graph.MutationEdge{
 						Field:    id.Name,
 						Function: callerName,
@@ -957,6 +1347,17 @@ func calleeString(call *ast.CallExpr) string {
 func extractHandlerRefs(call *ast.CallExpr) []string {
 	var refs []string
 	for _, a := range call.Args {
+		collectRefs(a, &refs, false)
+	}
+	return refs
+}
+
+// extractCallableRefs returns best-effort callback candidates for graph edges.
+// Unlike route labels, these references affect reachability, so identifiers
+// that the parser has already resolved as ordinary variables are excluded.
+func extractCallableRefs(call *ast.CallExpr) []string {
+	var refs []string
+	for _, a := range call.Args {
 		collectFuncRefs(a, &refs)
 	}
 	return refs
@@ -981,10 +1382,17 @@ func extractHandlerRefs(call *ast.CallExpr) []string {
 //   - *ast.Ident         — bare function reference (filters nil/true/false/iota)
 //   - *ast.SelectorExpr  — method value or qualified function (h.method, pkg.Foo)
 func collectFuncRefs(e ast.Expr, out *[]string) {
+	collectRefs(e, out, true)
+}
+
+func collectRefs(e ast.Expr, out *[]string, requireCallable bool) {
 	switch x := e.(type) {
 	case *ast.Ident:
 		switch x.Name {
 		case "nil", "true", "false", "iota", "":
+			return
+		}
+		if requireCallable && !identMayBeCallable(x) {
 			return
 		}
 		*out = append(*out, x.Name)
@@ -994,22 +1402,52 @@ func collectFuncRefs(e ast.Expr, out *[]string) {
 		}
 	case *ast.CallExpr:
 		for _, a := range x.Args {
-			collectFuncRefs(a, out)
+			collectRefs(a, out, requireCallable)
 		}
 	case *ast.CompositeLit:
 		for _, elt := range x.Elts {
-			collectFuncRefs(elt, out)
+			collectRefs(elt, out, requireCallable)
 		}
 	case *ast.KeyValueExpr:
 		// Map/struct field — only the value side can be a function ref;
 		// the key is either a field name (Ident) or a constant (BasicLit).
-		collectFuncRefs(x.Value, out)
+		collectRefs(x.Value, out, requireCallable)
 	case *ast.UnaryExpr:
 		// &Foo{...} — recurse into operand.
-		collectFuncRefs(x.X, out)
+		collectRefs(x.X, out, requireCallable)
 	case *ast.ParenExpr:
-		collectFuncRefs(x.X, out)
+		collectRefs(x.X, out, requireCallable)
 	}
+}
+
+func identMayBeCallable(id *ast.Ident) bool {
+	if id.Obj == nil {
+		// Cross-file declarations are not resolved by go/parser. BuildGraph
+		// validates these candidates against the complete symbol table later.
+		return true
+	}
+	if id.Obj.Kind == ast.Fun {
+		return true
+	}
+	if id.Obj.Kind != ast.Var {
+		return false
+	}
+
+	switch decl := id.Obj.Decl.(type) {
+	case *ast.Field:
+		_, ok := decl.Type.(*ast.FuncType)
+		return ok
+	case *ast.ValueSpec:
+		if _, ok := decl.Type.(*ast.FuncType); ok {
+			return true
+		}
+		for _, value := range decl.Values {
+			if _, ok := value.(*ast.FuncLit); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // exprName returns a best-effort single-identifier name for an expression.

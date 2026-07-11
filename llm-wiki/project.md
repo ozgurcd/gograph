@@ -2,36 +2,15 @@
 title: Project Identity and Architecture
 type: project
 status: current
-updated: 2026-06-13
+updated: 2026-07-11
 sources:
   - SRC-20260614-gograph-legacy-project
 ---
 
 # Project: gograph
 
-`gograph` is a local, AST-aware Go repository intelligence tool designed for AI coding agents. It parses a Go codebase, builds a static `.gograph/graph.json` index, and answers structural queries (callers, callees, routes, environment reads, error flows, package coupling) instantly without having to repeatedly parse raw source files.
+`gograph` is a local Go AST indexer for coding agents. CLI and MCP share 60 query/analysis/workflow capabilities; MCP has 64 endpoints including four session tools. CLI reads persisted `.gograph/graph.json`; MCP refreshes source analysis after edits.
 
-## Core Promise and Features
-- **Go-Focused**: Performs static AST analysis on Go repositories.
-- **Zero Network Dependency**: Runs completely offline, assuring local security.
-- **AST-Aware**: Extracts targeted source slices, traces change impact blast radiuses, and packages full symbol contexts in single queries.
-- **Fast Queries**: Exposes findings via CLI and a 50+ tool Model Context Protocol (MCP) server.
+Default builds tolerate broken code. Precise builds attempt type checking plus CHA/SSA and retain the AST graph on failure. Precise mode and `doc` invoke the configured Go toolchain and may use its module/cache/network policy.
 
-## Non-Goals (Hard Boundaries)
-- No multi-language parsing.
-- No AI/LLM API calls or integrations within the engine.
-- No vector embeddings or SaaS backend dependencies.
-- Zero telemetry or remote usage logs.
-- Does not replace compiler type-checking (heuristic extractors are for navigation, not proof).
-
-## Correctness Models
-- **Default (`gograph build .`)**: Uses AST heuristics and duck-typing; tolerates uncompilable or messy code states.
-- **Precise (`gograph build . --precise`)**: Uses Go type-checking (`go/types` CHA); requires a compilable package environment.
-
-## Package Architecture Layout
-- `internal/graph`: Core data models (lightweight, JSON-serializable, stdlib only).
-- `internal/parser`: AST inspection, scope resolution, and metadata extraction.
-- `internal/search`: Algorithmic query search, BFS traversals, and filtering.
-- `internal/wiki`: Code stats and LLM wiki page generator.
-- `internal/cli`: CLI runner, command line parsing, and table output.
-- `internal/mcp`: MCP stdio server.
+Non-goals: other languages, model APIs, embeddings, SaaS, remote telemetry, or executing target binaries/tests. Audit telemetry is local. Heuristic results aid navigation; they are not compiler proofs.

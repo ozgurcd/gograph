@@ -17,12 +17,16 @@ type StatsResult struct {
 	SQLs          int    `json:"sqls"`
 	EnvReads      int    `json:"env_reads"`
 	TestEdges     int    `json:"test_edges"`
+	BuildStatus   string `json:"build_status"`
+	ScannedFiles  int    `json:"scanned_files,omitempty"`
+	ParsedFiles   int    `json:"parsed_files,omitempty"`
+	ParseFailures int    `json:"parse_failures,omitempty"`
 }
 
 // Stats derives index health counts directly from the in-memory graph.
 // It performs no I/O and requires no schema changes.
 func Stats(g *graph.Graph) StatsResult {
-	return StatsResult{
+	result := StatsResult{
 		SchemaVersion: g.Version,
 		GeneratedAt:   g.GeneratedAt.Format("2006-01-02 15:04:05 UTC"),
 		Packages:      len(g.Packages),
@@ -34,5 +38,16 @@ func Stats(g *graph.Graph) StatsResult {
 		SQLs:          len(g.SQLs),
 		EnvReads:      len(g.EnvReads),
 		TestEdges:     len(g.TestEdges),
+		BuildStatus:   "unknown",
 	}
+	if g.Build != nil {
+		result.BuildStatus = "partial"
+		if g.Build.Complete {
+			result.BuildStatus = "complete"
+		}
+		result.ScannedFiles = g.Build.ScannedFiles
+		result.ParsedFiles = g.Build.ParsedFiles
+		result.ParseFailures = len(g.Build.Failures)
+	}
+	return result
 }

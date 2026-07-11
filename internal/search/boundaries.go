@@ -51,19 +51,52 @@ func isStdLib(importPath string) bool {
 	return !strings.Contains(firstSegment, ".")
 }
 
-// Boundaries checks the package import graph against constraints defined in a JSON file.
-func Boundaries(g *graph.Graph, configPath string) ([]Result, error) {
+func boundaryConfigPath(g *graph.Graph, configPath string) (string, error) {
 	if configPath == "" {
-		return nil, fmt.Errorf("invalid config path: empty")
+		return "", fmt.Errorf("invalid config path: empty")
 	}
 	if strings.Contains(configPath, "\\") {
-		return nil, fmt.Errorf("invalid config path: backslash not allowed")
+		return "", fmt.Errorf("invalid config path: backslash not allowed")
 	}
 	if strings.Contains(configPath, "..") {
-		return nil, fmt.Errorf("invalid config path: path traversal detected")
+		return "", fmt.Errorf("invalid config path: path traversal detected")
 	}
 
-	data, err := os.ReadFile(configPath)
+	if g == nil || g.Root == "" {
+		resolved, err := filepath.Abs(configPath)
+		if err != nil {
+			return "", fmt.Errorf("resolve config path: %w", err)
+		}
+		return resolved, nil
+	}
+	root := g.Root
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve graph root: %w", err)
+	}
+	resolved := configPath
+	if !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(absRoot, resolved)
+	}
+	absConfig, err := filepath.Abs(resolved)
+	if err != nil {
+		return "", fmt.Errorf("resolve config path: %w", err)
+	}
+	rel, err := filepath.Rel(absRoot, absConfig)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("invalid config path: must be inside graph root")
+	}
+	return absConfig, nil
+}
+
+// Boundaries checks the package import graph against constraints defined in a JSON file.
+func Boundaries(g *graph.Graph, configPath string) ([]Result, error) {
+	resolvedPath, err := boundaryConfigPath(g, configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := os.ReadFile(resolvedPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not read boundaries config file: %w", err)
 	}
@@ -162,16 +195,11 @@ func Boundaries(g *graph.Graph, configPath string) ([]Result, error) {
 
 // CreateBoundaries scans the graph and generates a baseline boundaries.json file based on current imports.
 func CreateBoundaries(g *graph.Graph, configPath string) error {
-	if configPath == "" {
-		return fmt.Errorf("invalid config path: empty")
+	resolvedPath, err := boundaryConfigPath(g, configPath)
+	if err != nil {
+		return err
 	}
-	if strings.Contains(configPath, "\\") {
-		return fmt.Errorf("invalid config path: backslash not allowed")
-	}
-	if strings.Contains(configPath, "..") {
-		return fmt.Errorf("invalid config path: path traversal detected")
-	}
-	if _, err := os.Stat(configPath); err == nil {
+	if _, err := os.Stat(resolvedPath); err == nil {
 		return fmt.Errorf("file already exists, refusing to overwrite. Delete it first if you want to regenerate")
 	}
 
@@ -265,12 +293,12 @@ func CreateBoundaries(g *graph.Graph, configPath string) error {
 		return config.Layers[i].Name < config.Layers[j].Name
 	})
 
-	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(resolvedPath), 0755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath, data, 0644)
+	return os.WriteFile(resolvedPath, data, 0644)
 }

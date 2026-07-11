@@ -3,6 +3,7 @@ package mcp_test
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strings"
 	"testing"
 
@@ -32,10 +33,28 @@ func TestGographCapabilities(t *testing.T) {
 		t.Fatalf("expected JSON, got: %v", err)
 	}
 
-	// 1. Output includes tools
+	// 1. Output includes every registered tool exactly once.
 	tools, ok := out["tools"].([]any)
-	if !ok || len(tools) < 25 {
-		t.Errorf("expected tools array with at least 25 tools, got %v", tools)
+	if !ok {
+		t.Fatalf("expected tools array, got %v", out["tools"])
+	}
+	var capabilityNames []string
+	for _, raw := range tools {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("invalid capability entry: %#v", raw)
+		}
+		name, _ := entry["name"].(string)
+		capabilityNames = append(capabilityNames, name)
+	}
+	var registeredNames []string
+	for name := range handlers {
+		registeredNames = append(registeredNames, name)
+	}
+	sort.Strings(capabilityNames)
+	sort.Strings(registeredNames)
+	if strings.Join(capabilityNames, "\n") != strings.Join(registeredNames, "\n") {
+		t.Errorf("capabilities registry differs from live MCP registry\ncapabilities: %v\nregistered:   %v", capabilityNames, registeredNames)
 	}
 
 	toolsStr := string(text)

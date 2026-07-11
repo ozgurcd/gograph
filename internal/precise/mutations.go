@@ -88,9 +88,20 @@ var stdlibMutators = map[string]bool{
 // a receiver field. Carries the exact store position so output can point
 // at the offending line — not just the enclosing function.
 type directMutation struct {
-	Field string
-	File  string
-	Line  int
+	Field    string
+	TypeName string
+	File     string
+	Line     int
+}
+
+func mutationReceiverTypeName(value types.Type) string {
+	if pointer, ok := value.(*types.Pointer); ok {
+		value = pointer.Elem()
+	}
+	if named, ok := value.(*types.Named); ok && named.Obj() != nil {
+		return named.Obj().Name()
+	}
+	return strings.TrimPrefix(value.String(), "*")
 }
 
 // findMutatingMethods walks every *ssa.Function in prog whose receiver is a
@@ -126,6 +137,7 @@ func findMutatingMethods(prog *ssa.Program, absRoot string) (mutatingMethods map
 			continue
 		}
 		recvType := fn.Signature.Recv().Type()
+		recvTypeName := mutationReceiverTypeName(recvType)
 		// Only pointer receivers can mutate caller-visible state. A value
 		// receiver gets a copy and can't affect the caller's struct.
 		if _, ptr := recvType.(*types.Pointer); !ptr {
@@ -172,7 +184,7 @@ func findMutatingMethods(prog *ssa.Program, absRoot string) (mutatingMethods map
 				}
 				seenForPosition[k] = true
 				directMutations[fnID] = append(directMutations[fnID], directMutation{
-					Field: field, File: file, Line: pos.Line,
+					Field: field, TypeName: recvTypeName, File: file, Line: pos.Line,
 				})
 			}
 		}
@@ -329,8 +341,10 @@ func collectIndirectMutations(prog *ssa.Program, absRoot string, userMutators ma
 		// fn is the *caller*. We need to know its receiver param so we can
 		// recognise calls of the form  caller-recv.field.Method().
 		var callerRecvParam *ssa.Parameter
+		callerTypeName := ""
 		if fn.Signature != nil && fn.Signature.Recv() != nil && len(fn.Params) > 0 {
 			callerRecvParam = fn.Params[0]
+			callerTypeName = mutationReceiverTypeName(fn.Signature.Recv().Type())
 		}
 		// Channel-send mutations: ssa.Send instructions targeting a field
 		// channel are emitted as mutations regardless of receiver chain
@@ -353,6 +367,7 @@ func collectIndirectMutations(prog *ssa.Program, absRoot string, userMutators ma
 					}
 					out = append(out, graph.MutationEdge{
 						Field:    field,
+						TypeName: callerTypeName,
 						Function: callerSymID,
 						File:     strings.TrimPrefix(pos.Filename, absRoot+"/"),
 						Line:     pos.Line,
@@ -395,6 +410,7 @@ func collectIndirectMutations(prog *ssa.Program, absRoot string, userMutators ma
 					}
 					out = append(out, graph.MutationEdge{
 						Field:    field,
+						TypeName: callerTypeName,
 						Function: callerSymID,
 						File:     strings.TrimPrefix(pos.Filename, absRoot+"/"),
 						Line:     pos.Line,

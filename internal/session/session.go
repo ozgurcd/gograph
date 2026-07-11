@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -33,16 +34,27 @@ func FindGographRoot() string {
 	return rootfind.FindRoot()
 }
 
-// sessionsDirAbs returns the absolute path to the sessions directory,
-// anchored at the discovered gograph root.
-func sessionsDirAbs() string {
-	return filepath.Join(FindGographRoot(), relSessionsDir)
+func sessionRoot(root string) string {
+	if root != "" {
+		return root
+	}
+	return FindGographRoot()
 }
 
-// activePointerPathAbs returns the absolute path to the active-session pointer
-// file, anchored at the discovered gograph root.
+func sessionsDirAt(root string) string {
+	return filepath.Join(sessionRoot(root), relSessionsDir)
+}
+
+func sessionsDirAbs() string {
+	return sessionsDirAt("")
+}
+
+func activePointerPathAt(root string) string {
+	return filepath.Join(sessionRoot(root), relActivePointerPath)
+}
+
 func activePointerPathAbs() string {
-	return filepath.Join(FindGographRoot(), relActivePointerPath)
+	return activePointerPathAt("")
 }
 
 // ActiveSessionPointer tracks the currently active session ID.
@@ -77,11 +89,17 @@ type CommandLogEntry struct {
 
 // GetActiveSessionID retrieves the currently active session ID if it exists.
 func GetActiveSessionID() (string, error) {
-	if _, err := os.Stat(activePointerPathAbs()); os.IsNotExist(err) {
+	return GetActiveSessionIDAt("")
+}
+
+// GetActiveSessionIDAt retrieves the active session rooted at a specific project.
+func GetActiveSessionIDAt(root string) (string, error) {
+	pointerPath := activePointerPathAt(root)
+	if _, err := os.Stat(pointerPath); os.IsNotExist(err) {
 		return "", nil
 	}
 
-	data, err := os.ReadFile(activePointerPathAbs())
+	data, err := os.ReadFile(pointerPath)
 	if err != nil {
 		return "", fmt.Errorf("read active pointer: %w", err)
 	}
@@ -96,8 +114,13 @@ func GetActiveSessionID() (string, error) {
 
 // StartSession initializes a new session and writes the active session pointer.
 func StartSession(customWord string) (string, error) {
+	return StartSessionAt("", customWord)
+}
+
+// StartSessionAt starts a session under the specified project root.
+func StartSessionAt(root, customWord string) (string, error) {
 	// 1. Check if a session is already active
-	activeID, err := GetActiveSessionID()
+	activeID, err := GetActiveSessionIDAt(root)
 	if err != nil {
 		return "", err
 	}
@@ -125,12 +148,12 @@ func StartSession(customWord string) (string, error) {
 	}
 
 	// 3. Ensure directories exist
-	if err := os.MkdirAll(sessionsDirAbs(), 0755); err != nil {
+	if err := os.MkdirAll(sessionsDirAt(root), 0755); err != nil {
 		return "", fmt.Errorf("create sessions directory: %w", err)
 	}
 
 	// 4. Create and write the session start log
-	logFilePath := filepath.Join(sessionsDirAbs(), fmt.Sprintf("session_%s.jsonl", sessionID))
+	logFilePath := filepath.Join(sessionsDirAt(root), fmt.Sprintf("session_%s.jsonl", sessionID))
 	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return "", fmt.Errorf("create session log file: %w", err)
@@ -150,7 +173,7 @@ func StartSession(customWord string) (string, error) {
 	// 5. Write the active session pointer
 	ptr := ActiveSessionPointer{ActiveSessionID: sessionID}
 	ptrBytes, _ := json.MarshalIndent(ptr, "", "  ")
-	if err := os.WriteFile(activePointerPathAbs(), ptrBytes, 0644); err != nil {
+	if err := os.WriteFile(activePointerPathAt(root), ptrBytes, 0644); err != nil {
 		return "", fmt.Errorf("write active session pointer: %w", err)
 	}
 
@@ -159,8 +182,13 @@ func StartSession(customWord string) (string, error) {
 
 // EndSession ends the currently active session.
 func EndSession() (string, error) {
+	return EndSessionAt("")
+}
+
+// EndSessionAt ends the active session under the specified project root.
+func EndSessionAt(root string) (string, error) {
 	// 1. Get active session ID
-	activeID, err := GetActiveSessionID()
+	activeID, err := GetActiveSessionIDAt(root)
 	if err != nil {
 		return "", err
 	}
@@ -169,11 +197,11 @@ func EndSession() (string, error) {
 	}
 
 	// 2. Append end entry to log file
-	logFilePath := filepath.Join(sessionsDirAbs(), fmt.Sprintf("session_%s.jsonl", activeID))
+	logFilePath := filepath.Join(sessionsDirAt(root), fmt.Sprintf("session_%s.jsonl", activeID))
 	logFile, err := os.OpenFile(logFilePath, os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		// If log file was manually deleted, still allow clean teardown of the active pointer
-		_ = os.Remove(activePointerPathAbs())
+		_ = os.Remove(activePointerPathAt(root))
 		return activeID, fmt.Errorf("open session log for append: %w (pointer cleaned up)", err)
 	}
 	defer func() { _ = logFile.Close() }()
@@ -187,7 +215,7 @@ func EndSession() (string, error) {
 	_, _ = logFile.Write(append(endBytes, '\n'))
 
 	// 3. Remove the active pointer file
-	if err := os.Remove(activePointerPathAbs()); err != nil {
+	if err := os.Remove(activePointerPathAt(root)); err != nil {
 		return activeID, fmt.Errorf("remove active pointer: %w", err)
 	}
 
@@ -196,16 +224,21 @@ func EndSession() (string, error) {
 
 // LogCommand Telemetry records command execution details inside the active session log if present.
 func LogCommand(command string, args []string, intention string, elapsed time.Duration, status string) error {
+	return LogCommandAt("", command, args, intention, elapsed, status)
+}
+
+// LogCommandAt records command metadata under the specified project root.
+func LogCommandAt(root, command string, args []string, intention string, elapsed time.Duration, status string) error {
 	if command == "hook-guard" && status == "success" {
 		return nil // Skip logging successful meta hook checks to keep the log clean
 	}
 
-	activeID, err := GetActiveSessionID()
+	activeID, err := GetActiveSessionIDAt(root)
 	if err != nil || activeID == "" {
 		return nil // No active session to log to
 	}
 
-	logFilePath := filepath.Join(sessionsDirAbs(), fmt.Sprintf("session_%s.jsonl", activeID))
+	logFilePath := filepath.Join(sessionsDirAt(root), fmt.Sprintf("session_%s.jsonl", activeID))
 	logFile, err := os.OpenFile(logFilePath, os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return fmt.Errorf("open session log for append: %w", err)
@@ -285,11 +318,17 @@ type AuditReport struct {
 
 // FindMostRecentSessionID finds the session log file with the newest modification time.
 func FindMostRecentSessionID() (string, error) {
-	if _, err := os.Stat(sessionsDirAbs()); os.IsNotExist(err) {
+	return FindMostRecentSessionIDAt("")
+}
+
+// FindMostRecentSessionIDAt finds the newest session under a project root.
+func FindMostRecentSessionIDAt(root string) (string, error) {
+	dir := sessionsDirAt(root)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return "", fmt.Errorf("no sessions directory exists yet")
 	}
 
-	files, err := os.ReadDir(sessionsDirAbs())
+	files, err := os.ReadDir(dir)
 	if err != nil {
 		return "", fmt.Errorf("read sessions directory: %w", err)
 	}
@@ -313,7 +352,7 @@ func FindMostRecentSessionID() (string, error) {
 	}
 
 	if newestID == "" {
-		return "", fmt.Errorf("no session logs found in %s", sessionsDirAbs())
+		return "", fmt.Errorf("no session logs found in %s", dir)
 	}
 
 	return newestID, nil
@@ -321,19 +360,30 @@ func FindMostRecentSessionID() (string, error) {
 
 // RunAudit parses and scores a session for agent compliance and success rates.
 func RunAudit(sessionID string, jsonMode bool) int {
+	return RunAuditTo(sessionID, jsonMode, os.Stdout, os.Stderr)
+}
+
+// RunAuditTo parses and scores a session, writing only to the supplied
+// streams. Server callers use this to avoid replacing process-global stdout.
+func RunAuditTo(sessionID string, jsonMode bool, stdout, stderr io.Writer) int {
+	return RunAuditToAt("", sessionID, jsonMode, stdout, stderr)
+}
+
+// RunAuditToAt audits a session under a specific project root.
+func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Writer) int {
 	var err error
 	if sessionID == "" {
-		sessionID, err = FindMostRecentSessionID()
+		sessionID, err = FindMostRecentSessionIDAt(root)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error locating session: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "Error locating session: %v\n", err)
 			return 1
 		}
 	}
 
-	logFilePath := filepath.Join(sessionsDirAbs(), fmt.Sprintf("session_%s.jsonl", sessionID))
+	logFilePath := filepath.Join(sessionsDirAt(root), fmt.Sprintf("session_%s.jsonl", sessionID))
 	file, err := os.Open(logFilePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening session log %q: %v\n", logFilePath, err)
+		_, _ = fmt.Fprintf(stderr, "Error opening session log %q: %v\n", logFilePath, err)
 		return 1
 	}
 	defer func() { _ = file.Close() }()
@@ -352,7 +402,7 @@ func RunAudit(sessionID string, jsonMode bool) int {
 	}
 
 	if len(lines) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: session log %q is empty or corrupt\n", logFilePath)
+		_, _ = fmt.Fprintf(stderr, "Error: session log %q is empty or corrupt\n", logFilePath)
 		return 1
 	}
 
@@ -473,61 +523,80 @@ func RunAudit(sessionID string, jsonMode bool) int {
 		Recommendations: recs,
 	}
 
+	output, err := formatAudit(report, jsonMode, duration)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "Error formatting session audit: %v\n", err)
+		return 1
+	}
+	if _, err := io.WriteString(stdout, output); err != nil {
+		_, _ = fmt.Fprintf(stderr, "Error writing session audit: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func formatAudit(report AuditReport, jsonMode bool, duration time.Duration) (string, error) {
 	if jsonMode {
-		b, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Println(string(b))
-		return 0
+		data, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		return string(data) + "\n", nil
 	}
 
-	fmt.Println(strings.Repeat("=", 80))
-	fmt.Printf("GOGRAPH AGENT SESSION AUDIT\n")
-	fmt.Println(strings.Repeat("=", 80))
-	fmt.Printf("Session ID      : %s\n", report.SessionID)
-	fmt.Printf("Status          : %s\n", report.Status)
-	fmt.Printf("Created At      : %s\n", report.CreatedAt)
-	fmt.Printf("Ended At        : %s\n", report.EndedAt)
-	fmt.Printf("Duration        : %v\n", duration.Round(time.Second))
-	fmt.Println()
-	fmt.Printf("━━━ METRICS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	fmt.Printf("Total Commands  : %d\n", report.TotalCommands)
-	fmt.Printf("Successful      : %d\n", report.SuccessCount)
-	fmt.Printf("Failed          : %d\n", report.FailureCount)
-	fmt.Printf("Success Rate    : %.1f%%\n", report.SuccessRate)
-	fmt.Println()
-	fmt.Printf("━━━ COMPLIANCE SCORE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	fmt.Printf("Plan Rule Run   : %t (Weight: 35%%)\n", report.PlanRun)
-	fmt.Printf("Review Rule Run : %t (Weight: 35%%)\n", report.ReviewRun)
-	fmt.Printf("Composability   : %.1f%% (Weight: 30%%)\n", report.Composability)
-	fmt.Println()
-	fmt.Printf("Overall Score   : %.1f%%\n", report.ComplianceScore)
-	fmt.Printf("Compliance Grade: %s\n", report.Grade)
-	fmt.Println()
+	var output strings.Builder
+	write := func(format string, args ...any) {
+		_, _ = fmt.Fprintf(&output, format, args...)
+	}
+	write("%s\n", strings.Repeat("=", 80))
+	write("GOGRAPH AGENT SESSION AUDIT\n")
+	write("%s\n", strings.Repeat("=", 80))
+	write("Session ID      : %s\n", report.SessionID)
+	write("Status          : %s\n", report.Status)
+	write("Created At      : %s\n", report.CreatedAt)
+	write("Ended At        : %s\n", report.EndedAt)
+	write("Duration        : %v\n\n", duration.Round(time.Second))
+	write("━━━ METRICS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	write("Total Commands  : %d\n", report.TotalCommands)
+	write("Successful      : %d\n", report.SuccessCount)
+	write("Failed          : %d\n", report.FailureCount)
+	write("Success Rate    : %.1f%%\n\n", report.SuccessRate)
+	write("━━━ COMPLIANCE SCORE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	write("Plan Rule Run   : %t (Weight: 35%%)\n", report.PlanRun)
+	write("Review Rule Run : %t (Weight: 35%%)\n", report.ReviewRun)
+	write("Composability   : %.1f%% (Weight: 30%%)\n\n", report.Composability)
+	write("Overall Score   : %.1f%%\n", report.ComplianceScore)
+	write("Compliance Grade: %s\n\n", report.Grade)
+	write("━━━ RECOMMENDATIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 	if len(report.Recommendations) > 0 {
-		fmt.Printf("━━━ RECOMMENDATIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-		for _, r := range report.Recommendations {
-			fmt.Printf("* %s\n", r)
+		for _, recommendation := range report.Recommendations {
+			write("* %s\n", recommendation)
 		}
 	} else {
-		fmt.Printf("━━━ RECOMMENDATIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-		fmt.Println("Perfect! AI agent followed all core compliance and efficiency workflow rules.")
+		write("Perfect! AI agent followed all core compliance and efficiency workflow rules.\n")
 	}
-	fmt.Println(strings.Repeat("=", 80))
-
-	return 0
+	write("%s\n", strings.Repeat("=", 80))
+	return output.String(), nil
 }
 
 // CleanupSessions deletes all inactive session JSONL logs. If no session is active, it deletes all logs.
 func CleanupSessions() (int, error) {
-	if _, err := os.Stat(sessionsDirAbs()); os.IsNotExist(err) {
+	return CleanupSessionsAt("")
+}
+
+// CleanupSessionsAt removes inactive sessions under a specific project root.
+func CleanupSessionsAt(root string) (int, error) {
+	dir := sessionsDirAt(root)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return 0, nil
 	}
 
-	files, err := os.ReadDir(sessionsDirAbs())
+	files, err := os.ReadDir(dir)
 	if err != nil {
 		return 0, fmt.Errorf("read sessions directory: %w", err)
 	}
 
-	activeID, _ := GetActiveSessionID()
+	activeID, _ := GetActiveSessionIDAt(root)
 	activeFileName := ""
 	if activeID != "" {
 		activeFileName = fmt.Sprintf("session_%s.jsonl", activeID)
@@ -539,7 +608,7 @@ func CleanupSessions() (int, error) {
 			if activeFileName != "" && f.Name() == activeFileName {
 				continue // Skip active session log to prevent runtime telemetry corruption
 			}
-			filePath := filepath.Join(sessionsDirAbs(), f.Name())
+			filePath := filepath.Join(dir, f.Name())
 			if err := os.Remove(filePath); err == nil {
 				deletedCount++
 			}

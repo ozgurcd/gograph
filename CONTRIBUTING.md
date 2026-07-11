@@ -27,7 +27,7 @@ As mentioned in the README, `gograph` was initially built exclusively for Go. If
 
 1. **Create a branch:** Create a new branch for your feature or bugfix (`git checkout -b feature/my-new-feature`).
 2. **Write code:** Implement your changes. Ensure you add tests if you are adding new functionality.
-3. **Format and lint:** Run `go fmt ./...` and `go vet ./...` before committing.
+3. **Format and verify:** Run `make format-check`, `go test -race ./...`, `go vet ./...`, `staticcheck ./...`, `golangci-lint run ./...`, and `govulncheck ./...` before committing. `make test` runs the full local verification suite when those tools and Grype are installed.
 4. **Commit:** Write clear, concise commit messages.
 5. **Push:** Push to your fork and submit a Pull Request against the `main` branch.
 6. **Review:** Maintainers will review your PR, suggest changes if needed, and merge it.

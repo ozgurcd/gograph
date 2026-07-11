@@ -3,6 +3,7 @@ package search
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -155,5 +156,84 @@ func TestCheckBoundariesViolation(t *testing.T) {
 	}
 	if len(report.Findings) != 1 || report.Findings[0].Check != "boundaries" {
 		t.Errorf("expected boundaries finding")
+	}
+}
+
+func TestCheckChangedRouteMatchesHandlerIdentity(t *testing.T) {
+	current := &graph.Graph{
+		Symbols: []graph.SymbolNode{{ID: "example.com/api::HandleUsers", Name: "HandleUsers", Kind: graph.KindFunction, Signature: "func(int)", File: "handler.go", Line: 3}},
+		Routes:  []graph.HTTPRoute{{Method: "GET", Path: "/users", Handler: "api.HandleUsers", File: "routes.go", Line: 8}},
+	}
+	baseline := &graph.Graph{Symbols: []graph.SymbolNode{{ID: "example.com/api::HandleUsers", Name: "HandleUsers", Kind: graph.KindFunction, Signature: "func()"}}}
+	report, err := RunChecks(&CheckParams{
+		CurrentGraph:  current,
+		BaselineGraph: baseline,
+		Config: &CheckConfig{Checks: map[string]any{
+			"require_tests_for_changed_routes": "error",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("RunChecks: %v", err)
+	}
+	if len(report.Findings) != 1 || report.Findings[0].Symbol != "api.HandleUsers" {
+		t.Fatalf("expected missing-test route finding, got %+v", report.Findings)
+	}
+}
+
+func TestCheckChangedRouteDetectsBodyOnlyGitChange(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "handler.go")
+	if err := os.WriteFile(path, []byte("package api\n\nfunc HandleUsers() { println(1) }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "--quiet"}, {"config", "user.email", "test@example.com"}, {"config", "user.name", "Test User"}, {"add", "."}, {"commit", "--quiet", "-m", "baseline"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(path, []byte("package api\n\nfunc HandleUsers() { println(2) }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	symbol := graph.SymbolNode{ID: "example.com/api::HandleUsers", Name: "HandleUsers", Kind: graph.KindFunction, Signature: "func()", File: "handler.go", Line: 3}
+	current := &graph.Graph{Root: root, Symbols: []graph.SymbolNode{symbol}, Routes: []graph.HTTPRoute{{Method: "GET", Path: "/users", Handler: "HandleUsers", File: "routes.go", Line: 8}}}
+	baseline := &graph.Graph{Symbols: []graph.SymbolNode{symbol}}
+	report, err := RunChecks(&CheckParams{
+		CurrentGraph:  current,
+		BaselineGraph: baseline,
+		SinceRef:      "HEAD",
+		RootDir:       root,
+		Config: &CheckConfig{Checks: map[string]any{
+			"require_tests_for_changed_routes": "error",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("RunChecks: %v", err)
+	}
+	if len(report.Findings) != 1 || report.Findings[0].Check != "require_tests_for_changed_routes" {
+		t.Fatalf("expected body-only route change finding, got %+v", report.Findings)
+	}
+}
+
+func TestCheckAdvertisedCoverageAndOrphanChecks(t *testing.T) {
+	g := &graph.Graph{Symbols: []graph.SymbolNode{
+		{ID: "example.com/api::Public", Name: "Public", Kind: graph.KindFunction, File: "api.go", Line: 3},
+		{ID: "example.com/api::dead", Name: "dead", Kind: graph.KindFunction, File: "api.go", Line: 8},
+	}}
+	report, err := RunChecks(&CheckParams{CurrentGraph: g, Config: &CheckConfig{Checks: map[string]any{
+		"test_coverage": "warn",
+		"no_orphans":    "error",
+	}}})
+	if err != nil {
+		t.Fatalf("RunChecks: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, finding := range report.Findings {
+		seen[finding.Check] = true
+	}
+	if !seen["test_coverage"] || !seen["no_orphans"] {
+		t.Fatalf("expected both advertised checks, got %+v", report.Findings)
 	}
 }

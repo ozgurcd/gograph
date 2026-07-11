@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+### Graph Correctness and Integrity
+
+- Call extraction now separates real calls from inferred callback references, rejects identifiers known to be ordinary variables, retains inferred references only when they resolve to repository callables, and deterministically deduplicates serialized edges.
+- Precise CHA enrichment no longer expands unconstrained function values to every signature-compatible function. New dynamic targets are limited to repository implementations, and direct calls inside closures merge with their AST call site.
+- Precise interface-satisfaction edges now carry package-qualified interface and concrete type IDs, preventing same-name collisions across packages.
+- Synchronization extraction requires receivers tied to `sync.Mutex`, `sync.RWMutex`, `sync.WaitGroup`, or `sync.Once`. Error-message extraction is restricted to `panic`, `errors.New`, and `fmt.Errorf`, with import-alias support.
+- Builds with zero successful parses fail without replacing an existing index. Partial builds record scanned/parsed counts and per-file failures in `graph.json`; `stats` reports complete/partial status.
+- `graph.json` is written to a synced temporary file and atomically renamed into place.
+- Mutation extraction no longer classifies ordinary local-variable assignments as struct/global mutations. Mutation edges retain their owning type when statically known, and `mutate Type.Field` now filters same-named fields on unrelated types.
+- Summary, gate baselines, gate evaluation, and architectural snapshots now use the same reachability-based orphan definition as the `orphans` CLI/MCP feature.
+
+### Repository and Policy Behavior
+
+- Filesystem-backed CLI commands use the root stored in `graph.json`, so `stale`, `changes`, `source`, `context`, snapshots, and Git impact checks behave consistently from subdirectories.
+- Build, stale, and change detection now share scanner rules, including generated files, agent worktrees, and individually Git-ignored Go files.
+- CLI and MCP API/check tools share one validated, cancellable Git baseline builder implemented with the standard-library tar reader. Nested project roots are archived at the correct subtree; Git refs are never treated as directory paths.
+- `gate` fails closed when the graph is stale and computes complexity in one pass. Snapshot complexity calculation now uses the same single-pass approach.
+- Changed-route policy checks map changes to route handler identities and use Git changed files to catch body-only edits. Advertised `test_coverage` and `no_orphans` checks are now implemented.
+
+### MCP Safety
+
+- MCP handlers serialize graph rebuild/publication, eliminating shared-graph races and concurrent duplicate rebuilds.
+- Session audit output uses injected writers instead of replacing process-global stdout.
+- Session lifecycle, boundary creation, cleanup, wiki, and doc tools now publish accurate read-only, destructive, idempotency, and open-world annotations.
+- `gograph_stale`, default `gograph_changes`, and `gograph_stats` inspect the persisted graph instead of rebuilding away the state they report. Source-analysis refresh failures now return an MCP error instead of silently querying an older graph.
+- MCP summary and untested queries refresh before analysis. MCP `doc`, wiki output, coupling module detection, boundary configs, and session telemetry are anchored to the analyzed graph root even when the server starts from another directory.
+- MCP graph refresh now reuses the latest graph while source is unchanged and rebuilds only after scanner-detected edits. This preserves loaded CHA/SSA enrichment instead of replacing a precise graph with a basic AST graph on the first tool call.
+
+### CLI/MCP Contract
+
+- MCP callers/callees now expose CLI-equivalent depth and test filtering; callers/context expose exact matching; errors exposes test filtering; endpoint exposes test-edge inclusion.
+- Added `gograph_boundaries_create`, the MCP equivalent of CLI `boundaries --create`, with mutating/non-idempotent annotations and repository-root path containment.
+- `gograph_capabilities` now lists every live registered tool, including trace, diagram, check, and boundary creation. A regression test compares the payload to the exact server registry (64 endpoints total).
+- CLI help now documents every canonical command and implemented mode, including summary, untested, doc, gate initialization, exact context/caller lookup, filtered SQL, coupling scope, hotspot test edges, and contextual plans. Regression tests cover both command names and these option surfaces in help and capabilities output.
+- Claude integration installation exits non-zero on partial failure instead of reporting success when required files could not be written.
+
+### Verification
+
+- CI now enforces `gofmt`, `go mod tidy -diff`, race tests, `staticcheck`, `golangci-lint`, and `govulncheck` in addition to build, unit tests, and `go vet`.
+- The module, CI, and release workflows now require Go 1.26.5 or newer so release binaries are not built with the vulnerable Go 1.26.4 standard library flagged by the SBOM scan.
+- Complexity tests derive real function positions from the Go AST instead of hardcoded line numbers.
+
 ### Improvements
 
 #### Repository-Root `.gitignore` Updates for Nested Modules
@@ -14,7 +56,9 @@
 
 ### Documentation
 
-Updated CLI help, capabilities output, README, docs-site home page, command-reference docs, getting-started docs, and coding-agent usage docs for the repository-root `.gitignore` behavior and empty-target build failure.
+Updated CLI help, MCP capability and annotation descriptions, README, command reference, getting-started guide, coding-agent usage guide, contributor checks, and the agent skill for graph integrity, shared root/scanner behavior, policy checks, MCP side effects, and CI verification.
+Corrected safety and I/O claims: default AST analysis does not execute target code, but gograph reads project/config metadata; precise mode and `doc` invoke the local Go toolchain; source/context and inline endpoint handlers can return source; session telemetry is local rather than absent. Documented exact CLI/MCP parity boundaries and output-mode support.
+Updated the vendored Hugo templates to supported language direction and locale APIs, removing deprecation warnings from the documentation build.
 
 ---
 
@@ -139,8 +183,8 @@ Added character validation checking (`^[a-zA-Z0-9_\-]+$`) to snapshot names for 
 
 | Target | Changes |
 |---|---|
-+| `README.md` | Documented `risk` command in change analysis commands table. |
-+| `docs/coding-agent-usage.md` | Documented `risk` command, `gograph_risk` MCP tool, and renumbered sections. |
+| `README.md` | Documented `risk` command in change analysis commands table. |
+| `docs/coding-agent-usage.md` | Documented `risk` command, `gograph_risk` MCP tool, and renumbered sections. |
 | `docs/coding-agent-usage.md` | Documented `capabilities`, `wiki`, and `doc` as exempt from intention checks. |
 | `RELEASE_NOTES.md` | This file |
 

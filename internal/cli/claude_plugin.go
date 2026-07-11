@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -41,14 +42,18 @@ func installPlugin() error {
 		return fmt.Errorf("could not determine home directory: %w", err)
 	}
 
+	var installErrs []error
+
 	// 1. Register MCP server in Claude Desktop config
 	if err := installMCPServer(); err != nil {
 		fmt.Printf("⚠️  MCP server registration skipped: %v\n", err)
+		installErrs = append(installErrs, fmt.Errorf("MCP server registration: %w", err))
 	}
 
 	// 2. Inject CLAUDE.md steering rules
 	if err := installCLAUDEmd(home); err != nil {
 		fmt.Printf("⚠️  CLAUDE.md injection skipped: %v\n", err)
+		installErrs = append(installErrs, fmt.Errorf("CLAUDE.md injection: %w", err))
 	} else {
 		fmt.Println("✅ CLAUDE.md steering rules injected (~/.claude/CLAUDE.md)")
 	}
@@ -56,13 +61,14 @@ func installPlugin() error {
 	// 3. Install hook script and register in Claude settings.json
 	if err := installHook(home); err != nil {
 		fmt.Printf("⚠️  Hook installation skipped: %v\n", err)
+		installErrs = append(installErrs, fmt.Errorf("PreToolUse hook installation: %w", err))
 	} else {
 		fmt.Println("✅ PreToolUse hook installed (~/.claude/hooks/gograph-guard.sh)")
 	}
 
 	fmt.Println("\n🔄 Restart Claude Desktop / Claude Code for all changes to take effect.")
 	fmt.Println("💡 Claude Code users: also run: claude mcp add gograph -- gograph mcp .")
-	return nil
+	return errors.Join(installErrs...)
 }
 
 // installMCPServer writes the gograph entry into claude_desktop_config.json.

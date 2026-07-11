@@ -3,6 +3,7 @@ package precise
 import (
 	"fmt"
 	"go/types"
+	"path/filepath"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
@@ -42,8 +43,10 @@ func Enrich(absRoot string, g *graph.Graph) error {
 	// 1. Precise Interface Satisfaction
 	var interfaces []*types.Interface
 	var interfaceNames []string
+	var interfaceIDs []string
 	var concretes []types.Type
 	var concreteNames []string
+	var concreteIDs []string
 
 	// Collect all types across all loaded packages
 	for _, pkg := range initial {
@@ -65,6 +68,7 @@ func Enrich(absRoot string, g *graph.Graph) error {
 					if iface.NumMethods() > 0 {
 						interfaces = append(interfaces, iface)
 						interfaceNames = append(interfaceNames, obj.Name())
+						interfaceIDs = append(interfaceIDs, typeObjectID(typeName))
 					}
 					continue
 				}
@@ -72,6 +76,7 @@ func Enrich(absRoot string, g *graph.Graph) error {
 				// Otherwise it's a concrete type
 				concretes = append(concretes, t)
 				concreteNames = append(concreteNames, obj.Name())
+				concreteIDs = append(concreteIDs, typeObjectID(typeName))
 			}
 		}
 	}
@@ -82,8 +87,10 @@ func Enrich(absRoot string, g *graph.Graph) error {
 			// Check value receiver
 			if types.Implements(conc, iface) {
 				g.Implements = append(g.Implements, graph.ImplementsEdge{
-					Interface: interfaceNames[i],
-					Concrete:  concreteNames[j],
+					Interface:   interfaceNames[i],
+					Concrete:    concreteNames[j],
+					InterfaceID: interfaceIDs[i],
+					ConcreteID:  concreteIDs[j],
 				})
 				continue
 			}
@@ -91,8 +98,10 @@ func Enrich(absRoot string, g *graph.Graph) error {
 			ptr := types.NewPointer(conc)
 			if types.Implements(ptr, iface) {
 				g.Implements = append(g.Implements, graph.ImplementsEdge{
-					Interface: interfaceNames[i],
-					Concrete:  concreteNames[j],
+					Interface:   interfaceNames[i],
+					Concrete:    concreteNames[j],
+					InterfaceID: interfaceIDs[i],
+					ConcreteID:  concreteIDs[j],
 				})
 			}
 		}
@@ -111,9 +120,12 @@ func Enrich(absRoot string, g *graph.Graph) error {
 		// keys match what CHA produces (CHA strips package qualifiers; AST
 		// does not).
 		astEdgeIdx := make(map[string]int) // dedup-key → index in g.Calls
+		astSiteIdx := make(map[string]int) // callee + source site → AST edge
 		for i, edge := range g.Calls {
 			key := fmt.Sprintf("%s->%s@%s:%d", cleanName(edge.CallerName), cleanName(edge.CalleeRaw), edge.File, edge.Line)
 			astEdgeIdx[key] = i
+			siteKey := fmt.Sprintf("%s@%s:%d", cleanName(edge.CalleeRaw), edge.File, edge.Line)
+			astSiteIdx[siteKey] = i
 		}
 
 		for _, node := range cg.Nodes {
@@ -180,7 +192,33 @@ func Enrich(absRoot string, g *graph.Graph) error {
 					}
 					continue
 				}
+				siteKey := fmt.Sprintf("%s@%s:%d", calleeName, relFile, pos.Line)
+				if existingIdx, dup := astSiteIdx[siteKey]; dup && !edge.Site.Common().IsInvoke() {
+					if calleeSymID != "" && g.Calls[existingIdx].CalleeSymbolID == "" {
+						g.Calls[existingIdx].CalleeSymbolID = calleeSymID
+					}
+					continue
+				}
+
+				// CHA treats unconstrained function values (for example the
+				// context.CancelFunc returned by context.WithTimeout) as calls to
+				// every function with a compatible signature. Those are not useful
+				// repository call edges. Keep interface invokes and true static
+				// calls; skip unresolved function-value expansions.
+				if !edge.Site.Common().IsInvoke() && edge.Site.Common().StaticCallee() == nil {
+					continue
+				}
+
+				// AST already records direct external calls. New CHA edges are only
+				// valuable when their concrete target is defined in this repository;
+				// excluding dependency implementations prevents an interface call
+				// such as err.Error() from expanding across the whole module cache.
+				calleePos := prog.Fset.Position(calleeFn.Pos())
+				if !pathWithinRoot(calleePos.Filename, absRoot) {
+					continue
+				}
 				astEdgeIdx[key] = len(g.Calls)
+				astSiteIdx[siteKey] = len(g.Calls)
 
 				// Append a new edge — CHA found a call AST didn't see
 				// (typically dynamic dispatch through an interface).
@@ -222,6 +260,7 @@ func Enrich(absRoot string, g *graph.Graph) error {
 			existing[k] = true
 			g.Mutations = append(g.Mutations, graph.MutationEdge{
 				Field:    s.Field,
+				TypeName: s.TypeName,
 				Function: fnID,
 				File:     s.File,
 				Line:     s.Line,
@@ -234,6 +273,21 @@ func Enrich(absRoot string, g *graph.Graph) error {
 	g.Mutations = append(g.Mutations, indirect...)
 
 	return nil
+}
+
+func typeObjectID(typeName *types.TypeName) string {
+	if typeName == nil || typeName.Pkg() == nil {
+		return ""
+	}
+	return typeName.Pkg().Path() + "::" + typeName.Name()
+}
+
+func pathWithinRoot(path, root string) bool {
+	if path == "" {
+		return false
+	}
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // mutationKey dedups MutationEdges that point at the same source position

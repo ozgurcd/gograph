@@ -136,3 +136,25 @@ Received a responsible-disclosure notice (scan date 2026-06-10) identifying thre
 
 - 2026-07-06 — Verified documentation/help updates for GitHub issues #24 and #25. CLI help/capabilities, command-reference docs, getting-started docs, coding-agent usage docs, generated docs-site pages, and RELEASE_NOTES describe repository-root .gitignore updates and empty-target build failures.
 - 2026-07-06 — Extended the documentation/help update for issues #24 and #25 to README.md and the docs-site home page source/public output, so the main project overview now matches CLI help and command-reference behavior.
+
+## [2026-07-11] maintenance | Graph correctness and reliability remediation
+
+- Removed variable-as-call edges, deterministic duplicates, and unconstrained CHA function-value expansion.
+- Unified root/scanner behavior; added atomic, completeness-aware graph builds and qualified precise type identities.
+- Shared Git baselines across CLI/MCP; made gates fail on stale graphs and repaired route/test policy checks.
+- Serialized MCP graph refresh, replaced global stdout capture, corrected tool annotations, tightened sync/error extractors, and expanded CI verification.
+
+- Verification: full unit and race suites, vet, staticcheck, golangci-lint, govulncheck, gofmt, and go.mod tidy checks passed.
+
+- Follow-up: zero-parse and partial-build cases were confirmed as separately runnable tests; moved-repository graph roots are re-anchored to the loaded index.
+
+## [2026-07-11] session | CLI, MCP, and documentation contract verification
+
+- Exercised every CLI feature and all 60 non-session MCP tools; verified four session endpoints separately and exact CLI/MCP query-analysis command parity.
+- Fixed orphan-summary semantics, MCP freshness/rooting/options/annotations, precise-graph preservation, boundary creation parity, mutation type disambiguation, and partial plugin-install failure reporting.
+- Reconciled README, release notes, coding-agent guide, live help/capabilities, plugin metadata, and docs-site content; Hugo now builds without deprecation warnings.
+- Raised the build floor to Go 1.26.5 after the SBOM scan identified vulnerable Go 1.26.4 stdlib artifacts.
+- Verified 102/102 precise parses; unit/E2E/contract/race tests, vet, staticcheck, golangci-lint, govulncheck, grype, tidy diff, and docs build pass.
+## [2026-07-11] maintenance | Normalize verification log formatting
+
+- Removed the extra trailing blank line left by the previous governed append; no project facts changed.

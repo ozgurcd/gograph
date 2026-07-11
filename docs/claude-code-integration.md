@@ -8,13 +8,13 @@ By providing Claude Code with `gograph`, you give it a **semantic, AST-aware und
 
 ## 1. Why Gograph instead of Gopls (LSP)?
 
-While some agents try to use `gopls` directly via MCP, **`gograph` is designed specifically for LLM token economy and latency**. In a recent benchmark against a production Go microservice (6,000+ files), `gograph` dramatically outperformed `gopls` for agentic use-cases:
+While some agents use `gopls` directly via MCP, **`gograph` is designed for compact, composed agent workflows**:
 
-- **Token Cost & Tool-Call Overhead**: `gopls` returns bare file positions (e.g. `file:line:col`). To understand the code, an LLM must follow up with 5 to 27 individual `Read` tool calls just to assemble context for one symbol. `gograph context` bundles the node, callers, callees, and exact source into **one single tool call**, dropping LLM token consumption by up to 50%.
-- **Latency**: `gograph` query latency averages **160ms**, whereas `gopls` calls (like `workspace_symbol` or `references`) often range from **1,600ms to 6,000ms**, causing severe agent slowdowns.
-- **Interface Accuracy**: `gopls call_hierarchy` fails (returns `rc=2`) on interface types. `gograph` natively traverses interfaces and returns all concrete method implementations.
+- **Tool-Call Overhead**: `gograph context` bundles node metadata, callers, callees, tests, role, and requested source in one response instead of requiring several position-follow-up reads.
+- **Repository-Level Signals**: gograph adds routes, SQL, env reads, coupling, reachability, risk, policy, and change-oriented composites that are not ordinary LSP queries.
+- **Interface Navigation**: default mode uses structural method-set heuristics; precise mode adds package-qualified type information when packages compile.
 
-*Note on Token Usage*: The one edge-case where `gograph` uses more tokens than `gopls` is when querying a highly-implemented Interface type. `gograph` proactively embeds the source code for *all* concrete implementations, whereas `gopls` only returns the file positions. This makes `gograph` slightly heavier (token-wise) in this specific scenario, but still vastly faster in wall-clock time.
+Benchmark results depend on repository size, cache state, query, and follow-up behavior. Use `scripts/benchmark.go` to measure the workflow on your own codebase.
 
 ## 2. Installation
 
@@ -70,7 +70,7 @@ Here is how Claude Code behaves before and after `gograph`:
 
 **✅ With Gograph (Blast Radius check)**
 1. Claude: `gograph impact "ValidateToken"`
-2. Claude: *Sees exactly the 3 downstream HTTP handlers that will be affected by changing the token validation signature.*
+2. Claude: *Sees the transitive upstream callers, including candidate HTTP handlers affected by the signature change.*
 3. Claude: `gograph source "ValidateToken"`
 4. Claude: *Reads the function, plans the edit, and safely applies it.*
 5. Claude: `gograph check --uncommitted`
@@ -80,7 +80,7 @@ Here is how Claude Code behaves before and after `gograph`:
 
 Instead of passing CLI instructions via `CLAUDE.md`, you can give Claude native superpowers by installing `gograph` as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) plugin. This exposes all of `gograph`'s capabilities as native LLM tools (e.g., `mcp_gograph_query`, `mcp_gograph_impact`), allowing the agent to invoke them automatically.
 
-### Claude Desktop + Claude Code: One-Command Setup
+### Claude Desktop Config + Shared Claude Rules/Hook
 
 ```bash
 gograph add-claude-plugin
@@ -94,7 +94,7 @@ This single command performs **three installation steps**:
 | **CLAUDE.md rules** | Injects steering rules Claude reads at every session start | `~/.claude/CLAUDE.md` |
 | **PreToolUse hook** | Smart hook that intercepts `grep`/`rg` on Go symbols | `~/.claude/hooks/gograph-guard.sh` + `~/.claude/settings.json` |
 
-*Restart Claude Desktop / Claude Code for all changes to take effect.*
+The installer exits non-zero if any step fails. Restart Claude Desktop / Claude Code after successful installation. Claude Code MCP registration is still per project, as shown below.
 
 #### What the PreToolUse hook does
 
@@ -122,4 +122,3 @@ claude mcp add gograph -- gograph mcp .
 - Claude Code registers the plugin centrally in your home directory (`~/.claude.json`), but **maps it directly to your current project directory**.
 - The `.` in `gograph mcp .` tells the server to index whatever specific folder Claude Code is currently operating in.
 - **You must run this command once for each Go project repository** you wish to use it in. This prevents your agent from accidentally querying index databases from other projects!
-

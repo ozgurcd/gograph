@@ -157,6 +157,10 @@ func Walk(root string) (paths []string, errs []error) {
 		if filepath.Ext(path) != ".go" {
 			return nil
 		}
+		absPath, aerr := filepath.Abs(path)
+		if aerr == nil && gitIgnore.isIgnored(absPath) {
+			return nil
+		}
 		skip, serr := ShouldIgnoreFile(path)
 		if serr != nil {
 			errs = append(errs, serr)

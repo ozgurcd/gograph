@@ -25,18 +25,16 @@ Go's unique structural features—such as implicit (duck-typed) interfaces, wrap
 
 ## ⚡ Comparative Analysis: Unix vs. gograph
 
-### Real-World Production Impact
-In actual production evaluations conducted by development teams running **35 specialized Claude Code agents** on large Go codebases, utilizing raw `grep` across 80+ endpoints resulted in a **measured hallucination rate of ~12%** on routine calls. 
-
-When replacing generic text searches with gograph's AST-accurate call graph and pruned context, the agent hallucination rate **dropped to 2%**.
+### Practical Impact
+Replacing broad text searches with AST-derived, symbol-focused responses reduces irrelevant context and tool round trips. Results remain static-analysis evidence rather than proof: dynamic dispatch, grouped routes, test attribution, and error flow have documented limits.
 
 ---
 
 | Objective | The Unix Way (`grep`, `find`) | The `gograph` Way | Token Cost Comparison | Accuracy |
 |---|---|---|---|---|
-| **Find callers of a method** | `grep -rn "Update" .` <br>*(Scans mocks, comments, other types)* | `gograph callers UserStore.Update` <br>*(AST-accurate call edges)* | **Extremely high context footprint** <br>*(model reads irrelevant source lines)* vs. **Minimal footprint** *(single-line caller symbols)* | ❌ High hallucination risk (~12% error)<br>🎯 100% Structural Ground Truth (~2% error) |
-| **Find interface implementers** | Multi-step grep searches of method receivers and receivers sets | `gograph implementers Connection` <br>*(Duck-typing interface satisfaction)* | **Massive context inflation** <br>*(reading dozens of files to match signatures)* vs. **Minimal footprint** *(only concrete struct types)* | ❌ Highly prone to omissions<br>🎯 100% Structural Ground Truth |
-| **Trace wrapped errors** | Grepping for substring matches inside formatting blocks | `gograph errorflow "invalid token"` <br>*(Reversed call graph BFS of `%w` wraps)* | **High context inflation** <br>*(scanning format strings across call paths)* vs. **Minimal footprint** *(structured error flow paths)* | ❌ Misses wrapping context<br>🎯 100% Structural Ground Truth |
+| **Find callers of a method** | `grep -rn "Update" .` <br>*(Scans mocks, comments, other types)* | `gograph callers UserStore.Update` <br>*(AST-derived call edges)* | Broad source context vs. compact caller rows | Text noise vs. best-effort structural matching |
+| **Find interface implementers** | Multi-step searches of method receivers and method sets | `gograph implementers Connection` | Many file reads vs. concrete type rows | Heuristic AST mode; package-qualified precise mode when available |
+| **Trace wrapped errors** | String searches inside formatting blocks | `gograph errorflow "invalid token"` | Broad scans vs. structured candidate paths | Navigation heuristic, not SSA data-flow proof |
 
 ---
 
@@ -57,14 +55,14 @@ Suppose an agent needs to add a required field to a struct named `Config`.
      ```bash
      gograph literals Config
      ```
-  2. gograph queries the AST database and returns the exact file, line, and code snippet of every composite literal initialization site (`Config{...}`) in milliseconds.
-  3. **Total cost**: Extremely low token cost, 1 tool call, complete structural certainty.
+  2. gograph queries the AST graph and returns file/line rows for matching composite literals (`Config{...}`).
+  3. **Total cost**: One focused tool call; generated or dynamically constructed values remain outside this syntax-based query.
 
 ---
 
 ## 🔬 Empirical Case Study: gograph Codebase Benchmark
 
-To verify these savings, we ran both generic Unix tools and `gograph` directly against the **`gograph` repository itself** (which consists of **16 Go packages, 70 Go files, 518 AST symbols, and 5,443 call edges**).
+The following is a historical point-in-time benchmark from an earlier gograph revision (16 packages, 70 Go files, 518 AST symbols, and 5,443 call edges). Current repository counts differ.
 
 Here are the concrete, measured results:
 
@@ -100,7 +98,7 @@ To start the MCP JSON-RPC server over standard I/O:
 ```bash
 gograph mcp [path]
 ```
-If `.gograph/graph.json` does not exist when the server starts, it automatically runs `gograph build` first to ensure a completely frictionless, zero-barrier client connection.
+If `.gograph/graph.json` does not exist, startup creates an in-memory AST graph; it does not publish CLI build artifacts. Source-analysis tools check freshness per call and rebuild only after edits. Persisted-index tools use the disk snapshot, and precise CHA/SSA remains active only while source is unchanged.
 
 ---
 
@@ -160,15 +158,17 @@ gograph add-claude-plugin
 
 This single command performs three critical setup steps:
 
-1. **Claude Configuration**: Registers the `gograph mcp` server under the local Claude desktop/CLI configuration.
-2. **Workspace Steering**: Configures or appends gograph rules to your repository's `CLAUDE.md` to instruct the model to prefer gograph over general grep search.
-3. **Pre-Tool-Use Hook Guard**: Installs a Git hook that intercepts incoming tool calls.
+1. **Claude Desktop Configuration**: Registers `gograph mcp <absolute-project-path>` in Claude Desktop's config.
+2. **Shared Steering**: Adds rules to `~/.claude/CLAUDE.md`.
+3. **Claude Code Hook**: Installs `~/.claude/hooks/gograph-guard.sh` and registers it in `~/.claude/settings.json`.
+
+Claude Code MCP registration is separate; run the `claude mcp add gograph -- gograph mcp .` command printed by the installer. The installer exits non-zero if any of its three file/configuration steps fail.
 
 ---
 
 ## The Hook Guard: Blocking general grep
 
-AI agents are highly habituated to executing raw `grep` or `find` commands to look for code patterns. In large Go codebases, this causes two severe issues:
+AI agents often execute raw `grep` or `rg` commands to look for code patterns. In large Go codebases, this causes two issues:
 1. **Hallucination**: The agent gets overwhelmed by noise (mocks, test helpers, matches inside unexported package dependencies) and hallucinates.
 2. **Token Waste**: Grepping large chunks of source files blows up the context window.
 
@@ -178,7 +178,7 @@ gograph solves this structurally with the **Hook Guard**:
 [Agent wants to run grep]
            │
            ▼
-   .git/hooks/PreToolUse
+   ~/.claude/hooks/gograph-guard.sh
            │
            ▼
    gograph hook-guard  ◄── Intercepts symbol query
@@ -193,7 +193,7 @@ gograph solves this structurally with the **Hook Guard**:
 If the agent tries to run `grep -rn "MyStruct" .`, the hook guard blocks the command with exit code `2` and returns a helpful message:
 > *Blocked: Do not use grep to look for Go symbols. Run `gograph query MyStruct` or `gograph callers MyStruct` instead for precise results.*
 
-This structurally forces the agent to use AST-accurate call graphs and dependency queries, dropping the hallucination rate from 12% to under 2%.
+The hook is a steering aid, not a security boundary: it targets likely Go-identifier searches and intentionally allows comment, documentation, and non-Go searches.
 
 ---
 
@@ -207,5 +207,5 @@ When `add-claude-plugin` runs, it adds these explicit directives to `CLAUDE.md` 
 - NEVER use general bash `grep`, `find`, or `sed` to locate Go symbols, structs, or callers.
 - ALWAYS use the native gograph MCP tools (`gograph_query`, `gograph_callers`, `gograph_source`, etc.).
 - ALWAYS run `gograph_plan` prior to editing any symbol to discover downstream caller risks.
-- ALWAYS run `gograph_build` with `--precise` and run `gograph_review` after editing to verify test coverage.
+- After editing, run CLI `gograph build . --precise`, then run `gograph_review` with `uncommitted=true`.
 ```

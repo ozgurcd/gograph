@@ -1,7 +1,7 @@
 ---
 name: gograph
 version: "0.1.0"
-description: "Go repository intelligence for Claude Code. Use whenever the user is reading, navigating, editing, reviewing, or refactoring a Go codebase. Replaces grep/rg/find for Go symbols with AST-accurate call graphs, blast radius analysis, impact analysis, and 57+ semantic queries via the local gograph MCP server. Mandatory for Go work whenever the gograph MCP server is connected."
+description: "Go repository intelligence for Claude Code. Use whenever the user is reading, navigating, editing, reviewing, or refactoring a Go codebase. Replaces grep/rg/find for Go symbols with AST-aware call graphs, blast radius analysis, impact analysis, and 60 query and analysis capabilities via the local gograph MCP server. Mandatory for Go work whenever the gograph MCP server is connected."
 argument-hint: "gograph status | gograph plan UserService.Login | gograph review"
 allowed-tools: Bash, Read
 homepage: https://gograph.identuum.ai
@@ -13,7 +13,7 @@ user-invocable: true
 
 # gograph: Go Repository Intelligence
 
-`gograph` is a local, AST-aware Go code intelligence engine that exposes 57+ semantic query tools over the Model Context Protocol. It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) deterministic structural awareness of a Go codebase without grepping files. One `gograph_context` call replaces 4-5 separate Read / Grep tool calls.
+`gograph` is a local, AST-aware Go code intelligence engine that exposes 60 query, analysis, and workflow capabilities over the Model Context Protocol (64 endpoints including session lifecycle). It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) structural awareness of a Go codebase without broad grep passes. One `gograph_context` call replaces 4-5 separate Read / Grep tool calls.
 
 `gopls` is optimized for human IDEs. `gograph` is optimized for AI coding agents that pay for every token of context.
 
@@ -46,10 +46,11 @@ Verify with `gograph --version`. The MCP server registration ships with the plug
 2. **Build / refresh the graph** before symbol queries:
    - First choice: `gograph build . --precise` (requires the package to compile).
    - Fallback: `gograph build .` - and explain why precise mode was unavailable.
+   - Run `gograph_stats` and require `build_status=complete`; a build with zero successful parses never replaces the previous graph, while partial failures are reported explicitly.
 3. **For symbol / type / function discovery, NEVER use `grep`, `rg`, `find`, or glob.** Use `gograph_query` instead. Text search returns false positives across vendored code, comments, and string literals; `gograph_query` returns AST-accurate matches.
 4. **Before editing any Go symbol**, run `gograph_plan <symbol>`. The plan returns callers, tests connected to the symbol, and a blast-radius estimate. Edit decisions should reference the plan.
 5. **To understand a function or method**, use `gograph_context <symbol>`. This single call returns node + source + callers + callees + tests, replacing 4-5 separate tool calls and saving substantial context tokens.
-6. **After editing Go code**, run `gograph_review --uncommitted` to verify test coverage and surface the blast radius of the change.
+6. **After editing Go code**, run `gograph build . --precise`, then `gograph_review --uncommitted` to verify test coverage and surface the blast radius of the change.
 
 ## High-value tools
 
@@ -72,12 +73,15 @@ Verify with `gograph --version`. The MCP server registration ships with the plug
 | `gograph_errors` / `gograph_errorflow` | Error propagation paths |
 | `gograph_changes` | Diff what changed since the last build |
 | `gograph_tests` | Tests connected to a symbol |
+| `gograph_check` | Policy checks, including changed-route tests, coverage, orphans, API drift, arity, and complexity |
 
-The full surface is 57+ tools; `gograph_capabilities` is the live source of truth.
+The live surface is 64 MCP endpoints; `gograph_capabilities` is the tested source of truth.
 
 ## Privacy
 
 Graph building is fully local. No source code leaves the machine. MCP transport is local stdio. Respects `.gitignore` and skips AI-agent worktree directories automatically. See `PRIVACY.md` in the gograph repo for details.
+
+Most MCP tools are read-only. Boundary creation writes configuration, session create/end mutate telemetry, session cleanup deletes stale logs, and `gograph_wiki` writes documentation; their MCP annotations declare those effects.
 
 ## Anti-patterns
 

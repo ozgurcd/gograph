@@ -182,3 +182,14 @@ func TestStale_SkipsGographDir(t *testing.T) {
 		t.Errorf("expected is_stale=false — files under .gograph/ must be skipped, got changed_files=%v", sr.ChangedFiles)
 	}
 }
+
+func TestStale_SkipsGeneratedFiles(t *testing.T) {
+	dir := t.TempDir()
+	graphTime := time.Now().Add(-5 * time.Minute)
+	makeGoFile(t, dir, "api_generated.go", time.Now())
+
+	sr := search.Stale(graphWithTime(graphTime), dir)
+	if sr.IsStale {
+		t.Fatalf("generated files must not make the graph stale: %v", sr.ChangedFiles)
+	}
+}

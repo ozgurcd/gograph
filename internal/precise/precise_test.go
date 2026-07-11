@@ -1,6 +1,7 @@
 package precise
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -47,6 +48,12 @@ func TestEnrich_PopulatesImplements(t *testing.T) {
 	}
 	if len(g.Implements) == 0 {
 		t.Log("warning: no Implements edges found — fixture may not contain an interface/concrete pair; skipping assertion")
+		return
+	}
+	for _, edge := range g.Implements {
+		if edge.InterfaceID == "" || edge.ConcreteID == "" {
+			t.Fatalf("precise edge lacks qualified IDs: %+v", edge)
+		}
 	}
 }
 
@@ -95,6 +102,32 @@ func TestEnrich_InvalidDir(t *testing.T) {
 	// Enrich may or may not error depending on packages.Load behavior; what
 	// matters is that it doesn't panic and handles the failure gracefully.
 	_ = err // either nil (empty result) or a wrapped packages.Load error is acceptable
+}
+
+func TestEnrichSkipsUnresolvedFunctionValueExpansions(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/cancel\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source := `package cancel
+import "context"
+func Run() {
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "cancel.go"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g := emptyGraph()
+	if err := Enrich(root, g); err != nil {
+		t.Fatalf("Enrich: %v", err)
+	}
+	for _, edge := range g.Calls {
+		if edge.File == "cancel.go" && edge.Line == 5 {
+			t.Fatalf("function value cancel() expanded to unrelated target: %+v", edge)
+		}
+	}
 }
 
 // --- Unit tests for pure helper functions ---

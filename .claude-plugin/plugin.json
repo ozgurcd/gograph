@@ -1,7 +1,7 @@
 {
   "name": "gograph",
   "version": "0.1.0",
-  "description": "Go repository intelligence for Claude Code. Replaces grep/rg/find for Go symbol search with AST-aware call graphs, blast radius, impact analysis, and 57+ semantic queries via the gograph MCP server.",
+  "description": "Go repository intelligence for Claude Code. Replaces broad grep/rg/find symbol search with AST-aware call graphs, blast radius, impact analysis, and 60 query and analysis capabilities via the gograph MCP server.",
   "author": {
     "name": "ozgurcd",
     "url": "https://github.com/ozgurcd"

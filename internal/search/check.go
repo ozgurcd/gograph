@@ -95,6 +95,8 @@ func RunChecks(p *CheckParams) (*CheckReport, error) {
 		"api_drift":                        true,
 		"require_tests_for_changed_routes": true,
 		"require_tests_for_changed_exported_symbols": true,
+		"test_coverage":  true,
+		"no_orphans":     true,
 		"max_arity":      true,
 		"max_complexity": true,
 		"new_globals":    true,
@@ -130,29 +132,23 @@ func RunChecks(p *CheckParams) (*CheckReport, error) {
 	}
 
 	hasBaselineOrUncommitted := p.BaselineGraph != nil || p.Uncommitted
+	needsChangedSymbols := false
+	for _, check := range []string{"require_tests_for_changed_routes", "require_tests_for_changed_exported_symbols", "new_globals"} {
+		if level, _ := parseLevel(p.Config.Checks[check]); level != CheckOff {
+			needsChangedSymbols = true
+			break
+		}
+	}
 
-	// Helper to extract affected symbols
+	// Extract affected symbols once for every change-scoped check. Git-backed
+	// baselines use changed files so body-only edits are not lost merely because
+	// a declaration's name and signature stayed the same.
 	var changedSymbols []string
-	if hasBaselineOrUncommitted {
-		if p.Uncommitted {
-			changes := Changes(p.CurrentGraph, p.RootDir)
-			for _, s := range changes.Symbols {
-				changedSymbols = append(changedSymbols, s.Name)
-			}
-		} else if p.BaselineGraph != nil {
-			// This is a naive way to get changed symbols from baseline vs current.
-			// Ideally we use a better primitive, but we can just use search.Changes logic or just check symbols that differ.
-			// Let's just collect symbols from CurrentGraph that aren't exactly in BaselineGraph.
-			// To keep it simple, we use APIDrift result for api_drift, and for others we just do a rough diff.
-			baselineSyms := make(map[string]graph.SymbolNode)
-			for _, s := range p.BaselineGraph.Symbols {
-				baselineSyms[s.Name] = s
-			}
-			for _, s := range p.CurrentGraph.Symbols {
-				if bs, ok := baselineSyms[s.Name]; !ok || bs.Signature != s.Signature {
-					changedSymbols = append(changedSymbols, s.Name)
-				}
-			}
+	if hasBaselineOrUncommitted && needsChangedSymbols {
+		var err error
+		changedSymbols, err = checkChangedSymbols(p)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -203,16 +199,18 @@ func RunChecks(p *CheckParams) (*CheckReport, error) {
 		if !hasBaselineOrUncommitted {
 			addSkipped("require_tests_for_changed_routes", "no --since or --uncommitted provided")
 		} else {
-			routesMap := make(map[string]Result)
-			for _, r := range Routes(p.CurrentGraph) {
-				routesMap[r.Name] = r
-			}
-			for _, sym := range changedSymbols {
-				if route, ok := routesMap[sym]; ok {
-					tests := Tests(p.CurrentGraph, sym)
-					if len(tests) == 0 {
-						addFinding("require_tests_for_changed_routes", fmt.Sprintf("Changed route handler %s has no mapped tests", sym), route.File, sym, route.Line, lvl, nil)
-					}
+			seenHandlers := make(map[string]bool)
+			for _, route := range p.CurrentGraph.Routes {
+				if route.DynamicHandler || !containsCheckSymbol(changedSymbols, route.Handler) {
+					continue
+				}
+				handlerKey := normalizeCheckSymbol(route.Handler)
+				if seenHandlers[handlerKey] {
+					continue
+				}
+				seenHandlers[handlerKey] = true
+				if len(Tests(p.CurrentGraph, route.Handler)) == 0 && len(Tests(p.CurrentGraph, handlerKey)) == 0 {
+					addFinding("require_tests_for_changed_routes", fmt.Sprintf("Changed route handler %s has no mapped tests", route.Handler), route.File, route.Handler, route.Line, lvl, map[string]any{"method": route.Method, "path": route.Path})
 				}
 			}
 		}
@@ -242,7 +240,26 @@ func RunChecks(p *CheckParams) (*CheckReport, error) {
 		}
 	}
 
-	// 5. max_arity
+	// 5. test_coverage
+	if lvl, _ := parseLevel(p.Config.Checks["test_coverage"]); lvl != CheckOff {
+		for _, s := range p.CurrentGraph.Symbols {
+			if (s.Kind != graph.KindFunction && s.Kind != graph.KindMethod) || isTestFile(s.File) || s.Name == "main" || s.Name == "init" || !isExportedName(s.Name) {
+				continue
+			}
+			if len(Tests(p.CurrentGraph, s.ID)) == 0 && len(Tests(p.CurrentGraph, s.Name)) == 0 {
+				addFinding("test_coverage", fmt.Sprintf("Exported symbol %s has no mapped tests", s.Name), s.File, s.Name, s.Line, lvl, nil)
+			}
+		}
+	}
+
+	// 6. no_orphans
+	if lvl, _ := parseLevel(p.Config.Checks["no_orphans"]); lvl != CheckOff {
+		for _, orphan := range ReachableOrphans(p.CurrentGraph) {
+			addFinding("no_orphans", fmt.Sprintf("Unreachable symbol %s", orphan.Name), orphan.File, orphan.Name, orphan.Line, lvl, nil)
+		}
+	}
+
+	// 7. max_arity
 	if lvl, val := parseLevel(p.Config.Checks["max_arity"]); lvl != CheckOff {
 		if val <= 0 {
 			val = 6 // default
@@ -257,7 +274,7 @@ func RunChecks(p *CheckParams) (*CheckReport, error) {
 		}
 	}
 
-	// 6. max_complexity
+	// 8. max_complexity
 	if lvl, val := parseLevel(p.Config.Checks["max_complexity"]); lvl != CheckOff {
 		if val <= 0 {
 			val = 20 // default
@@ -270,7 +287,7 @@ func RunChecks(p *CheckParams) (*CheckReport, error) {
 		}
 	}
 
-	// 7. new_globals
+	// 9. new_globals
 	if lvl, _ := parseLevel(p.Config.Checks["new_globals"]); lvl != CheckOff {
 		if !hasBaselineOrUncommitted {
 			addSkipped("new_globals", "no --since or --uncommitted provided")
@@ -335,4 +352,100 @@ func countArgs(signature string) int {
 	// Note: this is a simple heuristic and might be slightly off for complex generics or funcs as args,
 	// but it matches arity.go's heuristic. Actually, we should reuse arity logic if possible.
 	return len(strings.Split(argsStr, ","))
+}
+
+func checkChangedSymbols(p *CheckParams) ([]string, error) {
+	var changed []string
+	if p.Uncommitted {
+		ids, err := UncommittedSymbols(p.CurrentGraph)
+		if err != nil {
+			return nil, fmt.Errorf("identify uncommitted symbols: %w", err)
+		}
+		for _, id := range ids {
+			matches := FindSymbols(p.CurrentGraph, id)
+			if len(matches) == 0 {
+				changed = append(changed, id)
+				continue
+			}
+			for _, s := range matches {
+				changed = append(changed, s.Name)
+			}
+		}
+		return uniqueStrings(changed), nil
+	}
+
+	if p.BaselineGraph == nil {
+		return nil, nil
+	}
+	root := p.RootDir
+	if root == "" {
+		root = p.CurrentGraph.Root
+	}
+	if p.SinceRef != "" && !strings.HasSuffix(p.SinceRef, ".json") {
+		changes, err := ChangesByGitRef(p.CurrentGraph, root, p.SinceRef)
+		if err != nil {
+			return nil, fmt.Errorf("identify symbols changed since %q: %w", p.SinceRef, err)
+		}
+		for _, s := range changes.Symbols {
+			changed = append(changed, s.Name)
+		}
+		return uniqueStrings(changed), nil
+	}
+
+	baselineSymbols := make(map[string]graph.SymbolNode, len(p.BaselineGraph.Symbols))
+	for _, s := range p.BaselineGraph.Symbols {
+		baselineSymbols[checkSymbolKey(s)] = s
+	}
+	for _, s := range p.CurrentGraph.Symbols {
+		baseline, ok := baselineSymbols[checkSymbolKey(s)]
+		if !ok || baseline.Signature != s.Signature {
+			changed = append(changed, s.Name)
+		}
+	}
+	return uniqueStrings(changed), nil
+}
+
+func checkSymbolKey(s graph.SymbolNode) string {
+	if s.ID != "" {
+		return s.ID
+	}
+	return s.PackageName + "|" + s.Receiver + "|" + s.Name + "|" + s.File
+}
+
+func normalizeCheckSymbol(name string) string {
+	name = strings.TrimSpace(strings.TrimSuffix(name, "()"))
+	if idx := strings.LastIndex(name, "::"); idx >= 0 {
+		name = name[idx+2:]
+	}
+	return normalizeSymbolName(name)
+}
+
+func containsCheckSymbol(symbols []string, target string) bool {
+	target = normalizeCheckSymbol(target)
+	if target == "" {
+		return false
+	}
+	for _, symbol := range symbols {
+		if normalizeCheckSymbol(symbol) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
+}
+
+func isExportedName(name string) bool {
+	return len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z'
 }

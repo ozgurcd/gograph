@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/rootfind"
 	"github.com/ozgurcd/gograph/internal/search"
 )
 
@@ -55,11 +57,15 @@ func runCheck(args []string) int {
 		}
 	}
 
+	root := rootfind.FindRoot()
 	// load config
 	if configPath == "" {
-		if _, err := os.Stat(".gograph/checks.json"); err == nil {
-			configPath = ".gograph/checks.json"
+		defaultPath := filepath.Join(root, ".gograph", "checks.json")
+		if _, err := os.Stat(defaultPath); err == nil {
+			configPath = defaultPath
 		}
+	} else if !filepath.IsAbs(configPath) {
+		configPath = filepath.Join(root, configPath)
 	}
 
 	config := &search.CheckConfig{
@@ -68,7 +74,7 @@ func runCheck(args []string) int {
 			"max_arity":      map[string]any{"level": "warn", "value": 6.0},
 			"max_complexity": map[string]any{"level": "warn", "value": 20.0},
 		},
-		BoundariesConfig: ".gograph/boundaries.json",
+		BoundariesConfig: filepath.Join(root, ".gograph", "boundaries.json"),
 	}
 
 	if configPath != "" {
@@ -79,12 +85,15 @@ func runCheck(args []string) int {
 			}
 			return 1
 		}
-		if err := json.Unmarshal(data, &config); err != nil {
+		if err := json.Unmarshal(data, config); err != nil {
 			if !jsonMode {
 				fmt.Fprintf(os.Stderr, "failed to parse config: %v\n", err)
 			}
 			return 1
 		}
+	}
+	if config.BoundariesConfig != "" && !filepath.IsAbs(config.BoundariesConfig) {
+		config.BoundariesConfig = filepath.Join(root, config.BoundariesConfig)
 	}
 
 	// CLI flags override config
@@ -102,7 +111,7 @@ func runCheck(args []string) int {
 
 	var baselineGraph *graph.Graph
 	if config.Baseline != "" {
-		baselineGraph, err = BuildBaselineGraphFromGitRef(config.Baseline, BuildGraph)
+		baselineGraph, err = BuildBaselineGraphFromGitRefAtRoot(graphRoot(g), config.Baseline, BuildGraph)
 		if err != nil {
 			if !jsonMode {
 				fmt.Fprintf(os.Stderr, "failed to build baseline graph: %v\n", err)
@@ -117,7 +126,7 @@ func runCheck(args []string) int {
 		Config:        config,
 		SinceRef:      config.Baseline,
 		Uncommitted:   uncommitted,
-		RootDir:       ".",
+		RootDir:       graphRoot(g),
 	}
 
 	report, err := search.RunChecks(p)
