@@ -1,17 +1,27 @@
-# Benchmarking Gograph vs Gopls
+# Comparing Gograph and Gopls Workflows
 
-To recreate the performance reports demonstrating `gograph`'s latency and token cost advantages over `gopls` (the standard Go Language Server), you can use the built-in benchmark harness located at `scripts/benchmark.go`.
+[`gopls`](https://go.dev/gopls/features/mcp) is the Go project's
+compiler-backed language server. It provides live diagnostics, navigation,
+references, implementations, refactoring, and experimental MCP support.
+gograph complements it with a persisted repository graph, composed
+change-analysis responses, and policy-oriented queries.
 
-This script queries both tools sequentially, measures their wall-clock latency, approximates their LLM token payload cost using a multiplier heuristic, and outputs a comparative Unicode bar chart.
+The small harness in `scripts/benchmark.go` samples the wall-clock latency and
+raw output size of one gograph command and one `gopls` CLI command. It does not
+prove that either tool is faster, more accurate, or cheaper for a complete
+agent task. The commands return different evidence, and results depend on
+repository size, cache state, selected symbol, client behavior, and follow-up
+reads.
 
 ## Prerequisites
 
-1. You must have `gograph` built locally.
+1. Build `gograph` with `make build` (the default binary path is
+   `bin/gograph`).
 2. You must have `gopls` installed and available in your `$PATH`.
 
 ## Standard Execution
 
-To run a basic benchmark that compares `gograph context` against `gopls workspace_symbol`, simply pass the name of the symbol you want to benchmark:
+To sample `gograph context` and `gopls workspace_symbol`, pass a symbol name:
 
 ```bash
 go run scripts/benchmark.go --sym "YourSymbolName"
@@ -22,9 +32,16 @@ Example:
 go run scripts/benchmark.go --sym "Run"
 ```
 
-## High Precision Execution (Simulating LLM Behavior)
+Use `--gograph-bin` if the binary is elsewhere:
 
-By default, the script compares against `workspace_symbol`. However, if you want a more rigorous comparison against `gopls references` (which accurately simulates an LLM attempting to find call sites), you must provide `gopls` with the exact absolute file path, line, and column of the symbol. 
+```bash
+go run scripts/benchmark.go --gograph-bin /path/to/gograph --sym "Run"
+```
+
+## Sampling References
+
+By default, the script runs `gopls workspace_symbol`. To sample `gopls
+references` instead, provide its position-based target:
 
 Use the `--gopls-target` flag for this:
 
@@ -32,22 +49,26 @@ Use the `--gopls-target` flag for this:
 go run scripts/benchmark.go --sym "Run" --gopls-target "/absolute/path/to/repo/file.go:40:6"
 ```
 
-## Example Output
+Only compare successful commands against the same checked-out source state.
+`gograph context` and `gopls references` are still not semantically equivalent:
+the former is a composed repository-graph response, while the latter is a live,
+compiler-backed language operation.
 
-The script outputs a visual comparison similar to this:
+## Reading the Output
 
-```text
-Benchmarking Run...
-------------------------------------------------------------
-LATENCY:
-Run    🔷 █ 63ms
-       🔶 ███████ 391ms
+The harness reports:
 
-TOKEN COST (Estimated):
-Run    🔷 ██████████████████████████████████████████████████████████ 29378
-       🔶 ██ 1270
-```
+- command wall-clock time;
+- raw output bytes divided by four as a rough token estimate; and
+- command errors, if either invocation fails.
 
-### Understanding the Results
-- **Latency**: `gograph` (🔷) is significantly faster than `gopls` (🔶), generally resolving in a fraction of the time. This is critical for agentic workflows where 3-second tool hangs derail the LLM's thought process.
-- **Token Cost**: `gograph` proactively embeds the actual source code of the symbol, its callers, and its callees into a single payload. `gopls` only returns bare file paths, meaning the LLM must execute several subsequent `Read` tool calls to assemble the equivalent context. The `gopls` token cost in this script includes a simulated penalty to account for those subsequent file reads.
+It deliberately applies no invented follow-up-read penalty. Real model tokens
+depend on the model tokenizer and MCP/client envelope. End-to-end agent cost
+also includes tool selection, subsequent reads, retries, and whether the task
+was completed correctly.
+
+For a defensible product evaluation, define representative tasks and manually
+reviewed expected answers, then measure false positives, false negatives,
+tool-call count, actual client tokens, wall-clock time, and task success across
+multiple public repositories. Publish the fixtures and raw transcripts so the
+comparison can be reproduced.

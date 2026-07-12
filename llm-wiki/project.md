@@ -11,6 +11,12 @@ sources:
 
 `gograph` is a local Go repository indexer for coding agents. CLI and MCP share 61 query, analysis, and workflow capabilities; MCP has 65 endpoints including four session tools. CLI reads persisted `.gograph/graph.json`; MCP keeps source-analysis requests fresh in memory.
 
+## Positioning and onboarding
+
+gograph is a persisted repository-analysis layer, not a replacement for every Go or search tool. Use `gopls` for live compiler-backed workspace diagnostics, navigation, implementations, and refactoring; use `rg` or other text search for literals, comments, generated/non-indexed files, and non-Go content. Use gograph for repository-level impact, reachability, application inventories, composed agent workflows, and policy gates. When graph precision is AST/fallback, results are ambiguous, or a known call is missing, cross-check with `gopls` or targeted source/text search and disclose the fallback.
+
+The executable Go package is `github.com/ozgurcd/gograph/cmd/gograph`. First-run documentation must use repository-wide commands such as `stats`, `summary`, and `hotspot` before examples that require a project-specific symbol. Product claims must distinguish reproducible snapshot counts from inference and must not promise absolute accuracy, fixed token savings, or hallucination-rate improvements without published methodology and data.
+
 ## Analysis modes and health
 
 Default builds produce an AST graph and tolerate partial parsing when at least one Go file succeeds. `BuildMetadata.Precision` records `ast`, `precise`, or `precise_fallback`; this is independent of complete/partial AST build health. Precise builds attempt go/packages type loading plus CHA/SSA. Missing indexed production files or type/load errors retain the AST graph and record a visible fallback instead of claiming precise success. `gograph stats` and MCP stats expose both precision and build health.

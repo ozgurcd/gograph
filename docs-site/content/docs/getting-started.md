@@ -19,7 +19,8 @@ gograph version
 
 **Go install**
 ```bash
-go install github.com/ozgurcd/gograph@latest
+go install github.com/ozgurcd/gograph/cmd/gograph@latest
+gograph version
 ```
 
 **From source**
@@ -107,34 +108,41 @@ gograph stale
 
 Lists indexed source files that are newer than `graph.json`. It uses the same ignore policy as `build`, and all filesystem-backed commands resolve the repository root recorded in the graph, so it works identically from subdirectories. Rebuild if any files are listed.
 
-## Step 3 — First queries
+## Step 3 — Run repository-wide queries
 
 ```bash
-# Find a symbol
-gograph query ValidateToken
+# No project-specific symbol names are required for these commands
+gograph summary
+gograph hotspot --top 5
+gograph flow --no-tests
+```
 
-# Read its source
-gograph source ValidateToken
+Choose a real function or method reported by `summary`, `hotspot`, or
+`gograph complexity`, then replace `YourSymbol` below with that name:
+
+```bash
+# Read its source and surrounding graph context
+gograph source YourSymbol
+gograph context YourSymbol
 
 # Who calls it?
-gograph callers ValidateToken
+gograph callers YourSymbol
 
 # What does it call?
-gograph callees ValidateToken
+gograph callees YourSymbol
 
 # Full blast radius
-gograph impact ValidateToken
+gograph impact YourSymbol
 
 # Before editing it
-gograph plan ValidateToken
-
-# Review potential production source-to-sink security paths
-gograph flow --no-tests
+gograph plan YourSymbol
 ```
 
 ### Example: Reading Symbol Source Code
 
-Running `gograph source` directly against the codebase returns only the exact AST-extracted code block of the target symbol:
+The following is captured, repository-specific output from running
+`gograph source normalizeSymbolName` in the gograph repository. Your project
+will have different symbol names and locations:
 
 ```text
 $ gograph source normalizeSymbolName

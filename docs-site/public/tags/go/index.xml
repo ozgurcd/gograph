@@ -13,7 +13,7 @@
       <link>https://gograph.identuum.ai/posts/analyzing-go-codebase-with-gograph/</link>
       <pubDate>Wed, 24 Jun 2026 00:00:00 +0000</pubDate>
       <guid>https://gograph.identuum.ai/posts/analyzing-go-codebase-with-gograph/</guid>
-      <description>A deep-dive technical case study running gograph&amp;#39;s static analysis engine on its own codebase. Discover how structural call-graph intelligence eliminates LLM token waste, tracks precise blast radii, and out-performs standard grep.</description>
+      <description>A historical, reproducible snapshot of gograph analyzing its own Go codebase, with structural-query examples and documented limitations.</description>
     </item>
   </channel>
 </rss>

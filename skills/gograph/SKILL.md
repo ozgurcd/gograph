@@ -1,7 +1,7 @@
 ---
 name: gograph
 version: "0.1.0"
-description: "Go repository intelligence for Claude Code. Use whenever the user is reading, navigating, editing, reviewing, or refactoring a Go codebase. Replaces grep/rg/find for Go symbols with AST-aware call graphs, blast radius analysis, impact and security flow analysis, and 61 query and analysis capabilities via the local gograph MCP server. Mandatory for Go work whenever the gograph MCP server is connected."
+description: "Go repository intelligence for Claude Code. Use when reading, navigating, editing, reviewing, or refactoring a Go codebase. Adds AST-aware call graphs, blast-radius analysis, impact and security-flow candidates, and 61 query and analysis capabilities through the local gograph MCP server."
 argument-hint: "gograph status | gograph plan UserService.Login | gograph review"
 allowed-tools: Bash, Read
 homepage: https://gograph.identuum.ai
@@ -13,9 +13,12 @@ user-invocable: true
 
 # gograph: Go Repository Intelligence
 
-`gograph` is a local, AST-aware Go code intelligence engine that exposes 61 query, analysis, and workflow capabilities over the Model Context Protocol (65 endpoints including session lifecycle). It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) structural awareness of a Go codebase without broad grep passes. One `gograph_context` call replaces 4-5 separate Read / Grep tool calls.
+`gograph` is a local, AST-aware Go code intelligence engine that exposes 61 query, analysis, and workflow capabilities over the Model Context Protocol (65 endpoints including session lifecycle). It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) a persisted structural view of a Go codebase. `gograph_context` combines evidence that may otherwise require several navigation and source calls; actual savings depend on the task.
 
-`gopls` is optimized for human IDEs. `gograph` is optimized for AI coding agents that pay for every token of context.
+`gopls` provides live compiler-backed navigation, diagnostics, implementations,
+refactoring, and experimental MCP support. `gograph` complements it with a
+persisted repository graph, composed change-analysis workflows, and policy
+gates for coding agents.
 
 ## When to invoke this skill
 
@@ -35,7 +38,7 @@ Do NOT invoke for non-Go work. The skill is Go-scoped.
 The gograph binary must be installed and on `$PATH`:
 
 ```bash
-go install github.com/ozgurcd/gograph@latest
+go install github.com/ozgurcd/gograph/cmd/gograph@latest
 ```
 
 Verify with `gograph --version`. The MCP server registration ships with the plugin and auto-connects once the binary is installed.
@@ -47,17 +50,17 @@ Verify with `gograph --version`. The MCP server registration ships with the plug
    - First choice: `gograph build . --precise` (requires the package to compile).
    - Fallback: `gograph build .` - and explain why precise mode was unavailable.
    - Run `gograph_stats` and require `build_status=complete`; a build with zero successful parses never replaces the previous graph, while partial failures are reported explicitly.
-3. **For symbol / type / function discovery, NEVER use `grep`, `rg`, `find`, or glob.** Use `gograph_query` instead. Text search returns false positives across vendored code, comments, and string literals; `gograph_query` returns AST-accurate matches.
+3. **For structural symbol / type / function discovery, use `gograph_query` instead of `grep`, `rg`, `find`, or glob.** Text search also matches comments and string literals; `gograph_query` returns AST-derived matches. Continue to use text search for literal strings, documentation, configuration, and non-Go files.
 4. **Before editing any Go symbol**, run `gograph_plan <symbol>`. The plan returns callers, tests connected to the symbol, and a blast-radius estimate. Edit decisions should reference the plan.
-5. **To understand a function or method**, use `gograph_context <symbol>`. This single call returns node + source + callers + callees + tests, replacing 4-5 separate tool calls and saving substantial context tokens.
-6. **After editing Go code**, run `gograph build . --precise`, then `gograph_review --uncommitted` to verify test coverage and surface the blast radius of the change.
+5. **To understand a function or method**, use `gograph_context <symbol>`. This single call combines node + source + callers + callees + statically mapped tests; inspect source or `gopls` when the evidence is incomplete.
+6. **After editing Go code**, run `gograph build . --precise`, then `gograph_review --uncommitted` to inspect test mappings and the indexed blast radius. Run the repository's required tests and checks separately.
 
 ## High-value tools
 
 | Tool | Use case |
 |---|---|
 | `gograph_capabilities` | Discover what the connected server exposes |
-| `gograph_query` | AST-accurate symbol search (replaces grep) |
+| `gograph_query` | AST-derived structural symbol search |
 | `gograph_context <symbol>` | Node + source + callers + callees + tests in one call |
 | `gograph_plan <symbol>` | Pre-edit blast radius + callers + tests |
 | `gograph_review --uncommitted` | Post-edit coverage check |
@@ -80,17 +83,30 @@ The live surface is 65 MCP endpoints; `gograph_capabilities` is the tested sourc
 
 ## Privacy
 
-Graph building is fully local. No source code leaves the machine. MCP transport is local stdio. Respects `.gitignore` and skips AI-agent worktree directories automatically. See `PRIVACY.md` in the gograph repo for details.
+Graph artifacts and MCP transport are local. Default parsing makes no network
+calls; precise mode and `doc` invoke the installed Go toolchain and therefore
+follow its configured module-cache and network policy. Respects `.gitignore`
+and skips AI-agent worktree directories automatically. See `PRIVACY.md` in the
+gograph repo for details.
 
 Most MCP tools are read-only. Boundary creation writes configuration, session create/end mutate telemetry, session cleanup deletes stale logs, and `gograph_wiki` writes documentation; their MCP annotations declare those effects.
 
 ## Anti-patterns
 
-- Using `grep` / `rg` / `find` on a Go codebase when gograph is connected. Text search is inaccurate and wastes tokens.
-- Editing a Go function without `gograph_plan` first. You will miss callers and break tests downstream.
-- Skipping `gograph_review` after a multi-file change. Blast radius regressions slip through.
-- Reading 5-15K tokens of surrounding code with Read / Grep when `gograph_context <symbol>` returns the same answer in a single structured response.
+- Treating text search or gograph as universally authoritative. Use gograph
+  first for supported structural queries; use `gopls` or targeted source/text
+  search when precision is AST/fallback, results are ambiguous, or a known call
+  is missing. Use text search directly for literals, comments, generated or
+  non-indexed files, and non-Go content.
+- Editing a Go function without `gograph_plan` first. This can miss relevant callers and downstream tests.
+- Skipping `gograph_review` after a multi-file change and therefore missing a useful static review signal.
+- Repeating broad source reads when `gograph_context <symbol>` can provide a
+  focused structural starting point.
 
 ## Why this exists
 
-LLMs reading source through grep / Read / Glob burn 5-15K context tokens to understand a single function's surroundings. `gograph` returns the same answer in one structured response. Token cost drops by roughly 80% and the answer is AST-accurate, not text-pattern-fuzzy.
+Coding agents often need a symbol's source, callers, callees, tests, and role at
+the same time. `gograph_context` combines that indexed evidence in one response.
+Measure tool calls, actual model tokens, false positives, false negatives, and
+task success on your own repository; gograph output remains static-analysis
+evidence rather than runtime proof.

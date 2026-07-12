@@ -8,7 +8,7 @@ canonifyURLs = false
 enableRobotsTXT = true
 
 [params]
-  description = "gograph is a fast, AST-aware Go codebase analysis tool and MCP server. Query call graphs, dependency trees, interface implementers, and error flows from any AI agent or terminal."
+  description = "gograph is a local structural graph and MCP server for safer Go refactors, repository analysis, and coding-agent workflows."
   author = "Ozgur Demir"
   defaultTheme = "auto"
   ShowThemeToggle = true
@@ -19,7 +19,7 @@ enableRobotsTXT = true
   disableAnchoredHeadings = false
   comments = true
 
-  homeInfoParams = { Title = "gograph", Content = "A fast, AST-aware Go codebase analysis tool and MCP server. Query call graphs, dependency trees, interface implementers, and error flows in milliseconds — from your terminal or any AI agent." }
+  homeInfoParams = { Title = "gograph", Content = "A local structural graph for safer Go refactors, repository-level analysis, and coding-agent workflows — from the terminal or any compatible MCP client." }
 
   [params.schema]
     publisherType = "Person"
@@ -58,4 +58,3 @@ enableRobotsTXT = true
   [markup.goldmark]
     [markup.goldmark.renderer]
       unsafe = true
-

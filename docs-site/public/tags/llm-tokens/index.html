@@ -7,7 +7,7 @@
 <meta name="robots" content="index, follow">
 <title>Llm-Tokens | gograph – Go Codebase Analysis &amp; MCP Server</title>
 <meta name="keywords" content="">
-<meta name="description" content="gograph is a fast, AST-aware Go codebase analysis tool and MCP server. Query call graphs, dependency trees, interface implementers, and error flows from any AI agent or terminal.">
+<meta name="description" content="gograph is a local structural graph and MCP server for safer Go refactors, repository analysis, and coding-agent workflows.">
 <meta name="author" content="Ozgur Demir">
 <link rel="canonical" href="https://gograph.identuum.ai/tags/llm-tokens/">
 <link crossorigin="anonymous" href="/assets/css/stylesheet.cd9298b33628769aa1bc1acebbbfd7aa11ce81dfe03484d479e1907760249a1d.css" integrity="sha256-zZKYszYodpqhvBrOu7/XqhHOgd/gNITUeeGQd2Akmh0=" rel="preload stylesheet" as="style">
@@ -71,13 +71,13 @@
 <meta property="og:url" content="https://gograph.identuum.ai/tags/llm-tokens/">
   <meta property="og:site_name" content="gograph – Go Codebase Analysis & MCP Server">
   <meta property="og:title" content="Llm-Tokens">
-  <meta property="og:description" content="gograph is a fast, AST-aware Go codebase analysis tool and MCP server. Query call graphs, dependency trees, interface implementers, and error flows from any AI agent or terminal.">
+  <meta property="og:description" content="gograph is a local structural graph and MCP server for safer Go refactors, repository analysis, and coding-agent workflows.">
   <meta property="og:locale" content="en_us">
   <meta property="og:type" content="website">
 
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="Llm-Tokens">
-  <meta name="twitter:description" content="gograph is a fast, AST-aware Go codebase analysis tool and MCP server. Query call graphs, dependency trees, interface implementers, and error flows from any AI agent or terminal.">
+  <meta name="twitter:description" content="gograph is a local structural graph and MCP server for safer Go refactors, repository analysis, and coding-agent workflows.">
 
 </head>
 <body class="list" id="top">
@@ -172,9 +172,9 @@
     </h2>
   </header>
   <div class="entry-content">
-    <p>1. The Static Context Dilemma in AI-Assisted Engineering Modern software engineering is increasingly co-authored by AI coding agents. However, developers face a systemic bottleneck: LLM Context Window Bloat and Hallucinations.
+    <p>1. The Static Context Dilemma in AI-Assisted Engineering Modern software engineering is increasingly co-authored by AI coding agents. Those agents need both textual search and structural evidence to navigate a repository efficiently.
 When an agent needs to understand how a function is used, it typically defaults to one of two inefficient strategies:
-Primitive Textual Grep: Running broad text searches that flood the context window with comments, test mocks, markdown references, and unrelated matches. Whole-File Dumps: Feeding entire raw source files to the LLM, burning thousands of tokens, increasing processing latency, and inducing model hallucinations. gograph was built to solve this. By constructing a localized, persistent Abstract Syntax Tree (AST) call graph, it equips both developers and AI agents with precise structural awareness. Rather than guessing, gograph allows queries like “find the exact callers of this method” or “extract only this function’s source code block” in milliseconds.
+Broad textual search: Useful for literals and non-Go content, but it also returns comments, test mocks, Markdown references, and unrelated same-name matches when the question is structural. Whole-file reads: Sometimes necessary, but often larger than the function or relationship needed for the immediate task. gograph adds a local, persisted Abstract Syntax Tree (AST) graph, with optional type-checked enrichment. It supports questions such as “show the indexed callers of this method” or “extract this function’s source block”. Its output remains static-analysis evidence with documented limits.
 ...</p>
   </div>
   <footer class="entry-footer">

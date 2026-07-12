@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "gograph",
-      "description": "Go repository intelligence for Claude Code. Replaces broad grep/rg/find symbol search with AST-aware call graphs, blast radius, impact and security flow analysis, and 61 query and analysis capabilities via the gograph MCP server.",
+      "description": "Local Go repository intelligence for Claude Code: AST-aware call graphs, impact, security-flow candidates, and 61 query and analysis capabilities via the gograph MCP server.",
       "version": "0.1.0",
       "author": {
         "name": "ozgurcd",

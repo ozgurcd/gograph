@@ -188,3 +188,19 @@ Normalized the security-flow page link into the index's Schemas and Security sec
 ## [2026-07-12] maintenance | Normalize interface-dispatch log formatting
 
 - Removed the extra trailing blank line left by the governed session append; no project facts changed.
+## [2026-07-12] maintenance | Correct onboarding and product positioning
+
+- Corrected all maintained Go-install examples to the executable package at `github.com/ozgurcd/gograph/cmd/gograph`; a build through that import path produced a runnable `gograph version vdev` binary.
+- Replaced guessed-symbol Quick Start flows with repository-wide `build`, `stats`, `summary`, `hotspot`, and `flow` commands, followed by clearly labeled project-specific symbol placeholders.
+- Removed unsupported absolute accuracy, hallucination-rate, and fixed token-savings claims from current site, plugin, hook, benchmark, and agent guidance. Historical snapshot counts remain labeled as point-in-time output comparisons with different semantics.
+- Reframed gograph as complementary to `gopls` and targeted text search. Durable agent guidance now requires cross-checking AST/fallback, ambiguous, or known-missing results and forbids treating zero callers/orphans as proof.
+- Removed the benchmark harness's fabricated 1,250-token gopls penalty; it now reports only observed latency and raw payload-size estimates with an explicit non-equivalence warning.
+- Regenerated the tracked 32-page Hugo output. The independent render contains the corrected install path and no forbidden claim patterns.
+- Updated GitHub repository homepage metadata from the repository URL to `https://gograph.identuum.ai` and verified it through GitHub.
+- Verification passed: gofmt, module verify/tidy, build, unit tests, race tests, vet, staticcheck, golangci-lint, govulncheck, JSON validation, Hugo builds, diff checks, and live execution of every guaranteed Quick Start command.
+- No commit or push was made. The GitHub Pages deployment will reflect the corrected source after the working tree is intentionally committed and pushed to `main`.
+## [2026-07-12] maintenance | Normalize comparison wording
+
+- Replaced the final “token cost comparison” table label with neutral output-shape and analysis-caveat language.
+- Reworded the historical case study's composite-command section to describe combined evidence categories without claiming a fixed number of replaced calls.
+- Regenerated the 32-page Hugo output and a clean independent render after the wording changes.

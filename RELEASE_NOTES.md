@@ -75,6 +75,16 @@
 Updated CLI help, MCP capability and annotation descriptions, README, command reference, getting-started guide, coding-agent usage guide, contributor checks, and the agent skill for graph integrity, shared root/scanner behavior, policy checks, MCP side effects, and CI verification.
 Corrected safety and I/O claims: default AST analysis does not execute target code, but gograph reads project/config metadata; precise mode and `doc` invoke the local Go toolchain; source/context and inline endpoint handlers can return source; session telemetry is local rather than absent. Documented exact CLI/MCP parity boundaries and output-mode support.
 Updated the vendored Hugo templates to supported language direction and locale APIs, removing deprecation warnings from the documentation build.
+- Corrected every maintained `go install` example to target the executable
+  package at `github.com/ozgurcd/gograph/cmd/gograph`.
+- Reworked Quick Start and getting-started flows to begin with repository-wide
+  `stats`, `summary`, and `hotspot` results instead of assuming sample symbols
+  exist in the user's project.
+- Removed unsupported absolute accuracy, hallucination-rate, and fixed token-
+  savings claims from current product, site, plugin, and agent guidance.
+  Reframed gograph as complementary to `gopls` and targeted text search, and
+  changed the comparison harness to report only observed command latency and
+  raw payload size without a fabricated follow-up penalty.
 
 ---
 

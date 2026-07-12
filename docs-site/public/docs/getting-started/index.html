@@ -110,8 +110,8 @@
   "keywords": [
     
   ],
-  "articleBody": "Prerequisites Go 1.26 or later A Go module repository (go.mod present) Install Homebrew (recommended)\nbrew install ozgurcd/tap/gograph gograph version Go install\ngo install github.com/ozgurcd/gograph@latest From source\ngit clone https://github.com/ozgurcd/gograph cd gograph make build # produces bin/gograph sudo make install # copies to /usr/local/bin Step 1 — Build the graph Navigate to the root of any Go module and run:\ngograph build . This walks every .go file, extracts the AST, and writes:\n.gograph/graph.json — the machine-readable graph (all queries read from this) .gograph/GRAPH_REPORT.md — master index report .gograph/graph-symbols.md — all symbols .gograph/graph-routes.md — HTTP routes .gograph/graph-sql.md — SQL queries .gograph/graph-errors.md — error declarations .gograph/graph-deps.md — package dependencies .gograph/graph-concurrency.md — concurrency primitives .gograph/graph-config.md — environment reads .gograph/graph-tests.md — test edge mapping .gograph/ is automatically added to the Git repository root .gitignore. Outside a Git worktree, gograph falls back to the build target .gitignore. If no Go files are found after ignore filtering, the build exits without writing artifacts.\nPrecise mode gograph build . --precise Runs the full Go type checker on top of the AST pass. This enables Class Hierarchy Analysis (CHA) for accurate interface dispatch resolution — calls through interface variables are resolved to their concrete implementations. Slower, requires compilable code. Use before major refactors or blast-radius analysis.\nWhen to use which:\nMode Speed Requires compilable? Interface dispatch build . Fast No Heuristic (duck-typing) build . --precise Slower Yes Type-checked CHA Step 2 — Check the index gograph stats Prints schema version, build timestamp, and counts:\nschema_version: 2 generated_at: 2026-05-22T18:00:00Z packages: 24 files: 187 symbols: 1843 calls: 6201 imports: 412 routes: 38 sqls: 29 env_reads: 14 test_edges: 522 gograph stale Lists source files that are newer than graph.json. Run this before any structural analysis to confirm the index is current. Rebuild if any files are listed.\nStep 3 — First queries # Find a symbol gograph query ValidateToken # Read its source gograph source ValidateToken # Who calls it? gograph callers ValidateToken # What does it call? gograph callees ValidateToken # Full blast radius gograph impact ValidateToken # Before editing it gograph plan ValidateToken Example: Reading Symbol Source Code Running gograph source directly against the codebase returns only the exact AST-extracted code block of the target symbol:\n$ gograph source normalizeSymbolName // github.com/ozgurcd/gograph/internal/search::normalizeSymbolName (internal/search/advanced.go:12-21) func normalizeSymbolName(name string) string { name = strings.TrimPrefix(name, \"(\") if idx := strings.Index(name, \").\"); idx \u003e= 0 { name = name[idx+2:] } if idx := strings.LastIndex(name, \".\"); idx \u003e= 0 { name = name[idx+1:] } return strings.ToLower(name) } Output formats All query commands support three output modes:\ngograph callers Foo # text: [kind] Name — detail (file:line) gograph callers Foo --json # JSON envelope: {\"ok\":true,\"cmd\":\"callers\",\"query\":\"Foo\",\"count\":N,\"data\":[...]} gograph callers Foo --files-only # flat list of unique file paths Use --json for scripting and AI agent pipelines. Use --files-only to get a checklist of affected files without printing every result.\nRebuilding The graph does not auto-update. Rebuild whenever source files change:\ngograph build . # fast rebuild, tolerates broken code gograph build . --precise # type-checked rebuild (before big refactors) You can check whether a rebuild is needed:\ngograph stale ",
-  "wordCount" : "480",
+  "articleBody": "Prerequisites Go 1.26 or later A Go module repository (go.mod present) Install Homebrew (recommended)\nbrew install ozgurcd/tap/gograph gograph version Go install\ngo install github.com/ozgurcd/gograph/cmd/gograph@latest gograph version From source\ngit clone https://github.com/ozgurcd/gograph cd gograph make build # produces bin/gograph sudo make install # copies to /usr/local/bin Step 1 — Build the graph Navigate to the root of any Go module and run:\ngograph build . This walks every .go file, extracts the AST, and writes:\n.gograph/graph.json — the machine-readable graph (all queries read from this) .gograph/GRAPH_REPORT.md — master index report .gograph/graph-symbols.md — all symbols .gograph/graph-routes.md — HTTP routes .gograph/graph-sql.md — SQL queries .gograph/graph-errors.md — error declarations .gograph/graph-deps.md — package dependencies .gograph/graph-concurrency.md — concurrency primitives .gograph/graph-config.md — environment reads .gograph/graph-tests.md — test edge mapping graph.json also stores compact security-flow facts used by gograph flow; findings and sanitizer policy are evaluated when queried rather than written as a Markdown report.\n.gograph/ is automatically added to the Git repository root .gitignore. Outside a Git worktree, gograph falls back to the build target .gitignore. Files and directories ignored by Git are excluded consistently from builds, freshness checks, and change detection. If no Go files are found, or every Go file fails to parse, the build exits without replacing an existing graph. Partial parse failures are retained in graph.json build metadata.\nPrecise mode gograph build . --precise Attempts Go type loading plus CHA/SSA enrichment on top of the AST pass. Compilable, build-selected packages are required for precise data; if enrichment fails or omits an indexed non-test source file, gograph warns and retains the AST graph. Successful, fallback, and AST-only status is persisted as precise, precise_fallback, or ast. A precise interface invocation retains every valid named in-repository CHA target, so callers Repository.Delete can resolve direct, embedded-interface, and promoted concrete methods without dropping alternative implementations. Promoted wrappers forward through traversal-only synthetic edges that do not appear as source call sites. CHA can still over-approximate runtime targets, while reflection, plugins, unsafe, test-only packages, unnamed concrete types, and module-external implementations remain incomplete. Use before major refactors or blast-radius analysis.\nWhen to use which:\nMode Speed Requires compilable? Interface dispatch build . Fast No Heuristic (duck-typing) build . --precise Slower Yes Type-checked CHA Step 2 — Check the index gograph stats Prints schema version, build timestamp, and counts:\nschema_version: 2 generated_at: 2026-05-22T18:00:00Z packages: 24 files: 187 symbols: 1843 calls: 6201 imports: 412 routes: 38 sqls: 29 env_reads: 14 test_edges: 522 build_status: complete precision: precise parsed_files: 187/187 parse_failures: 0 gograph stale Lists indexed source files that are newer than graph.json. It uses the same ignore policy as build, and all filesystem-backed commands resolve the repository root recorded in the graph, so it works identically from subdirectories. Rebuild if any files are listed.\nStep 3 — Run repository-wide queries # No project-specific symbol names are required for these commands gograph summary gograph hotspot --top 5 gograph flow --no-tests Choose a real function or method reported by summary, hotspot, or gograph complexity, then replace YourSymbol below with that name:\n# Read its source and surrounding graph context gograph source YourSymbol gograph context YourSymbol # Who calls it? gograph callers YourSymbol # What does it call? gograph callees YourSymbol # Full blast radius gograph impact YourSymbol # Before editing it gograph plan YourSymbol Example: Reading Symbol Source Code The following is captured, repository-specific output from running gograph source normalizeSymbolName in the gograph repository. Your project will have different symbol names and locations:\n$ gograph source normalizeSymbolName // github.com/ozgurcd/gograph/internal/search::normalizeSymbolName (internal/search/advanced.go:12-21) func normalizeSymbolName(name string) string { name = strings.TrimPrefix(name, \"(\") if idx := strings.Index(name, \").\"); idx \u003e= 0 { name = name[idx+2:] } if idx := strings.LastIndex(name, \".\"); idx \u003e= 0 { name = name[idx+1:] } return strings.ToLower(name) } Output formats Result-list queries support text, JSON, and files-only output:\ngograph callers Foo # text: [kind] Name — detail (file:line) gograph callers Foo --json # {\"schema_version\":\"1\",\"command\":\"callers\",\"status\":\"ok\",\"query\":\"Foo\",\"count\":N,\"results\":[...]} gograph callers Foo --files-only # flat list of unique file paths Composed-analysis commands also support JSON where documented. Operational commands (build, wiki, gate, snapshot, sessions, installation, help, and version) remain text. Use --files-only only for result-list queries.\nRebuilding CLI analysis does not auto-update. Rebuild whenever source files change:\ngograph build . # fast rebuild, tolerates broken code gograph build . --precise # type-checked rebuild (before big refactors) You can check whether a rebuild is needed:\ngograph stale The MCP server checks source freshness and newer persisted graphs per analysis call. After an edit it rebuilds in memory using the current requested mode, so a precise session re-runs CHA/SSA rather than silently becoming AST-only; if that refresh cannot complete precisely, the analysis call returns an error. MCP stale, default changes, and stats still inspect the persisted graph.\n",
+  "wordCount" : "774",
   "inLanguage": "en",
   "datePublished": "0001-01-01T00:00:00Z",
   "dateModified": "0001-01-01T00:00:00Z",
@@ -226,7 +226,7 @@
     </div>
     <div class="post-meta">
 
-<span>3 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span>
+<span>4 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span>
 
 </div>
   </header> 
@@ -240,7 +240,8 @@
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>brew install ozgurcd/tap/gograph
 </span></span><span style="display:flex;"><span>gograph version
 </span></span></code></pre></div><p><strong>Go install</strong></p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>go install github.com/ozgurcd/gograph@latest
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>go install github.com/ozgurcd/gograph/cmd/gograph@latest
+</span></span><span style="display:flex;"><span>gograph version
 </span></span></code></pre></div><p><strong>From source</strong></p>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>git clone https://github.com/ozgurcd/gograph
 </span></span><span style="display:flex;"><span>cd gograph
@@ -262,12 +263,16 @@
 <li><code>.gograph/graph-config.md</code> — environment reads</li>
 <li><code>.gograph/graph-tests.md</code> — test edge mapping</li>
 </ul>
+<p><code>graph.json</code> also stores compact security-flow facts used by <code>gograph flow</code>; findings and sanitizer policy are evaluated when queried rather than written as a Markdown report.</p>
 <p><code>.gograph/</code> is automatically added to the Git repository root <code>.gitignore</code>.
 Outside a Git worktree, <code>gograph</code> falls back to the build target <code>.gitignore</code>.
-If no Go files are found after ignore filtering, the build exits without writing artifacts.</p>
+Files and directories ignored by Git are excluded consistently from builds,
+freshness checks, and change detection. If no Go files are found, or every Go
+file fails to parse, the build exits without replacing an existing graph.
+Partial parse failures are retained in <code>graph.json</code> build metadata.</p>
 <h3 id="precise-mode">Precise mode<a hidden class="anchor" aria-hidden="true" href="#precise-mode">#</a></h3>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>gograph build . --precise
-</span></span></code></pre></div><p>Runs the full Go type checker on top of the AST pass. This enables Class Hierarchy Analysis (CHA) for accurate interface dispatch resolution — calls through interface variables are resolved to their concrete implementations. Slower, requires compilable code. Use before major refactors or blast-radius analysis.</p>
+</span></span></code></pre></div><p>Attempts Go type loading plus CHA/SSA enrichment on top of the AST pass. Compilable, build-selected packages are required for precise data; if enrichment fails or omits an indexed non-test source file, gograph warns and retains the AST graph. Successful, fallback, and AST-only status is persisted as <code>precise</code>, <code>precise_fallback</code>, or <code>ast</code>. A precise interface invocation retains every valid named in-repository CHA target, so <code>callers Repository.Delete</code> can resolve direct, embedded-interface, and promoted concrete methods without dropping alternative implementations. Promoted wrappers forward through traversal-only synthetic edges that do not appear as source call sites. CHA can still over-approximate runtime targets, while reflection, plugins, <code>unsafe</code>, test-only packages, unnamed concrete types, and module-external implementations remain incomplete. Use before major refactors or blast-radius analysis.</p>
 <p><strong>When to use which:</strong></p>
 <table>
 	<thead>
@@ -307,28 +312,38 @@ routes:         38
 sqls:           29
 env_reads:      14
 test_edges:     522
+build_status:   complete
+precision:      precise
+parsed_files:   187/187
+parse_failures: 0
 </code></pre><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>gograph stale
-</span></span></code></pre></div><p>Lists source files that are newer than <code>graph.json</code>. Run this before any structural analysis to confirm the index is current. Rebuild if any files are listed.</p>
-<h2 id="step-3--first-queries">Step 3 — First queries<a hidden class="anchor" aria-hidden="true" href="#step-3--first-queries">#</a></h2>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Find a symbol</span>
-</span></span><span style="display:flex;"><span>gograph query ValidateToken
-</span></span><span style="display:flex;"><span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e"># Read its source</span>
-</span></span><span style="display:flex;"><span>gograph source ValidateToken
+</span></span></code></pre></div><p>Lists indexed source files that are newer than <code>graph.json</code>. It uses the same ignore policy as <code>build</code>, and all filesystem-backed commands resolve the repository root recorded in the graph, so it works identically from subdirectories. Rebuild if any files are listed.</p>
+<h2 id="step-3--run-repository-wide-queries">Step 3 — Run repository-wide queries<a hidden class="anchor" aria-hidden="true" href="#step-3--run-repository-wide-queries">#</a></h2>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># No project-specific symbol names are required for these commands</span>
+</span></span><span style="display:flex;"><span>gograph summary
+</span></span><span style="display:flex;"><span>gograph hotspot --top <span style="color:#ae81ff">5</span>
+</span></span><span style="display:flex;"><span>gograph flow --no-tests
+</span></span></code></pre></div><p>Choose a real function or method reported by <code>summary</code>, <code>hotspot</code>, or
+<code>gograph complexity</code>, then replace <code>YourSymbol</code> below with that name:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Read its source and surrounding graph context</span>
+</span></span><span style="display:flex;"><span>gograph source YourSymbol
+</span></span><span style="display:flex;"><span>gograph context YourSymbol
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Who calls it?</span>
-</span></span><span style="display:flex;"><span>gograph callers ValidateToken
+</span></span><span style="display:flex;"><span>gograph callers YourSymbol
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># What does it call?</span>
-</span></span><span style="display:flex;"><span>gograph callees ValidateToken
+</span></span><span style="display:flex;"><span>gograph callees YourSymbol
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Full blast radius</span>
-</span></span><span style="display:flex;"><span>gograph impact ValidateToken
+</span></span><span style="display:flex;"><span>gograph impact YourSymbol
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Before editing it</span>
-</span></span><span style="display:flex;"><span>gograph plan ValidateToken
+</span></span><span style="display:flex;"><span>gograph plan YourSymbol
 </span></span></code></pre></div><h3 id="example-reading-symbol-source-code">Example: Reading Symbol Source Code<a hidden class="anchor" aria-hidden="true" href="#example-reading-symbol-source-code">#</a></h3>
-<p>Running <code>gograph source</code> directly against the codebase returns only the exact AST-extracted code block of the target symbol:</p>
+<p>The following is captured, repository-specific output from running
+<code>gograph source normalizeSymbolName</code> in the gograph repository. Your project
+will have different symbol names and locations:</p>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>$ gograph source normalizeSymbolName
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>// github.com/ozgurcd/gograph/internal/search::normalizeSymbolName (internal/search/advanced.go:12-21)
@@ -343,18 +358,19 @@ test_edges:     522
 </span></span><span style="display:flex;"><span>	return strings.ToLower(name)
 </span></span><span style="display:flex;"><span>}
 </span></span></code></pre></div><h2 id="output-formats">Output formats<a hidden class="anchor" aria-hidden="true" href="#output-formats">#</a></h2>
-<p>All query commands support three output modes:</p>
+<p>Result-list queries support text, JSON, and files-only output:</p>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>gograph callers Foo              <span style="color:#75715e"># text: [kind] Name — detail  (file:line)</span>
-</span></span><span style="display:flex;"><span>gograph callers Foo --json       <span style="color:#75715e"># JSON envelope: {&#34;ok&#34;:true,&#34;cmd&#34;:&#34;callers&#34;,&#34;query&#34;:&#34;Foo&#34;,&#34;count&#34;:N,&#34;data&#34;:[...]}</span>
+</span></span><span style="display:flex;"><span>gograph callers Foo --json       <span style="color:#75715e"># {&#34;schema_version&#34;:&#34;1&#34;,&#34;command&#34;:&#34;callers&#34;,&#34;status&#34;:&#34;ok&#34;,&#34;query&#34;:&#34;Foo&#34;,&#34;count&#34;:N,&#34;results&#34;:[...]}</span>
 </span></span><span style="display:flex;"><span>gograph callers Foo --files-only <span style="color:#75715e"># flat list of unique file paths</span>
-</span></span></code></pre></div><p>Use <code>--json</code> for scripting and AI agent pipelines. Use <code>--files-only</code> to get a checklist of affected files without printing every result.</p>
+</span></span></code></pre></div><p>Composed-analysis commands also support JSON where documented. Operational commands (<code>build</code>, <code>wiki</code>, <code>gate</code>, <code>snapshot</code>, sessions, installation, help, and version) remain text. Use <code>--files-only</code> only for result-list queries.</p>
 <h2 id="rebuilding">Rebuilding<a hidden class="anchor" aria-hidden="true" href="#rebuilding">#</a></h2>
-<p>The graph does <strong>not</strong> auto-update. Rebuild whenever source files change:</p>
+<p>CLI analysis does <strong>not</strong> auto-update. Rebuild whenever source files change:</p>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>gograph build .           <span style="color:#75715e"># fast rebuild, tolerates broken code</span>
 </span></span><span style="display:flex;"><span>gograph build . --precise <span style="color:#75715e"># type-checked rebuild (before big refactors)</span>
 </span></span></code></pre></div><p>You can check whether a rebuild is needed:</p>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>gograph stale
-</span></span></code></pre></div>
+</span></span></code></pre></div><p>The MCP server checks source freshness and newer persisted graphs per analysis call. After an edit it rebuilds in memory using the current requested mode, so a precise session re-runs CHA/SSA rather than silently becoming AST-only; if that refresh cannot complete precisely, the analysis call returns an error. MCP <code>stale</code>, default <code>changes</code>, and <code>stats</code> still inspect the persisted graph.</p>
+
 
   </div>
 

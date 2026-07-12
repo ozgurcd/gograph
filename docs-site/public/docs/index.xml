@@ -22,11 +22,11 @@
       <description>Detailed documentation for every gograph CLI command.</description>
     </item>
     <item>
-      <title>AI Agent Integration &amp; Token Reduction</title>
+      <title>AI Agent Integration</title>
       <link>https://gograph.identuum.ai/docs/agent-integration/</link>
       <pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate>
       <guid>https://gograph.identuum.ai/docs/agent-integration/</guid>
-      <description>Integrate gograph with Claude Code, Cursor, and Google Antigravity. Leverage MCP and semantic search to achieve massive token reduction and context savings.</description>
+      <description>Integrate gograph&amp;#39;s local structural graph with Claude Code, Cursor, Copilot, Antigravity, OpenCode, and other MCP clients.</description>
     </item>
     <item>
       <title>Agent Workflows</title>

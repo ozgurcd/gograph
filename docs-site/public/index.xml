@@ -23,11 +23,11 @@
       <description>Detailed documentation for every gograph CLI command.</description>
     </item>
     <item>
-      <title>AI Agent Integration &amp; Token Reduction</title>
+      <title>AI Agent Integration</title>
       <link>https://gograph.identuum.ai/docs/agent-integration/</link>
       <pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate>
       <guid>https://gograph.identuum.ai/docs/agent-integration/</guid>
-      <description>Integrate gograph with Claude Code, Cursor, and Google Antigravity. Leverage MCP and semantic search to achieve massive token reduction and context savings.</description>
+      <description>Integrate gograph&amp;#39;s local structural graph with Claude Code, Cursor, Copilot, Antigravity, OpenCode, and other MCP clients.</description>
     </item>
     <item>
       <title>Agent Workflows</title>
@@ -41,7 +41,7 @@
       <link>https://gograph.identuum.ai/posts/analyzing-go-codebase-with-gograph/</link>
       <pubDate>Wed, 24 Jun 2026 00:00:00 +0000</pubDate>
       <guid>https://gograph.identuum.ai/posts/analyzing-go-codebase-with-gograph/</guid>
-      <description>A deep-dive technical case study running gograph&amp;#39;s static analysis engine on its own codebase. Discover how structural call-graph intelligence eliminates LLM token waste, tracks precise blast radii, and out-performs standard grep.</description>
+      <description>A historical, reproducible snapshot of gograph analyzing its own Go codebase, with structural-query examples and documented limitations.</description>
     </item>
   </channel>
 </rss>

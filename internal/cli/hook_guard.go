@@ -73,12 +73,14 @@ func evaluateHookCommand(command string) int {
 
 	fmt.Printf(`gograph-guard: blocked grep — this looks like a Go symbol search.
   Blocked:  %s
-  Use gograph MCP tools instead (~90%% fewer tokens, more precise):
+  Start with gograph's AST-derived structural tools:
     gograph_query "%s"          search symbols, files, packages
     gograph_context "%s"        node + source + callers + callees + tests
     gograph_callers "%s"        who calls this symbol
     gograph_impact "%s"         downstream blast radius
 
+  If precision is ast/precise_fallback, a result is ambiguous, or a known
+  source call is missing, verify with gopls or a targeted source/text search.
   For raw text search (comments, strings) target files explicitly:
     grep -r "..." --include="*.md"
     grep -r "..." --include="*.yaml"

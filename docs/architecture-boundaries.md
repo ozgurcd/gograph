@@ -38,7 +38,10 @@ Once you have your baseline `boundaries.json`, you can systematically eliminate 
 3. Find an illegal import (e.g., `"internal/repository/**"`) and **delete it**.
 4. Run `gograph boundaries`.
 
-It will now flag the exact files where the handler illegally imports the repository. Once you fix those files and run `gograph boundaries` again, you are mathematically guaranteed that the tech debt will never be reintroduced.
+It will report indexed import sites where the handler violates the configured
+rule. Once those sites are fixed, `gograph boundaries` can enforce the same
+policy in CI for future indexed imports. Generated, build-selected, or
+otherwise excluded files remain subject to the documented scanner limits.
 
 ## 3. The `boundaries.json` Schema
 
