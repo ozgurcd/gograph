@@ -346,7 +346,7 @@ If no Go files are found, or none can be parsed, build exits before replacing ar
 Partial builds record failed files in graph.json for machine-readable health checks.
   gograph stats   → counts plus complete/partial build status and parse failures
   gograph stale   → lists source files newer than graph.json and exits with result
-	                  (shows newest source time/file; exits 0 (up-to-date), 1 (error), 2 (stale))
+                      (shows newest source time/file; exits 0 (up-to-date), 1 (error), 2 (stale))
 
 CLI queries use this persisted snapshot, so rebuild whenever source files change.
 The MCP server checks freshness per call, preserving the current in-memory graph

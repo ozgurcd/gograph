@@ -452,6 +452,16 @@ func TestStaleExitCodes(t *testing.T) {
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
 		t.Fatalf("gograph stale (stale graph): expected exit 2, got %v\n%s", err, out)
 	}
+	cmd = exec.Command(bin, "stale", "--json")
+	cmd.Dir = root
+	out, err = cmd.CombinedOutput()
+	exitErr = nil
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+		t.Fatalf("gograph stale --json (stale graph): expected exit 2, got %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "\"schema_version\"") || !strings.Contains(string(out), "\"command\": \"stale\"") {
+		t.Fatalf("gograph stale --json: expected JSON output, got:\n%s", out)
+	}
 
 	noGraphDir := t.TempDir()
 	cmd = exec.Command(bin, "stale")
