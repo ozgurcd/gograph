@@ -40,6 +40,12 @@ const configFile = ".gograph/graph-config.md"
 const concFile = ".gograph/graph-concurrency.md"
 const testsFile = ".gograph/graph-tests.md"
 
+const (
+	exitSuccess = 0
+	exitError   = 1
+	exitStale   = 2
+)
+
 // Version is set at build time via -ldflags; defaults to "dev" for local builds.
 var Version = "dev"
 
@@ -339,7 +345,8 @@ when available; outside Git, the build target .gitignore is used.
 If no Go files are found, or none can be parsed, build exits before replacing artifacts.
 Partial builds record failed files in graph.json for machine-readable health checks.
   gograph stats   → counts plus complete/partial build status and parse failures
-  gograph stale   → lists source files newer than graph.json (shows newest source time/file)
+  gograph stale   → lists source files newer than graph.json and exits with result
+	                  (shows newest source time/file; exits 0 (up-to-date), 1 (error), 2 (stale))
 
 CLI queries use this persisted snapshot, so rebuild whenever source files change.
 The MCP server checks freshness per call, preserving the current in-memory graph
@@ -450,7 +457,8 @@ Know these before trusting results:
                         symbol name, not route string.
   impact / skeleton     can produce very large output on hotspot symbols or large repos.
                         Use callers --depth N for bounded traversal instead of impact.
-  CLI results           reflect graph.json at last build. Run 'gograph stale' first.
+  CLI results           reflect graph.json at last build. Run 'gograph stale' first;
+                        exit status encodes result (0 = up to date, 1 = error, 2 = stale).
   MCP analysis          checks freshness per call and rebuilds in memory after edits;
                         stale/default changes/stats inspect persisted graph.json.
   Subdirectory safe     all query commands auto-discover the project root (walks up to
@@ -467,6 +475,7 @@ build . [--precise]  : parse AST, atomically write graph.json + reports to .gogr
                        Skips .git, vendor, testdata, .claude, .cursor, .agents, and
                        any files or directories listed in .gitignore (via git check-ignore).
 stale                : list source files newer than graph.json (shows newest source time/file)
+                       exit 0 = up to date, 1 = error, 2 = stale
 stats                : schema/build health, parse failures, and symbol/call/route counts
 
 QUERY COMMANDS:
@@ -1910,22 +1919,27 @@ func runStale() int {
 			return PrintJSON(errEnvelope("stale", err.Error()))
 		}
 		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitError
 	}
 	sr := search.Stale(g, graphRoot(g))
 	if jsonMode {
-		return PrintJSON(okEnvelope("stale", "", sr, len(sr.ChangedFiles)))
+		code := exitSuccess
+		if sr.IsStale {
+			code = exitStale
+		}
+		PrintJSON(okEnvelope("stale", "", sr, len(sr.ChangedFiles)))
+		return code
 	}
 	if !sr.IsStale {
 		fmt.Printf("Graph is up to date (generated: %s).\n", sr.GraphAge)
-		return 0
+		return exitSuccess
 	}
 	fmt.Printf("Graph is STALE (generated: %s). %d file(s) changed:\n", sr.GraphAge, len(sr.ChangedFiles))
 	for _, f := range sr.ChangedFiles {
 		fmt.Printf("  %s\n", f)
 	}
 	fmt.Println("Run `gograph build .` to refresh.")
-	return 0
+	return exitStale
 }
 
 func runStats() int {

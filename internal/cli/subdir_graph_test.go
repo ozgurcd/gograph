@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -168,8 +169,15 @@ func TestFilesystemCommandsFromSubdirectory(t *testing.T) {
 		cmd := exec.Command(bin, args...)
 		cmd.Dir = subDir
 		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("gograph %v from subdirectory: %v\n%s", args, err, out)
+		if args[0] == "stale" {
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+				t.Fatalf("gograph stale from subdirectory: expected exit 2 (stale), got %v\n%s", err, out)
+			}
+		} else {
+			if err != nil {
+				t.Fatalf("gograph %v from subdirectory: %v\n%s", args, err, out)
+			}
 		}
 		if !strings.Contains(string(out), "main.go") {
 			t.Fatalf("gograph %v did not inspect the graph root:\n%s", args, out)

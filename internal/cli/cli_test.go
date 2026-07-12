@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ozgurcd/gograph/internal/cli"
 )
@@ -425,6 +426,40 @@ func TestAllCommandsRegistered(t *testing.T) {
 	if len(extra) > 0 {
 		sort.Strings(extra)
 		t.Errorf("the following cases exist in Run() but are NOT in the canonical want list in this test:\n  %v\nAdd them to the want slice above.", extra)
+	}
+}
+
+func TestStaleExitCodes(t *testing.T) {
+	root, bin := setupGraphFixture(t)
+
+	cmd := exec.Command(bin, "stale")
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("gograph stale (up to date): %v\n%s", err, out)
+	}
+
+	mainGo := filepath.Join(root, "main.go")
+	future := time.Now().Add(time.Hour)
+	if err := os.Chtimes(mainGo, future, future); err != nil {
+		t.Fatalf("mark main.go newer: %v", err)
+	}
+
+	cmd = exec.Command(bin, "stale")
+	cmd.Dir = root
+	out, err = cmd.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+		t.Fatalf("gograph stale (stale graph): expected exit 2, got %v\n%s", err, out)
+	}
+
+	noGraphDir := t.TempDir()
+	cmd = exec.Command(bin, "stale")
+	cmd.Dir = noGraphDir
+	out, err = cmd.CombinedOutput()
+	exitErr = nil
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("gograph stale (missing graph): expected exit 1, got %v\n%s", err, out)
 	}
 }
 
