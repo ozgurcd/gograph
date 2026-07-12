@@ -19,7 +19,8 @@ Adds `.gograph/` to the Git repository root `.gitignore` when available; outside
 Git-ignored files and directories use the same exclusion policy in `build`, `stale`, and `changes`. If no Go files are found or none parse successfully, exits without replacing existing artifacts. Partial parse failures are recorded in `graph.json`, which is committed with an atomic rename.
 - **Arguments**: `path` (optional, defaults to `.`)
 - **Flags**: 
-  - `--precise`: Attempts type-checked CHA/SSA enrichment. Enrichment needs compilable packages; on failure gograph warns and still publishes the AST graph.
+  - `--precise`: Attempts type-checked CHA/SSA enrichment. Enrichment needs compilable, build-selected packages; on failure or an incomplete non-test package load gograph warns and still publishes the AST graph. Graph metadata records `precise`, `precise_fallback`, or `ast`. Precise interface calls retain one parallel call edge per valid named in-repository target; promoted methods add an explicitly marked traversal-only forwarding edge.
+  - **Graph v2 compatibility**: Current readers accept legacy graphs with missing precision/column/synthetic fields. Older v2 binaries can decode newly written graphs but may count or display synthetic forwarding records as ordinary calls; use the current binary for new precise graphs.
 
 ### stale
 ```bash
@@ -39,6 +40,7 @@ Provides a zero-parse index health summary derived entirely from `.gograph/graph
   - `files`
   - `symbols`
   - `calls`
+    - Counts graph edges. One precise interface call expression contributes one edge per valid named in-repository CHA target; promoted-method wrappers can add synthetic traversal-only forwarding edges that are hidden from call-site output.
   - `imports`
   - `routes`
   - `sqls`
@@ -46,6 +48,7 @@ Provides a zero-parse index health summary derived entirely from `.gograph/graph
   - `test_edges`
   - `flow_functions`
   - `build_status` (`complete`, `partial`, or `unknown` for older graphs)
+  - `precision` (`ast`, `precise`, or `precise_fallback`; missing legacy metadata is treated as `ast`)
   - `scanned_files`
   - `parsed_files`
   - `parse_failures`
@@ -92,6 +95,7 @@ Extracts the exact raw source code block for a symbol (function, method, struct,
 gograph callers <function> [--no-tests] [--depth N] [--exact]
 ```
 Finds all callers of a target function or method.
+- Interface-qualified names such as `Repository.Delete`, including methods inherited from embedded interfaces, resolve through every recorded precise implementer. If several targets correspond to one invocation, the source expression is returned once. New graphs report its column as well as its line; legacy graphs remain line-only.
 - **Flags**:
   - `--no-tests`: Filters out test files from caller results.
   - `--depth N`: Traverses the call graph upwards up to `N` hops (from 1 to 10). Useful for scoped neighborhood analysis. Defaults to `1` (direct callers).
@@ -128,7 +132,7 @@ Calculates and prints the shortest call chain (BFS path) between two symbols, ve
 ```bash
 gograph orphans
 ```
-Finds dead code candidates using BFS from `main`/`init`, test/benchmark/fuzz roots, registered routes, and eligible externally callable exports. Exports under `internal/` are not roots; dead chains are reported even when their members call one another.
+Finds dead code candidates using BFS from `main`/`init`, test/benchmark/fuzz roots, registered routes, and eligible externally callable exports. Exports under `internal/` are not roots; dead chains are reported even when their members call one another. Precise reachability follows every retained interface target, not an arbitrary single implementation.
 
 ---
 
@@ -519,7 +523,7 @@ Prints the token-optimized AI agent cheat sheet detailing common workflows and c
 gograph mcp [path]
 ```
 Starts a Model Context Protocol (MCP) server over `stdio`, exposing all gograph capabilities as native tools for integration with AI clients (e.g., Claude Code, Cursor).
-- **Freshness**: If `graph.json` is missing, startup builds an in-memory AST graph. Source-analysis tools check freshness per call and rebuild only after edits; MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot. A precise graph is preserved until source changes.
+- **Freshness**: If `graph.json` is missing, startup builds an in-memory AST graph. Source-analysis tools check source freshness and newer persisted artifacts per call, then rebuild after edits in the current requested mode; MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot. Precise and precise-fallback sessions re-run CHA/SSA, and a failed precise refresh is returned visibly.
 - **Parity**: 61 query, analysis, and workflow capabilities have CLI equivalents; four additional endpoints manage sessions (65 endpoints total).
 
 ### wiki

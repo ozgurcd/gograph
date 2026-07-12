@@ -137,7 +137,7 @@ The call graph mapped that `loadGraph` is called from **56 locations** across th
 - The snapshot save/diff engine (`internal/cli/snapshot.go`).
 - The CI check and gate command handlers.
 
-At the time of this snapshot, persisted CLI analysis commands — from `callers` to `plan`, `review`, `risk`, `wiki`, `summary`, and `explain` — depended on `loadGraph` to deserialize the graph. The MCP server has a distinct freshness model: source-analysis tools refresh an in-memory AST graph, while persisted-index tools retain snapshot semantics.
+At the time of this snapshot, persisted CLI analysis commands — from `callers` to `plan`, `review`, `risk`, `wiki`, `summary`, and `explain` — depended on `loadGraph` to deserialize the graph. The MCP server has a distinct freshness model: source-analysis tools refresh an in-memory graph in the current requested mode, while persisted-index tools retain snapshot semantics.
 
 ### 4.3 Auditing Unused Code (`gograph orphans`)
 We checked for dead, unreachable, or unexported methods that are safe to delete:

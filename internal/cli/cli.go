@@ -331,19 +331,19 @@ using them. The capabilities, help, version, and external 'doc' commands do not
 need an index:
 
   gograph build .            fast, tolerates broken code — use during development
-  gograph build . --precise  attempt type-checked CHA/SSA; keeps AST graph on failure
+  gograph build . --precise  type-checked CHA/SSA; records precise or precise_fallback
 
 After build: graph.json + Markdown reports are written to .gograph/.
 The .gograph/ ignore entry is appended to the Git repository root .gitignore
 when available; outside Git, the build target .gitignore is used.
 If no Go files are found, or none can be parsed, build exits before replacing artifacts.
 Partial builds record failed files in graph.json for machine-readable health checks.
-  gograph stats   → counts plus complete/partial build status and parse failures
+  gograph stats   → counts plus complete/partial build and ast/precise/fallback status
   gograph stale   → lists source files newer than graph.json (shows newest source time/file)
 
 CLI queries use this persisted snapshot, so rebuild whenever source files change.
-The MCP server checks freshness per call, preserving the current in-memory graph
-until source changes and rebuilding it after edits.
+The MCP server checks source freshness and newer persisted graphs per call. After
+edits it rebuilds in the current requested mode, so precise analysis is recomputed.
 
 ━━━ COMMON WORKFLOWS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Start of any session         → summary  (top hotspots + worst instability + highest complexity + orphan/god-obj counts in ONE call)
@@ -375,11 +375,11 @@ FINDING THINGS — three different scopes:
 CALL GRAPH — two different depths:
   callers/callees <sym> [--depth N]   bounded: 1 hop (default) up to 10 — use for focused exploration
   impact <sym>                         unbounded: full BFS to ALL transitive callers — can be large on hotspots
-  <sym> can be a short name ("Validate" — fuzzy substring match), a standard Go package-qualified
-    name ("graph.Graph" or "graph.Graph.Build" — standard dot-notation), or a fully-qualified
-    ID ("pkg/path::(*Service).Validate" — exact match, no same-name conflation). Use
-    the dot or FQ form to disambiguate overloads/duplicates. Requires --precise build for
-    full effect. Works for callers, callees, impact, and path (both endpoints).
+  Call-graph symbol selectors accept short names ("Validate" — fuzzy substring),
+    concrete package-qualified dot notation, and fully-qualified IDs where advertised.
+    callers also accepts an interface method ("Repository.Delete"), expanding every
+    recorded precise implementer and returning a shared source site once. Precise IDs
+    and interface expansion require a --precise build for full effect.
 
 SYMBOL UNDERSTANDING — two different outputs:
   context <sym>   structured data: node + source + callers + callees + tests — fast, token-efficient
@@ -435,8 +435,12 @@ when you only need involved file paths.
 ━━━ STATIC ANALYSIS LIMITATIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Know these before trusting results:
 
-  Interface dispatch    callers/callees may miss calls through interface variables unless
-                        'build . --precise' was used (enables type-checked CHA call graph)
+  Interface dispatch    default AST graphs may miss dynamic targets. Precise CHA keeps every
+                        valid named in-repository implementation as a possible target and accepts
+                        callers Interface.Method, but can over-approximate runtime reachability.
+                        Promoted methods use hidden traversal-only wrapper edges. Reflection,
+                        unsafe, plugins, unresolved function values, test-only packages,
+                        unnamed concrete types, and module-external implementations can remain incomplete.
   errorflow             heuristic AST traversal — NOT SSA/data-flow. Useful for navigation,
                         not proof. Confidence rating (HIGH/MEDIUM) is a heuristic estimate.
   flow                  interprocedural, path-insensitive AST taint analysis with call/return
@@ -451,8 +455,9 @@ Know these before trusting results:
   impact / skeleton     can produce very large output on hotspot symbols or large repos.
                         Use callers --depth N for bounded traversal instead of impact.
   CLI results           reflect graph.json at last build. Run 'gograph stale' first.
-  MCP analysis          checks freshness per call and rebuilds in memory after edits;
-                        stale/default changes/stats inspect persisted graph.json.
+  MCP analysis          checks source freshness and newer graph.json artifacts per call;
+                        edits preserve/retry the requested precision. stale/default
+                        changes/stats inspect persisted graph.json.
   Subdirectory safe     all query commands auto-discover the project root (walks up to
                         the nearest .gograph/ directory). No need to cd back to the repo
                         root before running plan, review, or any other query.
@@ -467,7 +472,7 @@ build . [--precise]  : parse AST, atomically write graph.json + reports to .gogr
                        Skips .git, vendor, testdata, .claude, .cursor, .agents, and
                        any files or directories listed in .gitignore (via git check-ignore).
 stale                : list source files newer than graph.json (shows newest source time/file)
-stats                : schema/build health, parse failures, and symbol/call/route counts
+stats                : schema/build/precision health, parse failures, and symbol/call/route counts
 
 QUERY COMMANDS:
 boundaries [--config] : verify package architecture constraints using boundaries.json
@@ -612,8 +617,7 @@ func runBuild(args []string) int {
 
 	if preciseMode {
 		fmt.Println("  running type-checked precision analysis (this may take a moment)...")
-		// Delay import check by using precise.Enrich explicitly
-		if err := precise.Enrich(absRoot, g); err != nil {
+		if err := enrichGraphPrecisely(absRoot, g); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: precise enrichment failed: %v\n", err)
 		}
 	}
@@ -665,7 +669,10 @@ func runBuild(args []string) int {
 
 func BuildGraph(absRoot string) (*graph.Graph, error) {
 	files, walkErrs := scanner.Walk(absRoot)
-	buildMetadata := &graph.BuildMetadata{ScannedFiles: len(files)}
+	buildMetadata := &graph.BuildMetadata{
+		ScannedFiles: len(files),
+		Precision:    graph.PrecisionAST,
+	}
 	for _, e := range walkErrs {
 		fmt.Fprintf(os.Stderr, "  warning: %v\n", e)
 		buildMetadata.Warnings = append(buildMetadata.Warnings, e.Error())
@@ -765,6 +772,56 @@ func BuildGraph(absRoot string) (*graph.Graph, error) {
 	filterPotentialCalls(g)
 	sortGraph(g)
 	return g, nil
+}
+
+// enrichGraphPrecisely records the outcome in the graph even when enrichment
+// fails. Callers may continue using the AST graph, but the durable fallback
+// state makes that downgrade visible and preserves the request to retry precise
+// analysis after a future source edit.
+func enrichGraphPrecisely(absRoot string, g *graph.Graph) error {
+	if g.Build == nil {
+		g.Build = &graph.BuildMetadata{}
+	}
+	err := precise.Enrich(absRoot, g)
+	if err != nil {
+		g.Build.Precision = graph.PrecisionFallback
+		g.Build.Warnings = append(g.Build.Warnings, "precise enrichment failed: "+err.Error())
+		return err
+	}
+	g.Build.Precision = graph.PrecisionPrecise
+	return nil
+}
+
+// buildPreciseGraph is the in-memory MCP builder for a graph whose persisted
+// policy requested precise analysis. A failed enrichment retains the marked
+// fallback graph for diagnostics but returns an error so MCP analysis cannot
+// silently serve AST-only results.
+func buildPreciseGraph(absRoot string) (*graph.Graph, error) {
+	g, err := BuildGraph(absRoot)
+	if err != nil {
+		return nil, err
+	}
+	if err := enrichGraphPrecisely(absRoot, g); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: precise MCP refresh fell back to AST analysis: %v\n", err)
+		return g, fmt.Errorf("precise MCP refresh failed; graph is precise_fallback: %w", err)
+	}
+	sortGraph(g)
+	return g, nil
+}
+
+func precisionFallbackError(g *graph.Graph) error {
+	if g == nil || g.Build.EffectivePrecision() != graph.PrecisionFallback {
+		return nil
+	}
+	reason := "type-checked enrichment did not complete"
+	for i := len(g.Build.Warnings) - 1; i >= 0; i-- {
+		const prefix = "precise enrichment failed: "
+		if strings.HasPrefix(g.Build.Warnings[i], prefix) {
+			reason = strings.TrimPrefix(g.Build.Warnings[i], prefix)
+			break
+		}
+	}
+	return fmt.Errorf("precise analysis unavailable (graph is precise_fallback): %s", reason)
 }
 
 func filterPotentialCalls(g *graph.Graph) {
@@ -1053,19 +1110,115 @@ func runTests(args []string) int {
 	return printResults("tests", term, results, emptyMsg)
 }
 
-func graphRefresher(initial *graph.Graph, root string, build func(string) (*graph.Graph, error)) func() (*graph.Graph, error) {
+// graphRefresher keeps MCP analysis fresh without losing the analysis mode the
+// user selected. Precise and precise_fallback graphs both carry a durable
+// precise request, while explicit AST and legacy graphs refresh as AST-only.
+//
+// A manual `gograph build --precise` may publish a newer graph while an MCP
+// server is already running. The artifact is checked by file metadata before
+// it is parsed, then a successfully loaded replacement is treated as the later
+// publication even when overlapping builds make its build-start GeneratedAt
+// earlier. A precise-requested server never adopts an AST-only artifact: it
+// keeps the richer graph when source is unchanged, or recomputes precise
+// analysis in memory when source changed.
+func graphRefresher(
+	initial *graph.Graph,
+	root string,
+	buildAST func(string) (*graph.Graph, error),
+	buildPrecise func(string) (*graph.Graph, error),
+) func() (*graph.Graph, error) {
 	latest := initial
+	artifactPath := filepath.Join(root, graphFile)
+	artifactInfo := graphArtifactInfo(artifactPath)
+
 	return func() (*graph.Graph, error) {
+		currentArtifactInfo := graphArtifactInfo(artifactPath)
+		if graphArtifactChanged(artifactInfo, currentArtifactInfo) {
+			if persisted, err := loadGraph(root); err == nil {
+				// Advance the observed artifact only after a successful load. A
+				// transient read or decode failure remains retryable on the next call.
+				artifactInfo = currentArtifactInfo
+				if shouldAdoptPersistedGraph(latest, persisted) {
+					latest = persisted
+				}
+			}
+		}
+
 		if latest != nil && !search.Stale(latest, root).IsStale {
+			if err := precisionFallbackError(latest); err != nil {
+				return nil, err
+			}
 			return latest, nil
 		}
-		refreshed, err := build(root)
-		if err != nil {
-			return nil, err
+
+		// Source can move while AST/CHA analysis is running. Recheck the graph
+		// before serving it and retry once; a continuously changing tree fails
+		// visibly instead of returning a known-stale result.
+		const maxAttempts = 2
+		var stale search.StaleResult
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			build := buildAST
+			if latest != nil && latest.Build.PreciseRequested() {
+				build = buildPrecise
+			}
+			refreshed, err := build(root)
+			if refreshed != nil {
+				latest = refreshed
+			}
+			if err != nil {
+				return nil, err
+			}
+			if latest == nil {
+				return nil, errors.New("graph refresh returned no graph")
+			}
+			stale = search.Stale(latest, root)
+			if !stale.IsStale {
+				if err := precisionFallbackError(latest); err != nil {
+					return nil, err
+				}
+				return latest, nil
+			}
 		}
-		latest = refreshed
-		return latest, nil
+		return nil, fmt.Errorf("graph remained stale after %d refresh attempts (%d changed source files)", maxAttempts, len(stale.ChangedFiles))
 	}
+}
+
+func graphArtifactInfo(path string) os.FileInfo {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	return info
+}
+
+func graphArtifactChanged(previous, current os.FileInfo) bool {
+	if previous == nil || current == nil {
+		return previous != current
+	}
+	// writeJSON publishes by atomic rename. SameFile detects that replacement
+	// even on filesystems whose timestamp granularity and equal-sized payloads
+	// would make a modtime+size check ambiguous.
+	return !os.SameFile(previous, current) ||
+		!previous.ModTime().Equal(current.ModTime()) ||
+		previous.Size() != current.Size()
+}
+
+func shouldAdoptPersistedGraph(current, persisted *graph.Graph) bool {
+	if persisted == nil {
+		return false
+	}
+	if current == nil {
+		return true
+	}
+	if current.Build.PreciseRequested() && !persisted.Build.PreciseRequested() {
+		return false
+	}
+	// This predicate is called only after graphArtifactChanged observed a new
+	// publication. GeneratedAt is assigned at build start, so it cannot order
+	// overlapping builds: one may start first and publish last. Trust the
+	// successfully decoded replacement here, then let the caller's source
+	// staleness check decide whether it needs another in-memory rebuild.
+	return true
 }
 
 func runMCP(args []string) int {
@@ -1092,7 +1245,7 @@ func runMCP(args []string) int {
 	}
 	absRoot = graphRoot(g)
 
-	rebuild := graphRefresher(g, absRoot, BuildGraph)
+	rebuild := graphRefresher(g, absRoot, BuildGraph, buildPreciseGraph)
 	buildBaseline := func(ctx context.Context, ref string) (*graph.Graph, error) {
 		return baseline.Build(ctx, absRoot, ref, BuildGraph)
 	}
@@ -1328,6 +1481,9 @@ func sortGraph(g *graph.Graph) {
 		if g.Calls[i].Line != g.Calls[j].Line {
 			return g.Calls[i].Line < g.Calls[j].Line
 		}
+		if g.Calls[i].Column != g.Calls[j].Column {
+			return g.Calls[i].Column < g.Calls[j].Column
+		}
 		if g.Calls[i].CallerSymbolID != g.Calls[j].CallerSymbolID {
 			return g.Calls[i].CallerSymbolID < g.Calls[j].CallerSymbolID
 		}
@@ -1336,6 +1492,9 @@ func sortGraph(g *graph.Graph) {
 		}
 		if g.Calls[i].CalleeSymbolID != g.Calls[j].CalleeSymbolID {
 			return g.Calls[i].CalleeSymbolID < g.Calls[j].CalleeSymbolID
+		}
+		if g.Calls[i].Synthetic != g.Calls[j].Synthetic {
+			return !g.Calls[i].Synthetic
 		}
 		return g.Calls[i].ReturnUsage < g.Calls[j].ReturnUsage
 	})
@@ -1464,7 +1623,8 @@ func sortGraph(g *graph.Graph) {
 func dedupeCalls(calls []graph.CallEdge) []graph.CallEdge {
 	type key struct {
 		callerID, callerName, calleeRaw, calleeID, file, usage string
-		line                                                   int
+		line, column                                           int
+		synthetic                                              bool
 	}
 	seen := make(map[key]bool, len(calls))
 	deduped := calls[:0]
@@ -1477,6 +1637,8 @@ func dedupeCalls(calls []graph.CallEdge) []graph.CallEdge {
 			file:       call.File,
 			usage:      call.ReturnUsage,
 			line:       call.Line,
+			column:     call.Column,
+			synthetic:  call.Synthetic,
 		}
 		if seen[k] {
 			continue
@@ -1514,8 +1676,8 @@ INDEXING
                              Partial parse failures are recorded in graph.json build metadata.
                              Run after any major code change. Default path: .
                              Supports --precise to perform type-checked Class
-                             Hierarchy/SSA enrichment. If enrichment fails, warns
-                             and still publishes the AST graph.
+                             Hierarchy/SSA enrichment. If enrichment fails, warns,
+                             publishes the AST graph, and records precise_fallback.
                              AI worktree directories (.claude, .cursor, .agents) and
                              files/directories listed in .gitignore are automatically skipped.
   stale                      Check if graph.json is older than Go source files (shows newest source time/file).
@@ -1523,7 +1685,8 @@ INDEXING
   stats                      Compact index health summary: schema version, build
                              timestamp, and counts of packages, files, symbols,
                              calls, imports, routes, SQL queries, env reads, and
-                             test edges, flow functions, build completeness, and parse failures. Zero
+                             test edges, flow functions, build completeness, analysis
+                             precision (ast/precise/precise_fallback), and parse failures. Zero
                              re-parsing — reads graph.json only.
 
 AGENT WORKFLOW RULES (CRITICAL)
@@ -1558,8 +1721,10 @@ SEARCH & NAVIGATION
 
 CALL GRAPH
   callers <function> [--no-tests] [--depth N] [--exact]
-                             Find functions that call a target function; --depth 2-10
-                             expands N hops up (callers-of-callers).
+                             Find functions that call a target function or interface
+                             method; precise interface queries expand every recorded
+                             implementation and return a shared source site once.
+                             --depth 2-10 expands N hops up (callers-of-callers).
   callees <function> [--no-tests] [--depth N]    find functions that a target function calls; --depth 2-10 expands N hops down
   impact <name>              Full upstream blast radius (all transitive callers).
   impact --uncommitted       Blast radius of all uncommitted modified symbols.
@@ -1567,12 +1732,14 @@ CALL GRAPH
                              Composes changes --git <ref> + impact into one call.
   path <from> <to>           Shortest call chain between two symbols (BFS).
                              For callers/callees/impact/path: the symbol argument can be a short
-                             name ("Validate" — fuzzy substring) OR a fully-qualified ID
+                             name ("Validate" — fuzzy substring), concrete dot-notation,
+                             interface notation ("Repository.Delete" for callers), or a fully-qualified ID
                              ("pkg/path::(*S).Validate" — exact match, no same-name conflation).
                              Use the FQ form to disambiguate overloads. Requires --precise build.
   trace <err_str>            Find the origin of an error and trace backwards to entry points.
   orphans                    Functions unreachable from runtime/test/route/public entry
                              points via BFS, including dead chains with internal callers.
+                             Precise reachability traverses every interface target edge.
 
 INTERFACES & TYPES
   implementers <interface> [--test-only]
@@ -1725,7 +1892,8 @@ AGENT INTEGRATION
   doc <pkg[.Symbol]>         Run 'go doc' for a stdlib or third-party package/symbol.
                              No graph required; executes in the current Go module.
   mcp [path]                 Start a Model Context Protocol server over stdio.
-                             Exposes graph queries as native tools for AI clients.
+                             Exposes graph queries as native tools for AI clients;
+                             adopts newer precise graphs and preserves precision on refresh.
   session <action> [word]    Manage telemetry & audit sessions. Actions:
                              - create [unique_word]: Starts an audit session.
                              - end: Ends the active session.
@@ -1943,6 +2111,7 @@ func runStats() int {
 	}
 	fmt.Printf("schema_version : %s\n", st.SchemaVersion)
 	fmt.Printf("generated_at   : %s\n", st.GeneratedAt)
+	fmt.Printf("precision      : %s\n", st.Precision)
 	fmt.Printf("packages       : %d\n", st.Packages)
 	fmt.Printf("files          : %d\n", st.Files)
 	fmt.Printf("symbols        : %d\n", st.Symbols)

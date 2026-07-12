@@ -2,8 +2,10 @@ package precise
 
 import (
 	"fmt"
+	"go/token"
 	"go/types"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
@@ -28,6 +30,12 @@ func Enrich(absRoot string, g *graph.Graph) error {
 	if err != nil {
 		return fmt.Errorf("packages.Load failed: %w", err)
 	}
+	if err := packageLoadError(initial); err != nil {
+		return err
+	}
+	if err := validatePackageCoverage(absRoot, initial, g); err != nil {
+		return err
+	}
 
 	// Build SSA. ssa.InstantiateGenerics monomorphises generic functions
 	// and methods so CHA can see their call sites with source positions
@@ -44,6 +52,7 @@ func Enrich(absRoot string, g *graph.Graph) error {
 	var interfaces []*types.Interface
 	var interfaceNames []string
 	var interfaceIDs []string
+	var interfacePackages []*types.Package
 	var concretes []types.Type
 	var concreteNames []string
 	var concreteIDs []string
@@ -65,10 +74,12 @@ func Enrich(absRoot string, g *graph.Graph) error {
 				// Keep track of interface types
 				if iface, isIface := t.Underlying().(*types.Interface); isIface {
 					// We only care about interfaces with methods
+					iface.Complete()
 					if iface.NumMethods() > 0 {
 						interfaces = append(interfaces, iface)
 						interfaceNames = append(interfaceNames, obj.Name())
 						interfaceIDs = append(interfaceIDs, typeObjectID(typeName))
+						interfacePackages = append(interfacePackages, typeName.Pkg())
 					}
 					continue
 				}
@@ -80,6 +91,7 @@ func Enrich(absRoot string, g *graph.Graph) error {
 			}
 		}
 	}
+	enrichInterfaceMethods(g, interfaces, interfaceIDs, interfacePackages)
 
 	// Compute precise Implements edges
 	for i, iface := range interfaces {
@@ -119,14 +131,24 @@ func Enrich(absRoot string, g *graph.Graph) error {
 		// Both the caller and callee are normalised with cleanName so the
 		// keys match what CHA produces (CHA strips package qualifiers; AST
 		// does not).
-		astEdgeIdx := make(map[string]int) // dedup-key → index in g.Calls
-		astSiteIdx := make(map[string]int) // callee + source site → AST edge
+		astEdgeIdx := make(map[string]int)       // caller + callee + exact source site → edge
+		astEdgeIndices := make(map[string][]int) // caller + callee + exact source site → all edges
+		astSiteIdx := make(map[string]int)       // callee + exact source site → edge
+		astSiteIndices := make(map[string][]int) // callee + exact source site → all edges
+		syntheticEdges := make(map[string]struct{})
 		for i, edge := range g.Calls {
-			key := fmt.Sprintf("%s->%s@%s:%d", cleanName(edge.CallerName), cleanName(edge.CalleeRaw), edge.File, edge.Line)
+			key := preciseCallKey(edge.CallerName, edge.CalleeRaw, edge.File, edge.Line, edge.Column)
 			astEdgeIdx[key] = i
-			siteKey := fmt.Sprintf("%s@%s:%d", cleanName(edge.CalleeRaw), edge.File, edge.Line)
+			astEdgeIndices[key] = append(astEdgeIndices[key], i)
+			siteKey := preciseSiteKey(edge.CalleeRaw, edge.File, edge.Line, edge.Column)
 			astSiteIdx[siteKey] = i
+			astSiteIndices[siteKey] = append(astSiteIndices[siteKey], i)
+			if edge.CallerSymbolID != "" && edge.CalleeSymbolID != "" &&
+				(edge.Synthetic || edge.File == "" && edge.Line == 0) {
+				syntheticEdges[edge.CallerSymbolID+"->"+edge.CalleeSymbolID] = struct{}{}
+			}
 		}
+		invokeGroups := make(map[string]*invokeCallGroup)
 
 		for _, node := range cg.Nodes {
 			if node.Func == nil {
@@ -139,7 +161,8 @@ func Enrich(absRoot string, g *graph.Graph) error {
 			if o := callerFn.Origin(); o != nil {
 				callerFn = o
 			}
-			if callerFn.Pkg == nil {
+			callerSymID := ssaFuncToSymbolID(callerFn)
+			if callerFn.Pkg == nil && callerSymID == "" {
 				continue
 			}
 			callerName := cleanName(callerFn.Name())
@@ -155,24 +178,54 @@ func Enrich(absRoot string, g *graph.Graph) error {
 				if o := calleeFn.Origin(); o != nil {
 					calleeFn = o
 				}
-				if calleeFn.Pkg == nil {
+				calleeSymID := ssaFuncToSymbolID(calleeFn)
+				if calleeFn.Pkg == nil && calleeSymID == "" {
 					continue
 				}
 				calleeName := cleanName(calleeFn.Name())
+
+				// Method promotion and implicit receiver adaptation are represented
+				// by synthetic SSA wrappers. Those wrappers deliberately have no
+				// *ssa.Package and their body call has no source position, but CHA
+				// may select the wrapper as the only valid target of an interface
+				// invoke. Retain the wrapper-to-declared-method edge so downstream
+				// reachability can traverse from the concrete implementation to the
+				// source method that actually executes.
+				if isSyntheticMethodWrapper(callerFn) {
+					calleePos := ssaFunctionOwnerPosition(prog.Fset, calleeFn)
+					if calleeSymID == "" || !pathWithinRoot(calleePos.Filename, absRoot) {
+						continue
+					}
+					syntheticKey := callerSymID + "->" + calleeSymID
+					if _, exists := syntheticEdges[syntheticKey]; !exists {
+						syntheticEdges[syntheticKey] = struct{}{}
+						g.Calls = append(g.Calls, graph.CallEdge{
+							CallerSymbolID: callerSymID,
+							CallerName:     ssaFuncDisplayName(callerFn),
+							CalleeRaw:      calleeName,
+							CalleeSymbolID: calleeSymID,
+							Synthetic:      true,
+						})
+					}
+					continue
+				}
 
 				if edge.Site == nil {
 					continue
 				}
 
 				pos := prog.Fset.Position(edge.Site.Pos())
-				if pos.Filename == "" || !strings.HasPrefix(pos.Filename, absRoot) {
+				if pos.Filename == "" || !pathWithinRoot(pos.Filename, absRoot) {
 					continue
 				}
 				// Normalize to a repo-relative path so the dedup key matches the
 				// AST-sourced edge keys (which use relative paths). Without this,
 				// every AST call edge gets a CHA duplicate because the keys never
 				// match (absolute vs. relative path for the same call site).
-				relFile := strings.TrimPrefix(pos.Filename, absRoot+"/")
+				relFile, relErr := filepath.Rel(absRoot, pos.Filename)
+				if relErr != nil {
+					continue
+				}
 
 				// Resolve callee to a canonical symbol ID like
 				// "github.com/foo/bar::(*Service).Validate". This is the
@@ -181,9 +234,52 @@ func Enrich(absRoot string, g *graph.Graph) error {
 				// methods across types/packages without falling back to
 				// substring conflation. Pass the origin-resolved calleeFn
 				// so instantiations resolve to their source generic ID.
-				calleeSymID := ssaFuncToSymbolID(calleeFn)
-
-				key := fmt.Sprintf("%s->%s@%s:%d", callerName, calleeName, relFile, pos.Line)
+				key := preciseCallKey(callerName, calleeName, relFile, pos.Line, pos.Column)
+				siteKey := preciseSiteKey(calleeName, relFile, pos.Line, pos.Column)
+				if edge.Site.Common().IsInvoke() {
+					// CHA intentionally emits one edge for every concrete method
+					// that can satisfy an interface invoke. Keep every in-repository
+					// target: collapsing this set into the first edge makes exact
+					// caller queries depend on nondeterministic map iteration order.
+					calleePos := ssaFunctionOwnerPosition(prog.Fset, calleeFn)
+					if calleeSymID == "" || !pathWithinRoot(calleePos.Filename, absRoot) {
+						continue
+					}
+					// The exact source coordinate is the stable identity of the
+					// invocation. SSA gives closures synthetic caller names (Run$1),
+					// while the parser deliberately attributes their bodies to the
+					// enclosing symbol. Fall back to the source-site index so every
+					// concrete edge clones that parser provenance.
+					group := invokeGroups[siteKey]
+					if group == nil {
+						group = &invokeCallGroup{
+							prototype: graph.CallEdge{
+								CallerSymbolID: callerSymID,
+								CallerName:     callerName,
+								CalleeRaw:      calleeName,
+								File:           relFile,
+								Line:           pos.Line,
+								Column:         pos.Column,
+							},
+							targets: make(map[string]struct{}),
+						}
+						indices := astEdgeIndices[key]
+						if len(indices) == 0 {
+							indices = astSiteIndices[siteKey]
+						}
+						if len(indices) > 0 {
+							group.existingIndices = append(group.existingIndices, indices...)
+							// Clone the original AST edge so caller identity, selector
+							// spelling, return usage, and call-site provenance survive
+							// on every concrete target edge.
+							group.prototype = g.Calls[indices[0]]
+							group.prototype.CalleeSymbolID = ""
+						}
+						invokeGroups[siteKey] = group
+					}
+					group.targets[calleeSymID] = struct{}{}
+					continue
+				}
 				if existingIdx, dup := astEdgeIdx[key]; dup {
 					// Backfill: existing AST edge has no CalleeSymbolID.
 					// Fill it from CHA's resolution if we got one.
@@ -192,8 +288,7 @@ func Enrich(absRoot string, g *graph.Graph) error {
 					}
 					continue
 				}
-				siteKey := fmt.Sprintf("%s@%s:%d", calleeName, relFile, pos.Line)
-				if existingIdx, dup := astSiteIdx[siteKey]; dup && !edge.Site.Common().IsInvoke() {
+				if existingIdx, dup := astSiteIdx[siteKey]; dup {
 					if calleeSymID != "" && g.Calls[existingIdx].CalleeSymbolID == "" {
 						g.Calls[existingIdx].CalleeSymbolID = calleeSymID
 					}
@@ -213,24 +308,27 @@ func Enrich(absRoot string, g *graph.Graph) error {
 				// valuable when their concrete target is defined in this repository;
 				// excluding dependency implementations prevents an interface call
 				// such as err.Error() from expanding across the whole module cache.
-				calleePos := prog.Fset.Position(calleeFn.Pos())
+				calleePos := ssaFunctionOwnerPosition(prog.Fset, calleeFn)
 				if !pathWithinRoot(calleePos.Filename, absRoot) {
 					continue
 				}
 				astEdgeIdx[key] = len(g.Calls)
 				astSiteIdx[siteKey] = len(g.Calls)
 
-				// Append a new edge — CHA found a call AST didn't see
-				// (typically dynamic dispatch through an interface).
+				// Append a new edge when a repository static call has no
+				// parser edge to backfill (for example, a compiler-lowered form).
 				g.Calls = append(g.Calls, graph.CallEdge{
+					CallerSymbolID: callerSymID,
 					CallerName:     callerName,
 					CalleeRaw:      calleeName,
 					CalleeSymbolID: calleeSymID,
 					File:           relFile,
 					Line:           pos.Line,
+					Column:         pos.Column,
 				})
 			}
 		}
+		g.Calls = materializeInvokeCalls(g.Calls, invokeGroups)
 	}
 
 	// 3. Indirect mutations via mutating-method calls (Bug 17/28).
@@ -273,6 +371,275 @@ func Enrich(absRoot string, g *graph.Graph) error {
 	g.Mutations = append(g.Mutations, indirect...)
 
 	return nil
+}
+
+// validatePackageCoverage ensures precise mode actually type-checked the
+// production files already present in the AST graph. go/packages may return an
+// empty successful result, and it intentionally excludes files hidden by the
+// active build tags or a nested module boundary. Publishing such a mixed graph
+// as fully precise would make the precision metadata stronger than the data.
+func validatePackageCoverage(absRoot string, initial []*packages.Package, g *graph.Graph) error {
+	if len(initial) == 0 {
+		return fmt.Errorf("precise package loading matched no packages")
+	}
+	if g == nil || len(g.Files) == 0 {
+		return nil
+	}
+
+	loaded := make(map[string]struct{})
+	packages.Visit(initial, nil, func(pkg *packages.Package) {
+		files := make([]string, 0, len(pkg.GoFiles)+len(pkg.CompiledGoFiles))
+		files = append(files, pkg.GoFiles...)
+		files = append(files, pkg.CompiledGoFiles...)
+		for _, file := range files {
+			loaded[absoluteSourcePath(absRoot, file)] = struct{}{}
+		}
+	})
+
+	missingSet := make(map[string]struct{})
+	for _, file := range g.Files {
+		if strings.HasSuffix(file.Path, "_test.go") {
+			continue
+		}
+		if _, ok := loaded[absoluteSourcePath(absRoot, file.Path)]; !ok {
+			missingSet[file.Path] = struct{}{}
+		}
+	}
+	if len(missingSet) == 0 {
+		return nil
+	}
+
+	missing := make([]string, 0, len(missingSet))
+	for file := range missingSet {
+		missing = append(missing, file)
+	}
+	sort.Strings(missing)
+	const detailLimit = 3
+	details := missing
+	if len(details) > detailLimit {
+		details = details[:detailLimit]
+	}
+	message := strings.Join(details, ", ")
+	if remaining := len(missing) - len(details); remaining > 0 {
+		message += fmt.Sprintf(", and %d more", remaining)
+	}
+	return fmt.Errorf("precise package loading omitted %d indexed production file(s): %s", len(missing), message)
+}
+
+func absoluteSourcePath(root, path string) string {
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
+	return filepath.Clean(path)
+}
+
+// enrichInterfaceMethods fills parser interface nodes from the completed
+// go/types method set. The parser records explicit methods, but an embedded
+// interface contributes methods with no named AST field; completing the type
+// makes those inherited methods queryable as OuterInterface.Method.
+func enrichInterfaceMethods(g *graph.Graph, interfaces []*types.Interface, ids []string, owners []*types.Package) {
+	if g == nil {
+		return
+	}
+	type interfaceInfo struct {
+		iface *types.Interface
+		owner *types.Package
+	}
+	byID := make(map[string]interfaceInfo, len(ids))
+	for i, id := range ids {
+		if id == "" || i >= len(interfaces) || i >= len(owners) {
+			continue
+		}
+		byID[id] = interfaceInfo{iface: interfaces[i], owner: owners[i]}
+	}
+
+	for i := range g.Symbols {
+		symbol := &g.Symbols[i]
+		if symbol.Kind != graph.KindInterface {
+			continue
+		}
+		info, ok := byID[symbol.ID]
+		if !ok || info.iface == nil {
+			continue
+		}
+		methods := make(map[string]string, info.iface.NumMethods())
+		for name, signature := range symbol.InterfaceMethods {
+			methods[name] = signature
+		}
+		for methodIndex := 0; methodIndex < info.iface.NumMethods(); methodIndex++ {
+			method := info.iface.Method(methodIndex)
+			if _, exists := methods[method.Name()]; exists {
+				continue
+			}
+			if signature, ok := method.Type().(*types.Signature); ok {
+				methods[method.Name()] = preciseMethodSignature(signature, info.owner)
+			}
+		}
+		symbol.InterfaceMethods = methods
+	}
+}
+
+func preciseMethodSignature(signature *types.Signature, owner *types.Package) string {
+	if signature == nil {
+		return ""
+	}
+	var result strings.Builder
+	result.WriteString("func(")
+	result.WriteString(preciseTupleSignature(signature.Params(), signature.Variadic(), owner))
+	result.WriteString(")")
+	if signature.Results() != nil && signature.Results().Len() > 0 {
+		result.WriteString(" (")
+		result.WriteString(preciseTupleSignature(signature.Results(), false, owner))
+		result.WriteString(")")
+	}
+	return result.String()
+}
+
+func preciseTupleSignature(tuple *types.Tuple, variadic bool, owner *types.Package) string {
+	if tuple == nil || tuple.Len() == 0 {
+		return ""
+	}
+	parts := make([]string, 0, tuple.Len())
+	qualifier := func(pkg *types.Package) string {
+		if pkg == nil || owner != nil && pkg.Path() == owner.Path() {
+			return ""
+		}
+		return pkg.Name()
+	}
+	for i := 0; i < tuple.Len(); i++ {
+		typeValue := tuple.At(i).Type()
+		if variadic && i == tuple.Len()-1 {
+			if slice, ok := typeValue.(*types.Slice); ok {
+				parts = append(parts, "..."+types.TypeString(slice.Elem(), qualifier))
+				continue
+			}
+		}
+		parts = append(parts, types.TypeString(typeValue, qualifier))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func preciseCallKey(caller, callee, file string, line, column int) string {
+	return fmt.Sprintf("%s->%s@%s:%d:%d", cleanName(caller), cleanName(callee), file, line, column)
+}
+
+func preciseSiteKey(callee, file string, line, column int) string {
+	return fmt.Sprintf("%s@%s:%d:%d", cleanName(callee), file, line, column)
+}
+
+// packageLoadError reports type/load failures that packages.Load returns on
+// Package.Errors while its top-level error remains nil. Rejecting these before
+// SSA construction keeps precise enrichment all-or-nothing and lets callers
+// accurately record an AST fallback instead of publishing partial precision.
+func packageLoadError(initial []*packages.Package) error {
+	seen := make(map[string]struct{})
+	var problems []string
+	packages.Visit(initial, nil, func(pkg *packages.Package) {
+		name := pkg.PkgPath
+		if name == "" {
+			name = pkg.ID
+		}
+		for _, pkgErr := range pkg.Errors {
+			message := strings.Join(strings.Fields(pkgErr.Msg), " ")
+			if message == "" {
+				message = "unknown package error"
+			}
+			problem := name + ": " + message
+			if _, ok := seen[problem]; ok {
+				continue
+			}
+			seen[problem] = struct{}{}
+			problems = append(problems, problem)
+		}
+	})
+	if len(problems) == 0 {
+		return nil
+	}
+	sort.Strings(problems)
+	const detailLimit = 3
+	details := problems
+	if len(details) > detailLimit {
+		details = details[:detailLimit]
+	}
+	message := strings.Join(details, "; ")
+	if remaining := len(problems) - len(details); remaining > 0 {
+		message += fmt.Sprintf("; and %d more", remaining)
+	}
+	return fmt.Errorf("precise package loading reported %d error(s): %s", len(problems), message)
+}
+
+// invokeCallGroup accumulates all concrete CHA targets for one interface call
+// site. existingIndices refer only to edges that were present before this
+// enrichment pass, allowing materializeInvokeCalls to be idempotent when
+// Enrich is called repeatedly on the same graph.
+type invokeCallGroup struct {
+	prototype       graph.CallEdge
+	existingIndices []int
+	targets         map[string]struct{}
+}
+
+// materializeInvokeCalls replaces the unresolved AST edge for each interface
+// invoke with one metadata-preserving edge per concrete repository target.
+// Both group and target ordering are explicit so output does not depend on the
+// iteration order of the SSA/CHA maps.
+func materializeInvokeCalls(calls []graph.CallEdge, groups map[string]*invokeCallGroup) []graph.CallEdge {
+	if len(groups) == 0 {
+		return calls
+	}
+
+	groupKeys := make([]string, 0, len(groups))
+	for key := range groups {
+		groupKeys = append(groupKeys, key)
+	}
+	sort.Strings(groupKeys)
+
+	replacements := make(map[int][]graph.CallEdge)
+	skip := make(map[int]bool)
+	var appendOnly [][]graph.CallEdge
+
+	for _, key := range groupKeys {
+		group := groups[key]
+		targetIDs := make([]string, 0, len(group.targets))
+		for targetID := range group.targets {
+			targetIDs = append(targetIDs, targetID)
+		}
+		sort.Strings(targetIDs)
+		if len(targetIDs) == 0 {
+			continue
+		}
+
+		edges := make([]graph.CallEdge, 0, len(targetIDs))
+		for _, targetID := range targetIDs {
+			edge := group.prototype
+			edge.CalleeSymbolID = targetID
+			edges = append(edges, edge)
+		}
+
+		if len(group.existingIndices) == 0 {
+			appendOnly = append(appendOnly, edges)
+			continue
+		}
+		at := group.existingIndices[0]
+		replacements[at] = edges
+		for _, index := range group.existingIndices {
+			skip[index] = true
+		}
+	}
+
+	result := make([]graph.CallEdge, 0, len(calls)+len(appendOnly))
+	for i, edge := range calls {
+		if edges, ok := replacements[i]; ok {
+			result = append(result, edges...)
+		}
+		if skip[i] {
+			continue
+		}
+		result = append(result, edge)
+	}
+	for _, edges := range appendOnly {
+		result = append(result, edges...)
+	}
+	return result
 }
 
 func typeObjectID(typeName *types.TypeName) string {
@@ -326,10 +693,10 @@ func ssaFuncToSymbolID(fn *ssa.Function) string {
 	if origin := fn.Origin(); origin != nil {
 		fn = origin
 	}
-	if fn.Pkg == nil || fn.Pkg.Pkg == nil {
+	pkgPath := ssaFunctionPackagePath(fn)
+	if pkgPath == "" {
 		return ""
 	}
-	pkgPath := fn.Pkg.Pkg.Path()
 	name := fn.Name()
 	if name == "" {
 		return ""
@@ -350,6 +717,68 @@ func ssaFuncToSymbolID(fn *ssa.Function) string {
 		}
 	}
 	return fmt.Sprintf("%s::%s", pkgPath, name)
+}
+
+// ssaFunctionPackagePath returns the import path that owns fn's graph
+// identity. Declared functions carry it on fn.Pkg. Synthetic method wrappers
+// intentionally do not, so derive their owner from the named receiver type.
+func ssaFunctionPackagePath(fn *ssa.Function) string {
+	if fn == nil {
+		return ""
+	}
+	if fn.Pkg != nil && fn.Pkg.Pkg != nil {
+		return fn.Pkg.Pkg.Path()
+	}
+	if fn.Signature == nil || fn.Signature.Recv() == nil {
+		return ""
+	}
+	named := namedReceiverType(fn.Signature.Recv().Type())
+	if named == nil || named.Obj() == nil || named.Obj().Pkg() == nil {
+		return ""
+	}
+	return named.Obj().Pkg().Path()
+}
+
+// ssaFunctionOwnerPosition identifies the source declaration that owns fn's
+// graph identity. A promoted wrapper's fn.Pos points at the underlying method,
+// which may live in an external dependency; its receiver type declaration is
+// the correct ownership test for retaining an in-repository wrapper target.
+func ssaFunctionOwnerPosition(fset *token.FileSet, fn *ssa.Function) token.Position {
+	if fset == nil || fn == nil {
+		return token.Position{}
+	}
+	if fn.Pkg == nil && fn.Signature != nil && fn.Signature.Recv() != nil {
+		if named := namedReceiverType(fn.Signature.Recv().Type()); named != nil && named.Obj() != nil {
+			return fset.Position(named.Obj().Pos())
+		}
+	}
+	return fset.Position(fn.Pos())
+}
+
+func namedReceiverType(receiver types.Type) *types.Named {
+	if pointer, ok := receiver.(*types.Pointer); ok {
+		receiver = pointer.Elem()
+	}
+	named, _ := receiver.(*types.Named)
+	return named
+}
+
+func isSyntheticMethodWrapper(fn *ssa.Function) bool {
+	return fn != nil && fn.Pkg == nil && fn.Signature != nil && fn.Signature.Recv() != nil &&
+		strings.HasPrefix(fn.Synthetic, "wrapper for ")
+}
+
+func ssaFuncDisplayName(fn *ssa.Function) string {
+	if fn == nil {
+		return ""
+	}
+	name := cleanName(fn.Name())
+	if fn.Signature != nil {
+		if receiver := fn.Signature.Recv(); receiver != nil && receiver.Type() != nil {
+			return fmt.Sprintf("(%s).%s", formatReceiverType(receiver.Type()), name)
+		}
+	}
+	return name
 }
 
 // formatReceiverType renders a method's receiver type as it appears in

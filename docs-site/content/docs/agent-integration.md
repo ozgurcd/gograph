@@ -32,7 +32,7 @@ Replacing broad text searches with AST-derived, symbol-focused responses reduces
 
 | Objective | The Unix Way (`grep`, `find`) | The `gograph` Way | Token Cost Comparison | Accuracy |
 |---|---|---|---|---|
-| **Find callers of a method** | `grep -rn "Update" .` <br>*(Scans mocks, comments, other types)* | `gograph callers UserStore.Update` <br>*(AST-derived call edges)* | Broad source context vs. compact caller rows | Text noise vs. best-effort structural matching |
+| **Find callers of a method** | `grep -rn "Update" .` <br>*(Scans mocks, comments, other types)* | `gograph callers UserStore.Update` or `gograph callers Repository.Update` <br>*(AST-derived; interface-qualified queries use precise CHA targets)* | Broad source context vs. compact caller rows | Default AST evidence; conservative multi-target CHA when precise |
 | **Find interface implementers** | Multi-step searches of method receivers and method sets | `gograph implementers Connection` | Many file reads vs. concrete type rows | Heuristic AST mode; package-qualified precise mode when available |
 | **Trace wrapped errors** | String searches inside formatting blocks | `gograph errorflow "invalid token"` | Broad scans vs. structured candidate paths | Navigation heuristic, not SSA data-flow proof |
 | **Review untrusted-data paths** | Repeated searches for request reads and sensitive APIs | `gograph flow --no-tests` | One structured source-to-sink report | Interprocedural heuristic with explicit confidence, not exploitability proof |
@@ -99,7 +99,7 @@ To start the MCP JSON-RPC server over standard I/O:
 ```bash
 gograph mcp [path]
 ```
-If `.gograph/graph.json` does not exist, startup creates an in-memory AST graph; it does not publish CLI build artifacts. Source-analysis tools check freshness per call and rebuild only after edits. Persisted-index tools use the disk snapshot, and precise CHA/SSA remains active only while source is unchanged.
+If `.gograph/graph.json` does not exist, startup creates an in-memory AST graph; it does not publish CLI build artifacts. Source-analysis tools check source freshness and newer persisted artifacts per call, then rebuild after edits in the current requested mode. Persisted-index tools use the disk snapshot; precise and precise-fallback sessions re-run CHA/SSA, and a failed precise refresh is returned visibly.
 
 The server exposes 65 endpoints: 61 CLI-equivalent query, analysis, and workflow tools plus four session lifecycle tools. `gograph_flow` matches the CLI `flow` filters (`term`, `source`, `sink`, `config`, and `no_tests`) and returns structured source, sink, severity, confidence, and path data.
 

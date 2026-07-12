@@ -274,6 +274,23 @@ func TestAllToolAnnotations(t *testing.T) {
 	}
 }
 
+func TestToolDescriptionsUsePrecisionAwareRefreshContract(t *testing.T) {
+	g := &graph.Graph{}
+	s := mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), mockBuildBaseline(), "dev")
+
+	staleDescriptions := []string{
+		"rebuilds its in-memory AST graph only when source changed",
+		"refreshes in-memory AST analysis",
+	}
+	for name, registered := range s.ListTools() {
+		for _, staleDescription := range staleDescriptions {
+			if strings.Contains(registered.Tool.Description, staleDescription) {
+				t.Errorf("tool %q still advertises the obsolete AST-only refresh policy %q", name, staleDescription)
+			}
+		}
+	}
+}
+
 func TestConcurrentHandlersSerializeGraphRefresh(t *testing.T) {
 	prev := mcppkg.ExposeToolsForTesting
 	handlers := make(map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error))

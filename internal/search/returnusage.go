@@ -18,12 +18,32 @@ import (
 // that silently discards a value that will now carry different semantics.
 func ReturnUsages(g *graph.Graph, funcName string) []Result {
 	nl := strings.ToLower(funcName)
+	type siteKey struct {
+		callerIdentity string
+		calleeRaw      string
+		file           string
+		line           int
+		column         int
+	}
+	seen := make(map[siteKey]bool)
 	var results []Result
 	for _, call := range g.Calls {
+		if call.Synthetic {
+			continue
+		}
 		callee := strings.ToLower(call.CalleeRaw)
 		if callee != nl && !strings.HasSuffix(callee, "."+nl) {
 			continue
 		}
+		callerIdentity := call.CallerSymbolID
+		if callerIdentity == "" {
+			callerIdentity = call.CallerName
+		}
+		key := siteKey{callerIdentity: callerIdentity, calleeRaw: call.CalleeRaw, file: call.File, line: call.Line, column: call.Column}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		usage := call.ReturnUsage
 		if usage == "" {
 			usage = "passed"

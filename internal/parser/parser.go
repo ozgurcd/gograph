@@ -568,13 +568,17 @@ func extractGenDecl(fset *token.FileSet, d *ast.GenDecl, relPath, pkgName, pkgIm
 							return true
 						}
 						callee := calleeString(call)
-						callPos := fset.Position(call.Pos())
+						// go/ssa reports call instruction positions at the opening
+						// parenthesis. Store the same coordinate so precise enrichment
+						// can join an SSA call back to this exact AST expression.
+						callPos := fset.Position(call.Lparen)
 						if callee != "" {
 							result.Calls = append(result.Calls, graph.CallEdge{
 								CallerName: "init",
 								CalleeRaw:  callee,
 								File:       relPath,
 								Line:       callPos.Line,
+								Column:     callPos.Column,
 							})
 						}
 						// Same function-value-as-arg handling as in function
@@ -586,6 +590,7 @@ func extractGenDecl(fset *token.FileSet, d *ast.GenDecl, relPath, pkgName, pkgIm
 								CalleeRaw:  ref,
 								File:       relPath,
 								Line:       callPos.Line,
+								Column:     callPos.Column,
 								Potential:  true,
 							})
 						}
@@ -603,6 +608,7 @@ func extractGenDecl(fset *token.FileSet, d *ast.GenDecl, relPath, pkgName, pkgIm
 							CalleeRaw:  ref,
 							File:       relPath,
 							Line:       fset.Position(v.Pos()).Line,
+							Column:     fset.Position(v.Pos()).Column,
 							Potential:  true,
 						})
 					}
@@ -877,7 +883,10 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 			if !ok {
 				return true
 			}
-			callPos := fset.Position(call.Pos())
+			// go/ssa reports call instruction positions at the opening
+			// parenthesis. Store the same coordinate so precise enrichment
+			// can join an SSA call back to this exact AST expression.
+			callPos := fset.Position(call.Lparen)
 			callee := calleeString(call)
 
 			if kind, ok := functionResolver.concurrencyKind(call); ok {
@@ -1006,6 +1015,7 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 					CalleeRaw:      callee,
 					File:           relPath,
 					Line:           callPos.Line,
+					Column:         callPos.Column,
 					ReturnUsage:    returnUsageMap[call.Pos()],
 				})
 			}
@@ -1031,6 +1041,7 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 					CalleeRaw:      ref,
 					File:           relPath,
 					Line:           callPos.Line,
+					Column:         callPos.Column,
 					Potential:      true,
 				})
 			}
@@ -1063,6 +1074,7 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 						CalleeRaw:      ref,
 						File:           relPath,
 						Line:           fset.Position(assign.Pos()).Line,
+						Column:         fset.Position(assign.Pos()).Column,
 						Potential:      true,
 					})
 				}

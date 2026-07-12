@@ -6,7 +6,7 @@ description: "Local AST-based Go codebase analysis tool for token reduction in A
 ## What is gograph?
 
 
-gograph walks a Go repository, parses selected `.go` files, and stores a structured graph in `.gograph/graph.json`. CLI analysis reads that persisted snapshot. The MCP server loads or auto-builds an in-memory graph, checks freshness per source-analysis call, and rebuilds only after edits; persisted-index tools (`stale`, default `changes`, and `stats`) retain CLI semantics. Default AST analysis does not execute target code; precise mode and `doc` invoke the local Go toolchain.
+gograph walks a Go repository, parses selected `.go` files, and stores a structured graph in `.gograph/graph.json`. CLI analysis reads that persisted snapshot. The MCP server loads or auto-builds an in-memory graph, checks source freshness and newer artifacts per source-analysis call, and rebuilds after edits in the current requested mode; persisted-index tools (`stale`, default `changes`, and `stats`) retain CLI semantics. Default AST analysis does not execute target code; precise mode and `doc` invoke the local Go toolchain.
 
 ```bash
 gograph build .                        # index the repo — fast, tolerates broken code
@@ -72,8 +72,8 @@ sudo make install
 ## How it works
 
 1. **`gograph build .`** — walks Go files selected by the shared scanner, extracts symbols, validated call edges, imports, HTTP routes, SQL queries, environment reads, struct fields, error declarations, and typed synchronization primitives. Writes everything under the target `.gograph/` directory, adds `.gograph/` to the enclosing Git repository root `.gitignore` when available, and falls back to the build target `.gitignore` outside Git. A zero-file or zero-successful-parse build does not replace existing artifacts; partial failures are recorded in atomically published graph metadata.
-2. **CLI query commands** — read persisted `graph.json`; rebuild after source changes. MCP source-analysis tools preserve the latest graph while unchanged and rebuild in memory after edits.
-3. **`--precise` mode** — attempts type-checked CHA/SSA enrichment. It needs compilable packages for precise data; if enrichment fails, gograph warns and retains the AST graph.
+2. **CLI query commands** — read persisted `graph.json`; rebuild after source changes. MCP source-analysis tools check source freshness and newer persisted artifacts, adopt a newer precise graph, and rebuild after edits in the current requested mode. A failed precise refresh is returned visibly.
+3. **`--precise` mode** — attempts type-checked CHA/SSA enrichment. It needs compilable, build-selected packages for precise data; if type/load analysis fails or omits an indexed non-test file, gograph warns, retains the AST graph, and records `precise_fallback` (`precise` and `ast` identify the other modes).
 
 ## What it captures
 

@@ -12,6 +12,11 @@
 
 ### Graph Correctness and Integrity
 
+- Precise CHA interface invocations now retain every valid named in-repository implementation as a deterministic parallel call edge instead of assigning the call site to whichever implementation was visited first. Caller output deduplicates the shared source site, while reachability and orphan analysis traverse every target.
+- Promoted concrete methods are retained through their nil-package SSA wrappers. A traversal-only synthetic forwarding edge connects each wrapper to the declared embedded method, preserving exact paths and orphan reachability without inventing a source call site.
+- `callers Interface.Method` now resolves direct and embedded interface methods through their recorded implementers. Interface-qualified, promoted/concrete receiver, fully-qualified ID, bare-name, exact, CLI, and MCP query forms share the same resolver.
+- Graph v2's wire format now adds optional precision, call-column, and synthetic-forwarding fields with `ast`, `precise`, and `precise_fallback` states. Current readers load legacy graphs as AST-only with line-only ordinary calls. Older v2 binaries can decode new graphs, but do not understand traversal-only forwarding semantics and may count or display synthetic records as ordinary edges; use the current binary for new precise graphs. Text and JSON call-site output includes the source column when known.
+- Precise enrichment now rejects empty or partial non-test package loads before mutating the AST graph, so build constraints or nested module boundaries cannot be mislabeled as fully precise.
 - Call extraction now separates real calls from inferred callback references, rejects identifiers known to be ordinary variables, retains inferred references only when they resolve to repository callables, and deterministically deduplicates serialized edges.
 - Precise CHA enrichment no longer expands unconstrained function values to every signature-compatible function. New dynamic targets are limited to repository implementations, and direct calls inside closures merge with their AST call site.
 - Precise interface-satisfaction edges now carry package-qualified interface and concrete type IDs, preventing same-name collisions across packages.
@@ -31,12 +36,13 @@
 
 ### MCP Safety
 
+- A running MCP server now adopts a newer persisted precise graph and preserves the requested precise mode across source refreshes. Source edits re-run precision analysis (including after a prior fallback) instead of silently downgrading to an AST-only graph; a failed precise refresh is returned to the client as an error.
 - MCP handlers serialize graph rebuild/publication, eliminating shared-graph races and concurrent duplicate rebuilds.
 - Session audit output uses injected writers instead of replacing process-global stdout.
 - Session lifecycle, boundary creation, cleanup, wiki, and doc tools now publish accurate read-only, destructive, idempotency, and open-world annotations.
 - `gograph_stale`, default `gograph_changes`, and `gograph_stats` inspect the persisted graph instead of rebuilding away the state they report. Source-analysis refresh failures now return an MCP error instead of silently querying an older graph.
 - MCP summary and untested queries refresh before analysis. MCP `doc`, wiki output, coupling module detection, boundary configs, and session telemetry are anchored to the analyzed graph root even when the server starts from another directory.
-- MCP graph refresh now reuses the latest graph while source is unchanged and rebuilds only after scanner-detected edits. This preserves loaded CHA/SSA enrichment instead of replacing a precise graph with a basic AST graph on the first tool call.
+- MCP graph refresh now reuses the latest graph while source is unchanged and rebuilds only after scanner-detected edits. Loaded CHA/SSA enrichment is preserved and recomputed after edits instead of being replaced with a basic AST graph.
 
 ### CLI/MCP Contract
 
@@ -48,6 +54,7 @@
 
 ### Verification
 
+- `make test-coverage` now drives module-wide `-coverpkg` instrumentation from packages that contain tests, preserving whole-module coverage while remaining compatible with Go installations that omit the standalone `covdata` tool used only for no-test packages.
 - CI now enforces `gofmt`, `go mod tidy -diff`, race tests, `staticcheck`, `golangci-lint`, and `govulncheck` in addition to build, unit tests, and `go vet`.
 - The module, CI, and release workflows now require Go 1.26.5 or newer so release binaries are not built with the vulnerable Go 1.26.4 standard library flagged by the SBOM scan.
 - Complexity tests derive real function positions from the Go AST instead of hardcoded line numbers.
@@ -64,6 +71,7 @@
 
 ### Documentation
 
+- Documented interface-qualified caller queries, multi-target CHA representation, precision metadata/status, precision-aware MCP refresh, compatibility behavior, and the remaining conservative static-analysis limits.
 Updated CLI help, MCP capability and annotation descriptions, README, command reference, getting-started guide, coding-agent usage guide, contributor checks, and the agent skill for graph integrity, shared root/scanner behavior, policy checks, MCP side effects, and CI verification.
 Corrected safety and I/O claims: default AST analysis does not execute target code, but gograph reads project/config metadata; precise mode and `doc` invoke the local Go toolchain; source/context and inline endpoint handlers can return source; session telemetry is local rather than absent. Documented exact CLI/MCP parity boundaries and output-mode support.
 Updated the vendored Hugo templates to supported language direction and locale APIs, removing deprecation warnings from the documentation build.

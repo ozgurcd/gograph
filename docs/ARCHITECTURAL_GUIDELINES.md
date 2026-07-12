@@ -8,13 +8,13 @@ This document outlines the core architectural philosophy, constraints, and devel
 
 - **Local Service Boundary:** Source and telemetry must never be sent to a gograph service or external analytics API. Default AST analysis is local. Precise mode and `doc` may invoke the installed Go toolchain, which follows the user's module/cache/network policy.
 - **No Target-Code Execution:** The tool statically analyzes code and does not run target tests, binaries, or application entry points.
-- **Explicit Freshness:** CLI analysis uses a persisted `.gograph/graph.json` snapshot, except commands whose contract explicitly reads source/Git state (`source`, `stale`, `changes`, complexity, etc.). MCP source-analysis tools refresh an in-memory AST graph; MCP persisted-index tools preserve CLI snapshot semantics. Keep both paths bounded and deterministic.
+- **Explicit Freshness:** CLI analysis uses a persisted `.gograph/graph.json` snapshot, except commands whose contract explicitly reads source/Git state (`source`, `stale`, `changes`, complexity, etc.). MCP source-analysis tools refresh an in-memory graph using the current requested precision and adopt newer compatible persisted graphs; MCP persisted-index tools preserve CLI snapshot semantics. Keep both paths bounded and deterministic.
 - **Token Efficiency:** The output of CLI commands must be concise and targeted to save LLM context window tokens.
 
 ## 2. Correctness Model
 
 - **Default Mode (Heuristic):** The default `gograph build .` uses raw Go AST parsing (`go/ast`, `go/parser`). It uses duck-typing and structural heuristics. It **must** tolerate incomplete, uncompilable, or messy codebases.
-- **Precise Mode (Type-Checked):** The `gograph build . --precise` command uses `go/types` for Class Hierarchy Analysis (CHA) and exact interface satisfaction. It is allowed to fail or drop precision if the target codebase does not compile.
+- **Precise Mode (Type-Checked):** The `gograph build . --precise` command uses `go/types` for Class Hierarchy Analysis (CHA) and exact interface satisfaction. Each interface invocation retains all valid named in-repository CHA targets as parallel edges. Promoted-method wrappers use explicitly marked, traversal-only forwarding edges with no source provenance. Precise analysis is allowed to fail and publish the AST graph if the target codebase does not compile, but that fallback must be visible in metadata and stats.
 - **Navigation Aids, Not Proofs:** Heuristic extractors (such as REST route mappers, SQL query extractors, or test edge mappers) are strictly navigation aids for AI agents. They are not guaranteed to find every dynamic invocation. Do not use hyperbolic language (e.g., "cryptographic proof") to describe AST analysis.
 - **Security Flow Contract:** Flow analysis may be interprocedural but must remain bounded, deterministic, tolerant of broken code, and explicit about path insensitivity and call-context limits. Persist reusable AST facts in the graph and apply sanitizer policy at query time. Report confidence and never describe a finding as proof of exploitability.
 

@@ -66,7 +66,7 @@ Partial parse failures are retained in `graph.json` build metadata.
 gograph build . --precise
 ```
 
-Attempts Go type loading plus CHA/SSA enrichment on top of the AST pass. Compilable packages are required for precise data; if enrichment fails, gograph warns and retains the AST graph. Use before major refactors or blast-radius analysis.
+Attempts Go type loading plus CHA/SSA enrichment on top of the AST pass. Compilable, build-selected packages are required for precise data; if enrichment fails or omits an indexed non-test source file, gograph warns and retains the AST graph. Successful, fallback, and AST-only status is persisted as `precise`, `precise_fallback`, or `ast`. A precise interface invocation retains every valid named in-repository CHA target, so `callers Repository.Delete` can resolve direct, embedded-interface, and promoted concrete methods without dropping alternative implementations. Promoted wrappers forward through traversal-only synthetic edges that do not appear as source call sites. CHA can still over-approximate runtime targets, while reflection, plugins, `unsafe`, test-only packages, unnamed concrete types, and module-external implementations remain incomplete. Use before major refactors or blast-radius analysis.
 
 **When to use which:**
 
@@ -96,6 +96,7 @@ sqls:           29
 env_reads:      14
 test_edges:     522
 build_status:   complete
+precision:      precise
 parsed_files:   187/187
 parse_failures: 0
 ```
@@ -180,4 +181,4 @@ You can check whether a rebuild is needed:
 gograph stale
 ```
 
-The MCP server checks source freshness per analysis call and rebuilds its in-memory AST graph only after edits. MCP `stale`, default `changes`, and `stats` still inspect the persisted graph. A precise graph is preserved until source changes.
+The MCP server checks source freshness and newer persisted graphs per analysis call. After an edit it rebuilds in memory using the current requested mode, so a precise session re-runs CHA/SSA rather than silently becoming AST-only; if that refresh cannot complete precisely, the analysis call returns an error. MCP `stale`, default `changes`, and `stats` still inspect the persisted graph.

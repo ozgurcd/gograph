@@ -174,3 +174,17 @@ Implemented CLI `gograph flow` and MCP `gograph_flow`; persisted AST flow facts,
 Flow self-analysis found and fixed external/local same-name resolution, multi-return contamination, and cross-caller return leakage. Indexed return values plus bounded 16-frame call-site matching reduced self-scan findings from 160 fabricated/noisy paths to 53 coherent review leads.
 Verification: full tests and race tests passed; go vet, staticcheck, golangci-lint, go mod tidy -diff, govulncheck, grype, Hugo, make build, precise self-build, live text/JSON flow queries, and MCP/CLI parity contracts passed. Final precise index parsed 106/106 files and stored 1,013 flow functions. Policy check had zero errors and 74 pre-existing boundary warnings.
 Normalized the security-flow page link into the index's Schemas and Security section after the initial governed append placed it below Logs.
+## [2026-07-12] session | Preserve complete precise interface dispatch
+
+- Replaced single-target interface enrichment with deterministic parallel call edges: one source-provenance-preserving edge per valid named in-repository CHA target.
+- Added exact source columns and traversal-only synthetic wrapper-to-declared-method forwarding for promoted methods; presentation and source metrics deduplicate call expressions while traversal, reachability, impact, and orphan analysis retain every target.
+- Added Interface.Method caller resolution through precise implementer edges, including embedded interfaces and promoted methods, with consistent bare, concrete dot, fully-qualified ID, exact, CLI, and MCP behavior.
+- Persisted `ast`, `precise`, and `precise_fallback` status, exposed it through CLI/MCP stats, and retained additive graph-v2 wire compatibility with explicit older-reader caveats.
+- Made MCP refresh precision-aware: source edits recompute the requested mode, later precise artifact publications are adopted even across overlapping build timestamps, AST-only artifacts cannot downgrade precise sessions, and fallback is surfaced as an analysis error.
+- Updated help, capabilities, README, release notes, architectural/coding-agent guidance, and docs-site content with the representation, compatibility contract, and remaining CHA/static-analysis limits.
+- Added focused real-build, search, graph, CLI, MCP-handler, refresh, reachability, promoted-method, determinism, and precision-status regressions.
+- Verification passed: formatting, build, `go mod tidy -diff`, module verification, full unit and race suites, vet, staticcheck, golangci-lint, govulncheck, grype, coverage, and both fuzz targets. The precise self-build completed 115/115 parsed files with `precision: precise`; Hugo produced 32 pages and wiki generation produced 21 pages.
+
+## [2026-07-12] maintenance | Normalize interface-dispatch log formatting
+
+- Removed the extra trailing blank line left by the governed session append; no project facts changed.

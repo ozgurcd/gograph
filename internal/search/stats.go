@@ -6,30 +6,32 @@ import (
 
 // StatsResult holds a summary of the current graph index.
 type StatsResult struct {
-	SchemaVersion string `json:"schema_version"`
-	GeneratedAt   string `json:"generated_at"`
-	Packages      int    `json:"packages"`
-	Files         int    `json:"files"`
-	Symbols       int    `json:"symbols"`
-	Calls         int    `json:"calls"`
-	Imports       int    `json:"imports"`
-	Routes        int    `json:"routes"`
-	SQLs          int    `json:"sqls"`
-	EnvReads      int    `json:"env_reads"`
-	TestEdges     int    `json:"test_edges"`
-	FlowFunctions int    `json:"flow_functions"`
-	BuildStatus   string `json:"build_status"`
-	ScannedFiles  int    `json:"scanned_files,omitempty"`
-	ParsedFiles   int    `json:"parsed_files,omitempty"`
-	ParseFailures int    `json:"parse_failures,omitempty"`
+	SchemaVersion string              `json:"schema_version"`
+	GeneratedAt   string              `json:"generated_at"`
+	Precision     graph.PrecisionMode `json:"precision"`
+	Packages      int                 `json:"packages"`
+	Files         int                 `json:"files"`
+	Symbols       int                 `json:"symbols"`
+	Calls         int                 `json:"calls"`
+	Imports       int                 `json:"imports"`
+	Routes        int                 `json:"routes"`
+	SQLs          int                 `json:"sqls"`
+	EnvReads      int                 `json:"env_reads"`
+	TestEdges     int                 `json:"test_edges"`
+	FlowFunctions int                 `json:"flow_functions"`
+	BuildStatus   string              `json:"build_status"`
+	ScannedFiles  int                 `json:"scanned_files,omitempty"`
+	ParsedFiles   int                 `json:"parsed_files,omitempty"`
+	ParseFailures int                 `json:"parse_failures,omitempty"`
 }
 
-// Stats derives index health counts directly from the in-memory graph.
-// It performs no I/O and requires no schema changes.
+// Stats derives index health counts directly from the in-memory graph. It
+// performs no I/O and normalizes missing legacy precision metadata to AST.
 func Stats(g *graph.Graph) StatsResult {
 	result := StatsResult{
 		SchemaVersion: g.Version,
 		GeneratedAt:   g.GeneratedAt.Format("2006-01-02 15:04:05 UTC"),
+		Precision:     g.Build.EffectivePrecision(),
 		Packages:      len(g.Packages),
 		Files:         len(g.Files),
 		Symbols:       len(g.Symbols),

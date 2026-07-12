@@ -176,6 +176,9 @@ func Path(g *graph.Graph, from, to string, includeTests bool) []Result {
 		if matched && len(cur.path) > 0 {
 			var chain []Result
 			for _, edge := range cur.path {
+				if edge.Synthetic {
+					continue
+				}
 				chain = append(chain, Result{
 					Kind:   "path",
 					Name:   edge.CallerName,
@@ -186,11 +189,20 @@ func Path(g *graph.Graph, from, to string, includeTests bool) []Result {
 				})
 			}
 			last := cur.path[len(cur.path)-1]
+			destinationFile, destinationLine := last.File, last.Line
+			if last.CalleeSymbolID != "" {
+				for _, symbol := range g.Symbols {
+					if symbol.ID == last.CalleeSymbolID {
+						destinationFile, destinationLine = symbol.File, symbol.Line
+						break
+					}
+				}
+			}
 			chain = append(chain, Result{
 				Kind:   "path",
 				Name:   last.CalleeRaw,
-				File:   last.File,
-				Line:   last.Line,
+				File:   destinationFile,
+				Line:   destinationLine,
 				Detail: "destination",
 				Score:  10,
 			})
@@ -249,7 +261,25 @@ func isInternal(path string) bool {
 // This is stricter than the simple "0 incoming edges" orphan check — a
 // function called only by dead code is itself flagged as dead.
 func ReachableOrphans(g *graph.Graph) []Result {
-	roots := make(map[string]bool)
+	rootIDs := make(map[string]bool)
+	// Package-level initializers are emitted with CallerName == "init" and
+	// may not have a corresponding SymbolNode. This is a genuine identity-free
+	// runtime root, so retain the legacy name key for it.
+	fallbackRoots := map[string]bool{"init": true}
+	symbolIDsByName := make(map[string][]string)
+	for _, s := range g.Symbols {
+		if (s.Kind == graph.KindFunction || s.Kind == graph.KindMethod) && s.ID != "" {
+			name := normalizeSymbolName(s.Name)
+			symbolIDsByName[name] = append(symbolIDsByName[name], s.ID)
+		}
+	}
+	addRoot := func(s graph.SymbolNode) {
+		if s.ID != "" {
+			rootIDs[s.ID] = true
+			return
+		}
+		fallbackRoots[normalizeSymbolName(s.Name)] = true
+	}
 
 	for _, s := range g.Symbols {
 		if s.Kind != graph.KindFunction && s.Kind != graph.KindMethod {
@@ -258,88 +288,81 @@ func ReachableOrphans(g *graph.Graph) []Result {
 		// Entry points the Go runtime always invokes:
 		//   - main()  — program entry point
 		//   - init()  — runs at package load time, every package, every binary
-		//               (including test binaries; can appear multiple times per
-		//               package — Go runs them all)
 		if s.Name == "main" || s.Name == "init" {
-			roots[normalizeSymbolName(s.ID)] = true
-			roots[normalizeSymbolName(s.Name)] = true
+			addRoot(s)
 			continue
 		}
 		if isTestFile(s.File) {
-			// Test/Benchmark/Fuzz functions in test files are roots
 			if strings.HasPrefix(s.Name, "Test") || strings.HasPrefix(s.Name, "Benchmark") || strings.HasPrefix(s.Name, "Fuzz") {
-				roots[normalizeSymbolName(s.ID)] = true
-				roots[normalizeSymbolName(s.Name)] = true
+				addRoot(s)
 			}
 			continue
 		}
 		if isInternal(s.File) || isInternal(s.ID) {
-			// Exported symbols inside internal packages are NOT roots
+			// Exported symbols inside internal packages are NOT roots.
 			continue
 		}
 		if len(s.Name) > 0 && s.Name[0] >= 'A' && s.Name[0] <= 'Z' {
-			roots[normalizeSymbolName(s.ID)] = true
-			roots[normalizeSymbolName(s.Name)] = true
+			addRoot(s)
 		}
 	}
-	// Package-level var/const initializer expressions are emitted by the
-	// parser as call edges with CallerName == "init" (the natural sibling
-	// to actual init() function bodies — both run at package load time).
-	// The "init" name above seeds those edges as roots.
-	for _, r := range g.Routes {
-		roots[normalizeSymbolName(r.Handler)] = true
+
+	for _, route := range g.Routes {
+		matched := false
+		for _, s := range g.Symbols {
+			if s.Kind != graph.KindFunction && s.Kind != graph.KindMethod {
+				continue
+			}
+			if s.ID != "" && MatchSymbol(s, route.Handler) {
+				rootIDs[s.ID] = true
+				matched = true
+			}
+		}
+		if matched {
+			continue
+		}
+		handlerName := normalizeSymbolName(route.Handler)
+		if ids := symbolIDsByName[handlerName]; len(ids) > 0 {
+			for _, id := range ids {
+				rootIDs[id] = true
+			}
+			continue
+		}
+		fallbackRoots[handlerName] = true
 	}
 
-	// Seed reachable set with all roots — both the normalised-name form
-	// (legacy fallback for edges that lack CalleeSymbolID) AND the full
-	// symbol ID. The ID-keyed entry is what lets the BFS step through
-	// CalleeSymbolID without name conflation (Bug 6).
+	// Exact symbol IDs remain isolated. Name keys exist only for roots or
+	// call edges whose identity was unavailable in the graph.
 	reachable := make(map[string]bool)
-	for r := range roots {
-		reachable[r] = true
+	for id := range rootIDs {
+		reachable[id] = true
 	}
-	for _, s := range g.Symbols {
-		if s.Kind != graph.KindFunction && s.Kind != graph.KindMethod {
-			continue
-		}
-		if !reachable[normalizeSymbolName(s.Name)] && !reachable[normalizeSymbolName(s.ID)] {
-			continue
-		}
-		// Symbol is a root by name; also seed its ID so BFS via
-		// CalleeSymbolID can reach things only it specifically calls.
-		reachable[s.ID] = true
+	for name := range fallbackRoots {
+		reachable[name] = true
 	}
 
-	// Adjacency from caller-key → list of callee-keys. We index by two
-	// keys per side so the BFS works whether edges have CalleeSymbolID
-	// (precise mode) or only CalleeRaw (basic mode). On the caller side
-	// CallerSymbolID is preferred; CalleeSymbolID is preferred on the
-	// callee side. Empty fields fall back to the normalised name —
-	// matches the legacy behaviour for unresolved edges.
 	adj := make(map[string][]string)
-	for _, c := range g.Calls {
-		var callerKeys []string
-		if c.CallerSymbolID != "" {
-			callerKeys = append(callerKeys, c.CallerSymbolID)
+	for _, call := range g.Calls {
+		callerKey := call.CallerSymbolID
+		if callerKey == "" {
+			callerKey = normalizeSymbolName(call.CallerName)
 		}
-		callerKeys = append(callerKeys, normalizeSymbolName(c.CallerName))
 
-		var calleeKey string
-		if c.CalleeSymbolID != "" {
-			// Exact resolution: no conflation risk. (*A).Validate stays
-			// distinct from (*B).Validate — the whole point of Bug 6.
-			calleeKey = c.CalleeSymbolID
-		} else {
-			calleeKey = normalizeSymbolName(c.CalleeRaw)
+		if call.CalleeSymbolID != "" {
+			adj[callerKey] = append(adj[callerKey], call.CalleeSymbolID)
+			continue
 		}
-		for _, ck := range callerKeys {
-			adj[ck] = append(adj[ck], calleeKey)
-		}
+
+		// With no resolved callee identity, preserve the legacy conservative
+		// fallback: walk the name key and every symbol sharing that name.
+		calleeName := normalizeSymbolName(call.CalleeRaw)
+		adj[callerKey] = append(adj[callerKey], calleeName)
+		adj[callerKey] = append(adj[callerKey], symbolIDsByName[calleeName]...)
 	}
 
 	bfsQueue := make([]string, 0, len(reachable))
-	for r := range reachable {
-		bfsQueue = append(bfsQueue, r)
+	for root := range reachable {
+		bfsQueue = append(bfsQueue, root)
 	}
 	for len(bfsQueue) > 0 {
 		cur := bfsQueue[0]
@@ -353,8 +376,8 @@ func ReachableOrphans(g *graph.Graph) []Result {
 	}
 
 	incomingCount := make(map[string]int)
-	for _, c := range g.Calls {
-		incomingCount[normalizeSymbolName(c.CalleeRaw)]++
+	for _, call := range sourceCallSites(g.Calls) {
+		incomingCount[normalizeSymbolName(call.CalleeRaw)]++
 	}
 
 	var results []Result
@@ -362,15 +385,13 @@ func ReachableOrphans(g *graph.Graph) []Result {
 		if s.Kind != graph.KindFunction && s.Kind != graph.KindMethod {
 			continue
 		}
-		// Exclude symbols declared in test files from being reported as orphans.
 		if isTestFile(s.File) {
 			continue
 		}
-		// Three reachability checks per symbol:
-		//   - exact ID (matches CalleeSymbolID-based BFS hits)
-		//   - normalised ID (matches name-based roots/edges)
-		//   - normalised name (legacy short-name fallback)
-		if reachable[s.ID] || reachable[normalizeSymbolName(s.ID)] || reachable[normalizeSymbolName(s.Name)] {
+		if s.ID != "" && reachable[s.ID] {
+			continue
+		}
+		if s.ID == "" && reachable[normalizeSymbolName(s.Name)] {
 			continue
 		}
 		results = append(results, Result{
@@ -378,7 +399,7 @@ func ReachableOrphans(g *graph.Graph) []Result {
 			Name:   s.ID,
 			File:   s.File,
 			Line:   s.Line,
-			Detail: fmt.Sprintf("unreachable from any entry point (incoming calls: %d)", incomingCount[normalizeSymbolName(s.ID)]+incomingCount[normalizeSymbolName(s.Name)]),
+			Detail: fmt.Sprintf("unreachable from any entry point (incoming calls: %d)", incomingCount[normalizeSymbolName(s.Name)]),
 			Score:  10,
 		})
 	}
@@ -523,7 +544,7 @@ func GodObjects(g *graph.Graph, p GodObjectParams) []GodObjectCandidate {
 	// 2. Count total outgoing calls per receiver (sum across all its methods).
 	//    CallerName for methods is typically "(ReceiverType).MethodName".
 	outgoingCalls := make(map[string]int)
-	for _, c := range g.Calls {
+	for _, c := range sourceCallSites(g.Calls) {
 		// Strip "(ReceiverType)." prefix to get receiver name.
 		if strings.HasPrefix(c.CallerName, "(") {
 			end := strings.Index(c.CallerName, ")")

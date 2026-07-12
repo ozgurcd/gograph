@@ -59,7 +59,7 @@ scanner policy for building, freshness checks, and change detection.
 
 **Native MCP Server** — every query and analysis capability has an MCP endpoint for Claude, Cursor, Copilot, and other MCP clients. Host integration and CI artifact commands (`build`, `gate`, `snapshot`, plugin/hook installation, server startup, help, and version) remain CLI-only.
 
-**Explicit Freshness Model** — CLI analysis reads the last persisted graph. MCP source-analysis tools check freshness per call, preserve the latest graph while source is unchanged, and rebuild in memory after edits. MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot. A precise graph is preserved until source changes.
+**Explicit Freshness Model** — CLI analysis reads the last persisted graph. MCP source-analysis tools check freshness per call, adopt a newer persisted precise graph, and rebuild in memory after edits using the latest requested analysis mode. MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot.
 
 **Token-Saving Composites** — `context` replaces 5 calls. `plan` replaces 8. `explain` synthesizes architectural narratives. Built to minimize agent round-trips.
 
@@ -69,7 +69,7 @@ scanner policy for building, freshness checks, and change detection.
 
 **Security Flow Analysis** — `flow` follows potential HTTP request, decoded JSON, and environment data across assignments and function calls to SQL query text, process execution, filesystem paths, and outbound HTTP targets. Findings include severity, confidence, and source-to-sink path steps; MCP exposes the same analysis as `gograph_flow`.
 
-**Integrity-Aware Indexing** — `graph.json` is atomically replaced only after a successful parse, records complete/partial build health, and exposes parsed/scanned counts through `gograph stats`. `gate` refuses to evaluate a stale graph.
+**Integrity-Aware Indexing** — `graph.json` is atomically replaced only after a successful parse, records complete/partial build health and `ast`/`precise`/`precise_fallback` analysis status, and exposes both through `gograph stats`. `gate` refuses to evaluate a stale graph.
 
 **Agent Compliance Auditing** — session telemetry tracks whether agents run `plan` before edits and `review` after. Grades agent behavior A–F with actionable recommendations.
 
@@ -201,7 +201,9 @@ When you run `gograph build .`, the generated `GRAPH_REPORT.md` gives your AI a 
 <summary><strong>Correctness model</strong></summary>
 
 - **Default mode** uses Go AST parsing and best-effort heuristics. Tolerates incomplete or non-compiling repositories.
-- **Precise mode** attempts type-checked enrichment and needs compilable packages for CHA/SSA results. If enrichment fails, the command warns and still publishes the AST graph. Interface implementation edges use package-qualified type IDs; unresolved function values are not expanded to every signature-compatible function.
+- **Precise mode** attempts type-checked enrichment and needs compilable, build-selected packages for CHA/SSA results. If enrichment fails or omits an indexed non-test source file, the command warns, publishes the AST graph, and records `precise_fallback`; successful and AST-only builds record `precise` and `ast` respectively.
+- Each precise interface invocation is represented by one call edge per valid named in-repository CHA target. `callers Interface.Method` (including methods inherited from embedded interfaces and concrete methods promoted from embedded fields) expands through the interface's implementers and reports a shared source expression once; concrete receiver notation and fully-qualified method IDs remain available for disambiguation. Compiler-generated promoted-method forwarding is stored as a traversal-only synthetic edge and is hidden from call-site output.
+- CHA is conservative rather than points-to precise: it may retain implementations that cannot occur in one runtime configuration. Reflection, `unsafe`, plugins, unresolved function values, test-only packages, unnamed concrete types, and module-external implementations can still be incomplete.
 - Callback references are retained only when they resolve to repository callables, and exact call edges are deduplicated before serialization.
 - Mutation queries ignore ordinary local assignments and retain owning type information when statically known, so `Type.Field` disambiguates same-named fields.
 - Synchronization extraction requires a receiver tied to a known `sync` type. Error messages come from `panic`, `errors.New`, and `fmt.Errorf`, including import aliases.

@@ -22,14 +22,14 @@ A single command (`gograph build .`) emits `graph.json` plus nine focused Markdo
 | `GRAPH_REPORT.md` + split reports | Human + agent readable summaries for symbols, dependencies, routes, SQL, errors, configuration, concurrency, and tests. |
 | `graph.json` | Machine-readable full graph — dependencies, packages, files, structs, interfaces, funcs, methods, imports, call edges, env reads, SQL queries, errors, concurrency primitives, test edges. |
 
-*Note: Use `gograph build . --precise` for type-checked interface, CHA, and SSA enrichment. That enrichment requires compilable packages; if it fails, gograph warns and retains the AST graph.*
+*Note: Use `gograph build . --precise` for type-checked interface, CHA, and SSA enrichment. That enrichment requires compilable, build-selected packages; if type/load analysis fails or omits an indexed non-test file, gograph warns, retains the AST graph, and records `precise_fallback`.*
 
 And query commands the agent can invoke without re-parsing:
 
 ```sh
 gograph query <term>            # symbol/package/file/import/call substring search (works great for finding specific test names!)
 gograph focus <package>         # isolate context for a specific package
-gograph callers <function> [--no-tests] [--depth N] # who calls it; --depth 2-10 expands N hops up the call graph
+gograph callers <function|Interface.Method> [--no-tests] [--depth N] [--exact] # who calls it; interface-qualified queries expand precise CHA targets
 gograph callees <function> [--no-tests] [--depth N] # what it calls; --depth 2-10 expands N hops down
 gograph implementers <interface> # which structs implement an interface
 gograph interfaces <struct>     # which interfaces a struct satisfies (precise if --precise used)
@@ -50,7 +50,7 @@ gograph concurrency [term]      # map goroutines, channels, mutexes, waitgroups,
 gograph tests [symbol]          # find which test functions exercise a named symbol
 gograph path <from> <to>        # shortest call chain between two symbols (BFS traversal)
 gograph stale                   # check if graph.json is out of date vs source files
-gograph stats                   # compact index health summary: schema/build status and package/file/symbol/call/route/SQL/env/test/flow-function counts
+gograph stats                   # compact index health summary: schema/build/precision status and package/file/symbol/call/route/SQL/env/test/flow-function counts
 gograph godobj                  # find god-object struct candidates (default thresholds)
 gograph godobj --methods 10 --fields 12 --calls 30 --top 5  # custom thresholds
 gograph complexity              # cyclomatic complexity for all functions, highest first
@@ -728,7 +728,7 @@ Agents that support the Model Context Protocol (like Claude Desktop, Cursor, and
 
 MCP agents should call `gograph_capabilities` first when they need to discover available gograph tools and recommended workflows.
 
-At startup, the MCP server loads the persisted graph or creates an in-memory AST graph when none exists. Source-analysis tools check freshness per call, preserve the latest graph while source is unchanged, and rebuild in memory after edits; rebuild failures are returned visibly. `gograph_stale`, default `gograph_changes`, and `gograph_stats` intentionally inspect persisted `graph.json`. A precise graph is preserved until source changes; restoring precise CHA/SSA after edits requires another explicit precise build.
+At startup, the MCP server loads the persisted graph or creates an in-memory AST graph when none exists. Source-analysis tools check freshness per call, adopt a newer persisted precise graph, and rebuild in memory after edits using the latest requested analysis mode; rebuild failures and precise fallbacks are returned visibly. A precise or precise-fallback session therefore re-attempts CHA/SSA after an edit instead of silently serving AST-only analysis. `gograph_stale`, default `gograph_changes`, and `gograph_stats` intentionally inspect persisted `graph.json`.
 
 MCP annotations distinguish side effects: analysis tools are read-only;
 `gograph_session_create` and `gograph_session_end` mutate telemetry state;
@@ -748,7 +748,7 @@ The current suite registers 65 MCP endpoints: 61 query, analysis, and workflow t
 - **`gograph_session_cleanup`**: Delete all stale inactive session telemetry logs to keep the repository clean.
 - **`gograph_query`**: Accepts `term` or a `terms` array; multiple terms use the CLI's OR semantics.
 - **`gograph_focus`**
-- **`gograph_callers`**: Supports `depth` (1-10), `no_tests`, and exact matching, equivalent to the CLI traversal options.
+- **`gograph_callers`**: Supports `depth` (1-10), `no_tests`, and exact matching, equivalent to the CLI traversal options. In a precise graph, `Interface.Method` resolves through every recorded implementer while returning a shared source call site once.
 - **`gograph_callees`**: Supports `depth` (1-10) and `no_tests`, equivalent to the CLI traversal options.
 - **`gograph_implementers`**
 - **`gograph_fields`**
@@ -796,7 +796,7 @@ The current suite registers 65 MCP endpoints: 61 query, analysis, and workflow t
 - **`gograph_globals`**
 - **`gograph_mocks`**
 - **`gograph_explain`**: LLM-ready architectural summary. Synthesizes callers (prod vs test), callees, complexity, SQL, env, routes, concurrency, test coverage, interface satisfaction, and an opinionated role classification into one structured narrative.
-- **`gograph_stats`**: Compact index health summary. Returns schema version, build timestamp, complete/partial build status, parsed/scanned file counts, parse-failure count, and graph entity counts including persisted flow functions. Use this as a quick sanity check at the start of any analysis session.
+- **`gograph_stats`**: Compact index health summary. Returns schema version, build timestamp, complete/partial build status, analysis precision (`ast`, `precise`, or `precise_fallback`), parsed/scanned file counts, parse-failure count, and graph entity counts including persisted flow functions. Use this as a quick sanity check at the start of any analysis session.
 - **`gograph_trace`**: Alias for `gograph_errorflow`. Kept for backward compatibility — prefer `gograph_errorflow` directly.
 - **`gograph_diagram`**: Mermaid architecture diagram of the repository package dependency graph. Parameters: `group_by` (package/module/service/file), `max_depth` (0=unlimited), `include_stdlib` (bool). Use for onboarding or communicating package structure.
 - **`gograph_check`**: Run static policy checks (`boundaries`, `api_drift`, `require_tests_for_changed_routes`, `require_tests_for_changed_exported_symbols`, `test_coverage`, `no_orphans`, `new_globals`, `max_arity`, and `max_complexity`). Parameters: `since` (Git baseline), `uncommitted` (bool), `config` (path to checks.json). CLI and MCP share one validated Git baseline builder. Changed-route checks map by handler identity and include body-only changes. Returns structured JSON with status, findings, and summary counts. For CI enforcement with non-zero exit codes, use CLI `gograph gate`.
@@ -941,12 +941,14 @@ Numbers vary by repo, but the order-of-magnitude win is consistent: structural q
 ## Limitations the agent should know about
 
 - **Go only.** No multi-language parsing.
-- **Call edges are best-effort text form** from the AST — no type resolution, so overloaded names and method receivers may collide. Treat `callers`/`callees` results as a starting point, not ground truth. **Workaround:** when you need to disambiguate same-named methods/functions or query symbols cleanly:
-  1. Use standard Go **package-qualified dot-notation** (e.g. `service.GenerateRequest`, `graph.Graph` or `graph.Graph.Build`). All query commands support package-qualified dot notation dynamically.
+- **Default call edges are best-effort AST evidence.** Without precise enrichment, overloaded names and method receivers may collide and interface dispatch can be unresolved. Treat `callers`/`callees` results as navigation evidence, not runtime proof. **Workaround:** when you need to disambiguate same-named methods/functions or query symbols cleanly:
+  1. Use standard Go **package-qualified dot-notation** (e.g. `service.GenerateRequest`, `graph.Graph` or `graph.Graph.Build`) with call-graph commands that advertise symbol selectors. `callers` also accepts `Interface.Method` on a precise graph.
   2. For precise target matching with no same-name conflation, pass the fully-qualified symbol ID (e.g., `gograph callers 'github.com/foo/bar/internal/auth::(*Service).Validate'`). The same FQ-ID syntax works for `callees`, `impact`, and `path` (both endpoints). Requires `--precise` mode at build time.
+- **Precise interface dispatch is a CHA over-approximation.** One interface invocation can have several valid named in-repository targets; gograph retains all of them and interface-qualified caller queries deduplicate the source expression. Promoted concrete methods are represented by their wrapper target plus a traversal-only synthetic forwarding edge to the declared method. CHA can include implementations that are not instantiated in a particular runtime configuration, while reflection, `unsafe`, plugins, unresolved function values, test-only packages, unnamed concrete types, and module-external implementations can still cause omissions. If `go/packages` omits any indexed non-test file, the graph is marked `precise_fallback` instead of claiming full precision.
+- **Graph call counts are edge counts.** In a precise graph, one interface call expression contributes one edge per retained concrete target, and promoted-method forwarding can add explicitly marked synthetic traversal edges. Current caller/callee call-site output hides forwarding edges and deduplicates parallel targets for presentation. Older v2 binaries can decode the additive fields but may count or display synthetic records as ordinary edges, so use the current binary with newly generated precise graphs.
 - **No cross-repo / module-external edges.** External dependencies are extracted from `go.mod` to summarize the tech stack, but call edges into third-party packages are not resolved.
 - **Security flow is a conservative heuristic.** It is path-insensitive, uses field/root approximation, and matches call/return context for at most 16 nested repository calls. Default graphs have weaker method/interface resolution than precise graphs. Reflection, globals, arbitrary heap aliases, and unresolved dynamic calls can cause misses or false positives. External-call propagation is marked low confidence. A finding is not an exploitability claim.
-- **CLI snapshot vs MCP refresh.** CLI analysis reflects the last `gograph build`. MCP source-analysis tools check freshness per call and rebuild in memory only after source changes, while MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot. A precise graph remains active until source changes.
+- **CLI snapshot vs MCP refresh.** CLI analysis reflects the last `gograph build`. MCP source-analysis tools check both source freshness and newer persisted graphs, then rebuild in memory after source changes using the current requested mode. A precise refresh that falls back fails the analysis request visibly; MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot.
 
 ## TL;DR
 

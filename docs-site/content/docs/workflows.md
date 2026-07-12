@@ -59,7 +59,7 @@ Before changing the signature or behavior of any function, method, or struct, fo
    ```bash
    gograph build . --precise
    ```
-   Verifies compilation and computes type-checked interface implementers.
+   Attempts type/load analysis, computes type-checked interface implementers, and retains every valid named in-repository CHA target at interface call sites. Check both fields in `gograph stats`: `precision: precise` confirms enrichment succeeded, while `precise_fallback` means the retained AST graph could not be enriched; `build_status` independently reports whether AST parsing was complete or partial.
 5. **Post-edit review**:
    ```bash
    gograph review --uncommitted

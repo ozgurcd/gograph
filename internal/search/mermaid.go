@@ -119,6 +119,82 @@ func (mg *mermaidGraph) String(direction string) string {
 	return sb.String()
 }
 
+// visibleMermaidCallEdges collapses traversal-only wrapper forwarding into
+// the ordinary source edge that reached the wrapper. The resulting graph keeps
+// every concrete terminal target while never rendering a synthetic node or an
+// invented source call site.
+func visibleMermaidCallEdges(g *graph.Graph, includeTests bool) []graph.CallEdge {
+	var visible []graph.CallEdge
+	for _, call := range g.Calls {
+		if call.Synthetic || !includeTests && isTestFile(call.File) {
+			continue
+		}
+		targetIDs := visibleForwardingTargets(g, call.CalleeSymbolID)
+		if len(targetIDs) == 0 {
+			visible = append(visible, call)
+			continue
+		}
+		for _, targetID := range targetIDs {
+			resolved := call
+			resolved.CalleeSymbolID = targetID
+			visible = append(visible, resolved)
+		}
+	}
+	return visible
+}
+
+func visibleForwardingTargets(g *graph.Graph, targetID string) []string {
+	if targetID == "" {
+		return nil
+	}
+	expanded := expandForwardingCallees(g, map[string]bool{targetID: true})
+	forwarders := make(map[string]bool)
+	for _, call := range g.Calls {
+		if call.Synthetic && expanded[call.CallerSymbolID] && expanded[call.CalleeSymbolID] {
+			forwarders[call.CallerSymbolID] = true
+		}
+	}
+	visible := make([]string, 0, len(expanded))
+	for id := range expanded {
+		if id != "" && !forwarders[id] {
+			visible = append(visible, id)
+		}
+	}
+	if len(visible) == 0 {
+		visible = append(visible, targetID)
+	}
+	sort.Strings(visible)
+	return visible
+}
+
+func mermaidResolvedFrontier(g *graph.Graph, term string) map[string]bool {
+	frontier := make(map[string]bool)
+	resolved, interfaceMethodQuery := resolvedCallTargetIDs(g, term)
+	for id := range resolved {
+		frontier[id] = true
+	}
+	if interfaceMethodQuery {
+		// Match the text/JSON caller contract: an interface-qualified query
+		// is resolved only through proven implementers and must never widen
+		// to unrelated same-named symbols when that set is empty.
+		return expandTransparentCallerTargets(g, frontier)
+	}
+
+	tl := strings.ToLower(term)
+	for _, symbol := range g.Symbols {
+		if MatchSymbol(symbol, term) ||
+			(!isFullyQualifiedID(term) && (strings.Contains(strings.ToLower(symbol.Name), tl) ||
+				symbol.Receiver != "" && strings.Contains(strings.ToLower(symbol.Receiver), tl))) {
+			frontier[symbol.ID] = true
+			frontier[strings.ToLower(symbol.Name)] = true
+		}
+	}
+	if len(frontier) == 0 {
+		frontier[tl] = true
+	}
+	return expandTransparentCallerTargets(g, frontier)
+}
+
 // DepsToMermaid builds a package dependency diagram in TD style.
 func DepsToMermaid(g *graph.Graph, result *DepsResult) string {
 	mg := newMermaidGraph()
@@ -242,29 +318,8 @@ func CallersToMermaid(g *graph.Graph, term string, maxDepth int, includeTests bo
 	}
 
 	mg := newMermaidGraph()
-
-	type callEdge struct {
-		callerID   string
-		callerName string
-		calleeID   string
-		calleeRaw  string
-	}
-
-	var allCalls []callEdge
-	for _, c := range g.Calls {
-		if !includeTests && isTestFile(c.File) {
-			continue
-		}
-		allCalls = append(allCalls, callEdge{
-			callerID:   c.CallerSymbolID,
-			callerName: c.CallerName,
-			calleeID:   c.CalleeSymbolID,
-			calleeRaw:  c.CalleeRaw,
-		})
-	}
-
-	frontier := make(map[string]bool)
-	tl := strings.ToLower(term)
+	allCalls := visibleMermaidCallEdges(g, includeTests)
+	frontier := mermaidResolvedFrontier(g, term)
 
 	symMap := make(map[string]string)
 	for _, s := range g.Symbols {
@@ -274,25 +329,6 @@ func CallersToMermaid(g *graph.Graph, term string, maxDepth int, includeTests bo
 		} else {
 			symMap[s.ID] = s.Name
 		}
-
-		nameMatch := false
-		if isFullyQualifiedID(term) {
-			if s.ID == term {
-				nameMatch = true
-			}
-		} else {
-			if MatchSymbol(s, term) || strings.Contains(strings.ToLower(s.Name), tl) || (s.Receiver != "" && strings.Contains(strings.ToLower(s.Receiver), tl)) {
-				nameMatch = true
-			}
-		}
-		if nameMatch {
-			frontier[s.ID] = true
-			frontier[strings.ToLower(s.Name)] = true
-		}
-	}
-
-	if len(frontier) == 0 {
-		frontier[tl] = true
 	}
 
 	visited := make(map[string]bool)
@@ -302,41 +338,42 @@ func CallersToMermaid(g *graph.Graph, term string, maxDepth int, includeTests bo
 	}
 
 	for depth := 1; depth <= maxDepth; depth++ {
+		currentLevel = expandTransparentCallerTargets(g, currentLevel)
 		nextLevel := make(map[string]bool)
 		for _, c := range allCalls {
 			matched := false
-			if c.calleeID != "" && currentLevel[c.calleeID] {
+			if c.CalleeSymbolID != "" && currentLevel[c.CalleeSymbolID] {
 				matched = true
-			} else if currentLevel[strings.ToLower(c.calleeRaw)] {
+			} else if currentLevel[strings.ToLower(c.CalleeRaw)] {
 				matched = true
 			}
 
 			if matched {
-				callerLabel := c.callerID
-				if label, ok := symMap[c.callerID]; ok {
+				callerLabel := c.CallerSymbolID
+				if label, ok := symMap[c.CallerSymbolID]; ok {
 					callerLabel = label
-				} else if c.callerName != "" {
-					callerLabel = c.callerName
+				} else if c.CallerName != "" {
+					callerLabel = c.CallerName
 				}
 
-				calleeLabel := c.calleeID
-				if label, ok := symMap[c.calleeID]; ok {
+				calleeLabel := c.CalleeSymbolID
+				if label, ok := symMap[c.CalleeSymbolID]; ok {
 					calleeLabel = label
-				} else if c.calleeRaw != "" {
-					calleeLabel = c.calleeRaw
+				} else if c.CalleeRaw != "" {
+					calleeLabel = c.CalleeRaw
 				}
 
 				if callerLabel != "" && calleeLabel != "" {
 					mg.addEdge(callerLabel, calleeLabel)
 				}
 
-				if c.callerID != "" && !visited[c.callerID] {
-					visited[c.callerID] = true
-					nextLevel[c.callerID] = true
+				if c.CallerSymbolID != "" && !visited[c.CallerSymbolID] {
+					visited[c.CallerSymbolID] = true
+					nextLevel[c.CallerSymbolID] = true
 				}
-				if c.callerName != "" && !visited[strings.ToLower(c.callerName)] {
-					visited[strings.ToLower(c.callerName)] = true
-					nextLevel[strings.ToLower(c.callerName)] = true
+				if c.CallerName != "" && !visited[strings.ToLower(c.CallerName)] {
+					visited[strings.ToLower(c.CallerName)] = true
+					nextLevel[strings.ToLower(c.CallerName)] = true
 				}
 			}
 		}
@@ -358,29 +395,8 @@ func CalleesToMermaid(g *graph.Graph, term string, maxDepth int, includeTests bo
 	}
 
 	mg := newMermaidGraph()
-
-	type callEdge struct {
-		callerID   string
-		callerName string
-		calleeID   string
-		calleeRaw  string
-	}
-
-	var allCalls []callEdge
-	for _, c := range g.Calls {
-		if !includeTests && isTestFile(c.File) {
-			continue
-		}
-		allCalls = append(allCalls, callEdge{
-			callerID:   c.CallerSymbolID,
-			callerName: c.CallerName,
-			calleeID:   c.CalleeSymbolID,
-			calleeRaw:  c.CalleeRaw,
-		})
-	}
-
-	frontier := make(map[string]bool)
-	tl := strings.ToLower(term)
+	allCalls := visibleMermaidCallEdges(g, includeTests)
+	frontier := mermaidResolvedFrontier(g, term)
 
 	symMap := make(map[string]string)
 	for _, s := range g.Symbols {
@@ -390,25 +406,6 @@ func CalleesToMermaid(g *graph.Graph, term string, maxDepth int, includeTests bo
 		} else {
 			symMap[s.ID] = s.Name
 		}
-
-		nameMatch := false
-		if isFullyQualifiedID(term) {
-			if s.ID == term {
-				nameMatch = true
-			}
-		} else {
-			if MatchSymbol(s, term) || strings.Contains(strings.ToLower(s.Name), tl) || (s.Receiver != "" && strings.Contains(strings.ToLower(s.Receiver), tl)) {
-				nameMatch = true
-			}
-		}
-		if nameMatch {
-			frontier[s.ID] = true
-			frontier[strings.ToLower(s.Name)] = true
-		}
-	}
-
-	if len(frontier) == 0 {
-		frontier[tl] = true
 	}
 
 	visited := make(map[string]bool)
@@ -418,41 +415,42 @@ func CalleesToMermaid(g *graph.Graph, term string, maxDepth int, includeTests bo
 	}
 
 	for depth := 1; depth <= maxDepth; depth++ {
+		currentLevel = expandForwardingCallees(g, currentLevel)
 		nextLevel := make(map[string]bool)
 		for _, c := range allCalls {
 			matched := false
-			if c.callerID != "" && currentLevel[c.callerID] {
+			if c.CallerSymbolID != "" && currentLevel[c.CallerSymbolID] {
 				matched = true
-			} else if currentLevel[strings.ToLower(c.callerName)] {
+			} else if currentLevel[strings.ToLower(c.CallerName)] {
 				matched = true
 			}
 
 			if matched {
-				callerLabel := c.callerID
-				if label, ok := symMap[c.callerID]; ok {
+				callerLabel := c.CallerSymbolID
+				if label, ok := symMap[c.CallerSymbolID]; ok {
 					callerLabel = label
-				} else if c.callerName != "" {
-					callerLabel = c.callerName
+				} else if c.CallerName != "" {
+					callerLabel = c.CallerName
 				}
 
-				calleeLabel := c.calleeID
-				if label, ok := symMap[c.calleeID]; ok {
+				calleeLabel := c.CalleeSymbolID
+				if label, ok := symMap[c.CalleeSymbolID]; ok {
 					calleeLabel = label
-				} else if c.calleeRaw != "" {
-					calleeLabel = c.calleeRaw
+				} else if c.CalleeRaw != "" {
+					calleeLabel = c.CalleeRaw
 				}
 
 				if callerLabel != "" && calleeLabel != "" {
 					mg.addEdge(callerLabel, calleeLabel)
 				}
 
-				if c.calleeID != "" && !visited[c.calleeID] {
-					visited[c.calleeID] = true
-					nextLevel[c.calleeID] = true
+				if c.CalleeSymbolID != "" && !visited[c.CalleeSymbolID] {
+					visited[c.CalleeSymbolID] = true
+					nextLevel[c.CalleeSymbolID] = true
 				}
-				if c.calleeRaw != "" && !visited[strings.ToLower(c.calleeRaw)] {
-					visited[strings.ToLower(c.calleeRaw)] = true
-					nextLevel[strings.ToLower(c.calleeRaw)] = true
+				if c.CalleeRaw != "" && !visited[strings.ToLower(c.CalleeRaw)] {
+					visited[strings.ToLower(c.CalleeRaw)] = true
+					nextLevel[strings.ToLower(c.CalleeRaw)] = true
 				}
 			}
 		}
@@ -488,20 +486,7 @@ func ImpactMultipleToMermaid(g *graph.Graph, terms []string, includeTests bool) 
 		return ""
 	}
 	mg := newMermaidGraph()
-
-	type callEdge struct {
-		callerID   string
-		callerName string
-		calleeID   string
-		calleeRaw  string
-	}
-	var allCalls []callEdge
-	for _, c := range g.Calls {
-		if !includeTests && isTestFile(c.File) {
-			continue
-		}
-		allCalls = append(allCalls, callEdge{c.CallerSymbolID, c.CallerName, c.CalleeSymbolID, c.CalleeRaw})
-	}
+	allCalls := visibleMermaidCallEdges(g, includeTests)
 
 	symMap := make(map[string]string)
 	for _, s := range g.Symbols {
@@ -515,15 +500,8 @@ func ImpactMultipleToMermaid(g *graph.Graph, terms []string, includeTests bool) 
 	// Seed frontier from all terms.
 	frontier := make(map[string]bool)
 	for _, term := range terms {
-		tl := strings.ToLower(term)
-		for _, s := range g.Symbols {
-			if strings.Contains(strings.ToLower(s.Name), tl) || (s.Receiver != "" && strings.Contains(strings.ToLower(s.Receiver), tl)) {
-				frontier[s.ID] = true
-				frontier[strings.ToLower(s.Name)] = true
-			}
-		}
-		if len(frontier) == 0 {
-			frontier[tl] = true
+		for key := range mermaidResolvedFrontier(g, term) {
+			frontier[key] = true
 		}
 	}
 
@@ -534,34 +512,35 @@ func ImpactMultipleToMermaid(g *graph.Graph, terms []string, includeTests bool) 
 	}
 
 	for depth := 1; depth <= 20; depth++ {
+		currentLevel = expandTransparentCallerTargets(g, currentLevel)
 		nextLevel := make(map[string]bool)
 		for _, c := range allCalls {
-			matched := (c.calleeID != "" && currentLevel[c.calleeID]) || currentLevel[strings.ToLower(c.calleeRaw)]
+			matched := (c.CalleeSymbolID != "" && currentLevel[c.CalleeSymbolID]) || currentLevel[strings.ToLower(c.CalleeRaw)]
 			if !matched {
 				continue
 			}
-			callerLabel := c.callerID
-			if label, ok := symMap[c.callerID]; ok {
+			callerLabel := c.CallerSymbolID
+			if label, ok := symMap[c.CallerSymbolID]; ok {
 				callerLabel = label
-			} else if c.callerName != "" {
-				callerLabel = c.callerName
+			} else if c.CallerName != "" {
+				callerLabel = c.CallerName
 			}
-			calleeLabel := c.calleeID
-			if label, ok := symMap[c.calleeID]; ok {
+			calleeLabel := c.CalleeSymbolID
+			if label, ok := symMap[c.CalleeSymbolID]; ok {
 				calleeLabel = label
-			} else if c.calleeRaw != "" {
-				calleeLabel = c.calleeRaw
+			} else if c.CalleeRaw != "" {
+				calleeLabel = c.CalleeRaw
 			}
 			if callerLabel != "" && calleeLabel != "" {
 				mg.addEdge(callerLabel, calleeLabel)
 			}
-			if c.callerID != "" && !visited[c.callerID] {
-				visited[c.callerID] = true
-				nextLevel[c.callerID] = true
+			if c.CallerSymbolID != "" && !visited[c.CallerSymbolID] {
+				visited[c.CallerSymbolID] = true
+				nextLevel[c.CallerSymbolID] = true
 			}
-			if c.callerName != "" && !visited[strings.ToLower(c.callerName)] {
-				visited[strings.ToLower(c.callerName)] = true
-				nextLevel[strings.ToLower(c.callerName)] = true
+			if c.CallerName != "" && !visited[strings.ToLower(c.CallerName)] {
+				visited[strings.ToLower(c.CallerName)] = true
+				nextLevel[strings.ToLower(c.CallerName)] = true
 			}
 		}
 		if len(nextLevel) == 0 {

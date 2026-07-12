@@ -48,6 +48,9 @@ func Trace(g *graph.Graph, errStr string, includeTests bool) []TraceResult {
 	// Precompute reverse adjacency list to find callers quickly
 	revAdj := make(map[string][]graph.CallEdge)
 	for _, c := range g.Calls {
+		if c.Synthetic {
+			continue
+		}
 		if !includeTests && isTestFile(c.File) {
 			continue
 		}
@@ -127,7 +130,7 @@ func Trace(g *graph.Graph, errStr string, includeTests bool) []TraceResult {
 			// Fallback: Just return immediate callers using reverse adjacency
 			if callers, ok := revAdj[targetFunc]; ok && len(callers) > 0 {
 				var impacts []Result
-				for i, c := range callers {
+				for i, c := range sourceCallSites(callers) {
 					if i >= 5 {
 						break // limit fallback
 					}
