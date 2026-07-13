@@ -23,6 +23,16 @@ go install github.com/ozgurcd/gograph/cmd/gograph@latest
 gograph version
 ```
 
+**Official MCP Registry / MCPB (preview)**
+
+MCPB-capable clients can discover `io.github.ozgurcd/gograph` in the official
+Registry. This installs a self-contained local MCP server bundle rather than a
+CLI on `PATH`. Select the bundle matching macOS, Linux, or Windows and the
+host's amd64/arm64 architecture, then choose the root directory of the Go
+project to analyze. Current Registry metadata cannot select CPU architecture
+portably, so verify the asset filename instead of assuming automatic client
+selection. See [Official MCP Registry](/docs/mcp-registry/) for details.
+
 **From source**
 ```bash
 git clone https://github.com/ozgurcd/gograph

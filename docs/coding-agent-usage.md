@@ -751,6 +751,16 @@ Agents that support the Model Context Protocol (like Claude Desktop, Cursor, and
   }
 }
 ```
+
+MCPB-capable clients can obtain the same local stdio server from the preview
+official Registry under `io.github.ozgurcd/gograph`. Registry installation
+prompts for `/path/to/repo`; it is separate from Homebrew, `go install`, and
+the Claude Code marketplace plugin. Six bundles cover macOS, Linux, and
+Windows on amd64 and arm64, but current Registry metadata cannot select CPU
+architecture portably. Choose the matching asset filename, or use the manual
+configuration above. See [Official MCP Registry and MCPB
+Distribution](mcp-registry.md).
+
 `gograph` exposes a registered MCP tool suite for the highest-value agent workflows directly to the agent as executable tools, bypassing the need for terminal commands.
 
 MCP agents should call `gograph_capabilities` first when they need to discover available gograph tools and recommended workflows.

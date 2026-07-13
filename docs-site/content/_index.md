@@ -70,6 +70,15 @@ brew install ozgurcd/tap/gograph
 go install github.com/ozgurcd/gograph/cmd/gograph@latest
 ```
 
+**Official MCP Registry / MCPB (preview)**
+```text
+io.github.ozgurcd/gograph
+```
+This installs a platform-specific local MCP bundle in clients that support
+MCPB; it does not place the CLI on `PATH`. Select the Go project directory and
+the macOS/Linux/Windows amd64/arm64 asset matching the host. See the
+[Registry guide](/docs/mcp-registry/) for the current CPU-selection limitation.
+
 **From source**
 ```bash
 git clone https://github.com/ozgurcd/gograph

@@ -34,6 +34,15 @@ gograph hotspot --top 5
 gograph flow --no-tests
 ```
 
+Homebrew and `go install` install the normal `gograph` CLI. MCP clients that
+support MCP Bundles can instead discover the local stdio server in the
+[official MCP Registry](https://registry.modelcontextprotocol.io) as
+`io.github.ozgurcd/gograph`. Registry/MCPB installation is a separate
+distribution path; it does not install the Homebrew formula or configure the
+Claude Code marketplace plugin. The Registry is currently in preview. See
+[Official MCP Registry and MCPB installation](docs/mcp-registry.md) for client
+support, target selection, and current limitations.
+
 Choose a real function or method shown by `summary`, `hotspot`, or
 `gograph complexity`, then substitute its name below:
 
@@ -143,6 +152,16 @@ Omit `for` to trust the return value for every sink kind. `function` accepts the
 </details>
 
 ## AI Agent Integration
+
+**Official MCP Registry (preview):** MCPB-capable clients can discover
+`io.github.ozgurcd/gograph`. The bundle asks for the root directory of the Go
+project and launches the bundled executable with separate arguments equivalent
+to `gograph mcp <project-directory>`. Releases provide macOS, Linux, and
+Windows bundles for both amd64 and arm64. The current Registry package schema
+cannot select by CPU architecture, so choose the asset whose filename matches
+the host; do not assume a client will select it automatically. All analysis
+still runs locally over stdio, with no hosted gograph service or remote
+telemetry.
 
 **Desktop config, shared rules, and Claude Code hook setup:**
 ```bash

@@ -35,6 +35,17 @@ make build
 # symlink bin/gograph to /usr/local/bin/gograph
 ```
 
+MCPB-capable desktop clients can alternatively discover the local server as
+`io.github.ozgurcd/gograph` in the official MCP Registry. The Registry is in
+preview, and this path installs a platform-specific bundle rather than placing
+the CLI on `PATH`; it does not replace Claude Code's marketplace plugin or its
+per-project MCP registration. The bundle prompts for the Go project directory
+and launches arguments equivalent to `gograph mcp <project-directory>`.
+Releases cover macOS, Linux, and Windows on amd64 and arm64, but current
+Registry metadata cannot select CPU architecture portably. Choose the matching
+asset filename, or use Homebrew/`go install` plus manual registration. See
+[Official MCP Registry and MCPB Distribution](mcp-registry.md).
+
 ## 2. Project Instructions Setup
 
 Claude Code looks for a `CLAUDE.md` file in the root of your repository to understand project-specific rules and tool preferences. 

@@ -4,6 +4,8 @@ bin/
 bin/gograph-test
 /gograph
 docs/ARCHITECTURAL_GUIDELINES.mdcoverage.out
+.release-mcpb/
+dist/
 
 # local agent instructions
 CLAUDE.md

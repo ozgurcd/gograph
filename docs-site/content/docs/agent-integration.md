@@ -120,6 +120,20 @@ If `.gograph/graph.json` does not exist, startup creates an in-memory AST graph;
 
 The server exposes 65 endpoints: 61 CLI-equivalent query, analysis, and workflow tools plus four session lifecycle tools. `gograph_flow` matches the CLI `flow` filters (`term`, `source`, `sink`, `config`, and `no_tests`) and returns structured source, sink, severity, confidence, and path data.
 
+### Official Registry / MCPB installation
+
+Clients that support MCP Bundles can discover
+`io.github.ozgurcd/gograph` in the official MCP Registry. The Registry is in
+preview. Installation prompts for the Go project directory and launches the
+bundled executable with `mcp` and that directory as separate arguments.
+
+Registry/MCPB distribution is distinct from Homebrew, `go install`, and the
+Claude Code marketplace plugin. Six bundles cover macOS, Linux, and Windows on
+amd64 and arm64. Because the current Registry package format has no portable
+CPU selector, users must choose the matching asset filename when the client
+offers multiple packages. See [Official MCP Registry](/docs/mcp-registry/) for
+the target matrix, local-data behavior, and client fallback instructions.
+
 ---
 
 ## 🛠️ Client Integration Examples
