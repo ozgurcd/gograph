@@ -808,7 +808,7 @@ func hookSearchesGo(invocation hookSearchInvocation) bool {
 		if hookHasStdinPath(invocation.paths) && inputCanContainGo {
 			return true
 		}
-		if len(invocation.paths) == 0 && !(invocation.tool == hookToolGrep && invocation.recursive) {
+		if len(invocation.paths) == 0 && (invocation.tool != hookToolGrep || !invocation.recursive) {
 			return inputCanContainGo
 		}
 	}
