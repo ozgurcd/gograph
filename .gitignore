@@ -5,6 +5,7 @@ bin/gograph-test
 /gograph
 docs/ARCHITECTURAL_GUIDELINES.mdcoverage.out
 .release-mcpb/
+.release-work/
 dist/
 
 # local agent instructions

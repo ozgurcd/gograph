@@ -204,6 +204,18 @@ Normalized the security-flow page link into the index's Schemas and Security sec
 - Replaced the final “token cost comparison” table label with neutral output-shape and analysis-caveat language.
 - Reworded the historical case study's composite-command section to describe combined evidence categories without claiming a fixed number of replaced calls.
 - Regenerated the 32-page Hugo output and a clean independent render after the wording changes.
+## [2026-07-12] maintenance | Re-audit private codebase findings
+
+- Re-audited all eight findings and five future risks in `docs/private/gograph-findings.md` against v1.4.96 and remediation commit `7a4592a`.
+- Current status: five findings resolved and three partially resolved; four future risks resolved in core scope and precise implementer fallback remains partial.
+- Confirmed remaining correctness gaps: selector-name collisions in AST callback recovery, package-insensitive changed-route handler matching, incomplete graphs accepted by `gate`, and package-insensitive legacy/AST implementer fallback.
+- Recorded optional hardening for MCP refresh throughput, scanner error propagation, extractor coverage, baseline cancellation tests, and release verification.
+- Updated `project.md` so durable guidance discloses these limitations.
+- Verification passed: `go test ./... -count=1`, focused graph/parser/MCP/search/baseline tests, race tests for CLI/MCP, and clean `gofmt -l .`.
+
+## [2026-07-12] maintenance | Normalize findings re-audit log formatting
+
+- Consumed the extra trailing blank line left by the previous governed append as the separator for this maintenance entry; no project facts changed.
 
 ## 2026-07-12 — Official MCP Registry and MCPB publication
 
@@ -222,3 +234,14 @@ Normalized the security-flow page link into the index's Schemas and Security sec
 - The initial tag run failed before publication because release tests lacked `bin/gograph`; commit `4299e2806a87c43343584f941159a413ade156d3` added that prerequisite and a safe existing-tag dispatch path. The tag was not moved or recreated.
 - Successful run `29242849952` verified the tag, published ordinary assets and six MCPBs, reconciled Homebrew, authenticated with pinned `mcp-publisher v1.7.9`, and verified Registry activation.
 - Independent verification downloaded all 14 assets, matched all 12 checksummed artifacts plus GitHub digests for `server.json` and `checksums.txt`, initialized the downloaded native MCPB with 65 tools, and confirmed the v1.5.0 Homebrew formula.
+## [2026-07-13] release | Restore automatic patch release workflow
+
+- Restored the maintainer UX to `git commit` followed by `make release`, with the next patch version selected automatically and no `VERSION` argument.
+- Added a fail-closed release coordinator that owns exact metadata changes, validates official remote and immutable state, creates an annotated tag, and atomically pushes the captured commit plus that tag.
+- Added dry-run, compare-and-swap rollback, same-version resume/no-op behavior, and focused regression coverage for failure and recovery paths.
+- Expanded the pre-tag gate with module verification/tidiness, `go vet`, and a pinned GoReleaser v2.17.0 non-publishing snapshot alongside the full tests, race tests, lint, security, MCPB, smoke, and documentation checks.
+- Full `make release-verify MCPB_OUTPUT=.release-work/full-verify` passed without creating a commit, tag, push, GitHub release, or Registry version.
+
+## [2026-07-13] maintenance | Close automatic release log formatting
+
+- Consumed the governed append's trailing blank line as this entry's separator; no release facts changed.

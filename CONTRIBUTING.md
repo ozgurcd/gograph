@@ -40,53 +40,64 @@ the ordinary archives, checksums, or Homebrew update. The official Registry is
 currently in preview, and published versions and metadata are immutable.
 
 Current release pins are Registry schema `2025-12-11`, MCPB manifest schema
-`0.4`, `@anthropic-ai/mcpb` `2.1.2`, and `mcp-publisher` `1.7.9`. Review the
-official upstream schema and release notes before changing a pin. CI must
+`0.4`, `@anthropic-ai/mcpb` `2.1.2`, `mcp-publisher` `1.7.9`, and GoReleaser
+`v2.17.0`. Review the official upstream schema and release notes before
+changing a pin. CI must
 download the publisher by exact version, verify its pinned SHA-256 digest, and
 must not use a moving `latest` URL.
 
-For each new semantic version:
+The normal maintainer flow remains one command. Commit the feature or fix on
+`main`, leave the worktree clean, and run:
 
-1. Run the full verification documented above and confirm the tag will point
-   to that exact verified commit.
-2. Set `VERSION` to the new, unused semantic version (`1.5.0` is the initial
-   publication), then build all six MCPBs. The command prints each SHA-256:
+```bash
+make release
+```
 
-   ```bash
-   VERSION=1.5.0 # replace for each later release
-   go run ./cmd/mcpb-release build --version "$VERSION" --output .release-mcpb
-   ```
+No version argument is required. The target computes the next patch version,
+builds all six MCPBs, renders their immutable URLs and SHA-256 hashes into
+`server.json`, runs the complete release verification and native MCP smoke
+test, verifies modules and `go mod tidy`, runs `go vet`, and builds a pinned,
+non-publishing GoReleaser snapshot in the temporary release directory. It then
+commits only the generated version/release metadata and creates
+an annotated version tag and atomically pushes `main` and that tag. The tag
+starts the immutable GitHub release, Homebrew reconciliation, and official MCP
+Registry publication workflow.
 
-3. Render all six `server.json` package versions, immutable `v<version>` asset
-   URLs, and `fileSha256` values from the verified bundles. Then validate the
-   pinned schemas, manifest and archive layout, executable paths, version
-   agreement, URLs, and hashes, and smoke-test MCP initialization and
-   `tools/list` from the native bundle:
+The command fails closed before publishing unless the worktree is clean, the
+current branch is `main`, the selected remote's `main` is an ancestor of local
+`main`, the current declared version has a remote baseline tag in that history,
+the next version is unused, and every build and validation gate passes. The
+selected remote's push URL must be the official `ozgurcd/gograph` repository,
+and the remote update is therefore a fast-forward. A clone whose official
+remote is named `upstream` can use
+`make release RELEASE_REMOTE=upstream`. This preserves the old `git commit`
+followed by `make release` workflow while including the new MCPB and Registry
+gates. If the command is rerun at the same already-tagged release commit, it
+recognizes that release and does not increment the patch version again.
 
-   ```bash
-   go run ./cmd/mcpb-release render-server \
-     --version "$VERSION" \
-     --input .release-mcpb \
-     --output server.json
-   go run ./cmd/mcpb-release verify \
-     --version "$VERSION" \
-     --input .release-mcpb \
-     --server server.json
-   go run ./cmd/mcpb-release smoke \
-     --version "$VERSION" \
-     --input .release-mcpb
-   ```
+Use `make release-dry-run` to exercise the same automatic patch preparation,
+full verification, and immutable-state checks while restoring the metadata and
+creating no commit, tag, or push. If an atomic push fails, the coordinator
+retains the already-verified local release commit and tag; rerun `make release`
+to retry that same version.
 
-4. Let GoReleaser publish the ordinary assets, six MCPBs, checksums, and
-   `server.json`. The workflow then reconciles GoReleaser's generated Homebrew
-   formula idempotently, so a tap failure can be retried without replacing
-   release assets. Registry publication must wait until every referenced
-   GitHub release asset is publicly downloadable.
-5. Publish with GitHub Actions OIDC (`id-token: write`, `contents: read`) using
-   `mcp-publisher login github-oidc`; do not add a long-lived Registry token.
-6. Query the official Registry for the exact name and version, re-download and
-   hash every package, repeat the native MCP smoke test, and confirm Homebrew
-   and the ordinary release archives remain intact.
+For CI or diagnosis of an already prepared release state, the non-publishing
+gate remains available:
+
+```bash
+make release-verify
+```
+
+This advanced target runs the full local, MCPB, schema, hash, documentation,
+and smoke-test checks against the currently declared version without creating
+a commit, tag, or push.
+
+After the atomic push, GoReleaser publishes the ordinary assets, six MCPBs,
+checksums, and `server.json`. The workflow reconciles GoReleaser's generated
+Homebrew formula idempotently, waits for every referenced GitHub asset to be
+publicly downloadable, publishes with GitHub Actions OIDC, and verifies the
+Registry record and downloadable hashes. Do not add a long-lived Registry
+token.
 
 Reruns may no-op only when the existing GitHub release and Registry record
 match exactly. Any mismatch must fail closed, and no existing version, tag, or

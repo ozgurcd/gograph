@@ -81,12 +81,16 @@ func run(ctx context.Context, args []string) error {
 	}
 
 	switch args[0] {
+	case "auto-release":
+		return runAutoRelease(ctx, args[1:])
 	case "build":
 		return runBuild(ctx, args[1:])
 	case "verify":
 		return runVerify(args[1:])
 	case "render-server":
 		return runRenderServer(args[1:])
+	case "render-goreleaser":
+		return runRenderGoReleaser(args[1:])
 	case "smoke":
 		return runSmoke(ctx, args[1:])
 	case "github-release-state":
@@ -397,9 +401,11 @@ func usageText() string {
 	return `usage: mcpb-release <command> [options]
 
 commands:
+  auto-release           bump, verify, commit, tag, and atomically push a patch release
   build                  build all six deterministic MCP bundles
   verify                 validate bundle layout, targets, versions, and hashes
   render-server          render deterministic Registry metadata from bundle hashes
+  render-goreleaser      render a safe temporary GoReleaser snapshot configuration
   smoke                  initialize the native bundle and request tools/list
   github-release-state   print missing or matching; fail on divergent assets
   registry-state         print missing or matching; fail on divergent metadata`

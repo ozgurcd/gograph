@@ -19,7 +19,7 @@ The executable Go package is `github.com/ozgurcd/gograph/cmd/gograph`. First-run
 
 ## Analysis modes and health
 
-Default builds produce an AST graph and tolerate partial parsing when at least one Go file succeeds. `BuildMetadata.Precision` records `ast`, `precise`, or `precise_fallback`; this is independent of complete/partial AST build health. Precise builds attempt go/packages type loading plus CHA/SSA. Missing indexed production files or type/load errors retain the AST graph and record a visible fallback instead of claiming precise success. `gograph stats` and MCP stats expose both precision and build health.
+Default builds produce an AST graph and tolerate partial parsing when at least one Go file succeeds. `BuildMetadata.Precision` records `ast`, `precise`, or `precise_fallback`; this is independent of complete/partial AST build health. Precise builds attempt go/packages type loading plus CHA/SSA. Missing indexed production files or type/load errors retain the AST graph and record a visible fallback instead of claiming precise success. `gograph stats` and MCP stats expose both precision and build health. `gate` fails closed for stale source, but it does not currently reject a fresh graph whose build metadata is incomplete; CI workflows that require complete coverage must check build health explicitly.
 
 ## Precise call-graph representation
 
@@ -39,6 +39,6 @@ The graph schema remains version 2. Precision, call-column, and synthetic-forwar
 
 ## Static-analysis limits
 
-Precise dispatch uses conservative CHA, so it can include named implementations that are not instantiated in one runtime configuration. Reflection, `unsafe`, plugins, unresolved function values, test-only packages, unnamed concrete types, module-external implementations, active build tags, and incomplete package loading can still cause omissions. Flow analysis remains path-insensitive with up to 16 call-site frames and query-time sanitizer policy; findings are review leads, not proof.
+Precise dispatch uses conservative CHA, so it can include named implementations that are not instantiated in one runtime configuration. Reflection, `unsafe`, plugins, unresolved function values, test-only packages, unnamed concrete types, module-external implementations, active build tags, and incomplete package loading can still cause omissions. AST callback recovery filters known ordinary identifiers, but selector-valued arguments remain name-based and can create false call edges when a data field shares a name with a callable. Precise implementer edges use qualified IDs, while legacy ID-less graphs and the AST implementer fallback remain package-insensitive. Changed-route policy checks also normalize handler names and can conflate same-named handlers across packages or receiver types. Treat zero-result and heuristic/fallback results as evidence to cross-check, not proof. Flow analysis remains path-insensitive with up to 16 call-site frames and query-time sanitizer policy; findings are review leads, not proof.
 
 Non-goals include other languages, model APIs, SaaS, remote telemetry, and target binary/test execution.

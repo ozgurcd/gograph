@@ -20,7 +20,7 @@ Post-publication verification downloaded all 14 release assets. All six ordinary
 
 ## Identity and pinned formats
 
-Metadata includes immutable GitHub repository ID `1233398203`, website `https://gograph.identuum.ai`, and stdio transport. Validation pins Registry schema `2025-12-11`, MCPB manifest `0.4` from `@anthropic-ai/mcpb@2.1.2`, and `mcp-publisher v1.7.9`. Vendored schemas and provenance are under `internal/mcpbundle/schemas/`.
+Metadata includes immutable GitHub repository ID `1233398203`, website `https://gograph.identuum.ai`, and stdio transport. Validation pins Registry schema `2025-12-11`, MCPB manifest `0.4` from `@anthropic-ai/mcpb@2.1.2`, `mcp-publisher v1.7.9`, and the local ordinary-archive gate to GoReleaser `v2.17.0`. Vendored schemas and provenance are under `internal/mcpbundle/schemas/`.
 
 ## Representation
 
@@ -38,6 +38,16 @@ Registry packages omit `packageArguments`; the embedded MCPB launch configuratio
 ## Targets and limitation
 
 Six assets named `gograph_<version>_<goos>_<goarch>.mcpb` cover darwin, linux, and windows on amd64 and arm64. The manifest declares the truthful OS and namespaced architecture metadata. Registry packages currently have no OS/CPU selector, and MCPB has no standard CPU field, so preview clients may require manual asset choice. Homebrew or `go install` plus `gograph mcp <project-directory>` remains the fallback.
+
+## Maintainer release command
+
+The normal patch-release flow is again: commit the feature or fix on clean `main`, then run `make release`. No version argument is supplied. The coordinator reads the aligned declared version, requires its remote baseline tag to be in the official remote's `main` history, computes the next stable patch version, and rejects reuse of a local tag, remote tag, GitHub release, or Registry version.
+
+Preparation uses a unique ignored `.release-work/` transaction. The coordinator updates only `.bumpversion.cfg`, `plugin.json`, and the deterministically rendered `server.json`; builds and verifies all six MCPBs; and runs `make release-verify`. That gate includes module verification and tidiness, `go vet`, unit and race tests, lint/static/vulnerability checks, MCPB schema/layout/hash checks, native initialization plus `tools/list`, documentation, and a pinned non-publishing GoReleaser snapshot for the ordinary archives and Homebrew formula.
+
+After verification, the coordinator rechecks the worktree, HEAD, exact metadata bytes, GitHub state, and Registry state. It creates a release metadata commit containing exactly the three owned files, validates that commit's parent, subject, paths, and blobs, creates an annotated `v<version>` tag, and atomically pushes the captured commit SHA to `main` together with only that tag. The selected push URL must be the official `ozgurcd/gograph` repository; clones using another remote name can pass `RELEASE_REMOTE=upstream`.
+
+`make release-dry-run` performs the same preparation, verification, and immutable-state checks, then restores owned metadata without creating a commit, tag, or remote update. Restoration is compare-and-swap so a concurrent editor change is not overwritten. If tagging or an atomic push fails, the verified commit and any tag remain local; rerunning `make release` resumes the same version. A rerun from the already-tagged release commit is a no-op, including when remote `main` has subsequently advanced.
 
 ## Publication invariants
 

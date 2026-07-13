@@ -5,8 +5,10 @@ INSTALL   = /usr/local/bin
 MCPB_VERSION ?= $(shell awk -F ' = ' '$$1 == "current_version" { print $$2 }' .bumpversion.cfg)
 MCPB_OUTPUT  ?= .release-mcpb
 MCPB_SERVER  ?= server.json
+RELEASE_REMOTE ?= origin
+override GORELEASER_VERSION := v2.17.0
 
-.PHONY: build test format-check run-build clean bump-patch bump-minor bump-major install release release-verify mcpb-build mcpb-verify mcpb-smoke mcpb-check docs-check
+.PHONY: build test format-check run-build clean bump-patch bump-minor bump-major install release release-dry-run release-verify release-go-check release-goreleaser-check mcpb-build mcpb-verify mcpb-smoke mcpb-check docs-check
 
 build:
 	$(eval VERSION := $(shell grep '^current_version' .bumpversion.cfg | awk '{print $$3}'))
@@ -16,10 +18,22 @@ build:
 	go build -ldflags "-X main.version=$(VERSION)-$(GIT_COMMIT)$(DIRTY) -X main.releaseVersionMarker=gograph-release-version=/$(VERSION)-$(GIT_COMMIT)$(DIRTY)/" -o $(BUILD_DIR)/$(BINARY) $(CMD)
 	@echo "Built $(BUILD_DIR)/$(BINARY) v$(VERSION)-$(GIT_COMMIT)$(DIRTY)"
 
-release: release-verify
-	@echo "Release candidate verified and server.json matches the bundles; merge the commit to main, then create the version tag explicitly."
+release:
+	go run ./cmd/mcpb-release auto-release --repository-root . --remote "$(RELEASE_REMOTE)"
 
-release-verify: test mcpb-check docs-check
+release-dry-run:
+	go run ./cmd/mcpb-release auto-release --repository-root . --remote "$(RELEASE_REMOTE)" --dry-run
+
+release-verify: release-go-check test mcpb-check docs-check release-goreleaser-check
+
+release-go-check:
+	go mod verify
+	go mod tidy -diff
+	go vet ./...
+
+release-goreleaser-check: mcpb-check
+	go run ./cmd/mcpb-release render-goreleaser --repository-root . --input .goreleaser.yaml --output "$(MCPB_OUTPUT)/.goreleaser.snapshot.yaml" --mcpb-output "$(MCPB_OUTPUT)" --dist "$(MCPB_OUTPUT)/goreleaser-dist"
+	go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) release --snapshot --clean --skip=publish --config "$(MCPB_OUTPUT)/.goreleaser.snapshot.yaml"
 
 # install only copies whatever is already in bin/ — no implicit build.
 install:

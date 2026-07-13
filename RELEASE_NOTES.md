@@ -4,6 +4,15 @@
 
 ### Official MCP Registry Distribution
 
+- Restored the maintainer's one-command patch-release workflow: after a
+  feature commit on clean `main`, `make release` automatically selects the
+  next patch version, builds and verifies MCPBs, renders `server.json`, commits
+  the release metadata, creates an annotated tag, and atomically pushes
+  `main` plus the tag. Repeating the command at that tagged release commit does
+  not create another version.
+- The pre-tag gate now also verifies module integrity/tidiness, runs `go vet`,
+  and builds a pinned GoReleaser `v2.17.0` snapshot with temporary MCPB and
+  distribution paths, so ordinary archive failures cannot strand a new tag.
 - Added official Registry metadata for `io.github.ozgurcd/gograph` and genuine
   MCPB binary bundles for macOS, Linux, and Windows on amd64 and arm64. Each
   bundle contains a pinned MCPB 0.4 manifest, the MIT license, and the matching
