@@ -204,3 +204,21 @@ Normalized the security-flow page link into the index's Schemas and Security sec
 - Replaced the final “token cost comparison” table label with neutral output-shape and analysis-caveat language.
 - Reworded the historical case study's composite-command section to describe combined evidence categories without claiming a fixed number of replaced calls.
 - Regenerated the 32-page Hugo output and a clean independent render after the wording changes.
+
+## 2026-07-12 — Official MCP Registry and MCPB publication
+
+- Added standards-compliant `io.github.ozgurcd/gograph` Registry metadata and deterministic binary MCPBs for darwin/linux/windows on amd64/arm64.
+- Pinned and vendored Registry 2025-12-11 and MCPB 0.4 schemas, with strict layout, target, version, hash, argv, and native MCP contract validation.
+- Added a verified GoReleaser pipeline that preserves ordinary archives and Homebrew, then publishes through least-privilege GitHub OIDC using pinned `mcp-publisher v1.7.9`.
+- Documented Registry preview CPU-selection limitations and retained the local stdio/no-hosted-telemetry model.
+
+## [2026-07-12] maintenance | Close Registry publication log formatting
+
+- Consumed the governed append's trailing blank line as this entry's separator; no release facts changed.
+## [2026-07-13] release | Publish official MCP Registry entry
+
+- Published `io.github.ozgurcd/gograph` 1.5.0 as an active/latest official Registry entry through GitHub OIDC.
+- Created immutable tag `v1.5.0` at `e4f96315ec4edb805dddbdd584fffbc022f18c6d` and GitHub release `https://github.com/ozgurcd/gograph/releases/tag/v1.5.0`.
+- The initial tag run failed before publication because release tests lacked `bin/gograph`; commit `4299e2806a87c43343584f941159a413ade156d3` added that prerequisite and a safe existing-tag dispatch path. The tag was not moved or recreated.
+- Successful run `29242849952` verified the tag, published ordinary assets and six MCPBs, reconciled Homebrew, authenticated with pinned `mcp-publisher v1.7.9`, and verified Registry activation.
+- Independent verification downloaded all 14 assets, matched all 12 checksummed artifacts plus GitHub digests for `server.json` and `checksums.txt`, initialized the downloaded native MCPB with 65 tools, and confirmed the v1.5.0 Homebrew formula.
