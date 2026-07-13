@@ -96,5 +96,9 @@ the release gate rather than relying on publisher 1.7.9's standalone
 maintenance rationale is in
 [docs/mcp-registry.md](docs/mcp-registry.md).
 
+When a tag-triggered run fails before publication, repair the workflow on
+`main` and use `gh workflow run release.yml --ref main -f tag=vX.Y.Z`. This
+re-verifies the existing tag commit; never delete, recreate, or move the tag.
+
 ## Code of Conduct
 By participating in this project, you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md).

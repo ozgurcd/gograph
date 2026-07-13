@@ -4,14 +4,21 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to verify and publish without rewriting it
+        required: true
+        type: string
 
 permissions: {}
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
   GO_VERSION: '1.26.5'
   GORELEASER_VERSION: 'v2.17.0'
   HUGO_VERSION: '0.164.0'
@@ -30,6 +37,7 @@ jobs:
       - name: Checkout tagged source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -43,7 +51,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          tag="${RELEASE_TAG}"
           if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
             echo "release tag must be an exact semantic version (vX.Y.Z): $tag" >&2
             exit 1
@@ -87,6 +95,8 @@ jobs:
       - name: Build and test
         run: |
           go build -v ./...
+          mkdir -p bin
+          go build -o bin/gograph ./cmd/gograph
           go test -v ./...
           go test -race ./...
           go vet ./...
@@ -146,6 +156,7 @@ jobs:
       - name: Checkout tagged source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -170,7 +181,7 @@ jobs:
           set -euo pipefail
           state="$(go run ./cmd/mcpb-release github-release-state \
             --repository "$GITHUB_REPOSITORY" \
-            --tag "$GITHUB_REF_NAME" \
+            --tag "$RELEASE_TAG" \
             --server server.json)"
           case "$state" in
             missing) echo "publish=true" >> "$GITHUB_OUTPUT" ;;
@@ -194,7 +205,7 @@ jobs:
         run: |
           test "$(go run ./cmd/mcpb-release github-release-state \
             --repository "$GITHUB_REPOSITORY" \
-            --tag "$GITHUB_REF_NAME" \
+            --tag "$RELEASE_TAG" \
             --server server.json)" = matching
 
       - name: Generate Homebrew formula for an existing matching release
@@ -217,7 +228,7 @@ jobs:
           grep -Fq "version \"$desired_version\"" "$formula_path"
           published_checksums="$RUNNER_TEMP/published-checksums.txt"
           curl --fail --location --silent --show-error \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/checksums.txt" \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/checksums.txt" \
             --output "$published_checksums"
           for asset in \
             gograph_Darwin_arm64.tar.gz \
@@ -227,7 +238,7 @@ jobs:
             local_hash="$(awk -v name="$asset" '$2 == name { print $1 }' dist/checksums.txt)"
             published_hash="$(awk -v name="$asset" '$2 == name { print $1 }' "$published_checksums")"
             test -n "$local_hash" && test "$local_hash" = "$published_hash"
-            grep -Fq "/releases/download/${GITHUB_REF_NAME}/$asset" "$formula_path"
+            grep -Fq "/releases/download/${RELEASE_TAG}/$asset" "$formula_path"
             grep -Fq "sha256 \"$published_hash\"" "$formula_path"
           done
           remote_path="$RUNNER_TEMP/gograph.rb"
@@ -277,6 +288,7 @@ jobs:
       - name: Checkout tagged source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          ref: ${{ env.RELEASE_TAG }}
           persist-credentials: false
 
       - name: Set up Go
@@ -293,7 +305,7 @@ jobs:
           set -euo pipefail
           test "$(go run ./cmd/mcpb-release github-release-state \
             --repository "$GITHUB_REPOSITORY" \
-            --tag "$GITHUB_REF_NAME" \
+            --tag "$RELEASE_TAG" \
             --server server.json)" = matching
           state="$(go run ./cmd/mcpb-release registry-state --server server.json)"
           case "$state" in
@@ -313,6 +325,7 @@ jobs:
       - name: Checkout tagged source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          ref: ${{ env.RELEASE_TAG }}
           persist-credentials: false
 
       - name: Install pinned MCP publisher
@@ -345,6 +358,7 @@ jobs:
       - name: Checkout tagged source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          ref: ${{ env.RELEASE_TAG }}
           persist-credentials: false
 
       - name: Set up Go

@@ -177,3 +177,14 @@ never overwrite an existing version. The repository's independent schema and
 artifact verification is the release gate—do not substitute the standalone
 `mcp-publisher validate` command from publisher 1.7.9, whose installed command
 surface is not a dependable validation contract.
+
+If the tag-triggered workflow fails before publication, fix the workflow on
+`main` and dispatch the existing tag without moving it:
+
+```bash
+gh workflow run release.yml --ref main -f tag=vX.Y.Z
+```
+
+The recovery path checks out the named tag, dereferences it, requires that
+exact commit to be contained in `origin/main`, and repeats every release gate.
+It is not permission to delete, recreate, or retarget the tag.
