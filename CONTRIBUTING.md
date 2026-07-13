@@ -47,7 +47,8 @@ download the publisher by exact version, verify its pinned SHA-256 digest, and
 must not use a moving `latest` URL.
 
 The normal maintainer flow remains one command. Commit the feature or fix on
-`main`, leave the worktree clean, and run:
+any attached branch whose HEAD includes the latest official `main`, leave the
+worktree clean, and run:
 
 ```bash
 make release
@@ -58,18 +59,19 @@ builds all six MCPBs, renders their immutable URLs and SHA-256 hashes into
 `server.json`, runs the complete release verification and native MCP smoke
 test, verifies modules and `go mod tidy`, runs `go vet`, and builds a pinned,
 non-publishing GoReleaser snapshot in the temporary release directory. It then
-commits only the generated version/release metadata and creates
-an annotated version tag and atomically pushes `main` and that tag. The tag
-starts the immutable GitHub release, Homebrew reconciliation, and official MCP
-Registry publication workflow.
+commits only the generated version/release metadata and creates an annotated
+version tag. It atomically pushes that exact commit to the official remote's
+`main` together with the tag. The tag starts the immutable GitHub release,
+Homebrew reconciliation, and official MCP Registry publication workflow.
 
-The command fails closed before publishing unless the worktree is clean, the
-current branch is `main`, the selected remote's `main` is an ancestor of local
-`main`, the current declared version has a remote baseline tag in that history,
-the next version is unused, and every build and validation gate passes. The
-selected remote's push URL must be the official `ozgurcd/gograph` repository,
-and the remote update is therefore a fast-forward. A clone whose official
-remote is named `upstream` can use
+The command fails closed before publishing unless HEAD is attached to a branch,
+the worktree is clean, the selected remote's `main` is an ancestor of HEAD, the
+current declared version has a remote baseline tag in that history, the next
+version is unused, and every build and validation gate passes. The selected
+remote's push URL must be the official `ozgurcd/gograph` repository, and the
+remote update is therefore a fast-forward. The coordinator never checks out,
+merges, rebases, force-pushes, changes local `main`, or pushes the working
+branch ref. A clone whose official remote is named `upstream` can use
 `make release RELEASE_REMOTE=upstream`. This preserves the old `git commit`
 followed by `make release` workflow while including the new MCPB and Registry
 gates. If the command is rerun at the same already-tagged release commit, it
@@ -78,8 +80,13 @@ recognizes that release and does not increment the patch version again.
 Use `make release-dry-run` to exercise the same automatic patch preparation,
 full verification, and immutable-state checks while restoring the metadata and
 creating no commit, tag, or push. If an atomic push fails, the coordinator
-retains the already-verified local release commit and tag; rerun `make release`
-to retry that same version.
+retains the already-verified local release commit and tag. Rerun `make release`
+to retry that same version when remote `main` still permits a fast-forward; if
+the unchanged release commit later reaches remote `main`, a rerun can publish
+only the missing tag without moving `main`. An incompatible remote advance
+fails closed and requires manual reconciliation of the unpublished local
+release state. Branch protection may likewise require repository-specific
+approval before the atomic update can succeed.
 
 For CI or diagnosis of an already prepared release state, the non-publishing
 gate remains available:

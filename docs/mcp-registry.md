@@ -121,20 +121,20 @@ all six targets before changing it. Do not download an unverified moving
 `latest` publisher in CI. The release workflow checks the pinned publisher
 archive's SHA-256 digest and embedded version before execution.
 
-For a new patch release, first commit the feature or fix on `main` and leave
-the worktree clean. Then run the same command used before Registry support:
+For a new patch release, first commit the feature or fix on an attached branch
+whose HEAD includes the latest official `main`, and leave the worktree clean.
+Then run the same command used before Registry support:
 
 ```bash
 make release
 ```
 
 The target requires no manually supplied version. It computes the next patch
-version and fails closed unless the current branch is `main`, the selected
-remote's `main` is an ancestor of local `main`, the worktree is clean, the
-current version has a remote baseline tag in that history, and the next
-version, local and remote tag, GitHub release, and Registry record are all
-unused. The selected remote must push to the official `ozgurcd/gograph`
-repository; use
+version and fails closed unless HEAD is attached to a branch, the selected
+remote's `main` is an ancestor of HEAD, the worktree is clean, the current
+version has a remote baseline tag in that history, and the next version, local
+and remote tag, GitHub release, and Registry record are all unused. The
+selected remote must push to the official `ozgurcd/gograph` repository; use
 `make release RELEASE_REMOTE=upstream` when that remote is not named `origin`.
 It then:
 
@@ -149,8 +149,15 @@ It then:
    whose MCPB and output paths remain inside the temporary release transaction.
 4. Commits only the generated version/release metadata and creates an
    annotated `v<version>` tag at that exact verified commit.
-5. Atomically pushes `main` and the tag, so neither remote reference advances
-   alone. The tag starts the GitHub Actions release workflow.
+5. Atomically pushes the exact verified commit to the official remote's `main`
+   together with the tag, so neither remote reference advances alone. The tag
+   starts the GitHub Actions release workflow.
+
+The checked-out branch remains the release source and stays checked out. The
+coordinator does not check out, merge, rebase, force-push, move local `main`,
+or push the source branch ref. This lets `git commit` followed by `make release`
+work directly from a fast-forward topic or agent branch while keeping remote
+`main` as the only publication branch.
 
 A rerun at the same already-tagged release commit recognizes the release and
 does not increment the patch version again. For CI or advanced diagnosis of a
@@ -159,8 +166,14 @@ local release gate against the currently declared version without committing,
 tagging, or pushing. `make release-dry-run` instead exercises automatic patch
 preparation plus the same gates and immutable-state checks, then restores the
 metadata without creating any ref or remote change. If an atomic push fails,
-the verified local release commit and tag are retained; rerunning
-`make release` retries that same version.
+the verified local release commit and tag are retained. Rerunning
+`make release` retries that same version if remote `main` still allows the
+fast-forward. If the unchanged release commit later lands on remote `main`, a
+rerun verifies it and atomically publishes only the missing tag while leaving
+the newer `main` tip unchanged. An incompatible remote advance fails closed
+and requires manual reconciliation of the unpublished local commit and tag.
+Protected-branch policy may also require repository-specific approval before
+the atomic push can succeed.
 
 GoReleaser publishes the ordinary archives, six MCPBs, `server.json`, and
 checksums from the verified tag. The workflow then idempotently reconciles the

@@ -75,6 +75,53 @@ func TestGitHubRepositoryFromRemoteURL(t *testing.T) {
 	}
 }
 
+func TestRequireOfficialReleaseRemoteValidatesFetchAndEveryPushURL(t *testing.T) {
+	tests := map[string]struct {
+		fetch    string
+		pushes   []string
+		wantText string
+	}{
+		"official": {
+			fetch:  "git@github.com:ozgurcd/gograph.git",
+			pushes: []string{"git@github.com:ozgurcd/gograph.git"},
+		},
+		"fork fetch with official push": {
+			fetch:    "https://github.com/example/gograph.git",
+			pushes:   []string{"git@github.com:ozgurcd/gograph.git"},
+			wantText: "fetch URL",
+		},
+		"fan-out push": {
+			fetch: "git@github.com:ozgurcd/gograph.git",
+			pushes: []string{
+				"git@github.com:ozgurcd/gograph.git",
+				"https://github.com/example/gograph.git",
+			},
+			wantText: "exactly one fetch URL and one effective push URL",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "repository")
+			gitTestCommand(t, "", "init", root)
+			gitTestCommand(t, root, "remote", "add", "origin", test.fetch)
+			for _, pushURL := range test.pushes {
+				gitTestCommand(t, root, "remote", "set-url", "--add", "--push", "origin", pushURL)
+			}
+			runner := execReleaseCommandRunner{stdout: io.Discard, stderr: io.Discard}
+			err := requireOfficialReleaseRemote(context.Background(), runner, root, "origin")
+			if test.wantText == "" {
+				if err != nil {
+					t.Fatalf("requireOfficialReleaseRemote() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantText) {
+				t.Fatalf("error = %v, want %q", err, test.wantText)
+			}
+		})
+	}
+}
+
 func TestAutoReleaseCreatesPatchCommitAnnotatedTagAndAtomicRemoteRefs(t *testing.T) {
 	repository := newAutoReleaseRepository(t)
 	dependencies, calls := fakeAutoReleaseDependencies(t, repository.root)
@@ -160,8 +207,76 @@ func TestAutoReleaseCreatesPatchCommitAnnotatedTagAndAtomicRemoteRefs(t *testing
 	}
 }
 
+func TestAutoReleaseFromFeatureBranchAdvancesRemoteMain(t *testing.T) {
+	repository := newAutoReleaseRepository(t)
+	const sourceBranch = "agent/mcp-registry-publishing"
+	localMain := gitTestOutput(t, repository.root, "rev-parse", "refs/heads/main")
+	advancer := filepath.Join(t.TempDir(), "main-advancer")
+	gitTestCommand(t, "", "clone", repository.bare, advancer)
+	gitTestCommand(t, advancer, "config", "user.email", "advancer@example.com")
+	gitTestCommand(t, advancer, "config", "user.name", "Main Advancer")
+	gitTestCommand(t, advancer, "config", "commit.gpgSign", "false")
+	writeTestFile(t, advancer, "remote-main.txt", "newer remote main\n")
+	gitTestCommand(t, advancer, "add", "remote-main.txt")
+	gitTestCommand(t, advancer, "commit", "-m", "docs: advance main before branch work")
+	gitTestCommand(t, advancer, "push", "origin", "main")
+	gitTestCommand(t, repository.root, "fetch", "origin", "main")
+	gitTestCommand(t, repository.root, "checkout", "-b", sourceBranch, "origin/main")
+	writeTestFile(t, repository.root, "release-workflow.txt", "release from the working branch\n")
+	gitTestCommand(t, repository.root, "add", "release-workflow.txt")
+	gitTestCommand(t, repository.root, "commit", "-m", "build: prepare release workflow")
+
+	dependencies, calls := fakeAutoReleaseDependencies(t, repository.root)
+	if err := runAutoReleaseWithDependencies(context.Background(), autoReleaseOptions{
+		repositoryRoot: repository.root,
+		remote:         "origin",
+		branch:         "main",
+	}, dependencies); err != nil {
+		t.Fatalf("feature-branch release error = %v", err)
+	}
+
+	releaseCommit := gitTestOutput(t, repository.root, "rev-parse", "HEAD")
+	if got := gitTestOutput(t, repository.root, "symbolic-ref", "--short", "HEAD"); got != sourceBranch {
+		t.Fatalf("release changed the checked-out branch to %q, want %q", got, sourceBranch)
+	}
+	if got := gitTestOutput(t, repository.root, "rev-parse", "refs/heads/main"); got != localMain {
+		t.Fatalf("release moved local main to %s, want unchanged %s", got, localMain)
+	}
+	if got := gitTestOutput(t, repository.bare, "rev-parse", "refs/heads/main"); got != releaseCommit {
+		t.Fatalf("remote main = %s, want feature-branch release %s", got, releaseCommit)
+	}
+	if got := gitTestOutput(t, repository.bare, "rev-parse", "refs/tags/v1.5.1^{commit}"); got != releaseCommit {
+		t.Fatalf("remote tag = %s, want feature-branch release %s", got, releaseCommit)
+	}
+	if gitTestRun(repository.bare, "show-ref", "--verify", "--quiet", "refs/heads/"+sourceBranch) == nil {
+		t.Fatalf("release unexpectedly pushed source branch %s", sourceBranch)
+	}
+	if want := []string{"build", "render", "verify", "github", "registry"}; !reflect.DeepEqual(*calls, want) {
+		t.Fatalf("release calls = %v, want %v", *calls, want)
+	}
+	assertReleaseVersions(t, repository.root, "1.5.1")
+
+	noOpDependencies, noOpCalls := fakeAutoReleaseDependencies(t, repository.root)
+	if err := runAutoReleaseWithDependencies(context.Background(), autoReleaseOptions{
+		repositoryRoot: repository.root,
+		remote:         "origin",
+		branch:         "main",
+	}, noOpDependencies); err != nil {
+		t.Fatalf("feature-branch rerun error = %v", err)
+	}
+	if len(*noOpCalls) != 0 {
+		t.Fatalf("feature-branch rerun performed release work: %v", *noOpCalls)
+	}
+	if got := gitTestOutput(t, repository.root, "rev-parse", "HEAD"); got != releaseCommit {
+		t.Fatalf("feature-branch rerun moved HEAD to %s", got)
+	}
+}
+
 func TestAutoReleasePushFailureResumesSameVersion(t *testing.T) {
 	repository := newAutoReleaseRepository(t)
+	const sourceBranch = "agent/push-retry"
+	gitTestCommand(t, repository.root, "checkout", "-b", sourceBranch)
+	localMain := gitTestOutput(t, repository.root, "rev-parse", "refs/heads/main")
 	dependencies, _ := fakeAutoReleaseDependencies(t, repository.root)
 	failing := &failOncePushRunner{delegate: dependencies.runner}
 	dependencies.runner = failing
@@ -183,6 +298,12 @@ func TestAutoReleasePushFailureResumesSameVersion(t *testing.T) {
 	}
 	if got := gitTestOutput(t, repository.bare, "rev-parse", "refs/heads/main"); got == localRelease {
 		t.Fatal("simulated failed atomic push unexpectedly updated remote main")
+	}
+	if got := gitTestOutput(t, repository.root, "rev-parse", "refs/heads/main"); got != localMain {
+		t.Fatalf("failed feature-branch release moved local main to %s, want %s", got, localMain)
+	}
+	if got := gitTestOutput(t, repository.root, "symbolic-ref", "--short", "HEAD"); got != sourceBranch {
+		t.Fatalf("failed release changed current branch to %q, want %q", got, sourceBranch)
 	}
 
 	resumeDependencies, resumeCalls := fakeAutoReleaseDependencies(t, repository.root)
@@ -206,6 +327,146 @@ func TestAutoReleasePushFailureResumesSameVersion(t *testing.T) {
 		t.Fatalf("resumed remote tag = %s, want %s", got, localRelease)
 	}
 	assertReleaseVersions(t, repository.root, "1.5.1")
+}
+
+func TestAutoReleaseRejectsSourceBranchChangeDuringVerification(t *testing.T) {
+	repository := newAutoReleaseRepository(t)
+	const sourceBranch = "agent/source-stability"
+	gitTestCommand(t, repository.root, "checkout", "-b", sourceBranch)
+	remoteMain := gitTestOutput(t, repository.bare, "rev-parse", "refs/heads/main")
+	dependencies, _ := fakeAutoReleaseDependencies(t, repository.root)
+	originalVerify := dependencies.verify
+	dependencies.verify = func(ctx context.Context, root, version, bundles, server string) error {
+		if err := originalVerify(ctx, root, version, bundles, server); err != nil {
+			return err
+		}
+		gitTestCommand(t, repository.root, "branch", "concurrent-branch", "HEAD")
+		gitTestCommand(t, repository.root, "symbolic-ref", "HEAD", "refs/heads/concurrent-branch")
+		return nil
+	}
+
+	err := runAutoReleaseWithDependencies(context.Background(), autoReleaseOptions{
+		repositoryRoot: repository.root,
+		remote:         "origin",
+		branch:         "main",
+	}, dependencies)
+	if err == nil || !strings.Contains(err.Error(), "current branch is concurrent-branch, want "+sourceBranch) {
+		t.Fatalf("error = %v, want source-branch stability rejection", err)
+	}
+	if gitTestRun(repository.root, "show-ref", "--verify", "--quiet", "refs/tags/v1.5.1") == nil {
+		t.Fatal("source-branch race created v1.5.1")
+	}
+	if got := gitTestOutput(t, repository.bare, "rev-parse", "refs/heads/main"); got != remoteMain {
+		t.Fatalf("source-branch race moved remote main to %s, want %s", got, remoteMain)
+	}
+}
+
+func TestAutoReleaseConcurrentRemoteAdvanceFailsAtomically(t *testing.T) {
+	repository := newAutoReleaseRepository(t)
+	gitTestCommand(t, repository.root, "checkout", "-b", "agent/concurrent-main")
+	competing := filepath.Join(t.TempDir(), "competing")
+	gitTestCommand(t, "", "clone", repository.bare, competing)
+	gitTestCommand(t, competing, "config", "user.email", "competing@example.com")
+	gitTestCommand(t, competing, "config", "user.name", "Competing Writer")
+	gitTestCommand(t, competing, "config", "commit.gpgSign", "false")
+
+	dependencies, _ := fakeAutoReleaseDependencies(t, repository.root)
+	originalVerify := dependencies.verify
+	var competingCommit string
+	dependencies.verify = func(ctx context.Context, root, version, bundles, server string) error {
+		if err := originalVerify(ctx, root, version, bundles, server); err != nil {
+			return err
+		}
+		writeTestFile(t, competing, "competing.txt", "remote main advanced\n")
+		gitTestCommand(t, competing, "add", "competing.txt")
+		gitTestCommand(t, competing, "commit", "-m", "docs: advance remote main")
+		gitTestCommand(t, competing, "push", "origin", "main")
+		competingCommit = gitTestOutput(t, competing, "rev-parse", "HEAD")
+		return nil
+	}
+
+	err := runAutoReleaseWithDependencies(context.Background(), autoReleaseOptions{
+		repositoryRoot: repository.root,
+		remote:         "origin",
+		branch:         "main",
+	}, dependencies)
+	if err == nil || !strings.Contains(err.Error(), "atomically push main and v1.5.1") {
+		t.Fatalf("error = %v, want atomic push rejection", err)
+	}
+	localRelease := gitTestOutput(t, repository.root, "rev-parse", "HEAD")
+	if got := gitTestOutput(t, repository.root, "rev-parse", "refs/tags/v1.5.1^{commit}"); got != localRelease {
+		t.Fatalf("retained local tag = %s, want %s", got, localRelease)
+	}
+	if got := gitTestOutput(t, repository.bare, "rev-parse", "refs/heads/main"); got != competingCommit {
+		t.Fatalf("remote main = %s, want competing commit %s", got, competingCommit)
+	}
+	if gitTestRun(repository.bare, "show-ref", "--verify", "--quiet", "refs/tags/v1.5.1") == nil {
+		t.Fatal("failed atomic push created remote v1.5.1")
+	}
+
+	resumeDependencies, resumeCalls := fakeAutoReleaseDependencies(t, repository.root)
+	err = runAutoReleaseWithDependencies(context.Background(), autoReleaseOptions{
+		repositoryRoot: repository.root,
+		remote:         "origin",
+		branch:         "main",
+	}, resumeDependencies)
+	if err == nil || !strings.Contains(err.Error(), "behind or diverged") {
+		t.Fatalf("resume error = %v, want reconciliation requirement", err)
+	}
+	if len(*resumeCalls) != 0 {
+		t.Fatalf("diverged resume performed release work: %v", *resumeCalls)
+	}
+}
+
+func TestAutoReleasePublishesMissingTagWhenRemoteMainContainsRelease(t *testing.T) {
+	repository := newAutoReleaseRepository(t)
+	gitTestCommand(t, repository.root, "checkout", "-b", "agent/protected-main-recovery")
+	dependencies, _ := fakeAutoReleaseDependencies(t, repository.root)
+	failing := &failOncePushRunner{delegate: dependencies.runner}
+	dependencies.runner = failing
+
+	err := runAutoReleaseWithDependencies(context.Background(), autoReleaseOptions{
+		repositoryRoot: repository.root,
+		remote:         "origin",
+		branch:         "main",
+	}, dependencies)
+	if err == nil {
+		t.Fatal("injected push failure returned nil")
+	}
+	releaseCommit := gitTestOutput(t, repository.root, "rev-parse", "HEAD")
+	gitTestCommand(t, repository.root, "push", "origin", releaseCommit+":refs/heads/main")
+
+	advancer := filepath.Join(t.TempDir(), "post-release-main")
+	gitTestCommand(t, "", "clone", repository.bare, advancer)
+	gitTestCommand(t, advancer, "config", "user.email", "post-release@example.com")
+	gitTestCommand(t, advancer, "config", "user.name", "Post Release Writer")
+	gitTestCommand(t, advancer, "config", "commit.gpgSign", "false")
+	writeTestFile(t, advancer, "after-release.txt", "remote main contains the release\n")
+	gitTestCommand(t, advancer, "add", "after-release.txt")
+	gitTestCommand(t, advancer, "commit", "-m", "docs: advance after release commit")
+	gitTestCommand(t, advancer, "push", "origin", "main")
+	advancedMain := gitTestOutput(t, advancer, "rev-parse", "HEAD")
+
+	resumeDependencies, resumeCalls := fakeAutoReleaseDependencies(t, repository.root)
+	if err := runAutoReleaseWithDependencies(context.Background(), autoReleaseOptions{
+		repositoryRoot: repository.root,
+		remote:         "origin",
+		branch:         "main",
+	}, resumeDependencies); err != nil {
+		t.Fatalf("missing-tag recovery error = %v", err)
+	}
+	if want := []string{"build", "render", "verify", "github", "registry"}; !reflect.DeepEqual(*resumeCalls, want) {
+		t.Fatalf("missing-tag recovery calls = %v, want %v", *resumeCalls, want)
+	}
+	if got := gitTestOutput(t, repository.bare, "rev-parse", "refs/heads/main"); got != advancedMain {
+		t.Fatalf("missing-tag recovery moved remote main to %s, want %s", got, advancedMain)
+	}
+	if got := gitTestOutput(t, repository.bare, "rev-parse", "refs/tags/v1.5.1^{commit}"); got != releaseCommit {
+		t.Fatalf("recovered remote tag = %s, want release commit %s", got, releaseCommit)
+	}
+	if got := gitTestOutput(t, repository.root, "rev-parse", "HEAD"); got != releaseCommit {
+		t.Fatalf("missing-tag recovery moved local HEAD to %s", got)
+	}
 }
 
 func TestAutoReleaseTagFailureResumesPreparedCommit(t *testing.T) {
@@ -319,6 +580,40 @@ func TestAutoReleaseRollbackDoesNotOverwriteConcurrentMetadataEdit(t *testing.T)
 	}
 }
 
+func TestAutoReleaseRejectsConcurrentMetadataModeChange(t *testing.T) {
+	repository := newAutoReleaseRepository(t)
+	dependencies, _ := fakeAutoReleaseDependencies(t, repository.root)
+	originalVerify := dependencies.verify
+	dependencies.verify = func(ctx context.Context, root, version, bundles, server string) error {
+		if err := originalVerify(ctx, root, version, bundles, server); err != nil {
+			return err
+		}
+		if err := os.Chmod(filepath.Join(repository.root, releasePluginFile), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return nil
+	}
+
+	err := runAutoReleaseWithDependencies(context.Background(), autoReleaseOptions{
+		repositoryRoot: repository.root,
+		remote:         "origin",
+		branch:         "main",
+	}, dependencies)
+	if err == nil || !strings.Contains(err.Error(), "plugin.json mode changed unexpectedly") {
+		t.Fatalf("error = %v, want mode-change rejection", err)
+	}
+	info, statErr := os.Stat(filepath.Join(repository.root, releasePluginFile))
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Fatalf("restored plugin mode = %04o, want 0644", got)
+	}
+	if gitTestRun(repository.root, "show-ref", "--verify", "--quiet", "refs/tags/v1.5.1") == nil {
+		t.Fatal("mode-change rejection created v1.5.1")
+	}
+}
+
 func TestAutoReleaseDryRunRestoresWithoutCreatingRefs(t *testing.T) {
 	repository := newAutoReleaseRepository(t)
 	dependencies, calls := fakeAutoReleaseDependencies(t, repository.root)
@@ -404,16 +699,16 @@ func TestAutoReleasePreflightFailsClosed(t *testing.T) {
 		}
 	})
 
-	t.Run("wrong branch", func(t *testing.T) {
+	t.Run("detached HEAD", func(t *testing.T) {
 		repository := newAutoReleaseRepository(t)
-		gitTestCommand(t, repository.root, "checkout", "-b", "feature")
+		gitTestCommand(t, repository.root, "checkout", "--detach")
 		dependencies, calls := fakeAutoReleaseDependencies(t, repository.root)
 		err := runAutoReleaseWithDependencies(context.Background(), autoReleaseOptions{repositoryRoot: repository.root, remote: "origin", branch: "main"}, dependencies)
-		if err == nil || !strings.Contains(err.Error(), "branch main") {
+		if err == nil || !strings.Contains(err.Error(), "attached branch") {
 			t.Fatalf("error = %v", err)
 		}
 		if len(*calls) != 0 {
-			t.Fatalf("wrong-branch preflight called release operations: %v", *calls)
+			t.Fatalf("detached-HEAD preflight called release operations: %v", *calls)
 		}
 	})
 
@@ -466,6 +761,7 @@ func TestAutoReleasePreflightFailsClosed(t *testing.T) {
 
 	t.Run("diverged remote main", func(t *testing.T) {
 		repository := newAutoReleaseRepository(t)
+		gitTestCommand(t, repository.root, "checkout", "-b", "agent/diverged-main")
 		clone := filepath.Join(t.TempDir(), "other")
 		gitTestCommand(t, "", "clone", repository.bare, clone)
 		gitTestCommand(t, clone, "config", "user.email", "other@example.com")

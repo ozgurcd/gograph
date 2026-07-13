@@ -164,7 +164,8 @@ func runAutoReleaseWithDependencies(ctx context.Context, options autoReleaseOpti
 		return errors.New("release remote and branch must not be empty")
 	}
 
-	if err := requireReleaseRepository(ctx, dependencies.runner, root, options.branch); err != nil {
+	sourceBranch, err := requireReleaseRepository(ctx, dependencies.runner, root)
+	if err != nil {
 		return err
 	}
 	if err := dependencies.validateRemote(ctx, dependencies.runner, root, options.remote); err != nil {
@@ -209,10 +210,7 @@ func runAutoReleaseWithDependencies(ctx context.Context, options autoReleaseOpti
 				return err
 			}
 		}
-		if err := requireRemoteAncestor(ctx, dependencies.runner, root, options.remote, options.branch); err != nil {
-			return err
-		}
-		return resumeAutoRelease(ctx, root, current, head, options, dependencies, localCurrentTag, remoteCurrentTag)
+		return resumeAutoRelease(ctx, root, current, head, sourceBranch, options, dependencies, localCurrentTag, remoteCurrentTag)
 	}
 	if err := requireRemoteAncestor(ctx, dependencies.runner, root, options.remote, options.branch); err != nil {
 		return err
@@ -281,7 +279,7 @@ func runAutoReleaseWithDependencies(ctx context.Context, options autoReleaseOpti
 	if err := requireUnpublishedRelease(ctx, dependencies, serverPath, next); err != nil {
 		return err
 	}
-	if err := requireReleaseHead(ctx, dependencies.runner, root, options.branch, head); err != nil {
+	if err := requireReleaseHead(ctx, dependencies.runner, root, sourceBranch, head); err != nil {
 		keepPreparedFiles = true
 		return fmt.Errorf("release repository changed during verification; prepared metadata was retained: %w", err)
 	}
@@ -310,23 +308,46 @@ func runAutoReleaseWithDependencies(ctx context.Context, options autoReleaseOpti
 	if err != nil {
 		return fmt.Errorf("read release commit: %w", err)
 	}
-	if err := verifyCreatedReleaseCommit(ctx, dependencies.runner, root, options.branch, commit, head, message, owned); err != nil {
+	if err := verifyCreatedReleaseCommit(ctx, dependencies.runner, root, sourceBranch, commit, head, message, owned); err != nil {
 		return fmt.Errorf("validate release commit %s: %w; nothing was tagged or pushed", commit, err)
 	}
 	if err := dependencies.runner.Run(ctx, root, "git", "tag", "-a", nextTag, "-m", message, commit); err != nil {
 		return fmt.Errorf("create annotated tag %s: %w; the release commit was retained, so rerun make release to resume", nextTag, err)
 	}
 	if err := pushRelease(ctx, dependencies.runner, root, options.remote, options.branch, commit, nextTag, true); err != nil {
-		return fmt.Errorf("atomically push %s and %s: %w; the local release commit and tag were retained, so rerun make release to resume", options.branch, nextTag, err)
+		return fmt.Errorf("atomically push %s and %s: %w; the local release commit and tag were retained—rerun make release if %s/%s still permits a fast-forward; a divergent remote requires manual reconciliation", options.branch, nextTag, err, options.remote, options.branch)
 	}
 	_, err = fmt.Fprintf(dependencies.stdout, "released %s from %s; the tag-triggered workflow will publish GitHub, Homebrew, and Registry artifacts\n", nextTag, commit)
 	return err
 }
 
-func resumeAutoRelease(ctx context.Context, root, version, head string, options autoReleaseOptions, dependencies autoReleaseDependencies, localTag string, remoteTag remoteTagState) error {
+func resumeAutoRelease(ctx context.Context, root, version, head, sourceBranch string, options autoReleaseOptions, dependencies autoReleaseDependencies, localTag string, remoteTag remoteTagState) error {
 	tag := "v" + version
 	if localTag != "" && localTag != head {
 		return fmt.Errorf("local tag %s resolves to %s, not release commit %s", tag, localTag, head)
+	}
+	remoteRef := "refs/remotes/" + options.remote + "/" + options.branch
+	remoteCommit, err := gitOutput(ctx, dependencies.runner, root, "rev-parse", remoteRef)
+	if err != nil {
+		return fmt.Errorf("resolve %s/%s: %w", options.remote, options.branch, err)
+	}
+	remoteIsAncestor, err := gitIsAncestor(ctx, dependencies.runner, root, remoteCommit, head)
+	if err != nil {
+		return fmt.Errorf("compare %s/%s with release commit: %w", options.remote, options.branch, err)
+	}
+	remoteContainsRelease, err := gitIsAncestor(ctx, dependencies.runner, root, head, remoteCommit)
+	if err != nil {
+		return fmt.Errorf("compare release commit with %s/%s: %w", options.remote, options.branch, err)
+	}
+	if !remoteIsAncestor && !remoteContainsRelease {
+		return fmt.Errorf("release commit %s is behind or diverged from %s/%s at %s; local release state requires manual reconciliation", head, options.remote, options.branch, remoteCommit)
+	}
+	mainCommit := head
+	if remoteContainsRelease && !remoteIsAncestor {
+		// The release commit reached main without its tag (for example through a
+		// protected-branch merge). Re-push the captured remote tip unchanged as
+		// an atomic compare-and-swap alongside the missing tag.
+		mainCommit = remoteCommit
 	}
 	bundles, err := newReleaseWorkspace(root, "gograph-release-resume-"+version+"-")
 	if err != nil {
@@ -344,7 +365,7 @@ func resumeAutoRelease(ctx context.Context, root, version, head string, options 
 	if err := requireUnpublishedRelease(ctx, dependencies, serverPath, version); err != nil {
 		return err
 	}
-	if err := requireReleaseHead(ctx, dependencies.runner, root, options.branch, head); err != nil {
+	if err := requireReleaseHead(ctx, dependencies.runner, root, sourceBranch, head); err != nil {
 		return fmt.Errorf("release repository changed during resume: %w", err)
 	}
 	if err := requireCleanReleaseWorktree(ctx, dependencies.runner, root); err != nil {
@@ -367,8 +388,8 @@ func resumeAutoRelease(ctx context.Context, root, version, head string, options 
 		}
 		pushTag = true
 	}
-	if err := pushRelease(ctx, dependencies.runner, root, options.remote, options.branch, head, tag, pushTag); err != nil {
-		return fmt.Errorf("resume atomic push for %s: %w; local release state was retained for another retry", tag, err)
+	if err := pushRelease(ctx, dependencies.runner, root, options.remote, options.branch, mainCommit, tag, pushTag); err != nil {
+		return fmt.Errorf("resume atomic push for %s: %w; local release state was retained—retry if %s/%s still permits the verified update; a divergent remote requires manual reconciliation", tag, err, options.remote, options.branch)
 	}
 	_, err = fmt.Fprintf(dependencies.stdout, "released %s from %s; the tag-triggered workflow will publish GitHub, Homebrew, and Registry artifacts\n", tag, head)
 	return err
@@ -427,33 +448,41 @@ func requireUnpublishedRelease(ctx context.Context, dependencies autoReleaseDepe
 	return nil
 }
 
-func requireReleaseRepository(ctx context.Context, runner releaseCommandRunner, root, branch string) error {
+func requireReleaseRepository(ctx context.Context, runner releaseCommandRunner, root string) (string, error) {
 	top, err := gitOutput(ctx, runner, root, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return fmt.Errorf("inspect Git repository: %w", err)
+		return "", fmt.Errorf("inspect Git repository: %w", err)
 	}
 	resolvedTop, err := filepath.EvalSymlinks(top)
 	if err != nil {
-		return fmt.Errorf("resolve Git repository root: %w", err)
+		return "", fmt.Errorf("resolve Git repository root: %w", err)
 	}
 	if filepath.Clean(resolvedTop) != filepath.Clean(root) {
-		return fmt.Errorf("--repository-root %s is not the Git repository root %s", root, resolvedTop)
+		return "", fmt.Errorf("--repository-root %s is not the Git repository root %s", root, resolvedTop)
 	}
-	currentBranch, err := gitOutput(ctx, runner, root, "symbolic-ref", "--short", "HEAD")
+	currentBranch, err := currentReleaseBranch(ctx, runner, root)
 	if err != nil {
-		return fmt.Errorf("release requires an attached %s branch: %w", branch, err)
-	}
-	if currentBranch != branch {
-		return fmt.Errorf("release must run from branch %s, not %s", branch, currentBranch)
+		return "", err
 	}
 	status, err := gitOutput(ctx, runner, root, "status", "--porcelain=v1", "--untracked-files=all")
 	if err != nil {
-		return fmt.Errorf("inspect worktree: %w", err)
+		return "", fmt.Errorf("inspect worktree: %w", err)
 	}
 	if status != "" {
-		return fmt.Errorf("release requires a completely clean worktree; commit or remove these changes first:\n%s", status)
+		return "", fmt.Errorf("release requires a completely clean worktree; commit or remove these changes first:\n%s", status)
 	}
-	return nil
+	return currentBranch, nil
+}
+
+func currentReleaseBranch(ctx context.Context, runner releaseCommandRunner, root string) (string, error) {
+	currentBranch, err := gitOutput(ctx, runner, root, "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("release requires an attached branch: %w", err)
+	}
+	if currentBranch == "" {
+		return "", errors.New("release requires an attached branch")
+	}
+	return currentBranch, nil
 }
 
 func fetchReleaseBranch(ctx context.Context, runner releaseCommandRunner, root, remote, branch string) error {
@@ -468,10 +497,10 @@ func requireRemoteAncestor(ctx context.Context, runner releaseCommandRunner, roo
 	remoteRef := "refs/remotes/" + remote + "/" + branch
 	isAncestor, err := gitIsAncestor(ctx, runner, root, remoteRef, "HEAD")
 	if err != nil {
-		return fmt.Errorf("compare local %s with %s/%s: %w", branch, remote, branch, err)
+		return fmt.Errorf("compare release HEAD with %s/%s: %w", remote, branch, err)
 	}
 	if !isAncestor {
-		return fmt.Errorf("local %s is behind or diverged from %s/%s; update it before releasing", branch, remote, branch)
+		return fmt.Errorf("HEAD is behind or diverged from %s/%s; update the working branch before releasing", remote, branch)
 	}
 	return nil
 }
@@ -525,15 +554,44 @@ func requireCleanReleaseWorktree(ctx context.Context, runner releaseCommandRunne
 }
 
 func requireOfficialReleaseRemote(ctx context.Context, runner releaseCommandRunner, root, remote string) error {
-	remoteURL, err := gitOutput(ctx, runner, root, "remote", "get-url", "--push", remote)
+	fetchURLs, err := gitRemoteURLs(ctx, runner, root, remote, false)
 	if err != nil {
-		return fmt.Errorf("inspect push URL for remote %s: %w", remote, err)
+		return fmt.Errorf("inspect fetch URL for remote %s: %w", remote, err)
 	}
-	repository, ok := githubRepositoryFromRemoteURL(remoteURL)
-	if !ok || repository != releaseRepository {
-		return fmt.Errorf("remote %s push URL %q is not the official %s repository; configure an official remote and pass --remote if needed", remote, remoteURL, releaseRepository)
+	pushURLs, err := gitRemoteURLs(ctx, runner, root, remote, true)
+	if err != nil {
+		return fmt.Errorf("inspect push URLs for remote %s: %w", remote, err)
+	}
+	if len(fetchURLs) != 1 || len(pushURLs) != 1 {
+		return fmt.Errorf("remote %s must have exactly one fetch URL and one effective push URL for %s; got fetch=%v push=%v", remote, releaseRepository, fetchURLs, pushURLs)
+	}
+	for _, candidate := range []struct {
+		kind string
+		url  string
+	}{{kind: "fetch", url: fetchURLs[0]}, {kind: "push", url: pushURLs[0]}} {
+		repository, ok := githubRepositoryFromRemoteURL(candidate.url)
+		if !ok || repository != releaseRepository {
+			return fmt.Errorf("remote %s %s URL %q is not the official %s repository; configure one non-fan-out official remote and pass --remote if needed", remote, candidate.kind, candidate.url, releaseRepository)
+		}
 	}
 	return nil
+}
+
+func gitRemoteURLs(ctx context.Context, runner releaseCommandRunner, root, remote string, push bool) ([]string, error) {
+	args := []string{"remote", "get-url"}
+	if push {
+		args = append(args, "--push")
+	}
+	args = append(args, "--all", remote)
+	output, err := gitOutput(ctx, runner, root, args...)
+	if err != nil {
+		return nil, err
+	}
+	urls := nonemptyLines(output)
+	if len(urls) == 0 {
+		return nil, fmt.Errorf("remote %s has no configured URL", remote)
+	}
+	return urls, nil
 }
 
 func githubRepositoryFromRemoteURL(remoteURL string) (string, bool) {
@@ -599,6 +657,21 @@ func verifyCreatedReleaseCommit(ctx context.Context, runner releaseCommandRunner
 		}
 		if !bytes.Equal(contents, file.updated) {
 			return fmt.Errorf("committed %s differs from verified metadata", relative)
+		}
+		treeEntry, err := gitOutput(ctx, runner, root, "ls-tree", commit, "--", filepath.ToSlash(relative))
+		if err != nil {
+			return fmt.Errorf("read committed mode for %s: %w", relative, err)
+		}
+		fields := strings.Fields(treeEntry)
+		if len(fields) < 4 || fields[1] != "blob" {
+			return fmt.Errorf("unexpected tree entry for %s: %q", relative, treeEntry)
+		}
+		expectedMode := "100644"
+		if file.mode&0o111 != 0 {
+			expectedMode = "100755"
+		}
+		if fields[0] != expectedMode {
+			return fmt.Errorf("committed %s mode is %s, want %s", relative, fields[0], expectedMode)
 		}
 	}
 	return requireCleanReleaseWorktree(ctx, runner, root)
@@ -753,6 +826,13 @@ func requireOnlyOwnedReleaseChanges(ctx context.Context, runner releaseCommandRu
 		}
 		if !bytes.Equal(contents, owned[index].updated) {
 			return fmt.Errorf("%s changed unexpectedly during release verification", filepath.Base(owned[index].path))
+		}
+		info, err := os.Stat(owned[index].path)
+		if err != nil {
+			return fmt.Errorf("stat prepared release file: %w", err)
+		}
+		if info.Mode().Perm() != owned[index].mode {
+			return fmt.Errorf("%s mode changed unexpectedly during release verification: got %04o, want %04o", filepath.Base(owned[index].path), info.Mode().Perm(), owned[index].mode)
 		}
 	}
 	cached, err := gitOutput(ctx, runner, root, "diff", "--cached", "--name-only", "--diff-filter=ACDMRTUXB")

@@ -245,3 +245,11 @@ Normalized the security-flow page link into the index's Schemas and Security sec
 ## [2026-07-13] maintenance | Close automatic release log formatting
 
 - Consumed the governed append's trailing blank line as this entry's separator; no release facts changed.
+
+## [2026-07-13] maintenance | Allow releases from fast-forward working branches
+
+- Corrected `make release` so any clean attached branch whose HEAD descends from fetched official `main` can be the release source; local `main` may remain stale and untouched.
+- Kept remote `main` as the fixed publication target and atomically pushes only the captured verified commit plus the new tag; the source branch ref is never pushed by the coordinator.
+- Added fail-closed validation for a single official fetch URL and single effective official push URL, exact metadata modes, detached HEAD, branch/HEAD races, preflight and concurrent remote divergence, feature-branch retries, and missing-tag recovery when remote `main` already contains the release commit.
+- Verified the repository's current topology (`agent/mcp-registry-publishing` ahead of `origin/main`) and confirmed the final full non-publishing release gate passes, including unit/race tests, vet, lint/static/security checks, six MCPBs, MCP smoke, docs, and GoReleaser snapshot.
+- No release commit, version tag, push, GitHub release, or Registry publication was created during this correction.

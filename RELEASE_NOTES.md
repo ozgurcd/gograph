@@ -5,11 +5,13 @@
 ### Official MCP Registry Distribution
 
 - Restored the maintainer's one-command patch-release workflow: after a
-  feature commit on clean `main`, `make release` automatically selects the
-  next patch version, builds and verifies MCPBs, renders `server.json`, commits
-  the release metadata, creates an annotated tag, and atomically pushes
-  `main` plus the tag. Repeating the command at that tagged release commit does
-  not create another version.
+  feature commit on any clean attached branch that fast-forwards official
+  `main`, `make release` automatically selects the next patch version, builds
+  and verifies MCPBs, renders `server.json`, commits the release metadata,
+  creates an annotated tag, and atomically pushes the verified commit to
+  remote `main` plus the tag. It leaves the working branch checked out and
+  local `main` untouched; repeating the command at that tagged release commit
+  does not create another version.
 - The pre-tag gate now also verifies module integrity/tidiness, runs `go vet`,
   and builds a pinned GoReleaser `v2.17.0` snapshot with temporary MCPB and
   distribution paths, so ordinary archive failures cannot strand a new tag.
