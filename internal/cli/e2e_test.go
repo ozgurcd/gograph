@@ -414,17 +414,17 @@ func TestE2E_ClaudePluginInstall(t *testing.T) {
 func TestE2E_HookGuard(t *testing.T) {
 	binPath := buildTestBinary(t)
 	cmd := exec.Command(binPath, "hook-guard")
-	cmd.Stdin = strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"rg UserService --include=*.go"}}`)
+	cmd.Stdin = strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"grep -rn 'runHookGuard\\|evaluateHookCommand' internal/cli/*.go"}}`)
 	out, err := cmd.CombinedOutput()
 	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 2 {
 		t.Fatalf("hook-guard exit = %v, want 2\n%s", err, out)
 	}
-	if !strings.Contains(string(out), "blocked grep") || !strings.Contains(string(out), `gograph_context "UserService"`) {
+	if !strings.Contains(string(out), "blocked grep") || !strings.Contains(string(out), `gograph_context "runHookGuard"`) {
 		t.Fatalf("hook-guard did not provide the documented redirect:\n%s", out)
 	}
 
 	allow := exec.Command(binPath, "hook-guard")
-	allow.Stdin = strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"rg TODO --include=*.go"}}`)
+	allow.Stdin = strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"rg TODO -g '*.go'"}}`)
 	if out, err := allow.CombinedOutput(); err != nil {
 		t.Fatalf("hook-guard should allow comment search: %v\n%s", err, out)
 	}

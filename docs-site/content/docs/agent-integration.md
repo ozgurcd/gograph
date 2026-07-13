@@ -231,6 +231,14 @@ If the agent tries to run `grep -rn "MyStruct" .`, the hook guard blocks the com
 
 The hook is a steering aid, not a security boundary: it targets likely Go-identifier searches and intentionally allows comment, documentation, and non-Go searches.
 
+Identifier-only alternations are also steered: basic `grep` recognizes `\|`,
+while `grep -E` and `rg` recognize bare `|`. Literal-pipe patterns in
+fixed-string mode, escaped pipes in `grep -E`/`rg`, mixed regex/literal patterns,
+and unsupported dynamic shell syntax remain allowed. Quotes, pattern flags,
+glob/context option values, and the first shell pipeline stage are parsed before
+classification. Mixed targets are blocked when any selected path can contain Go
+source; comment markers do not hide another symbol branch.
+
 ---
 
 ## Workspace Steering Rules

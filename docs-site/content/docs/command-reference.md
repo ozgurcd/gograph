@@ -557,7 +557,7 @@ Registers Claude Desktop MCP configuration, injects shared `~/.claude/CLAUDE.md`
 ```bash
 gograph hook-guard
 ```
-Called by the Claude Code `PreToolUse` hook. Intercepts incoming tool-call JSON over `stdin`; blocks likely `grep`/`rg` Go-symbol searches with exit code 2 and allows non-Go/comment searches.
+Called by the Claude Code `PreToolUse` hook. Intercepts incoming tool-call JSON over `stdin`; blocks likely `grep`/`rg` Go-symbol searches with exit code 2 and allows non-Go/comment-only searches. Identifier-only alternations are recognized according to grep/ripgrep regex mode; literal-pipe patterns in fixed-string mode and escaped pipes in extended grep/ripgrep remain allowed.
 
 ### version and help
 ```bash

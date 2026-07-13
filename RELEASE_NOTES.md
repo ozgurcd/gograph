@@ -107,6 +107,15 @@
 
 ### Fixes
 
+#### Hook Guard Alternation Parsing
+`gograph hook-guard` now recognizes identifier-only alternations without
+mistaking quoted regex pipes for shell pipelines. Basic `grep` `\|`, extended
+`grep`/ripgrep `|`, repeated pattern flags, ordered glob/type selectors,
+redirections, context values, and fixed-string/engine modes are parsed according
+to their command semantics. Literal or mixed-regex searches still fail open;
+mixed targets or exempt branches no longer hide a Go-symbol search. Focused unit
+and process-level tests cover the reported escaped-pipe false negative.
+
 #### Empty Build Targets Do Not Write Artifacts
 `gograph build` now exits with `no Go files in <path>` before running precise analysis or writing artifacts when the scanner finds zero Go files after ignore filtering.
 

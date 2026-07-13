@@ -136,21 +136,30 @@ The hook (`gograph hook-guard`) is invoked automatically by Claude Code before e
 
 1. Reads the tool call JSON from stdin.
 2. Checks if the command is `grep` or `rg`.
-3. If targeting `.go` files and the search pattern looks like a Go identifier (PascalCase/camelCase, 3+ chars) → **blocks** with exit code `2` and tells Claude which `gograph` tool to use instead.
+3. If the search can cover Go files and every non-exempt pattern branch is either one Go identifier or an identifier-only alternation (3+ ASCII identifier characters per branch) → **blocks** with exit code `2` and tells Claude which `gograph` tool to use instead.
 4. Otherwise → **allows** with exit code `0`.
 
 **Allowed through (not blocked):**
-- Searches explicitly targeting non-Go files (`*.yaml`, `*.md`, `*.sql`, etc.)
-- Comment/doc searches (TODO, FIXME, HACK, etc.)
-- Searches in `docs/`, `.github/`, `testdata/`, `migrations/`
-- Patterns that don't look like Go identifiers (short strings, regex with special chars)
+- Searches targeting only non-Go files (`*.yaml`, `*.md`, `*.sql`, etc.)
+- Comment/doc-only searches (TODO, FIXME, HACK, etc.)
+- Searches targeting only `docs/`, `.github/`, `testdata/`, or `migrations/`
+- Patterns containing non-identifier regex or literal text. In particular,
+  literal-pipe patterns in fixed-string mode and escaped pipes in `grep -E`/`rg`
+  remain text searches.
 
 **Blocked and redirected:**
 ```bash
 grep -r "ValidateToken" .        # → gograph_query "ValidateToken"
-rg "UserService" --include=*.go  # → gograph_context "UserService"
+rg "UserService" -g '*.go' .     # → gograph_context "UserService"
 grep -rn "runCheck" .            # → gograph_callers "runCheck"
+grep -rn 'LoadUser\|SaveUser' .   # basic grep alternation → LoadUser first
+rg 'LoadUser|SaveUser' -g '*.go'  # ripgrep alternation → LoadUser first
 ```
+
+Alternation follows the selected search dialect: basic `grep` uses `\|`, while
+`grep -E` and `rg` use bare `|`. The hook parses direct `grep`/`rg` arguments,
+option values, quotes, and the first shell pipeline stage; malformed or dynamic
+shell syntax fails open.
 
 The hook is steering, not a correctness boundary. If graph precision is
 `ast`/`precise_fallback`, a result is ambiguous, or a known call is missing,
