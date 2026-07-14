@@ -263,3 +263,9 @@ Normalized the security-flow page link into the index's Schemas and Security sec
 ## [2026-07-13] maintenance | Close hook-guard log formatting
 
 - Consumed the governed append's trailing blank line as this entry's separator; no project facts changed.
+
+## [2026-07-14] maintenance | Merge hook-guard alternation fix
+
+- Merged PR #28 at `f2d8de75c6ba16d72ffbccad5657a19e7650fdd9`; the `Closes #27` trailer closed the reporter's issue and a follow-up comment thanked @serdardalgic.
+- Final PR CI run 29308791305 passed unit/E2E tests, race, vet, static analysis, vulnerability checks, all six MCPBs, native MCP smoke, and documentation.
+- Corrected ordinary CI to verify candidate MCPBs against ephemeral metadata rendered from those exact artifacts. Release-time `mcpb-verify`, committed `server.json`, byte comparisons, and immutable v1.5.1 hashes remain unchanged and fail closed.
