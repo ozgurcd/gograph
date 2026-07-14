@@ -253,3 +253,13 @@ Normalized the security-flow page link into the index's Schemas and Security sec
 - Added fail-closed validation for a single official fetch URL and single effective official push URL, exact metadata modes, detached HEAD, branch/HEAD races, preflight and concurrent remote divergence, feature-branch retries, and missing-tag recovery when remote `main` already contains the release commit.
 - Verified the repository's current topology (`agent/mcp-registry-publishing` ahead of `origin/main`) and confirmed the final full non-publishing release gate passes, including unit/race tests, vet, lint/static/security checks, six MCPBs, MCP smoke, docs, and GoReleaser snapshot.
 - No release commit, version tag, push, GitHub release, or Registry publication was created during this correction.
+## [2026-07-13] maintenance | Fix hook-guard alternation parsing
+
+- Fixed GitHub issue #27: basic-grep `\|` alternations now preserve every identifier while extended grep/ripgrep, literal pipes, fixed strings, and shell pipelines retain their real semantics.
+- Added a deterministic direct-command lexer/classifier with known option arity, ordered selectors, case toggles, and descriptor-aware redirection; unsupported dynamic syntax still fails open.
+- Added unit/E2E regressions for the reporter's command and updated maintained docs/release notes.
+- Verification passed: precise 133-file build, graph checks, full unit/race/lint/static/security suites, coverage, fuzzing, and Hugo.
+
+## [2026-07-13] maintenance | Close hook-guard log formatting
+
+- Consumed the governed append's trailing blank line as this entry's separator; no project facts changed.
