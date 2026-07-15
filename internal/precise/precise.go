@@ -1,6 +1,7 @@
 package precise
 
 import (
+	"context"
 	"fmt"
 	"go/token"
 	"go/types"
@@ -8,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ozgurcd/gograph/internal/buildctx"
 	"github.com/ozgurcd/gograph/internal/graph"
 	"golang.org/x/tools/go/callgraph/cha"
 	"golang.org/x/tools/go/packages"
@@ -19,10 +21,22 @@ import (
 // It loads the project via go/packages, finds exact interface implementers,
 // and uses Class Hierarchy Analysis (CHA) to add precise dynamic dispatch call edges.
 func Enrich(absRoot string, g *graph.Graph) error {
+	config, err := buildctx.Resolve(context.Background(), absRoot)
+	if err != nil {
+		return err
+	}
+	return EnrichWithConfig(absRoot, g, config)
+}
+
+// EnrichWithConfig applies type-checked precision using the same effective Go
+// build configuration that selected files for the AST graph.
+func EnrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) error {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
 			packages.NeedImports | packages.NeedDeps | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedSyntax,
-		Dir: absRoot,
+		Dir:        absRoot,
+		Env:        config.Environment(),
+		BuildFlags: config.Flags(),
 	}
 
 	// Load all packages

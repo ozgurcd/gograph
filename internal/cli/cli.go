@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/build"
 	"go/token"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ozgurcd/gograph/internal/baseline"
+	"github.com/ozgurcd/gograph/internal/buildctx"
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/mcp"
 	"github.com/ozgurcd/gograph/internal/parser"
@@ -608,7 +610,8 @@ func runBuild(args []string) int {
 		}
 	}
 
-	g, err := BuildGraph(absRoot)
+	buildConfig, configErr := resolveBuildConfig(absRoot)
+	g, err := buildGraphWithConfig(absRoot, buildConfig, configErr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error building graph: %v\n", err)
 		return 1
@@ -617,7 +620,7 @@ func runBuild(args []string) int {
 
 	if preciseMode {
 		fmt.Println("  running type-checked precision analysis (this may take a moment)...")
-		if err := enrichGraphPrecisely(absRoot, g); err != nil {
+		if err := enrichGraphPreciselyWithConfig(absRoot, g, buildConfig, configErr); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: precise enrichment failed: %v\n", err)
 		}
 	}
@@ -668,7 +671,15 @@ func runBuild(args []string) int {
 }
 
 func BuildGraph(absRoot string) (*graph.Graph, error) {
-	files, walkErrs := scanner.Walk(absRoot)
+	buildConfig, configErr := resolveBuildConfig(absRoot)
+	return buildGraphWithConfig(absRoot, buildConfig, configErr)
+}
+
+func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr error) (*graph.Graph, error) {
+	files, walkErrs := scanner.WalkWithContext(absRoot, buildConfig.BuildContext())
+	if configErr != nil {
+		walkErrs = append([]error{fmt.Errorf("using default Go build context: %w", configErr)}, walkErrs...)
+	}
 	buildMetadata := &graph.BuildMetadata{
 		ScannedFiles: len(files),
 		Precision:    graph.PrecisionAST,
@@ -774,15 +785,20 @@ func BuildGraph(absRoot string) (*graph.Graph, error) {
 	return g, nil
 }
 
-// enrichGraphPrecisely records the outcome in the graph even when enrichment
-// fails. Callers may continue using the AST graph, but the durable fallback
-// state makes that downgrade visible and preserves the request to retry precise
-// analysis after a future source edit.
-func enrichGraphPrecisely(absRoot string, g *graph.Graph) error {
+// enrichGraphPreciselyWithConfig records the outcome in the graph even when
+// enrichment fails. Callers may continue using the AST graph, but the durable
+// fallback state makes that downgrade visible and preserves the request to
+// retry precise analysis after a future source edit.
+func enrichGraphPreciselyWithConfig(absRoot string, g *graph.Graph, buildConfig buildctx.Config, configErr error) error {
 	if g.Build == nil {
 		g.Build = &graph.BuildMetadata{}
 	}
-	err := precise.Enrich(absRoot, g)
+	var err error
+	if configErr != nil {
+		err = fmt.Errorf("build context resolution failed: %w", configErr)
+	} else {
+		err = precise.EnrichWithConfig(absRoot, g, buildConfig)
+	}
 	if err != nil {
 		g.Build.Precision = graph.PrecisionFallback
 		g.Build.Warnings = append(g.Build.Warnings, "precise enrichment failed: "+err.Error())
@@ -797,16 +813,25 @@ func enrichGraphPrecisely(absRoot string, g *graph.Graph) error {
 // fallback graph for diagnostics but returns an error so MCP analysis cannot
 // silently serve AST-only results.
 func buildPreciseGraph(absRoot string) (*graph.Graph, error) {
-	g, err := BuildGraph(absRoot)
+	buildConfig, configErr := resolveBuildConfig(absRoot)
+	g, err := buildGraphWithConfig(absRoot, buildConfig, configErr)
 	if err != nil {
 		return nil, err
 	}
-	if err := enrichGraphPrecisely(absRoot, g); err != nil {
+	if err := enrichGraphPreciselyWithConfig(absRoot, g, buildConfig, configErr); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: precise MCP refresh fell back to AST analysis: %v\n", err)
 		return g, fmt.Errorf("precise MCP refresh failed; graph is precise_fallback: %w", err)
 	}
 	sortGraph(g)
 	return g, nil
+}
+
+func resolveBuildConfig(absRoot string) (buildctx.Config, error) {
+	config, err := buildctx.Resolve(context.Background(), absRoot)
+	if err == nil {
+		return config, nil
+	}
+	return buildctx.FromBuildContext(build.Default, os.Environ()), err
 }
 
 func precisionFallbackError(g *graph.Graph) error {

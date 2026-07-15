@@ -269,3 +269,10 @@ Normalized the security-flow page link into the index's Schemas and Security sec
 - Merged PR #28 at `f2d8de75c6ba16d72ffbccad5657a19e7650fdd9`; the `Closes #27` trailer closed the reporter's issue and a follow-up comment thanked @serdardalgic.
 - Final PR CI run 29308791305 passed unit/E2E tests, race, vet, static analysis, vulnerability checks, all six MCPBs, native MCP smoke, and documentation.
 - Corrected ordinary CI to verify candidate MCPBs against ephemeral metadata rendered from those exact artifacts. Release-time `mcpb-verify`, committed `server.json`, byte comparisons, and immutable v1.5.1 hashes remain unchanged and fail closed.
+
+## 2026-07-15 — Build-context-aware file selection (issue #30)
+
+- Added a shared cmd/go-resolved build-context snapshot for GOENV/GOFLAGS tags, GOOS/GOARCH, cgo, compiler, tool tags, and release tags.
+- Scanner selection now uses go/build.Context.ImportDir; inactive constrained/platform/cgo files contribute no graph records, while active constrained tests and invalid files remain available to AST analysis.
+- Precise loading receives the same pinned environment and build tags; the coverage invariant and repository-wide fallback remain unchanged.
+- Regressions cover the ignored package-main tool, MCP plan/review/check, custom and legacy tags, platform files, cgo, tests, explicit ignore activation, and nested-module fallback.
