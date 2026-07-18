@@ -276,3 +276,17 @@ Normalized the security-flow page link into the index's Schemas and Security sec
 - Scanner selection now uses go/build.Context.ImportDir; inactive constrained/platform/cgo files contribute no graph records, while active constrained tests and invalid files remain available to AST analysis.
 - Precise loading receives the same pinned environment and build tags; the coverage invariant and repository-wide fallback remain unchanged.
 - Regressions cover the ignored package-main tool, MCP plan/review/check, custom and legacy tags, platform files, cgo, tests, explicit ignore activation, and nested-module fallback.
+
+## [2026-07-18] maintenance | Harden build-context-aware file selection
+
+- Completed GitHub issue #30 with one cmd/go-resolved configuration shared by AST scanning and precise package loading.
+- Excluded inactive modern and legacy build constraints, GOOS/GOARCH and cgo files, generated sources, wildcard-excluded directories, Git-ignored paths, and Go 1.26 go.mod ignore paths while retaining active constrained tests.
+- Added selected-file and module-selection freshness fingerprints so MCP/CLI refresh detects additions, deletions, active/inactive transitions, custom-tag changes, nested-module boundaries, and module identity changes.
+- Preserved precise coverage reconciliation and repository-wide fallback for genuine package-loader gaps.
+- Aligned module/GOPATH symbol identity and canonical path handling across explicit-root symlinks, module-subdirectory symlinks, invocation PWD changes, and symlinked go.mod files.
+- Exact v1.5.2 reproduction indexed the ignored package-main tool and fell back; the patched build indexed only the active library, reached precise mode, and returned no main symbol.
+- Focused regressions, full tests, race checks, lint/static/security checks, coverage, fuzzing, precise self-review, and the release pipeline are the required publication evidence.
+
+## [2026-07-18] maintenance | Close build-context log formatting
+
+- Consumed the governed append's trailing blank line as this entry's separator; no project facts changed.

@@ -49,7 +49,7 @@ gograph envs [term]             # list indexed environment reads
 gograph concurrency [term]      # map goroutines, channels, mutexes, waitgroups, sync.Once
 gograph tests [symbol]          # find which test functions exercise a named symbol
 gograph path <from> <to>        # shortest call chain between two symbols (BFS traversal)
-gograph stale                   # check if graph.json is out of date vs source files
+gograph stale                   # check selected files and build context vs graph.json
 gograph stats                   # compact index health summary: schema/build/precision status and package/file/symbol/call/route/SQL/env/test/flow-function counts
 gograph godobj                  # find god-object struct candidates (default thresholds)
 gograph godobj --methods 10 --fields 12 --calls 30 --top 5  # custom thresholds
@@ -250,7 +250,7 @@ from an HTTP handler to a SQL call without first reading every intermediate
 file. It does not prove that the path executes at runtime.
 
 ### 9. Graph freshness check
-`gograph stale` compares `graph.json`'s `generated_at` timestamp against files selected by the same scanner and Git-ignore rules as `build`. It displays the graph age, the newest source file, and its modification time. If any indexed source file is newer, it lists the changed files and tells the agent to re-run `gograph build .`. It uses the root recorded in `graph.json`, so results are identical from repository subdirectories. Agents should run this before any structural analysis.
+`gograph stale` compares the selected-file inventory, effective Go build context, and source modification times with the persisted graph. It detects added, deleted, newly inactive, and newly active source files even when timestamps alone cannot. It displays the graph age, the newest selected source file, changed files, and whether the build context changed, then tells the agent to re-run `gograph build .` when needed. It uses the root recorded in `graph.json`, so results are identical from repository subdirectories. Agents should run this before any structural analysis.
 
 ### 10. Reading Internal Implementations (Mock Stubs, Algorithms)
 When you need to read an indexed method body (for example, to check whether a
@@ -787,7 +787,7 @@ so parallel MCP traffic never replaces process-global stdout.
 
 The current suite registers 65 MCP endpoints: 61 query, analysis, and workflow tools plus four session lifecycle tools. The live `gograph_capabilities` payload is tested against the server registry.
 - **`gograph_capabilities`**: Discover available tools and workflows.
-- **`gograph_stale`**: Check whether `.gograph/graph.json` is outdated relative to Go source files. Returns JSON with `is_stale`, `graph_age`, `newest_source_mtime`, `newest_source_file`, and `changed_files[]`.
+- **`gograph_stale`**: Check whether `.gograph/graph.json` is outdated relative to selected Go source files or the effective build context. Returns JSON with `is_stale`, `graph_age`, `newest_source_mtime`, `newest_source_file`, `changed_files[]`, and `build_context_changed`.
 - **`gograph_session_create`**: Start a telemetry audit session for tracking agent compliance and tool success metrics.
 - **`gograph_session_end`**: End the active telemetry session cleanly and write end-of-session logs.
 - **`gograph_session_audit`**: Review and grade agent compliance (Plan rule, Review rule, Composability/Efficiency) and tool success rates.
@@ -968,7 +968,7 @@ gograph session cleanup
 - **Project metadata reads** — in addition to `.go` files, gograph reads `go.mod`, `.gitignore`, Git state, `.gograph/graph.json`, and user-selected gograph JSON/YAML configs, including `.gograph/flow.json`. It does not intentionally read `.env`, key, certificate, kubeconfig, or tfstate files.
 - **Targeted source output** — `source` and `context` return requested Go source, and inline route-handler bodies are stored in `graph.json` so endpoint analysis can return them. Other graph data is structural metadata.
 - **Generated files skipped** — `.pb.go`, `_generated.go`, files with `// Code generated` headers are excluded so they don't pollute the map.
-- **AI agent worktrees and ignored paths excluded** — `.claude/`, `.cursor/`, `.agents/` directories are skipped entirely, and both individual files and directories listed in `.gitignore` are excluded via `git check-ignore`. The same scanner policy powers build, stale, and changes.
+- **Inactive and ignored paths excluded** — Go build constraints, GOOS/GOARCH filenames, cgo state, cmd/go's hidden/underscore/`testdata` package-directory rules, Go 1.26 module ignore directives, generated sources, `.claude/`, `.cursor/`, `.agents/`, and Git-ignored paths are excluded consistently. The same scanner policy powers build, stale, and changes.
 - **Subdirectory aware** — all query commands auto-discover the project root by walking up to the nearest `.gograph/` directory. Agents do not need to `cd` back to the repo root before running `plan`, `review`, or any other query.
 - **Crash-safe graph publication** — output files are mode `0640`; `graph.json` is synced to a temporary file and atomically renamed, and the Git repository root `.gitignore` is appended to, never overwritten.
 

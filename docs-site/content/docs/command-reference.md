@@ -16,7 +16,7 @@ gograph build [path] [--precise]
 ```
 Walks and parses a Go repository. Generates the structured graph at `.gograph/graph.json` and nine targeted Markdown reports in `.gograph/`.
 Adds `.gograph/` to the Git repository root `.gitignore` when available; outside Git, falls back to the build target `.gitignore`.
-Git-ignored files and directories use the same exclusion policy in `build`, `stale`, and `changes`. If no Go files are found or none parse successfully, exits without replacing existing artifacts. Partial parse failures are recorded in `graph.json`, which is committed with an atomic rename.
+The scanner honors the effective Go build context, including build tags, platform filenames, cgo, test-file constraints, cmd/go package-directory rules, and module ignore directives. Git-ignored files and directories use the same exclusion policy in `build`, `stale`, and `changes`. If no Go files are found or none parse successfully, exits without replacing existing artifacts. Partial parse failures are recorded in `graph.json`, which is committed with an atomic rename.
 - **Arguments**: `path` (optional, defaults to `.`)
 - **Flags**: 
   - `--precise`: Attempts type-checked CHA/SSA enrichment. Enrichment needs compilable, build-selected packages; on failure or an incomplete non-test package load gograph warns and still publishes the AST graph. Graph metadata records `precise`, `precise_fallback`, or `ast`. Precise interface calls retain one parallel call edge per valid named in-repository target; promoted methods add an explicitly marked traversal-only forwarding edge.
@@ -26,7 +26,7 @@ Git-ignored files and directories use the same exclusion policy in `build`, `sta
 ```bash
 gograph stale
 ```
-Checks if any `.go` source files in the repository are newer than `.gograph/graph.json`. Returns a list of files that have been modified since the last build.
+Compares the selected-file inventory, effective Go build context, and source modification times with `.gograph/graph.json`. It reports added, deleted, newly active, newly inactive, and modified selected files plus build-context changes.
 
 ### stats
 ```bash

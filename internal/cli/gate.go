@@ -93,7 +93,7 @@ func runGate(args []string) int {
 	root = graphRoot(g)
 	sr := search.Stale(g, root)
 	if sr.IsStale {
-		fmt.Fprintf(os.Stderr, "error: graph is stale compared to %d source file(s); refusing to evaluate outdated data.\n", len(sr.ChangedFiles))
+		fmt.Fprintf(os.Stderr, "error: graph is stale due to %d freshness change(s); refusing to evaluate outdated data.\n", sr.ChangeCount())
 		fmt.Fprintln(os.Stderr, "Run 'gograph build .' and retry.")
 		return 1
 	}

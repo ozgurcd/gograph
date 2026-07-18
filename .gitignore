@@ -3,7 +3,8 @@
 bin/
 bin/gograph-test
 /gograph
-docs/ARCHITECTURAL_GUIDELINES.mdcoverage.out
+docs/ARCHITECTURAL_GUIDELINES.md
+coverage.out
 .release-mcpb/
 .release-work/
 dist/

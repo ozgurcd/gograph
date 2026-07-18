@@ -31,10 +31,16 @@ func Enrich(absRoot string, g *graph.Graph) error {
 // EnrichWithConfig applies type-checked precision using the same effective Go
 // build configuration that selected files for the AST graph.
 func EnrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) error {
+	analysisRoot := absRoot
+	if config.ModuleRoot() != "" {
+		if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
+			analysisRoot = resolved
+		}
+	}
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
 			packages.NeedImports | packages.NeedDeps | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedSyntax,
-		Dir:        absRoot,
+		Dir:        analysisRoot,
 		Env:        config.Environment(),
 		BuildFlags: config.Flags(),
 	}
@@ -47,7 +53,7 @@ func EnrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 	if err := packageLoadError(initial); err != nil {
 		return err
 	}
-	if err := validatePackageCoverage(absRoot, initial, g); err != nil {
+	if err := validatePackageCoverage(analysisRoot, initial, g); err != nil {
 		return err
 	}
 
@@ -207,7 +213,7 @@ func EnrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 				// source method that actually executes.
 				if isSyntheticMethodWrapper(callerFn) {
 					calleePos := ssaFunctionOwnerPosition(prog.Fset, calleeFn)
-					if calleeSymID == "" || !pathWithinRoot(calleePos.Filename, absRoot) {
+					if calleeSymID == "" || !pathWithinRoot(calleePos.Filename, analysisRoot) {
 						continue
 					}
 					syntheticKey := callerSymID + "->" + calleeSymID
@@ -229,14 +235,14 @@ func EnrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 				}
 
 				pos := prog.Fset.Position(edge.Site.Pos())
-				if pos.Filename == "" || !pathWithinRoot(pos.Filename, absRoot) {
+				if pos.Filename == "" || !pathWithinRoot(pos.Filename, analysisRoot) {
 					continue
 				}
 				// Normalize to a repo-relative path so the dedup key matches the
 				// AST-sourced edge keys (which use relative paths). Without this,
 				// every AST call edge gets a CHA duplicate because the keys never
 				// match (absolute vs. relative path for the same call site).
-				relFile, relErr := filepath.Rel(absRoot, pos.Filename)
+				relFile, relErr := filepath.Rel(analysisRoot, pos.Filename)
 				if relErr != nil {
 					continue
 				}
@@ -256,7 +262,7 @@ func EnrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 					// target: collapsing this set into the first edge makes exact
 					// caller queries depend on nondeterministic map iteration order.
 					calleePos := ssaFunctionOwnerPosition(prog.Fset, calleeFn)
-					if calleeSymID == "" || !pathWithinRoot(calleePos.Filename, absRoot) {
+					if calleeSymID == "" || !pathWithinRoot(calleePos.Filename, analysisRoot) {
 						continue
 					}
 					// The exact source coordinate is the stable identity of the
@@ -323,7 +329,7 @@ func EnrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 				// excluding dependency implementations prevents an interface call
 				// such as err.Error() from expanding across the whole module cache.
 				calleePos := ssaFunctionOwnerPosition(prog.Fset, calleeFn)
-				if !pathWithinRoot(calleePos.Filename, absRoot) {
+				if !pathWithinRoot(calleePos.Filename, analysisRoot) {
 					continue
 				}
 				astEdgeIdx[key] = len(g.Calls)
@@ -351,7 +357,7 @@ func EnrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 	// stdlib allowlist) and attribute each call site to the field being
 	// addressed. Appends to g.Mutations alongside the AST-direct
 	// assignments that the parser already collected.
-	userMutators, directExtra := findMutatingMethods(prog, absRoot)
+	userMutators, directExtra := findMutatingMethods(prog, analysisRoot)
 
 	// 3a. Direct stores the AST parser missed. The parser only walks
 	// AssignStmt, which excludes IncDecStmt (`c.n++`), augmented
@@ -381,7 +387,7 @@ func EnrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 	}
 
 	// 3b. Indirect mutations through mutating-method calls.
-	indirect := collectIndirectMutations(prog, absRoot, userMutators)
+	indirect := collectIndirectMutations(prog, analysisRoot, userMutators)
 	g.Mutations = append(g.Mutations, indirect...)
 
 	return nil
@@ -443,6 +449,9 @@ func validatePackageCoverage(absRoot string, initial []*packages.Package, g *gra
 func absoluteSourcePath(root, path string) string {
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(root, path)
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
 	}
 	return filepath.Clean(path)
 }

@@ -201,7 +201,7 @@ func NewServer(
 			"prerequisite": "The MCP server loads .gograph/graph.json when present and auto-builds an in-memory graph when it is missing. Source-analysis tools check source freshness and newer persisted graphs per call, then rebuild after edits using the latest requested analysis mode; gograph_stale, gograph_changes without git_ref, and gograph_stats inspect the persisted index. Run `gograph build . --precise` for type-checked CHA/SSA enrichment; MCP adopts a newer precise graph and re-runs precision after source changes instead of silently downgrading to AST-only analysis. Session lifecycle tools write local telemetry, gograph_session_cleanup deletes stale logs, gograph_boundaries_create writes configuration, and gograph_wiki writes documentation. gograph_doc invokes the local Go toolchain and is annotated open-world because module resolution follows the user's Go environment.",
 			"tools": []map[string]string{
 				{"name": "gograph_capabilities", "purpose": "List all available tools and recommended workflows. No prerequisites."},
-				{"name": "gograph_stale", "purpose": "Check whether .gograph/graph.json is outdated vs source files. Run this first as a pre-flight check; if stale, run `gograph build .`."},
+				{"name": "gograph_stale", "purpose": "Check whether .gograph/graph.json is outdated vs selected source files or the effective Go build context. Run this first as a pre-flight check; if stale, run `gograph build .`."},
 				{"name": "gograph_session_create", "purpose": "Start a telemetry audit session for tracking agent compliance and tool success metrics."},
 				{"name": "gograph_session_end", "purpose": "End the active telemetry session cleanly and write end-of-session logs."},
 				{"name": "gograph_session_audit", "purpose": "Review and grade agent compliance (Plan rule, Review rule, Composability/Efficiency) and tool success rates."},
@@ -1738,7 +1738,7 @@ func initNewTools(
 
 	// Tool: gograph_stale
 	staleTool := mcp.NewTool("gograph_stale",
-		mcp.WithDescription("Check whether the persisted graph index loaded from .gograph/graph.json is older than current Go source files. This tool intentionally does not refresh first; when no artifact existed at server startup it compares against the startup auto-build fallback. Read-only; no side effects. WHEN TO USE: To decide whether CLI snapshot analysis or precise enrichment needs rebuilding. NOT TO USE: For module dependency freshness; for changed symbols (use gograph_changes). RETURNS: is_stale, graph_age, newest source metadata, and changed_files."),
+		mcp.WithDescription("Check whether the persisted graph index loaded from .gograph/graph.json differs from the current selected-file inventory, effective Go build context, or source modification times. This tool intentionally does not refresh first; when no artifact existed at server startup it compares against the startup auto-build fallback. Read-only; no side effects. WHEN TO USE: To decide whether CLI snapshot analysis or precise enrichment needs rebuilding. NOT TO USE: For module dependency freshness; for changed symbols (use gograph_changes). RETURNS: is_stale, graph_age, newest source metadata, changed_files, and build_context_changed."),
 	)
 	addTool(staleTool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		base := persistedGraph(indexedGraph)

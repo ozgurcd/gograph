@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Build-Context-Aware Repository Indexing
+
+- The AST scanner and precise package loader now share cmd/go's effective
+  build context, including modern and legacy build constraints, GOOS/GOARCH
+  filenames, cgo, release/tool tags, and custom tags inherited through
+  `GOFLAGS`. Inactive tooling files such as `//go:build ignore` no longer
+  pollute graph records or force repository-wide `precise_fallback`.
+- Scanner package discovery now matches `go list ./...` for hidden,
+  underscore-prefixed, `testdata`, and Go 1.26 module-mode ignore directories
+  while retaining nested-module coverage diagnostics and broken-source tolerance.
+- Graph freshness now compares the selected-file inventory and an additive
+  source-selection fingerprint, so deletions, active/inactive transitions,
+  nested module-boundary changes, and build-context changes trigger MCP
+  refresh instead of serving stale symbols.
+- Build-context resolution decodes stdout separately from successful cmd/go
+  stderr diagnostics, preserving precise analysis during toolchain messages.
+
 ### Official MCP Registry Distribution
 
 - Restored the maintainer's one-command patch-release workflow: after a

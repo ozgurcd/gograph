@@ -17,7 +17,7 @@ import (
 	"github.com/ozgurcd/gograph/internal/buildctx"
 )
 
-// ignoredDirs are directory names that are always skipped during the walk,
+// ignoredDirs are directory names skipped below the explicit scan root,
 // regardless of .gitignore. This is a fast O(1) check that requires no I/O.
 var ignoredDirs = map[string]bool{
 	".git":         true,
@@ -46,6 +46,14 @@ var ignoredDirs = map[string]bool{
 // be skipped entirely.
 func ShouldIgnoreDir(base string) bool {
 	return ignoredDirs[base]
+}
+
+// shouldIgnoreGoWildcardDir reports directories cmd/go excludes while
+// expanding ./.... The caller must exempt the explicit scan root so a project
+// whose own basename starts with '.' or '_' remains analyzable.
+func shouldIgnoreGoWildcardDir(base string) bool {
+	return (strings.HasPrefix(base, ".") && base != "." && base != "..") ||
+		strings.HasPrefix(base, "_") || base == "testdata"
 }
 
 // ShouldIgnoreFile reports whether a file should be skipped before parsing.
@@ -126,8 +134,10 @@ func (g *gitIgnoreChecker) isIgnored(absPath string) bool {
 
 // Walk traverses root and returns paths of .go files that should be parsed.
 // It respects:
-//  1. The hardcoded ignoredDirs blocklist (always active, no I/O).
-//  2. The repository's .gitignore rules via `git check-ignore` — this
+//  1. The effective Go build and module context.
+//  2. cmd/go's package-directory and module-ignore rules.
+//  3. Generated-file and hardcoded directory exclusions.
+//  4. The repository's .gitignore rules via `git check-ignore` — this
 //     eliminates duplicates caused by AI agent worktrees (e.g. .claude/worktrees/
 //     or any other tool-managed copy of the project) that are listed in .gitignore
 //     but live inside the project directory.
@@ -135,15 +145,19 @@ func (g *gitIgnoreChecker) isIgnored(absPath string) bool {
 // Generated files are excluded. An error slice is also returned for files that
 // could not be inspected (non-fatal).
 func Walk(root string) (paths []string, errs []error) {
-	config, configErr := buildctx.Resolve(context.Background(), root)
-	if configErr != nil {
-		config = buildctx.FromBuildContext(build.Default, os.Environ())
-	}
-	paths, errs = WalkWithContext(root, config.BuildContext())
+	paths, _, errs = WalkWithFingerprint(root)
+	return paths, errs
+}
+
+// WalkWithFingerprint returns the active source files and the fingerprint of
+// the effective build context used to select them.
+func WalkWithFingerprint(root string) (paths []string, fingerprint string, errs []error) {
+	config, configErr := buildctx.ResolveOrDefault(context.Background(), root)
+	paths, fingerprint, errs = WalkWithConfigAndFingerprint(root, config)
 	if configErr != nil {
 		errs = append([]error{fmt.Errorf("using default Go build context: %w", configErr)}, errs...)
 	}
-	return paths, errs
+	return paths, fingerprint, errs
 }
 
 // WalkWithContext traverses root and applies the supplied Go build context to
@@ -151,29 +165,62 @@ func Walk(root string) (paths []string, errs []error) {
 // MatchFile: in addition to filename and header constraints, it classifies an
 // otherwise-unconstrained import "C" file as inactive when cgo is disabled.
 func WalkWithContext(root string, buildContext build.Context) (paths []string, errs []error) {
+	return WalkWithConfig(root, buildctx.FromBuildContext(buildContext, nil))
+}
+
+// WalkWithConfig traverses root using one explicit source of file-selection
+// truth, including both the Go build context and module-mode state.
+func WalkWithConfig(root string, config buildctx.Config) (paths []string, errs []error) {
+	paths, _, errs = WalkWithConfigAndFingerprint(root, config)
+	return paths, errs
+}
+
+// WalkWithConfigAndFingerprint also returns a fingerprint of every effective
+// source-selection input observed during the walk, including nested module
+// boundaries and ignore directives.
+func WalkWithConfigAndFingerprint(root string, config buildctx.Config) (paths []string, fingerprint string, errs []error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		absRoot = root
 	}
+	buildContext := config.BuildContext()
 	gitIgnore := newGitIgnoreChecker(absRoot)
+	moduleIgnores, moduleErr := newModuleIgnoreTracker(config.ModulesEnabled(), config.ModuleRoot(), absRoot)
+	if moduleErr != nil {
+		errs = append(errs, moduleErr)
+	}
 	candidatesByDir := make(map[string][]string)
 
-	err = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	walkRoot := root
+	if rootInfo, lstatErr := os.Lstat(root); lstatErr == nil && rootInfo.Mode()&os.ModeSymlink != 0 {
+		if targetInfo, statErr := os.Stat(root); statErr == nil && targetInfo.IsDir() {
+			walkRoot = filepath.Clean(root) + string(filepath.Separator)
+		}
+	}
+	err = filepath.Walk(walkRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			errs = append(errs, err)
 			return nil // keep walking
 		}
 		if info.IsDir() {
+			absPath, aerr := filepath.Abs(path)
+			isRoot := aerr == nil && filepath.Clean(absPath) == filepath.Clean(absRoot)
 			// Fast blocklist check (no subprocess).
-			if ShouldIgnoreDir(info.Name()) {
+			if !isRoot && (ShouldIgnoreDir(info.Name()) || shouldIgnoreGoWildcardDir(info.Name())) {
 				return filepath.SkipDir
 			}
 			// Gitignore check for directories: if the directory itself is
 			// gitignored skip the whole subtree with one syscall instead of
 			// checking every file inside it individually. This is what catches
 			// `.claude/worktrees/agent-*/` and similar AI agent scratch trees.
-			absPath, aerr := filepath.Abs(path)
 			if aerr == nil && gitIgnore.isIgnored(absPath) {
+				return filepath.SkipDir
+			}
+			skipModuleDir, moduleErr := moduleIgnores.enterDir(path)
+			if moduleErr != nil {
+				errs = append(errs, moduleErr)
+			}
+			if skipModuleDir {
 				return filepath.SkipDir
 			}
 			return nil
@@ -236,5 +283,5 @@ func WalkWithContext(root string, buildContext build.Context) (paths []string, e
 			errs = append(errs, fmt.Errorf("evaluate Go build constraints in %s: %w", dir, importErr))
 		}
 	}
-	return paths, errs
+	return paths, moduleIgnores.selectionFingerprint(config.Fingerprint()), errs
 }
