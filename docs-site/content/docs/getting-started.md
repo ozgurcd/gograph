@@ -6,7 +6,7 @@ description: "Install gograph, build your first graph, and run your first querie
 
 ## Prerequisites
 
-- Go 1.26 or later
+- Go 1.26.5 or later
 - A Go module repository (`go.mod` present)
 
 ## Install
@@ -116,7 +116,7 @@ parse_failures: 0
 gograph stale
 ```
 
-Lists indexed source files that are newer than `graph.json`. It uses the same ignore policy as `build`, and all filesystem-backed commands resolve the repository root recorded in the graph, so it works identically from subdirectories. Rebuild if any files are listed.
+Compares the current selected-file inventory, effective Go build context, and source modification times with `graph.json`. It uses the same build-constraint and ignore policy as `build`, and all filesystem-backed commands resolve the repository root recorded in the graph, so it works identically from subdirectories. Rebuild when it reports any freshness change.
 
 ## Step 3 — Run repository-wide queries
 

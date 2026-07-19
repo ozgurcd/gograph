@@ -144,6 +144,9 @@ func TestMCPStaleInspectsPersistedIndexWithoutRefresh(t *testing.T) {
 	if !strings.Contains(text, `"is_stale": true`) {
 		t.Fatalf("expected stale persisted index, got %s", text)
 	}
+	if !strings.Contains(text, `"changed_files": [`) || !strings.Contains(text, `"build_context_changed": false`) {
+		t.Fatalf("stale MCP contract omitted stable collection/context fields: %s", text)
+	}
 	if got := rebuilds.Load(); got != 0 {
 		t.Fatalf("gograph_stale rebuilt %d time(s), want 0", got)
 	}

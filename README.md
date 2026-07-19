@@ -58,8 +58,9 @@ Build artifacts are written under the target `.gograph/` directory. `gograph`
 adds `.gograph/` to the enclosing Git repository root `.gitignore` when
 available, falls back to the build target `.gitignore` outside Git, and exits
 without replacing artifacts if no Go files are found or no source file parses
-successfully. Individual ignored files and ignored directories use the same
-scanner policy for building, freshness checks, and change detection.
+successfully. Go build constraints, cmd/go package-directory rules, generated
+sources, module-mode ignore directives, and Git ignores use the same scanner
+policy for building, freshness checks, and change detection.
 
 ## Why gograph?
 

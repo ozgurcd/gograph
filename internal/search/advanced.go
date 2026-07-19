@@ -409,11 +409,23 @@ func ReachableOrphans(g *graph.Graph) []Result {
 
 // StaleResult reports the freshness of graph.json relative to source files.
 type StaleResult struct {
-	IsStale           bool     `json:"is_stale"`
-	GraphAge          string   `json:"graph_age"`
-	NewestSourceMtime string   `json:"newest_source_mtime,omitempty"`
-	NewestSourceFile  string   `json:"newest_source_file,omitempty"`
-	ChangedFiles      []string `json:"changed_files,omitempty"`
+	IsStale             bool     `json:"is_stale"`
+	GraphAge            string   `json:"graph_age"`
+	NewestSourceMtime   string   `json:"newest_source_mtime,omitempty"`
+	NewestSourceFile    string   `json:"newest_source_file,omitempty"`
+	ChangedFiles        []string `json:"changed_files"`
+	BuildContextChanged bool     `json:"build_context_changed"`
+}
+
+// ChangeCount returns the number of independent stale signals represented by
+// the result. It keeps machine-readable envelopes non-empty for a context-only
+// transition while retaining one count per changed selected file.
+func (r StaleResult) ChangeCount() int {
+	count := len(r.ChangedFiles)
+	if r.BuildContextChanged {
+		count++
+	}
+	return count
 }
 
 // GodObjectCandidate is a struct that exceeded at least one threshold.
@@ -428,24 +440,30 @@ type GodObjectCandidate struct {
 	Score         int    `json:"score"`
 }
 
-// Stale compares graph.json's GeneratedAt timestamp with the mtime of every
-// .go file under root. Pass the absolute repository root path.
+// Stale compares graph.json's selected-file inventory, effective build
+// context, and GeneratedAt timestamp with the current repository state. Pass
+// the absolute repository root path.
 //
 // Returns:
-//   - is_stale:            true when any .go file is newer than the graph.
+//   - is_stale:            true when selected files or their build context differ.
 //   - graph_age:           UTC timestamp of the graph build.
 //   - newest_source_mtime: UTC mtime of the newest .go file found (populated
 //     regardless of staleness — useful for diagnosis).
 //   - newest_source_file:  repo-relative path of that newest file.
-//   - changed_files:       all .go files newer than the graph (stale case only).
+//   - changed_files:       files newer than the graph or added/removed from the
+//     active build selection (stale case only).
+//   - build_context_changed: true when source-selection inputs changed.
 func Stale(g *graph.Graph, root string) StaleResult {
 	graphTime := g.GeneratedAt
-	var staleFiles []string
+	staleFiles := make(map[string]struct{})
 	var newestMtime time.Time
 	var newestPath string
 
-	files, _ := scanner.Walk(root)
+	files, buildContextFingerprint, _ := scanner.WalkWithFingerprint(root)
+	currentFiles := make(map[string]struct{}, len(files))
 	for _, path := range files {
+		rel := graphFileRelative(root, path)
+		currentFiles[rel] = struct{}{}
 		info, err := os.Stat(path)
 		if err != nil {
 			continue
@@ -455,19 +473,46 @@ func Stale(g *graph.Graph, root string) StaleResult {
 			newestPath = path
 		}
 		if info.ModTime().After(graphTime) {
-			if rel, relErr := filepath.Rel(root, path); relErr == nil {
-				staleFiles = append(staleFiles, rel)
-			} else {
-				staleFiles = append(staleFiles, path)
+			staleFiles[rel] = struct{}{}
+		}
+	}
+
+	previousFiles := make(map[string]struct{})
+	for _, file := range g.Files {
+		previousFiles[graphFileRelative(root, file.Path)] = struct{}{}
+	}
+	if g.Build != nil {
+		for _, failure := range g.Build.Failures {
+			previousFiles[graphFileRelative(root, failure.File)] = struct{}{}
+		}
+	}
+	if len(previousFiles) > 0 {
+		for path := range previousFiles {
+			if _, ok := currentFiles[path]; !ok {
+				staleFiles[path] = struct{}{}
+			}
+		}
+		for path := range currentFiles {
+			if _, ok := previousFiles[path]; !ok {
+				staleFiles[path] = struct{}{}
 			}
 		}
 	}
-	sortStrings(staleFiles)
+
+	buildContextChanged := g.Build != nil &&
+		g.Build.BuildContextFingerprint != "" &&
+		g.Build.BuildContextFingerprint != buildContextFingerprint
+	changedFiles := make([]string, 0, len(staleFiles))
+	for path := range staleFiles {
+		changedFiles = append(changedFiles, path)
+	}
+	sortStrings(changedFiles)
 
 	sr := StaleResult{
-		IsStale:      len(staleFiles) > 0,
-		GraphAge:     graphTime.Format("2006-01-02 15:04:05 UTC"),
-		ChangedFiles: staleFiles,
+		IsStale:             len(changedFiles) > 0 || buildContextChanged,
+		GraphAge:            graphTime.Format("2006-01-02 15:04:05 UTC"),
+		ChangedFiles:        changedFiles,
+		BuildContextChanged: buildContextChanged,
 	}
 	if !newestMtime.IsZero() {
 		sr.NewestSourceMtime = newestMtime.UTC().Format("2006-01-02 15:04:05 UTC")

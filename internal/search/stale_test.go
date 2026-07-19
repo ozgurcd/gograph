@@ -1,13 +1,16 @@
 package search_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ozgurcd/gograph/internal/buildctx"
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/scanner"
 	"github.com/ozgurcd/gograph/internal/search"
 )
 
@@ -192,4 +195,112 @@ func TestStale_SkipsGeneratedFiles(t *testing.T) {
 	if sr.IsStale {
 		t.Fatalf("generated files must not make the graph stale: %v", sr.ChangedFiles)
 	}
+}
+
+func TestStale_ActiveFileBecomesInactive(t *testing.T) {
+	dir := t.TempDir()
+	config := testBuildConfig(t, dir)
+	graphTime := time.Now()
+	path := makeGoFile(t, dir, "active.go", graphTime.Add(-time.Minute))
+	fingerprint := testSelectionFingerprint(t, dir, config)
+	g := &graph.Graph{
+		GeneratedAt: graphTime,
+		Files:       []graph.FileNode{{Path: "active.go"}},
+		Build:       &graph.BuildMetadata{BuildContextFingerprint: fingerprint},
+	}
+	if err := os.WriteFile(path, []byte("//go:build ignore\n\npackage x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, graphTime.Add(-time.Minute), graphTime.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	sr := search.Stale(g, dir)
+	if !sr.IsStale || len(sr.ChangedFiles) != 1 || sr.ChangedFiles[0] != "active.go" {
+		t.Fatalf("active-to-inactive transition was not detected: %+v", sr)
+	}
+	if sr.BuildContextChanged {
+		t.Fatalf("file-selection transition incorrectly reported a context change: %+v", sr)
+	}
+}
+
+func TestStale_DeletedIndexedFile(t *testing.T) {
+	dir := t.TempDir()
+	config := testBuildConfig(t, dir)
+	graphTime := time.Now()
+	path := makeGoFile(t, dir, "deleted.go", graphTime.Add(-time.Minute))
+	fingerprint := testSelectionFingerprint(t, dir, config)
+	g := &graph.Graph{
+		GeneratedAt: graphTime,
+		Files:       []graph.FileNode{{Path: "deleted.go"}},
+		Build:       &graph.BuildMetadata{BuildContextFingerprint: fingerprint},
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+
+	sr := search.Stale(g, dir)
+	if !sr.IsStale || len(sr.ChangedFiles) != 1 || sr.ChangedFiles[0] != "deleted.go" {
+		t.Fatalf("deleted indexed file was not detected: %+v", sr)
+	}
+}
+
+func TestStale_BuildContextChangedWithoutMtimeChange(t *testing.T) {
+	dir := t.TempDir()
+	graphTime := time.Now()
+	makeGoFile(t, dir, "active.go", graphTime.Add(-time.Minute))
+	g := &graph.Graph{
+		GeneratedAt: graphTime,
+		Files:       []graph.FileNode{{Path: "active.go"}},
+		Build:       &graph.BuildMetadata{BuildContextFingerprint: "different-context"},
+	}
+
+	sr := search.Stale(g, dir)
+	if !sr.IsStale || !sr.BuildContextChanged || len(sr.ChangedFiles) != 0 {
+		t.Fatalf("context-only change was not reported distinctly: %+v", sr)
+	}
+	if sr.ChangeCount() != 1 {
+		t.Fatalf("context-only change count = %d, want 1", sr.ChangeCount())
+	}
+}
+
+func TestStale_ParseFailureRemainsInSelectedInventory(t *testing.T) {
+	dir := t.TempDir()
+	config := testBuildConfig(t, dir)
+	graphTime := time.Now()
+	makeGoFile(t, dir, "broken.go", graphTime.Add(-time.Minute))
+	fingerprint := testSelectionFingerprint(t, dir, config)
+	g := &graph.Graph{
+		GeneratedAt: graphTime,
+		Build: &graph.BuildMetadata{
+			BuildContextFingerprint: fingerprint,
+			Failures:                []graph.BuildFailure{{File: "broken.go", Error: "prior parse failure"}},
+		},
+	}
+
+	if sr := search.Stale(g, dir); sr.IsStale {
+		t.Fatalf("unchanged selected parse failure caused a stale loop: %+v", sr)
+	}
+}
+
+func testSelectionFingerprint(t *testing.T, root string, config buildctx.Config) string {
+	t.Helper()
+	_, fingerprint, errs := scanner.WalkWithConfigAndFingerprint(root, config)
+	if len(errs) != 0 {
+		t.Fatalf("walk test selection: %v", errs)
+	}
+	return fingerprint
+}
+
+func testBuildConfig(t *testing.T, root string) buildctx.Config {
+	t.Helper()
+	t.Setenv("GOENV", "off")
+	t.Setenv("GOWORK", "off")
+	t.Setenv("GOTOOLCHAIN", "local")
+	t.Setenv("GOFLAGS", "")
+	config, err := buildctx.Resolve(context.Background(), root)
+	if err != nil {
+		t.Fatalf("resolve test build context: %v", err)
+	}
+	return config
 }

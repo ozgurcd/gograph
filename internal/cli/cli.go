@@ -6,16 +6,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/build"
 	"go/token"
 	"os"
 	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/ozgurcd/gograph/internal/baseline"
+	"github.com/ozgurcd/gograph/internal/buildctx"
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/mcp"
 	"github.com/ozgurcd/gograph/internal/parser"
@@ -339,7 +343,7 @@ when available; outside Git, the build target .gitignore is used.
 If no Go files are found, or none can be parsed, build exits before replacing artifacts.
 Partial builds record failed files in graph.json for machine-readable health checks.
   gograph stats   → counts plus complete/partial build and ast/precise/fallback status
-  gograph stale   → lists source files newer than graph.json (shows newest source time/file)
+  gograph stale   → checks source selection, build context, and modification times
 
 CLI queries use this persisted snapshot, so rebuild whenever source files change.
 The MCP server checks source freshness and newer persisted graphs per call. After
@@ -469,9 +473,9 @@ AGENT WORKFLOW RULES (CRITICAL):
 
 INDEXING:
 build . [--precise]  : parse AST, atomically write graph.json + reports to .gograph/
-                       Skips .git, vendor, testdata, .claude, .cursor, .agents, and
-                       any files or directories listed in .gitignore (via git check-ignore).
-stale                : list source files newer than graph.json (shows newest source time/file)
+                       Honors Go build constraints and cmd/go package-directory rules;
+                       skips generated, module-ignored, and Git-ignored sources.
+stale                : check source selection, build context, and modification times
 stats                : schema/build/precision health, parse failures, and symbol/call/route counts
 
 QUERY COMMANDS:
@@ -608,7 +612,8 @@ func runBuild(args []string) int {
 		}
 	}
 
-	g, err := BuildGraph(absRoot)
+	buildConfig, configErr := resolveBuildConfig(absRoot)
+	g, err := buildGraphWithConfig(absRoot, buildConfig, configErr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error building graph: %v\n", err)
 		return 1
@@ -617,7 +622,7 @@ func runBuild(args []string) int {
 
 	if preciseMode {
 		fmt.Println("  running type-checked precision analysis (this may take a moment)...")
-		if err := enrichGraphPrecisely(absRoot, g); err != nil {
+		if err := enrichGraphPreciselyWithConfig(absRoot, g, buildConfig, configErr); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: precise enrichment failed: %v\n", err)
 		}
 	}
@@ -668,10 +673,19 @@ func runBuild(args []string) int {
 }
 
 func BuildGraph(absRoot string) (*graph.Graph, error) {
-	files, walkErrs := scanner.Walk(absRoot)
+	buildConfig, configErr := resolveBuildConfig(absRoot)
+	return buildGraphWithConfig(absRoot, buildConfig, configErr)
+}
+
+func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr error) (*graph.Graph, error) {
+	files, selectionFingerprint, walkErrs := scanner.WalkWithConfigAndFingerprint(absRoot, buildConfig)
+	if configErr != nil {
+		walkErrs = append([]error{fmt.Errorf("using default Go build context: %w", configErr)}, walkErrs...)
+	}
 	buildMetadata := &graph.BuildMetadata{
-		ScannedFiles: len(files),
-		Precision:    graph.PrecisionAST,
+		ScannedFiles:            len(files),
+		Precision:               graph.PrecisionAST,
+		BuildContextFingerprint: selectionFingerprint,
 	}
 	for _, e := range walkErrs {
 		fmt.Fprintf(os.Stderr, "  warning: %v\n", e)
@@ -704,7 +718,7 @@ func BuildGraph(absRoot string) (*graph.Graph, error) {
 		}
 		dir := filepath.Dir(rel)
 		if _, seen := dirToImportPath[dir]; !seen {
-			dirToImportPath[dir] = bestEffortImportPath(absRoot, dir)
+			dirToImportPath[dir] = bestEffortImportPath(absRoot, dir, buildConfig)
 		}
 	}
 
@@ -774,15 +788,20 @@ func BuildGraph(absRoot string) (*graph.Graph, error) {
 	return g, nil
 }
 
-// enrichGraphPrecisely records the outcome in the graph even when enrichment
-// fails. Callers may continue using the AST graph, but the durable fallback
-// state makes that downgrade visible and preserves the request to retry precise
-// analysis after a future source edit.
-func enrichGraphPrecisely(absRoot string, g *graph.Graph) error {
+// enrichGraphPreciselyWithConfig records the outcome in the graph even when
+// enrichment fails. Callers may continue using the AST graph, but the durable
+// fallback state makes that downgrade visible and preserves the request to
+// retry precise analysis after a future source edit.
+func enrichGraphPreciselyWithConfig(absRoot string, g *graph.Graph, buildConfig buildctx.Config, configErr error) error {
 	if g.Build == nil {
 		g.Build = &graph.BuildMetadata{}
 	}
-	err := precise.Enrich(absRoot, g)
+	var err error
+	if configErr != nil {
+		err = fmt.Errorf("build context resolution failed: %w", configErr)
+	} else {
+		err = precise.EnrichWithConfig(absRoot, g, buildConfig)
+	}
 	if err != nil {
 		g.Build.Precision = graph.PrecisionFallback
 		g.Build.Warnings = append(g.Build.Warnings, "precise enrichment failed: "+err.Error())
@@ -797,16 +816,21 @@ func enrichGraphPrecisely(absRoot string, g *graph.Graph) error {
 // fallback graph for diagnostics but returns an error so MCP analysis cannot
 // silently serve AST-only results.
 func buildPreciseGraph(absRoot string) (*graph.Graph, error) {
-	g, err := BuildGraph(absRoot)
+	buildConfig, configErr := resolveBuildConfig(absRoot)
+	g, err := buildGraphWithConfig(absRoot, buildConfig, configErr)
 	if err != nil {
 		return nil, err
 	}
-	if err := enrichGraphPrecisely(absRoot, g); err != nil {
+	if err := enrichGraphPreciselyWithConfig(absRoot, g, buildConfig, configErr); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: precise MCP refresh fell back to AST analysis: %v\n", err)
 		return g, fmt.Errorf("precise MCP refresh failed; graph is precise_fallback: %w", err)
 	}
 	sortGraph(g)
 	return g, nil
+}
+
+func resolveBuildConfig(absRoot string) (buildctx.Config, error) {
+	return buildctx.ResolveOrDefault(context.Background(), absRoot)
 }
 
 func precisionFallbackError(g *graph.Graph) error {
@@ -1179,7 +1203,7 @@ func graphRefresher(
 				return latest, nil
 			}
 		}
-		return nil, fmt.Errorf("graph remained stale after %d refresh attempts (%d changed source files)", maxAttempts, len(stale.ChangedFiles))
+		return nil, fmt.Errorf("graph remained stale after %d refresh attempts (%d freshness changes)", maxAttempts, stale.ChangeCount())
 	}
 }
 
@@ -1433,23 +1457,58 @@ func parseDependencies(absRoot string) ([]graph.Dependency, error) {
 	return deps, nil
 }
 
-func bestEffortImportPath(absRoot, relDir string) string {
-	modPath := filepath.Join(absRoot, "go.mod")
-	data, err := os.ReadFile(modPath)
-	if err != nil {
-		return relDir
+func bestEffortImportPath(absRoot, relDir string, config buildctx.Config) string {
+	absDir := absRoot
+	if relDir != "." && relDir != "" {
+		absDir = filepath.Join(absRoot, relDir)
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "module ") {
-			mod := strings.TrimSpace(strings.TrimPrefix(line, "module "))
-			if relDir == "." || relDir == "" {
-				return mod
+	if config.ModulesEnabled() && config.ModuleRoot() != "" {
+		modulePath := config.ModulePath()
+		moduleRoot := canonicalExistingPath(config.ModuleRoot())
+		packageDir := canonicalExistingPath(absDir)
+		if modulePath != "" {
+			if relative, relErr := filepath.Rel(moduleRoot, packageDir); relErr == nil && pathWithinRoot(relative) {
+				if relative == "." {
+					return modulePath
+				}
+				return pathpkg.Join(modulePath, filepath.ToSlash(relative))
 			}
-			return mod + "/" + filepath.ToSlash(relDir)
 		}
 	}
-	return relDir
+
+	buildContext := config.BuildContext()
+	if pkg, _ := buildContext.ImportDir(absDir, build.FindOnly); pkg != nil && pkg.ImportPath != "" && pkg.ImportPath != "." {
+		return pkg.ImportPath
+	}
+	return pseudoImportPath(absDir)
+}
+
+func canonicalExistingPath(path string) string {
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	return filepath.Clean(path)
+}
+
+func pathWithinRoot(relative string) bool {
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+func pseudoImportPath(dir string) string {
+	if absolute, err := filepath.Abs(dir); err == nil {
+		dir = absolute
+	}
+	valid := strings.Map(func(char rune) rune {
+		const illegal = `!"#$%&'()*,:;<=>?[\]^{|}` + "`\uFFFD"
+		if !unicode.IsGraphic(char) || unicode.IsSpace(char) || strings.ContainsRune(illegal, char) {
+			return '_'
+		}
+		return char
+	}, filepath.ToSlash(filepath.Clean(dir)))
+	return pathpkg.Join("_", valid)
 }
 
 func sortGraph(g *graph.Graph) {
@@ -1678,9 +1737,10 @@ INDEXING
                              Supports --precise to perform type-checked Class
                              Hierarchy/SSA enrichment. If enrichment fails, warns,
                              publishes the AST graph, and records precise_fallback.
-                             AI worktree directories (.claude, .cursor, .agents) and
-                             files/directories listed in .gitignore are automatically skipped.
-  stale                      Check if graph.json is older than Go source files (shows newest source time/file).
+                             Inactive build-constrained files, cmd/go wildcard-excluded
+                             directories, generated sources, go.mod ignore paths, AI
+                             worktrees, and Git-ignored paths are automatically skipped.
+  stale                      Check selected files, build context, and modification times.
                              Agents should run this before structural analysis.
   stats                      Compact index health summary: schema version, build
                              timestamp, and counts of packages, files, symbols,
@@ -2082,15 +2142,21 @@ func runStale() int {
 	}
 	sr := search.Stale(g, graphRoot(g))
 	if jsonMode {
-		return PrintJSON(okEnvelope("stale", "", sr, len(sr.ChangedFiles)))
+		return PrintJSON(okEnvelope("stale", "", sr, sr.ChangeCount()))
 	}
 	if !sr.IsStale {
 		fmt.Printf("Graph is up to date (generated: %s).\n", sr.GraphAge)
 		return 0
 	}
-	fmt.Printf("Graph is STALE (generated: %s). %d file(s) changed:\n", sr.GraphAge, len(sr.ChangedFiles))
-	for _, f := range sr.ChangedFiles {
-		fmt.Printf("  %s\n", f)
+	fmt.Printf("Graph is STALE (generated: %s).\n", sr.GraphAge)
+	if sr.BuildContextChanged {
+		fmt.Println("  effective Go build context changed")
+	}
+	if len(sr.ChangedFiles) > 0 {
+		fmt.Printf("  %d selected file(s) changed:\n", len(sr.ChangedFiles))
+		for _, f := range sr.ChangedFiles {
+			fmt.Printf("    %s\n", f)
+		}
 	}
 	fmt.Println("Run `gograph build .` to refresh.")
 	return 0

@@ -27,6 +27,9 @@ func TestLegacyV2GraphDefaultsToASTPrecisionAndLineOnlyCalls(t *testing.T) {
 	if g.Build.PreciseRequested() {
 		t.Fatal("legacy graph unexpectedly requests precise refresh")
 	}
+	if g.Build.BuildContextFingerprint != "" {
+		t.Fatalf("legacy graph fingerprint = %q, want empty", g.Build.BuildContextFingerprint)
+	}
 	if len(g.Calls) != 1 || g.Calls[0].Column != 0 || g.Calls[0].Synthetic {
 		t.Fatalf("legacy call provenance = %#v, want line-only ordinary call", g.Calls)
 	}
@@ -35,7 +38,7 @@ func TestLegacyV2GraphDefaultsToASTPrecisionAndLineOnlyCalls(t *testing.T) {
 func TestOptionalPrecisionAndCallProvenanceMetadataRemainAdditive(t *testing.T) {
 	g := Graph{
 		Version: Version,
-		Build:   &BuildMetadata{Complete: true, Precision: PrecisionPrecise},
+		Build:   &BuildMetadata{Complete: true, Precision: PrecisionPrecise, BuildContextFingerprint: "selection-v1"},
 		Calls: []CallEdge{{
 			CallerName: "Run",
 			CalleeRaw:  "Delete",
@@ -50,7 +53,7 @@ func TestOptionalPrecisionAndCallProvenanceMetadataRemainAdditive(t *testing.T) 
 		t.Fatal(err)
 	}
 	text := string(encoded)
-	for _, field := range []string{`"precision":"precise"`, `"column":21`, `"synthetic":true`} {
+	for _, field := range []string{`"precision":"precise"`, `"build_context_fingerprint":"selection-v1"`, `"column":21`, `"synthetic":true`} {
 		if !strings.Contains(text, field) {
 			t.Fatalf("encoded graph missing %s: %s", field, text)
 		}

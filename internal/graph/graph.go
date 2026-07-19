@@ -48,12 +48,16 @@ type Graph struct {
 // are independent: a complete AST graph may have PrecisionFallback when the
 // optional type-checked enrichment could not run.
 type BuildMetadata struct {
-	ScannedFiles int            `json:"scanned_files"`
-	ParsedFiles  int            `json:"parsed_files"`
-	Complete     bool           `json:"complete"`
-	Precision    PrecisionMode  `json:"precision,omitempty"`
-	Failures     []BuildFailure `json:"failures,omitempty"`
-	Warnings     []string       `json:"warnings,omitempty"`
+	ScannedFiles int           `json:"scanned_files"`
+	ParsedFiles  int           `json:"parsed_files"`
+	Complete     bool          `json:"complete"`
+	Precision    PrecisionMode `json:"precision,omitempty"`
+	// BuildContextFingerprint hashes effective build and module-selection
+	// inputs, including nested module boundaries. The historical JSON field
+	// name is retained for schema-v2 compatibility.
+	BuildContextFingerprint string         `json:"build_context_fingerprint,omitempty"`
+	Failures                []BuildFailure `json:"failures,omitempty"`
+	Warnings                []string       `json:"warnings,omitempty"`
 }
 
 // PrecisionMode records both the requested analysis strength and its outcome.

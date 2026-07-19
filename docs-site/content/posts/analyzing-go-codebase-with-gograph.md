@@ -330,7 +330,7 @@ Install the static analysis utility using Homebrew:
 brew install ozgurcd/tap/gograph
 ```
 
-Alternatively, install directly from source (Go 1.26+):
+Alternatively, install directly from source (Go 1.26.5+):
 
 ```bash
 go install github.com/ozgurcd/gograph/cmd/gograph@latest

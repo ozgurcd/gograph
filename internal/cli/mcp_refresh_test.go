@@ -148,6 +148,57 @@ func Purge(store Store) error { return store.Delete("key") }
 	}
 }
 
+func TestGraphRefresherRebuildsWhenIndexedFileBecomesInactive(t *testing.T) {
+	setDeterministicBuildEnvironment(t, "")
+	root := t.TempDir()
+	writeBuildContextFixture(t, root, "go.mod", "module example.com/inactive-refresh\n\ngo 1.26\n")
+	writeBuildContextFixture(t, root, "keep.go", "package refresh\nfunc KeepAfterRefresh() {}\n")
+	toggledPath := writeBuildContextFixture(t, root, "toggled.go", "package refresh\nfunc RemovedAfterConstraint() {}\n")
+
+	initial, err := buildPreciseGraph(root)
+	if err != nil {
+		skipCoverageCacheFallback(t, initial)
+		t.Fatal(err)
+	}
+	preciseBuilds := 0
+	refresh := graphRefresher(
+		initial,
+		root,
+		func(string) (*graph.Graph, error) { t.Fatal("unexpected AST build"); return nil, nil },
+		func(root string) (*graph.Graph, error) {
+			preciseBuilds++
+			return buildPreciseGraph(root)
+		},
+	)
+
+	if err := os.WriteFile(toggledPath, []byte("//go:build ignore\n\npackage refresh\nfunc RemovedAfterConstraint() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	older := initial.GeneratedAt.Add(-time.Minute)
+	if err := os.Chtimes(toggledPath, older, older); err != nil {
+		t.Fatal(err)
+	}
+
+	refreshed, err := refresh()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preciseBuilds != 1 || refreshed.Build.EffectivePrecision() != graph.PrecisionPrecise {
+		t.Fatalf("active-to-inactive change did not rebuild precisely once: builds=%d precision=%s", preciseBuilds, refreshed.Build.EffectivePrecision())
+	}
+	for _, symbol := range refreshed.Symbols {
+		if symbol.Name == "RemovedAfterConstraint" {
+			t.Fatalf("inactive symbol remained in refreshed graph: %+v", symbol)
+		}
+	}
+	if _, err := refresh(); err != nil {
+		t.Fatal(err)
+	}
+	if preciseBuilds != 1 {
+		t.Fatalf("stable refreshed graph rebuilt again: builds=%d", preciseBuilds)
+	}
+}
+
 func TestGraphRefresherRetriesRequestedPrecisionAfterFallback(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "main.go")
