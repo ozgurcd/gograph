@@ -196,7 +196,10 @@ func TestBuildAllVerifyAllAndSmokeNative(t *testing.T) {
 	if testing.Short() {
 		t.Skip("cross-compiles all release targets")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	// Cold CI runners cross-compile all six targets while other package tests
+	// may be doing the same work. Keep a hard bound without making 3 minutes a
+	// hidden performance requirement for release-bundle verification.
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	output := t.TempDir()
 	artifacts, err := BuildAll(ctx, repositoryRoot(t), output, testVersion)
