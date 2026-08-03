@@ -51,8 +51,8 @@ func TestRunStaleJSONContextOnlyUsesNonEmptyEnvelope(t *testing.T) {
 	os.Stdout = writer
 	defer func() { os.Stdout = originalStdout }()
 
-	if code := runStale(); code != 0 {
-		t.Fatalf("runStale exit code = %d, want 0", code)
+	if code := runStale(); code != exitStale {
+		t.Fatalf("runStale exit code = %d, want %d", code, exitStale)
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)

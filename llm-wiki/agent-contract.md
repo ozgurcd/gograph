@@ -2,7 +2,7 @@
 title: Agent Workflow Contract
 type: workflow
 status: current
-updated: 2026-07-12
+updated: 2026-08-03
 sources:
   - SRC-20260614-gograph-legacy-agent-contract
 ---
@@ -26,7 +26,7 @@ Skipping planning or review degrades the session compliance grade, but a high gr
 
 Before modifying Go code:
 
-- Ensure the graph is fresh with `gograph stale`; rebuild if needed.
+- Ensure the graph is fresh with `gograph stale`: exit `0` means current, `2` is the expected rebuild signal, and `1` is an operational or JSON serialization failure. In shell automation, especially under `set -e`, branch explicitly on `2` rather than treating every non-zero status as stale.
 - Run `gograph stats` and inspect `build_status` and `precision`.
 - Run `gograph plan <symbol>` to inspect indexed targets, risk factors, routes, environment reads, and statically mapped tests.
 - Run `gograph context <symbol>` to view the declaration and retained caller/callee evidence.

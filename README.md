@@ -80,7 +80,7 @@ of evidence):*
 
 **Native MCP Server** — every query and analysis capability has an MCP endpoint for Claude, Cursor, Copilot, and other MCP clients. Host integration and CI artifact commands (`build`, `gate`, `snapshot`, plugin/hook installation, server startup, help, and version) remain CLI-only.
 
-**Explicit Freshness Model** — CLI analysis reads the last persisted graph. MCP source-analysis tools check freshness per call, adopt a newer persisted precise graph, and rebuild in memory after edits using the latest requested analysis mode. MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot.
+**Explicit Freshness Model** — CLI analysis reads the last persisted graph. `gograph stale` is a tri-state predicate in text and JSON modes: exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error. MCP source-analysis tools check freshness per call, adopt a newer persisted precise graph, and rebuild in memory after edits using the latest requested analysis mode. MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot.
 
 **Compact Composite Workflows** — `context`, `plan`, and `explain` combine source and graph evidence that would otherwise require several separate queries. Actual tool-call and token savings depend on the repository and task.
 

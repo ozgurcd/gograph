@@ -116,7 +116,7 @@ parse_failures: 0
 gograph stale
 ```
 
-Compares the current selected-file inventory, effective Go build context, and source modification times with `graph.json`. It uses the same build-constraint and ignore policy as `build`, and all filesystem-backed commands resolve the repository root recorded in the graph, so it works identically from subdirectories. Rebuild when it reports any freshness change.
+Compares the current selected-file inventory, effective Go build context, and source modification times with `graph.json`. It uses the same build-constraint and ignore policy as `build`, and all filesystem-backed commands resolve the repository root recorded in the graph, so it works identically from subdirectories. Exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error; text and `--json` modes use the same contract. Rebuild only for status `2`.
 
 ## Step 3 — Run repository-wide queries
 

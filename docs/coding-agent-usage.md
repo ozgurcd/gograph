@@ -250,7 +250,28 @@ from an HTTP handler to a SQL call without first reading every intermediate
 file. It does not prove that the path executes at runtime.
 
 ### 9. Graph freshness check
-`gograph stale` compares the selected-file inventory, effective Go build context, and source modification times with the persisted graph. It detects added, deleted, newly inactive, and newly active source files even when timestamps alone cannot. It displays the graph age, the newest selected source file, changed files, and whether the build context changed, then tells the agent to re-run `gograph build .` when needed. It uses the root recorded in `graph.json`, so results are identical from repository subdirectories. Agents should run this before any structural analysis.
+`gograph stale` compares the selected-file inventory, effective Go build context, and source modification times with the persisted graph. It detects added, deleted, newly inactive, and newly active source files even when timestamps alone cannot. It displays the graph age, changed files, and whether the build context changed, then tells the agent to re-run `gograph build .` when needed. It uses the root recorded in `graph.json`, so results are identical from repository subdirectories. Agents should run this before any structural analysis.
+
+The command uses the same tri-state exit contract in text and JSON modes: `0`
+means the graph is current, `2` means it is stale, and `1` means an operational
+or JSON serialization error. Exit `2` is an expected freshness result, not a failed check.
+Scripts—especially those using `set -e`—must branch explicitly:
+
+```sh
+set -e
+if gograph stale; then
+  echo "Graph is current."
+else
+  status=$?
+  case "$status" in
+    2) gograph build . ;;
+    *) exit "$status" ;;
+  esac
+fi
+```
+
+Avoid `gograph stale || gograph build .`: that also rebuilds after exit `1` and
+can mask a real freshness-check failure.
 
 ### 10. Reading Internal Implementations (Mock Stubs, Algorithms)
 When you need to read an indexed method body (for example, to check whether a

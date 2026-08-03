@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -14,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ozgurcd/gograph/internal/cli"
 )
@@ -425,6 +427,99 @@ func TestAllCommandsRegistered(t *testing.T) {
 	if len(extra) > 0 {
 		sort.Strings(extra)
 		t.Errorf("the following cases exist in Run() but are NOT in the canonical want list in this test:\n  %v\nAdd them to the want slice above.", extra)
+	}
+}
+
+func TestStaleExitCodes(t *testing.T) {
+	root, bin := setupGraphFixture(t)
+
+	cmd := exec.Command(bin, "stale")
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("gograph stale (up to date): %v\n%s", err, out)
+	}
+
+	mainGo := filepath.Join(root, "main.go")
+	future := time.Now().Add(time.Hour)
+	if err := os.Chtimes(mainGo, future, future); err != nil {
+		t.Fatalf("mark main.go newer: %v", err)
+	}
+
+	cmd = exec.Command(bin, "stale")
+	cmd.Dir = root
+	out, err = cmd.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+		t.Fatalf("gograph stale (stale graph): expected exit 2, got %v\n%s", err, out)
+	}
+	cmd = exec.Command(bin, "stale", "--json")
+	cmd.Dir = root
+	out, err = cmd.CombinedOutput()
+	exitErr = nil
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+		t.Fatalf("gograph stale --json (stale graph): expected exit 2, got %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "\"schema_version\"") || !strings.Contains(string(out), "\"command\": \"stale\"") {
+		t.Fatalf("gograph stale --json: expected JSON output, got:\n%s", out)
+	}
+
+	noGraphDir := t.TempDir()
+	cmd = exec.Command(bin, "stale")
+	cmd.Dir = noGraphDir
+	out, err = cmd.CombinedOutput()
+	exitErr = nil
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("gograph stale (missing graph): expected exit 1, got %v\n%s", err, out)
+	}
+}
+
+func TestStaleExitCodeIsSuccessfulSessionTelemetry(t *testing.T) {
+	root, bin := setupGraphFixture(t)
+
+	cmd := exec.Command(bin, "session", "create", "staleexit")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("create session: %v\n%s", err, out)
+	}
+
+	mainGo := filepath.Join(root, "main.go")
+	future := time.Now().Add(time.Hour)
+	if err := os.Chtimes(mainGo, future, future); err != nil {
+		t.Fatalf("mark main.go newer: %v", err)
+	}
+
+	cmd = exec.Command(bin, "stale")
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+		t.Fatalf("gograph stale: expected exit 2, got %v\n%s", err, out)
+	}
+
+	cmd = exec.Command(bin, "session", "end")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("end session: %v\n%s", err, out)
+	}
+
+	cmd = exec.Command(bin, "--json", "session", "audit")
+	cmd.Dir = root
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("audit session: %v\n%s", err, out)
+	}
+	var report struct {
+		TotalCommands int     `json:"total_commands"`
+		SuccessCount  int     `json:"success_count"`
+		FailureCount  int     `json:"failure_count"`
+		SuccessRate   float64 `json:"success_rate"`
+	}
+	if err := json.Unmarshal(out, &report); err != nil {
+		t.Fatalf("decode session audit: %v\n%s", err, out)
+	}
+	if report.TotalCommands != 1 || report.SuccessCount != 1 || report.FailureCount != 0 || report.SuccessRate != 100 {
+		t.Fatalf("unexpected stale telemetry audit: %+v", report)
 	}
 }
 

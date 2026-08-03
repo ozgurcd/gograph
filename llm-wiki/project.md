@@ -2,7 +2,7 @@
 title: Project Identity and Architecture
 type: project
 status: current
-updated: 2026-07-18
+updated: 2026-08-03
 sources:
   - SRC-20260614-gograph-legacy-project
 ---
@@ -22,6 +22,8 @@ The executable Go package is `github.com/ozgurcd/gograph/cmd/gograph`. First-run
 Default builds produce an AST graph and tolerate partial parsing when at least one Go file succeeds. `BuildMetadata.Precision` records `ast`, `precise`, or `precise_fallback`; this is independent of complete/partial AST build health. Precise builds attempt go/packages type loading plus CHA/SSA. Missing indexed production files or type/load errors retain the AST graph and record a visible fallback instead of claiming precise success. `gograph stats` and MCP stats expose both precision and build health. `gate` fails closed for stale source, but it does not currently reject a fresh graph whose build metadata is incomplete; CI workflows that require complete coverage must check build health explicitly.
 
 Scanner file selection and `go/packages` share one cmd/go-resolved build configuration: GOOS/GOARCH, cgo, compiler, user and GOFLAGS tags, tool tags, and release tags. Active constrained tests remain indexed; inactive constraints, generated files, cmd/go wildcard-excluded directories, go.mod ignore paths, and Git-ignored paths do not enter any graph records. The persisted selection fingerprint includes the selected source inventory plus build and module-selection state, so freshness checks detect tag/platform changes, module-boundary changes, active/inactive transitions, additions, and deletions.
+
+`gograph stale` is a tri-state freshness predicate in both text and JSON modes: exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error. Exit `2` is an expected freshness result and is recorded as successful session telemetry. Shell automation must distinguish `2` from `1`, especially under `set -e`, so genuine failures are not mistaken for rebuild requests.
 
 ## Precise call-graph representation
 

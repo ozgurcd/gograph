@@ -104,6 +104,10 @@
 
 ### CLI/MCP Contract
 
+- `gograph stale` now uses a tri-state exit contract in text and JSON modes:
+  `0` when the graph is current, `2` when it is stale, and `1` for operational
+  or JSON serialization errors. Automation—especially `set -e` scripts—must branch
+  explicitly on `2` so genuine errors are not treated as rebuild requests.
 - MCP callers/callees now expose CLI-equivalent depth and test filtering; callers/context expose exact matching; errors exposes test filtering; endpoint exposes test-edge inclusion.
 - Added `gograph_boundaries_create`, the MCP equivalent of CLI `boundaries --create`, with mutating/non-idempotent annotations and repository-root path containment.
 - `gograph_capabilities` now lists every live registered tool, including flow, trace, diagram, check, and boundary creation. A regression test compares the payload to the exact server registry (65 endpoints total).

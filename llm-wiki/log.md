@@ -290,3 +290,11 @@ Normalized the security-flow page link into the index's Schemas and Security sec
 ## [2026-07-18] maintenance | Close build-context log formatting
 
 - Consumed the governed append's trailing blank line as this entry's separator; no project facts changed.
+## [2026-08-03] maintenance | Complete strict stale exit contract
+
+- Reconciled PR #26 with current `main` without rebasing or discarding newer build-context freshness behavior.
+- Made `gograph stale` return `0` when current, `2` when stale, and `1` for operational or JSON serialization errors in both text and JSON modes.
+- Preserved JSON output failure precedence and classified the expected stale result as successful session telemetry.
+- Added regression coverage for text/JSON exit codes, build-context-only staleness, JSON failure precedence, subdirectory behavior, and session audit accounting.
+- Updated CLI help, user documentation, release notes, and the durable agent workflow contract, including safe `set -e` handling.
+- Verification passed: focused and full tests, race detector, vet, Staticcheck, GolangCI-Lint, govulncheck, coverage, fuzzing, Hugo, precise gograph review, and the CI-equivalent MCPB build/verify/smoke workflow.

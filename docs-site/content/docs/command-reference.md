@@ -24,9 +24,19 @@ The scanner honors the effective Go build context, including build tags, platfor
 
 ### stale
 ```bash
-gograph stale
+gograph stale [--json]
 ```
 Compares the selected-file inventory, effective Go build context, and source modification times with `.gograph/graph.json`. It reports added, deleted, newly active, newly inactive, and modified selected files plus build-context changes.
+
+Text and JSON modes use the same exit contract:
+
+- `0`: the graph is current
+- `2`: the graph is stale and should be rebuilt
+- `1`: an operational or JSON serialization error occurred
+
+When using `set -e`, put the command in an `if` condition and branch explicitly
+on status `2`. Do not use `gograph stale || gograph build .`, because that also
+rebuilds on status `1` and can hide the original error.
 
 ### stats
 ```bash

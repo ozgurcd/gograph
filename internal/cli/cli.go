@@ -44,6 +44,12 @@ const configFile = ".gograph/graph-config.md"
 const concFile = ".gograph/graph-concurrency.md"
 const testsFile = ".gograph/graph-tests.md"
 
+const (
+	exitSuccess = 0
+	exitError   = 1
+	exitStale   = 2
+)
+
 // Version is set at build time via -ldflags; defaults to "dev" for local builds.
 var Version = "dev"
 
@@ -151,14 +157,18 @@ func Run(args []string) int {
 
 	// Log command telemetry
 	if args[0] != "session" && args[0] != "--session" && args[0] != "mcp" {
-		status := "success"
-		if exitCode != 0 {
-			status = "failure"
-		}
+		status := commandTelemetryStatus(args[0], exitCode)
 		_ = session.LogCommand(args[0], args[1:], intention, elapsed, status)
 	}
 
 	return exitCode
+}
+
+func commandTelemetryStatus(command string, exitCode int) string {
+	if exitCode == exitSuccess || (command == "stale" && exitCode == exitStale) {
+		return "success"
+	}
+	return "failure"
 }
 
 // dispatch routes subcommands to their implementation.
@@ -343,7 +353,8 @@ when available; outside Git, the build target .gitignore is used.
 If no Go files are found, or none can be parsed, build exits before replacing artifacts.
 Partial builds record failed files in graph.json for machine-readable health checks.
   gograph stats   → counts plus complete/partial build and ast/precise/fallback status
-  gograph stale   → checks source selection, build context, and modification times
+  gograph stale   → checks source selection, build context, and modification times;
+                    exits 0 (up to date), 1 (error), or 2 (stale)
 
 CLI queries use this persisted snapshot, so rebuild whenever source files change.
 The MCP server checks source freshness and newer persisted graphs per call. After
@@ -458,7 +469,8 @@ Know these before trusting results:
                         symbol name, not route string.
   impact / skeleton     can produce very large output on hotspot symbols or large repos.
                         Use callers --depth N for bounded traversal instead of impact.
-  CLI results           reflect graph.json at last build. Run 'gograph stale' first.
+  CLI results           reflect graph.json at last build. Run 'gograph stale' first;
+                        exit status encodes result (0 = up to date, 1 = error, 2 = stale).
   MCP analysis          checks source freshness and newer graph.json artifacts per call;
                         edits preserve/retry the requested precision. stale/default
                         changes/stats inspect persisted graph.json.
@@ -476,6 +488,7 @@ build . [--precise]  : parse AST, atomically write graph.json + reports to .gogr
                        Honors Go build constraints and cmd/go package-directory rules;
                        skips generated, module-ignored, and Git-ignored sources.
 stale                : check source selection, build context, and modification times
+                       exit 0 = up to date, 1 = error, 2 = stale
 stats                : schema/build/precision health, parse failures, and symbol/call/route counts
 
 QUERY COMMANDS:
@@ -1741,6 +1754,8 @@ INDEXING
                              directories, generated sources, go.mod ignore paths, AI
                              worktrees, and Git-ignored paths are automatically skipped.
   stale                      Check selected files, build context, and modification times.
+                             Exit 0 when current, 2 when stale, and 1 on error;
+                             --json uses the same exit contract.
                              Agents should run this before structural analysis.
   stats                      Compact index health summary: schema version, build
                              timestamp, and counts of packages, files, symbols,
@@ -2138,15 +2153,18 @@ func runStale() int {
 			return PrintJSON(errEnvelope("stale", err.Error()))
 		}
 		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitError
 	}
 	sr := search.Stale(g, graphRoot(g))
 	if jsonMode {
-		return PrintJSON(okEnvelope("stale", "", sr, sr.ChangeCount()))
+		return staleJSONExitCode(
+			PrintJSON(okEnvelope("stale", "", sr, sr.ChangeCount())),
+			sr.IsStale,
+		)
 	}
 	if !sr.IsStale {
 		fmt.Printf("Graph is up to date (generated: %s).\n", sr.GraphAge)
-		return 0
+		return exitSuccess
 	}
 	fmt.Printf("Graph is STALE (generated: %s).\n", sr.GraphAge)
 	if sr.BuildContextChanged {
@@ -2159,7 +2177,17 @@ func runStale() int {
 		}
 	}
 	fmt.Println("Run `gograph build .` to refresh.")
-	return 0
+	return exitStale
+}
+
+func staleJSONExitCode(printCode int, isStale bool) int {
+	if printCode != exitSuccess {
+		return exitError
+	}
+	if isStale {
+		return exitStale
+	}
+	return exitSuccess
 }
 
 func runStats() int {
