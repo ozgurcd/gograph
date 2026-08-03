@@ -9,6 +9,7 @@
 - [agent-contract.md](agent-contract.md) — Workflow lifecycle, checklists, tool matrices, and auditing.
 - [agent-rules.md](agent-rules.md) — Workflow guidelines and rules for development.
 - [scrinium-guide.md](scrinium-guide.md) — Reference guide for using Scrinium.
+- [mcp-registry.md](mcp-registry.md) — Official MCP Registry identity, MCPB representation, release invariants, and preview limits.
 
 ## Generated Reports (rebuilt dynamically)
 
@@ -43,6 +44,8 @@
 - [sources/SRC-20260614-gograph-legacy-concurrency.md](sources/SRC-20260614-gograph-legacy-concurrency.md) — Source summary for legacy concurrency primitives report.
 - [sources/SRC-20260614-gograph-legacy-hotspots.md](sources/SRC-20260614-gograph-legacy-hotspots.md) — Source summary for legacy hotspots report.
 - [sources/SRC-20260614-gograph-legacy-api-surface.md](sources/SRC-20260614-gograph-legacy-api-surface.md) — Source summary for legacy API surface report.
+- [sources/SRC-20260712-mcp-registry-spec.md](sources/SRC-20260712-mcp-registry-spec.md) — Pinned official Registry publishing specification.
+- [sources/SRC-20260712-mcpb-spec.md](sources/SRC-20260712-mcpb-spec.md) — Pinned official MCPB 2.1.2 specification.
 
 ## Workflows
 

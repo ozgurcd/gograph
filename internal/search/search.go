@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
@@ -31,11 +32,12 @@ type Result struct {
 	Detail string `json:"detail,omitempty"`
 	Score  int    `json:"-"` // internal ranking only, not serialised
 
-	// CallSiteFile and CallSiteLine carry the exact location of the call
+	// CallSiteFile, CallSiteLine, and CallSiteColumn carry the location of the call
 	// expression that produced this result (callers/callees). Empty for
 	// non-call results. This is the provenance field.
-	CallSiteFile string `json:"call_site_file,omitempty"`
-	CallSiteLine int    `json:"call_site_line,omitempty"`
+	CallSiteFile   string `json:"call_site_file,omitempty"`
+	CallSiteLine   int    `json:"call_site_line,omitempty"`
+	CallSiteColumn int    `json:"call_site_column,omitempty"`
 }
 
 // String returns a compact human-readable representation.
@@ -47,6 +49,9 @@ func (r Result) String() string {
 	provenance := ""
 	if r.CallSiteFile != "" {
 		provenance = fmt.Sprintf(" [call @ %s:%d]", r.CallSiteFile, r.CallSiteLine)
+		if r.CallSiteColumn > 0 {
+			provenance = fmt.Sprintf(" [call @ %s:%d:%d]", r.CallSiteFile, r.CallSiteLine, r.CallSiteColumn)
+		}
 	}
 	if r.Detail != "" {
 		return fmt.Sprintf("[%s] %s — %s  (%s)%s", r.Kind, r.Name, r.Detail, loc, provenance)
@@ -107,6 +112,9 @@ func Query(g *graph.Graph, terms []string) []Result {
 		}
 	}
 	for _, c := range g.Calls {
+		if c.Synthetic {
+			continue
+		}
 		if match(c.CalleeRaw) > 0 {
 			add(Result{Kind: "call", Name: c.CalleeRaw, File: c.File, Line: c.Line, Detail: "called by " + c.CallerName, Score: 1})
 		}
@@ -164,10 +172,12 @@ func Node(g *graph.Graph, name string) []Result {
 // exactly against CallEdge.CalleeSymbolID — this disambiguates (*A).Validate
 // from (*B).Validate when both exist. Short names (e.g. "Validate") fall back
 // to case-insensitive substring matching against CalleeRaw, preserving the
-// fuzzy UX users rely on for casual queries.
+// fuzzy UX users rely on for casual queries. Interface.Method queries are
+// expanded through Graph.Implements to every concrete method target retained by
+// precise CHA; parallel target edges are collapsed to one source call-site row.
 func Callers(g *graph.Graph, name string, includeTests bool, exactMatch bool) []Result {
 	nl := strings.ToLower(name)
-	fqQuery := isFullyQualifiedID(name)
+	resolvedTargets, interfaceMethodQuery := resolvedCallTargetIDs(g, name)
 	callerSymbols := make(map[string]graph.SymbolNode)
 	for _, s := range g.Symbols {
 		callerSymbols[s.ID] = s
@@ -175,7 +185,10 @@ func Callers(g *graph.Graph, name string, includeTests bool, exactMatch bool) []
 
 	targetSymbols := FindSymbols(g, name)
 	matchesCallee := func(c graph.CallEdge) bool {
-		if fqQuery && c.CalleeSymbolID == name {
+		if interfaceMethodQuery {
+			return resolvedTargets[c.CalleeSymbolID]
+		}
+		if c.CalleeSymbolID != "" && resolvedTargets[c.CalleeSymbolID] {
 			return true
 		}
 		for _, ts := range targetSymbols {
@@ -197,17 +210,27 @@ func Callers(g *graph.Graph, name string, includeTests bool, exactMatch bool) []
 
 	// Collect all matching call edges (one per unique call site).
 	type siteKey struct {
-		id, callFile string
-		callLine     int
+		callerIdentity string
+		callFile       string
+		callLine       int
+		callColumn     int
+		calleeRaw      string
 	}
 	seen := make(map[siteKey]bool)
 	var results []Result
 	for _, c := range g.Calls {
+		if c.Synthetic {
+			continue
+		}
 		if !includeTests && isTestFile(c.File) {
 			continue
 		}
 		if matchesCallee(c) {
-			k := siteKey{c.CallerSymbolID, c.File, c.Line}
+			callerIdentity := c.CallerSymbolID
+			if callerIdentity == "" {
+				callerIdentity = c.CallerName
+			}
+			k := siteKey{callerIdentity: callerIdentity, callFile: c.File, callLine: c.Line, callColumn: c.Column, calleeRaw: c.CalleeRaw}
 			if seen[k] {
 				continue
 			}
@@ -236,13 +259,14 @@ func Callers(g *graph.Graph, name string, includeTests bool, exactMatch bool) []
 			}
 
 			results = append(results, Result{
-				Kind:         "caller",
-				Name:         c.CallerName,
-				File:         file,
-				Line:         line,
-				Detail:       detail,
-				CallSiteFile: c.File,
-				CallSiteLine: c.Line,
+				Kind:           "caller",
+				Name:           c.CallerName,
+				File:           file,
+				Line:           line,
+				Detail:         detail,
+				CallSiteFile:   c.File,
+				CallSiteLine:   c.Line,
+				CallSiteColumn: c.Column,
 			})
 		}
 	}
@@ -277,12 +301,38 @@ func Callees(g *graph.Graph, name string, includeTests bool, exactMatch bool) []
 		}
 	}
 
+	type siteKey struct {
+		callerIdentity string
+		callFile       string
+		callLine       int
+		callColumn     int
+		calleeRaw      string
+	}
+	seen := make(map[siteKey]bool)
 	var results []Result
 	for _, c := range g.Calls {
+		if c.Synthetic {
+			continue
+		}
 		if !includeTests && isTestFile(c.File) {
 			continue
 		}
 		if matchedIDs[c.CallerSymbolID] {
+			callerIdentity := c.CallerSymbolID
+			if callerIdentity == "" {
+				callerIdentity = c.CallerName
+			}
+			key := siteKey{
+				callerIdentity: callerIdentity,
+				callFile:       c.File,
+				callLine:       c.Line,
+				callColumn:     c.Column,
+				calleeRaw:      c.CalleeRaw,
+			}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
 			if !isSafePathSegment(c.File) || strings.Contains(c.File, "..") || strings.Contains(c.File, "\\") {
 				continue
 			}
@@ -301,13 +351,14 @@ func Callees(g *graph.Graph, name string, includeTests bool, exactMatch bool) []
 			}
 
 			results = append(results, Result{
-				Kind:         "callee",
-				Name:         c.CalleeRaw,
-				File:         c.File,
-				Line:         c.Line,
-				Detail:       detail,
-				CallSiteFile: c.File,
-				CallSiteLine: c.Line,
+				Kind:           "callee",
+				Name:           c.CalleeRaw,
+				File:           c.File,
+				Line:           c.Line,
+				Detail:         detail,
+				CallSiteFile:   c.File,
+				CallSiteLine:   c.Line,
+				CallSiteColumn: c.Column,
 			})
 		}
 	}
@@ -338,8 +389,10 @@ func CallersDepth(g *graph.Graph, name string, maxDepth int, includeTests bool, 
 		callerName     string
 		file           string
 		line           int
+		column         int
 		calleeNameLow  string
 		calleeSymbolID string
+		synthetic      bool
 	}
 	var allEdges []edge
 	for _, c := range g.Calls {
@@ -351,8 +404,10 @@ func CallersDepth(g *graph.Graph, name string, maxDepth int, includeTests bool, 
 			c.CallerName,
 			c.File,
 			c.Line,
+			c.Column,
 			strings.ToLower(c.CalleeRaw),
 			c.CalleeSymbolID,
+			c.Synthetic,
 		})
 	}
 
@@ -368,16 +423,23 @@ func CallersDepth(g *graph.Graph, name string, maxDepth int, includeTests bool, 
 	// seeds the name.
 	frontier := make(map[string]bool)
 	nl := strings.ToLower(name)
-	frontier[nl] = true
-	if isFullyQualifiedID(name) {
-		frontier[name] = true
+	resolvedTargets, interfaceMethodQuery := resolvedCallTargetIDs(g, name)
+	for targetID := range resolvedTargets {
+		frontier[targetID] = true
+	}
+	if !interfaceMethodQuery {
+		frontier[nl] = true
 	}
 	seen := make(map[string]bool) // seen caller symbol IDs across all depths
 	var results []Result
 
 	for depth := 1; depth <= maxDepth; depth++ {
+		frontier = expandForwardingTargets(g, frontier)
 		nextFrontier := make(map[string]bool)
 		for _, e := range allEdges {
+			if e.synthetic {
+				continue
+			}
 			// Match priority: exact ID > short-name substring.
 			matched := false
 			if e.calleeSymbolID != "" && frontier[e.calleeSymbolID] {
@@ -398,14 +460,15 @@ func CallersDepth(g *graph.Graph, name string, maxDepth int, includeTests bool, 
 				file, line = sym.File, sym.Line
 			}
 			results = append(results, Result{
-				Kind:         "caller",
-				Name:         e.callerName,
-				File:         file,
-				Line:         line,
-				Detail:       fmt.Sprintf("depth %d — calls %s", depth, e.calleeNameLow),
-				CallSiteFile: e.file,
-				CallSiteLine: e.line,
-				Score:        10 - depth,
+				Kind:           "caller",
+				Name:           e.callerName,
+				File:           file,
+				Line:           line,
+				Detail:         fmt.Sprintf("depth %d — calls %s", depth, e.calleeNameLow),
+				CallSiteFile:   e.file,
+				CallSiteLine:   e.line,
+				CallSiteColumn: e.column,
+				Score:          10 - depth,
 			})
 			// Push BOTH forms of the caller into the next frontier so the
 			// next hop matches edges keyed by either CalleeSymbolID (exact)
@@ -443,7 +506,6 @@ func CalleesDepth(g *graph.Graph, name string, maxDepth int, includeTests bool) 
 		maxDepth = 10
 	}
 
-	symByID := make(map[string]graph.SymbolNode)
 	// Multiple symbols can share the same short name (e.g., two unrelated
 	// types both have a Validate method). Tracking by lowercase name was
 	// last-write-wins, silently dropping all but one when resolving a
@@ -453,7 +515,6 @@ func CalleesDepth(g *graph.Graph, name string, maxDepth int, includeTests bool) 
 	// be reached) instead of the wrong direction (show one arbitrary path).
 	symByName := make(map[string][]string)
 	for _, s := range g.Symbols {
-		symByID[s.ID] = s
 		key := strings.ToLower(s.Name)
 		symByName[key] = append(symByName[key], s.ID)
 	}
@@ -484,42 +545,44 @@ func CalleesDepth(g *graph.Graph, name string, maxDepth int, includeTests bool) 
 	var results []Result
 
 	for depth := 1; depth <= maxDepth; depth++ {
+		frontier = expandForwardingCallees(g, frontier)
 		nextFrontier := make(map[string]bool)
 		for _, c := range g.Calls {
+			if c.Synthetic {
+				continue
+			}
 			if !includeTests && isTestFile(c.File) {
 				continue
 			}
 			if !frontier[c.CallerSymbolID] {
 				continue
 			}
-			calleeKey := strings.ToLower(c.CalleeRaw) + "|" + c.File + fmt.Sprintf("|%d", c.Line)
-			if seen[calleeKey] {
-				continue
+			calleeKey := strings.ToLower(c.CalleeRaw) + "|" + c.File + fmt.Sprintf("|%d|%d", c.Line, c.Column)
+			if !seen[calleeKey] {
+				seen[calleeKey] = true
+				results = append(results, Result{
+					Kind:           "callee",
+					Name:           c.CalleeRaw,
+					File:           c.File,
+					Line:           c.Line,
+					Detail:         fmt.Sprintf("depth %d — called by %s", depth, c.CallerName),
+					CallSiteFile:   c.File,
+					CallSiteLine:   c.Line,
+					CallSiteColumn: c.Column,
+					Score:          10 - depth,
+				})
 			}
-			seen[calleeKey] = true
-			results = append(results, Result{
-				Kind:         "callee",
-				Name:         c.CalleeRaw,
-				File:         c.File,
-				Line:         c.Line,
-				Detail:       fmt.Sprintf("depth %d — called by %s", depth, c.CallerName),
-				CallSiteFile: c.File,
-				CallSiteLine: c.Line,
-				Score:        10 - depth,
-			})
 			// Resolve callee to symbol IDs for the next frontier.
 			// Prefer the precise CalleeSymbolID (exact identity, no
 			// conflation). Fall back to name-resolution for legacy edges:
 			// same-named symbols across different receivers/packages all
 			// expand — see the symByName comment above.
 			if c.CalleeSymbolID != "" {
-				if _, isKnown := symByID[c.CalleeSymbolID]; isKnown {
-					nextFrontier[c.CalleeSymbolID] = true
-					continue
-				}
-				// CalleeSymbolID points at a symbol we don't have in the
-				// table (stdlib, third-party). Treat as a leaf — no
-				// expansion needed; the edge itself is already in results.
+				// Synthetic promoted-method wrappers have stable IDs without
+				// SymbolNodes. Keep every resolved ID in the next frontier;
+				// expandForwardingCallees transparently follows any wrapper
+				// forwarding edge before the next source-depth hop.
+				nextFrontier[c.CalleeSymbolID] = true
 				continue
 			}
 			calleeLower := strings.ToLower(c.CalleeRaw)
@@ -639,7 +702,7 @@ func Focus(g *graph.Graph, pkgName string) []Result {
 	calleeCounts := make(map[string]int)   // callee name → total call count
 	calleeSites := make(map[string]string) // callee name → representative caller
 	callerCounts := make(map[calleeKey]bool)
-	for _, c := range g.Calls {
+	for _, c := range sourceCallSites(g.Calls) {
 		if pkgFiles[c.File] {
 			if !isLikelyCallee(c.CalleeRaw) {
 				continue
@@ -1030,13 +1093,37 @@ func ImpactMultiple(g *graph.Graph, names []string, reason string, includeTests 
 	visitedIDs := make(map[string]bool)     // FQ-ID terms we've already searched
 	visitedTerms := make(map[string]bool)   // short-name terms we've already searched
 	visitedSymbols := make(map[string]bool) // caller symbols we've already requeued
+	enqueueID := func(id string) {
+		if id == "" {
+			return
+		}
+		expanded := expandTransparentCallerTargets(g, map[string]bool{id: true})
+		ids := make([]string, 0, len(expanded))
+		for targetID := range expanded {
+			if targetID != "" && !visitedIDs[targetID] {
+				ids = append(ids, targetID)
+			}
+		}
+		sort.Strings(ids)
+		for _, targetID := range ids {
+			visitedIDs[targetID] = true
+			queue = append(queue, frontierItem{id: targetID})
+		}
+	}
 
 	for _, name := range names {
+		resolvedTargets, interfaceMethodQuery := resolvedCallTargetIDs(g, name)
+		for targetID := range resolvedTargets {
+			enqueueID(targetID)
+		}
+		if interfaceMethodQuery {
+			// A resolved Interface.Method is identity-qualified. Falling back
+			// to its raw text would either miss receiver-variable calls such as
+			// value.Delete or conflate unrelated methods with the same name.
+			continue
+		}
 		if isFullyQualifiedID(name) {
-			if !visitedIDs[name] {
-				visitedIDs[name] = true
-				queue = append(queue, frontierItem{id: name})
-			}
+			enqueueID(name)
 		} else {
 			nl := strings.ToLower(name)
 			if !visitedTerms[nl] {
@@ -1054,6 +1141,9 @@ func ImpactMultiple(g *graph.Graph, names []string, reason string, includeTests 
 		queue = queue[1:]
 
 		for _, c := range g.Calls {
+			if c.Synthetic {
+				continue
+			}
 			if !includeTests && isTestFile(c.File) {
 				continue
 			}
@@ -1093,10 +1183,7 @@ func ImpactMultiple(g *graph.Graph, names []string, reason string, includeTests 
 			// set so two same-named symbols don't suppress one another.
 			if !visitedSymbols[sym.ID] {
 				visitedSymbols[sym.ID] = true
-				if !visitedIDs[sym.ID] {
-					visitedIDs[sym.ID] = true
-					queue = append(queue, frontierItem{id: sym.ID})
-				}
+				enqueueID(sym.ID)
 				nextTerm := strings.ToLower(sym.Name)
 				if !visitedTerms[nextTerm] {
 					visitedTerms[nextTerm] = true
@@ -1711,18 +1798,11 @@ func Untested(g *graph.Graph) []UntestedResult {
 		}
 	}
 
-	// Build caller count per symbol ID (non-test call sites only).
-	callerCount := make(map[string]int)
-	for _, c := range g.Calls {
-		if isTestFile(c.File) {
-			continue
-		}
-		if c.CalleeSymbolID != "" {
-			callerCount[c.CalleeSymbolID]++
-		} else {
-			callerCount[c.CalleeRaw]++
-		}
-	}
+	// Count distinct production source-target pairs. Synthetic promoted-method
+	// wrappers forward the real source call to the declared method body.
+	callerCountByID, callerCountByRaw := sourceTargetCallCounts(g.Calls, func(call graph.CallEdge) bool {
+		return !isTestFile(call.File)
+	})
 
 	// Build a name→packageName lookup for display.
 	pkgByID := make(map[string]string)
@@ -1745,9 +1825,9 @@ func Untested(g *graph.Graph) []UntestedResult {
 		}
 
 		// Must have at least one non-test caller.
-		count := callerCount[s.ID]
+		count := callerCountByID[s.ID]
 		if count == 0 {
-			count = callerCount[s.Name]
+			count = callerCountByRaw[s.Name]
 		}
 		if count == 0 {
 			continue

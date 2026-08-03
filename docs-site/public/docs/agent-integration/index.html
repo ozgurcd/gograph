@@ -5,9 +5,9 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <meta name="robots" content="index, follow">
-<title>AI Agent Integration &amp; Token Reduction | gograph – Go Codebase Analysis &amp; MCP Server</title>
+<title>AI Agent Integration | gograph – Go Codebase Analysis &amp; MCP Server</title>
 <meta name="keywords" content="">
-<meta name="description" content="Integrate gograph with Claude Code, Cursor, and Google Antigravity. Leverage MCP and semantic search to achieve massive token reduction and context savings.">
+<meta name="description" content="Integrate gograph&#39;s local structural graph with Claude Code, Cursor, Copilot, Antigravity, OpenCode, and other MCP clients.">
 <meta name="author" content="Ozgur Demir">
 <link rel="canonical" href="https://gograph.identuum.ai/docs/agent-integration/">
 <link crossorigin="anonymous" href="/assets/css/stylesheet.cd9298b33628769aa1bc1acebbbfd7aa11ce81dfe03484d479e1907760249a1d.css" integrity="sha256-zZKYszYodpqhvBrOu7/XqhHOgd/gNITUeeGQd2Akmh0=" rel="preload stylesheet" as="style">
@@ -69,15 +69,15 @@
         async src="//gc.zgo.at/count.js"></script>
 <meta property="og:url" content="https://gograph.identuum.ai/docs/agent-integration/">
   <meta property="og:site_name" content="gograph – Go Codebase Analysis & MCP Server">
-  <meta property="og:title" content="AI Agent Integration & Token Reduction">
-  <meta property="og:description" content="Integrate gograph with Claude Code, Cursor, and Google Antigravity. Leverage MCP and semantic search to achieve massive token reduction and context savings.">
+  <meta property="og:title" content="AI Agent Integration">
+  <meta property="og:description" content="Integrate gograph&#39;s local structural graph with Claude Code, Cursor, Copilot, Antigravity, OpenCode, and other MCP clients.">
   <meta property="og:locale" content="en_us">
   <meta property="og:type" content="article">
     <meta property="article:section" content="docs">
 
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="AI Agent Integration & Token Reduction">
-  <meta name="twitter:description" content="Integrate gograph with Claude Code, Cursor, and Google Antigravity. Leverage MCP and semantic search to achieve massive token reduction and context savings.">
+  <meta name="twitter:title" content="AI Agent Integration">
+  <meta name="twitter:description" content="Integrate gograph&#39;s local structural graph with Claude Code, Cursor, Copilot, Antigravity, OpenCode, and other MCP clients.">
 
 
 <script type="application/ld+json">
@@ -94,7 +94,7 @@
     {
       "@type": "ListItem",
       "position":  2 ,
-      "name": "AI Agent Integration \u0026 Token Reduction",
+      "name": "AI Agent Integration",
       "item": "https://gograph.identuum.ai/docs/agent-integration/"
     }
   ]
@@ -104,14 +104,14 @@
 {
   "@context": "https://schema.org",
   "@type": "BlogPosting",
-  "headline": "AI Agent Integration \u0026 Token Reduction",
-  "name": "AI Agent Integration \u0026 Token Reduction",
-  "description": "Integrate gograph with Claude Code, Cursor, and Google Antigravity. Leverage MCP and semantic search to achieve massive token reduction and context savings.",
+  "headline": "AI Agent Integration",
+  "name": "AI Agent Integration",
+  "description": "Integrate gograph's local structural graph with Claude Code, Cursor, Copilot, Antigravity, OpenCode, and other MCP clients.",
   "keywords": [
     
   ],
-  "articleBody": "gograph is built from the ground up to be an agent-first tool. While humans can query the CLI, the primary design target is AI coding agents (such as Claude Code, Cursor, Copilot, Google Antigravity, or OpenCode) that need accurate, structured repository intelligence without context-window inflation.\n🚫 The Problem: Unix Tools are Expensive \u0026 Blind In modern AI agent loops, models are highly habituated to using standard Unix text-processing commands (grep, find, sed) to understand and navigate code. For Go, this is an inefficient, token-expensive, and error-prone anti-pattern.\nGo’s unique structural features—such as implicit (duck-typed) interfaces, wrapping error chains, and package boundaries—cannot be solved by text patterns.\nWhy Generic Unix Tools Fail Agents: Massive Token Waste: A broad grep forces the model to ingest thousands of lines of search noise (test logs, mock code, comments) just to locate a single method caller. This rapidly consumes context windows and inflates API costs. Implicit Interfaces: In Go, a struct satisfies an interface implicitly (no implements keyword). To find what implements an interface using Unix tools, an agent must parse method sets and grep receivers across hundreds of files—a complex task that consumes thousands of context tokens and is highly prone to omission. Wrapped Errors: Go errors are often wrapped (fmt.Errorf(\"user not found: %w\", err)). The original error symbol and its bubble-up path are lost in string wrapping. Generic Unix tools cannot trace this structural relationship. Structural Blindness: grep matches comments, inactive mock files, test fixtures, and raw strings equally. Agents get overwhelmed by noise and are highly prone to hallucinating architectural relationships. ⚡ Comparative Analysis: Unix vs. gograph Real-World Production Impact In actual production evaluations conducted by development teams running 35 specialized Claude Code agents on large Go codebases, utilizing raw grep across 80+ endpoints resulted in a measured hallucination rate of ~12% on routine calls.\nWhen replacing generic text searches with gograph’s AST-accurate call graph and pruned context, the agent hallucination rate dropped to 2%.\nObjective The Unix Way (grep, find) The gograph Way Token Cost Comparison Accuracy Find callers of a method grep -rn \"Update\" . (Scans mocks, comments, other types) gograph callers UserStore.Update (AST-accurate call edges) Extremely high context footprint (model reads irrelevant source lines) vs. Minimal footprint (single-line caller symbols) ❌ High hallucination risk (~12% error)\n🎯 100% Structural Ground Truth (~2% error) Find interface implementers Multi-step grep searches of method receivers and receivers sets gograph implementers Connection (Duck-typing interface satisfaction) Massive context inflation (reading dozens of files to match signatures) vs. Minimal footprint (only concrete struct types) ❌ Highly prone to omissions\n🎯 100% Structural Ground Truth Trace wrapped errors Grepping for substring matches inside formatting blocks gograph errorflow \"invalid token\" (Reversed call graph BFS of %w wraps) High context inflation (scanning format strings across call paths) vs. Minimal footprint (structured error flow paths) ❌ Misses wrapping context\n🎯 100% Structural Ground Truth Concrete Workflow Example: Modifying a Struct Field Suppose an agent needs to add a required field to a struct named Config.\nThe Unix Way (Manual Grepping):\nAgent runs grep -rn \"type Config struct\" . to locate the type definition. Agent tries to locate every composite literal declaration to see where it is initialized: grep -rn \"Config{\" .. Because Config is a common word, it matches test utilities, local files, config parser variables, and external package docs. The agent is forced to inspect multiple different files manually to see if the block matches. Total cost: Massive token consumption, 5-10 sequential tool calls, high risk of missing initialization sites inside test suites. The gograph Way (Structural Call):\nAgent runs a single tool call: gograph literals Config gograph queries the AST database and returns the exact file, line, and code snippet of every composite literal initialization site (Config{...}) in milliseconds. Total cost: Extremely low token cost, 1 tool call, complete structural certainty. 🔬 Empirical Case Study: gograph Codebase Benchmark To verify these savings, we ran both generic Unix tools and gograph directly against the gograph repository itself (which consists of 16 Go packages, 70 Go files, 518 AST symbols, and 5,443 call edges).\nHere are the concrete, measured results:\nCase 1: Broad Symbol Queries An agent needs to locate symbols matching the word \"Symbol\".\nThe Unix Way (grep -rn \"Symbol\" .): Returns 842 matching lines from comments, markdown guides, local variables, and unrelated documentation blocks, completely flooding the context window. The gograph Way (gograph query Symbol): Returns exactly 83 structured results (only actual structs, functions, and active call edges), immediately filtering out 90% of search noise and saving massive token costs. Case 2: Tracking Callers of a Helper Function An agent needs to track callers of the function loadGraph.\nThe Unix Way (grep -rn \"loadGraph\" .): Returns 158 matching lines across comments, markdown docs, function declarations, and call expressions. The gograph Way (gograph callers loadGraph): Returns exactly 56 structural caller edges mapped precisely to their AST call sites. Case 3: Viewing Function Source Code An agent needs to read the definition of normalizeSymbolName.\nThe Unix Way: Agent greps for the declaration and then must call view_file to read the entire internal/search/advanced.go file (or guess line ranges). The gograph Way (gograph source normalizeSymbolName): Instantly returns exactly 12 lines of code containing only the clean function block. Model Context Protocol (MCP): Open \u0026 Client-Agnostic gograph implements a complete native Model Context Protocol server. Because MCP is an open-standard protocol, gograph is completely client-agnostic.\nAny editor, CLI wrapper, custom Python/Node script, or agent framework (such as LangChain, LlamaIndex, or AutoGPT) that supports standard MCP over stdio can connect to and leverage gograph out-of-the-box.\nStarting the Server (Standard I/O) To start the MCP JSON-RPC server over standard I/O:\ngograph mcp [path] If .gograph/graph.json does not exist when the server starts, it automatically runs gograph build first to ensure a completely frictionless, zero-barrier client connection.\n🛠️ Client Integration Examples Since the MCP server communicates over standard stdio streams, it plugs seamlessly into any compliant client environment. Here are configurations for several common developer setups:\n🧭 Cursor MCP Configuration To add gograph as an MCP server in Cursor:\nOpen Cursor Settings (Cmd + , or Ctrl + ,). Navigate to Features -\u003e MCP. Click + Add New MCP Server. Configure the fields: Name: gograph Type: command Command: gograph mcp (if not globally in PATH, specify the absolute path: /opt/homebrew/bin/gograph mcp) Click Save. Cursor will automatically start the background stdio session, parse the JSON schemas, and register every gograph capability as a native agent tool in Composer and Chat!\n🌊 Windsurf MCP Configuration To configure gograph inside the Windsurf IDE:\nAdd the following block to your global or workspace-local mcp_config.json file (typically located under ~/.codeium/windsurf/mcp_config.json):\n{ \"mcpServers\": { \"gograph\": { \"command\": \"gograph\", \"args\": [\"mcp\"], \"env\": {} } } } Save the file. Windsurf will instantly hot-reload the configuration and expose all gograph analytical features to the AI critic and coder loop!\n🤖 Claude Code Integration gograph includes native automation to integrate directly with Claude Code.\nAutomatic Plugin Installation Run the following command inside your Go repository:\ngograph add-claude-plugin This single command performs three critical setup steps:\nClaude Configuration: Registers the gograph mcp server under the local Claude desktop/CLI configuration. Workspace Steering: Configures or appends gograph rules to your repository’s CLAUDE.md to instruct the model to prefer gograph over general grep search. Pre-Tool-Use Hook Guard: Installs a Git hook that intercepts incoming tool calls. The Hook Guard: Blocking general grep AI agents are highly habituated to executing raw grep or find commands to look for code patterns. In large Go codebases, this causes two severe issues:\nHallucination: The agent gets overwhelmed by noise (mocks, test helpers, matches inside unexported package dependencies) and hallucinates. Token Waste: Grepping large chunks of source files blows up the context window. gograph solves this structurally with the Hook Guard:\n[Agent wants to run grep] │ ▼ .git/hooks/PreToolUse │ ▼ gograph hook-guard ◄── Intercepts symbol query │ ┌─────────┴─────────┐ │ │ ▼ (Generic grep) ▼ (Gograph equivalent) [BLOCKED] [ALLOWED] \"Use gograph instead\" If the agent tries to run grep -rn \"MyStruct\" ., the hook guard blocks the command with exit code 2 and returns a helpful message:\nBlocked: Do not use grep to look for Go symbols. Run gograph query MyStruct or gograph callers MyStruct instead for precise results.\nThis structurally forces the agent to use AST-accurate call graphs and dependency queries, dropping the hallucination rate from 12% to under 2%.\nWorkspace Steering Rules When add-claude-plugin runs, it adds these explicit directives to CLAUDE.md to keep the model on track:\n# Go Codebase Navigation Steering - NEVER use general bash `grep`, `find`, or `sed` to locate Go symbols, structs, or callers. - ALWAYS use the native gograph MCP tools (`gograph_query`, `gograph_callers`, `gograph_source`, etc.). - ALWAYS run `gograph_plan` prior to editing any symbol to discover downstream caller risks. - ALWAYS run `gograph_build` with `--precise` and run `gograph_review` after editing to verify test coverage. ",
-  "wordCount" : "1469",
+  "articleBody": "gograph is an agent-oriented static-analysis tool. Humans can use the CLI, while MCP clients such as Claude Code, Cursor, Copilot, Antigravity, and OpenCode can request the same structured repository evidence. Results follow the documented AST, precise-analysis, and heuristic limits; they are not runtime proof.\nText search, gopls, and gograph have different jobs rg, grep, and find are appropriate for literal text, documentation, configuration, generated content, and non-Go files. Text matching alone cannot resolve Go interface satisfaction or distinguish a call expression from a comment or string.\ngopls provides live compiler-backed workspace diagnostics, navigation, references, implementations, refactoring, and experimental MCP support. gograph complements it with persisted snapshots, repository-level graph analyses, composed change workflows, and policy gates.\nChoose the tool that matches the question:\nText and file search: use rg, grep, and find for literal or non-structural questions. Live Go semantics: use gopls for compiler-backed editor and workspace operations. Persisted repository analysis: use gograph for impact, reachability, routes, SQL, environment reads, security-flow candidates, and architecture policies. ⚡ Comparative Analysis: Unix vs. gograph Practical Impact Replacing broad text searches with AST-derived, symbol-focused responses reduces irrelevant context and tool round trips. Results remain static-analysis evidence rather than proof: dynamic dispatch, grouped routes, test attribution, and error flow have documented limits.\nObjective Text-search route (grep, find) The gograph route Typical output shape Analysis caveat Find callers of a method grep -rn \"Update\" . (Scans mocks, comments, other types) gograph callers UserStore.Update or gograph callers Repository.Update (AST-derived; interface-qualified queries use precise CHA targets) Broad source context vs. compact caller rows Default AST evidence; conservative multi-target CHA when precise Find interface implementers Multi-step searches of method receivers and method sets gograph implementers Connection Many file reads vs. concrete type rows Heuristic AST mode; package-qualified precise mode when available Trace wrapped errors String searches inside formatting blocks gograph errorflow \"invalid token\" Broad scans vs. structured candidate paths Navigation heuristic, not SSA data-flow proof Review untrusted-data paths Repeated searches for request reads and sensitive APIs gograph flow --no-tests One structured source-to-sink report Interprocedural heuristic with explicit confidence, not exploitability proof Concrete Workflow Example: Modifying a Struct Field Suppose an agent needs to add a required field to a struct named Config.\nThe text-search route:\nAgent runs grep -rn \"type Config struct\" . to locate the type definition. Agent tries to locate every composite literal declaration to see where it is initialized: grep -rn \"Config{\" .. Because Config is a common word, it matches test utilities, local files, config parser variables, and external package docs. The agent inspects the matching files to determine which results are Go composite literals for the intended type. The gograph Way (Structural Call):\nAgent runs a single tool call: gograph literals Config gograph queries the AST graph and returns file/line rows for matching composite literals (Config{...}). This is one focused syntax-based query. Generated or dynamically constructed values remain outside its scope. 🔬 Empirical Case Study: gograph Codebase Benchmark The following is a historical point-in-time benchmark from an earlier gograph revision (16 packages, 70 Go files, 518 AST symbols, and 5,443 call edges). Current repository counts differ.\nHere are the concrete, measured results:\nCase 1: Broad Symbol Queries An agent needs to locate symbols matching the word \"Symbol\".\nThe Unix Way (grep -rn \"Symbol\" .): Returns 842 matching lines from comments, markdown guides, local variables, and unrelated documentation blocks, completely flooding the context window. The gograph Way (gograph query Symbol): Returned 83 structured results in that snapshot, about 90% fewer rows than the text search. The two commands return different kinds of evidence, so this is a noise comparison rather than a correctness benchmark. Case 2: Tracking Callers of a Helper Function An agent needs to track callers of the function loadGraph.\nThe Unix Way (grep -rn \"loadGraph\" .): Returns 158 matching lines across comments, markdown docs, function declarations, and call expressions. The gograph Way (gograph callers loadGraph): Returned 56 AST-derived call-site rows in that snapshot. Case 3: Viewing Function Source Code An agent needs to read the definition of normalizeSymbolName.\nThe Unix Way: Agent greps for the declaration and then must call view_file to read the entire internal/search/advanced.go file (or guess line ranges). The gograph Way (gograph source normalizeSymbolName): Returned the 12-line function block in that snapshot. Model Context Protocol (MCP): Open \u0026 Client-Agnostic gograph implements a stdio Model Context Protocol server. MCP clients that support local stdio servers can register the gograph binary and its tool schemas.\nClient configuration and support vary; use the integration instructions for your host rather than assuming identical behavior across every MCP client.\nStarting the Server (Standard I/O) To start the MCP JSON-RPC server over standard I/O:\ngograph mcp [path] If .gograph/graph.json does not exist, startup creates an in-memory AST graph; it does not publish CLI build artifacts. Source-analysis tools check source freshness and newer persisted artifacts per call, then rebuild after edits in the current requested mode. Persisted-index tools use the disk snapshot; precise and precise-fallback sessions re-run CHA/SSA, and a failed precise refresh is returned visibly.\nThe server exposes 65 endpoints: 61 CLI-equivalent query, analysis, and workflow tools plus four session lifecycle tools. gograph_flow matches the CLI flow filters (term, source, sink, config, and no_tests) and returns structured source, sink, severity, confidence, and path data.\n🛠️ Client Integration Examples Since the MCP server communicates over standard stdio streams, it plugs seamlessly into any compliant client environment. Here are configurations for several common developer setups:\n🧭 Cursor MCP Configuration To add gograph as an MCP server in Cursor:\nOpen Cursor Settings (Cmd + , or Ctrl + ,). Navigate to Features -\u003e MCP. Click + Add New MCP Server. Configure the fields: Name: gograph Type: command Command: gograph mcp (if not globally in PATH, specify the absolute path: /opt/homebrew/bin/gograph mcp) Click Save. Cursor will automatically start the background stdio session, parse the JSON schemas, and register every gograph capability as a native agent tool in Composer and Chat!\n🌊 Windsurf MCP Configuration To configure gograph inside the Windsurf IDE:\nAdd the following block to your global or workspace-local mcp_config.json file (typically located under ~/.codeium/windsurf/mcp_config.json):\n{ \"mcpServers\": { \"gograph\": { \"command\": \"gograph\", \"args\": [\"mcp\"], \"env\": {} } } } Save the file. Windsurf will instantly hot-reload the configuration and expose all gograph analytical features to the AI critic and coder loop!\n🤖 Claude Code Integration gograph includes native automation to integrate directly with Claude Code.\nAutomatic Plugin Installation Run the following command inside your Go repository:\ngograph add-claude-plugin This single command performs three critical setup steps:\nClaude Desktop Configuration: Registers gograph mcp in Claude Desktop’s config. Shared Steering: Adds rules to ~/.claude/CLAUDE.md. Claude Code Hook: Installs ~/.claude/hooks/gograph-guard.sh and registers it in ~/.claude/settings.json. Claude Code MCP registration is separate; run the claude mcp add gograph -- gograph mcp . command printed by the installer. The installer exits non-zero if any of its three file/configuration steps fail.\nThe Hook Guard: Steering structural Go searches AI agents often execute grep or rg for both literal searches and Go symbol questions. The former is appropriate; the latter mixes declarations, comments, strings, mocks, and unrelated same-name symbols.\ngograph solves this structurally with the Hook Guard:\n[Agent wants to run grep] │ ▼ ~/.claude/hooks/gograph-guard.sh │ ▼ gograph hook-guard ◄── Intercepts symbol query │ ┌─────────┴─────────┐ │ │ ▼ (Generic grep) ▼ (Gograph equivalent) [BLOCKED] [ALLOWED] \"Use gograph instead\" If the agent tries to run grep -rn \"MyStruct\" ., the hook guard blocks the command with exit code 2 and returns a helpful message:\nBlocked: This looks like a Go symbol search. Start with gograph query MyStruct or gograph callers MyStruct. If precision fell back or a known call is missing, verify with gopls or targeted source/text search.\nThe hook is a steering aid, not a security boundary: it targets likely Go-identifier searches and intentionally allows comment, documentation, and non-Go searches.\nWorkspace Steering Rules When add-claude-plugin runs, it adds these explicit directives to CLAUDE.md to keep the model on track:\n# Go Codebase Navigation Steering - Use native gograph MCP tools first for supported structural Go queries. - Use text search for literals, comments, generated/non-indexed files, and non-Go content. - If precision is `ast`/`precise_fallback`, results are ambiguous, or a known call is missing, verify with `gopls` or targeted source/text search and disclose the fallback. - Run `gograph_plan` before editing a symbol to inspect indexed downstream risks. - For security reviews, use `gograph_flow` before broad source searches; inspect every reported path because it is static, path-insensitive evidence rather than proof. - After editing, run CLI `gograph build . --precise`, `gograph_review` with `uncommitted=true`, and the repository's required tests and checks. ",
+  "wordCount" : "1422",
   "inLanguage": "en",
   "datePublished": "0001-01-01T00:00:00Z",
   "dateModified": "0001-01-01T00:00:00Z",
@@ -219,10 +219,10 @@
     </svg>
 </nav>
     <h1 class="post-title entry-hint-parent">
-      AI Agent Integration &amp; Token Reduction
+      AI Agent Integration
     </h1>
     <div class="post-description">
-      Integrate gograph with Claude Code, Cursor, and Google Antigravity. Leverage MCP and semantic search to achieve massive token reduction and context savings.
+      Integrate gograph&#39;s local structural graph with Claude Code, Cursor, Copilot, Antigravity, OpenCode, and other MCP clients.
     </div>
     <div class="post-meta">
 
@@ -230,55 +230,74 @@
 
 </div>
   </header> 
-  <div class="post-content md-content"><p>gograph is built from the ground up to be an <strong>agent-first tool</strong>. While humans can query the CLI, the primary design target is AI coding agents (such as Claude Code, Cursor, Copilot, Google Antigravity, or OpenCode) that need accurate, structured repository intelligence without context-window inflation.</p>
+  <div class="post-content md-content"><p>gograph is an <strong>agent-oriented static-analysis tool</strong>. Humans can use the CLI,
+while MCP clients such as Claude Code, Cursor, Copilot, Antigravity, and
+OpenCode can request the same structured repository evidence. Results follow
+the documented AST, precise-analysis, and heuristic limits; they are not
+runtime proof.</p>
 <hr>
-<h2 id="-the-problem-unix-tools-are-expensive--blind">🚫 The Problem: Unix Tools are Expensive &amp; Blind<a hidden class="anchor" aria-hidden="true" href="#-the-problem-unix-tools-are-expensive--blind">#</a></h2>
-<p>In modern AI agent loops, models are highly habituated to using standard Unix text-processing commands (<code>grep</code>, <code>find</code>, <code>sed</code>) to understand and navigate code. For Go, this is an <strong>inefficient, token-expensive, and error-prone</strong> anti-pattern.</p>
-<p>Go&rsquo;s unique structural features—such as implicit (duck-typed) interfaces, wrapping error chains, and package boundaries—cannot be solved by text patterns.</p>
-<h3 id="why-generic-unix-tools-fail-agents">Why Generic Unix Tools Fail Agents:<a hidden class="anchor" aria-hidden="true" href="#why-generic-unix-tools-fail-agents">#</a></h3>
+<h2 id="text-search-gopls-and-gograph-have-different-jobs">Text search, gopls, and gograph have different jobs<a hidden class="anchor" aria-hidden="true" href="#text-search-gopls-and-gograph-have-different-jobs">#</a></h2>
+<p><code>rg</code>, <code>grep</code>, and <code>find</code> are appropriate for literal text, documentation,
+configuration, generated content, and non-Go files. Text matching alone cannot
+resolve Go interface satisfaction or distinguish a call expression from a
+comment or string.</p>
+<p><a href="https://go.dev/gopls/features/mcp"><code>gopls</code></a> provides live compiler-backed
+workspace diagnostics, navigation, references, implementations, refactoring,
+and experimental MCP support. gograph complements it with persisted snapshots,
+repository-level graph analyses, composed change workflows, and policy gates.</p>
+<p>Choose the tool that matches the question:</p>
 <ol>
-<li><strong>Massive Token Waste</strong>: A broad <code>grep</code> forces the model to ingest thousands of lines of search noise (test logs, mock code, comments) just to locate a single method caller. This rapidly consumes context windows and inflates API costs.</li>
-<li><strong>Implicit Interfaces</strong>: In Go, a struct satisfies an interface implicitly (no <code>implements</code> keyword). To find what implements an interface using Unix tools, an agent must parse method sets and grep receivers across hundreds of files—a complex task that consumes thousands of context tokens and is highly prone to omission.</li>
-<li><strong>Wrapped Errors</strong>: Go errors are often wrapped (<code>fmt.Errorf(&quot;user not found: %w&quot;, err)</code>). The original error symbol and its bubble-up path are lost in string wrapping. Generic Unix tools cannot trace this structural relationship.</li>
-<li><strong>Structural Blindness</strong>: <code>grep</code> matches comments, inactive mock files, test fixtures, and raw strings equally. Agents get overwhelmed by noise and are highly prone to hallucinating architectural relationships.</li>
+<li><strong>Text and file search</strong>: use <code>rg</code>, <code>grep</code>, and <code>find</code> for literal or
+non-structural questions.</li>
+<li><strong>Live Go semantics</strong>: use <code>gopls</code> for compiler-backed editor and workspace
+operations.</li>
+<li><strong>Persisted repository analysis</strong>: use gograph for impact, reachability,
+routes, SQL, environment reads, security-flow candidates, and architecture
+policies.</li>
 </ol>
 <hr>
 <h2 id="-comparative-analysis-unix-vs-gograph">⚡ Comparative Analysis: Unix vs. gograph<a hidden class="anchor" aria-hidden="true" href="#-comparative-analysis-unix-vs-gograph">#</a></h2>
-<h3 id="real-world-production-impact">Real-World Production Impact<a hidden class="anchor" aria-hidden="true" href="#real-world-production-impact">#</a></h3>
-<p>In actual production evaluations conducted by development teams running <strong>35 specialized Claude Code agents</strong> on large Go codebases, utilizing raw <code>grep</code> across 80+ endpoints resulted in a <strong>measured hallucination rate of ~12%</strong> on routine calls.</p>
-<p>When replacing generic text searches with gograph&rsquo;s AST-accurate call graph and pruned context, the agent hallucination rate <strong>dropped to 2%</strong>.</p>
+<h3 id="practical-impact">Practical Impact<a hidden class="anchor" aria-hidden="true" href="#practical-impact">#</a></h3>
+<p>Replacing broad text searches with AST-derived, symbol-focused responses reduces irrelevant context and tool round trips. Results remain static-analysis evidence rather than proof: dynamic dispatch, grouped routes, test attribution, and error flow have documented limits.</p>
 <hr>
 <table>
 	<thead>
 			<tr>
 					<th>Objective</th>
-					<th>The Unix Way (<code>grep</code>, <code>find</code>)</th>
-					<th>The <code>gograph</code> Way</th>
-					<th>Token Cost Comparison</th>
-					<th>Accuracy</th>
+					<th>Text-search route (<code>grep</code>, <code>find</code>)</th>
+					<th>The <code>gograph</code> route</th>
+					<th>Typical output shape</th>
+					<th>Analysis caveat</th>
 			</tr>
 	</thead>
 	<tbody>
 			<tr>
 					<td><strong>Find callers of a method</strong></td>
 					<td><code>grep -rn &quot;Update&quot; .</code> <br><em>(Scans mocks, comments, other types)</em></td>
-					<td><code>gograph callers UserStore.Update</code> <br><em>(AST-accurate call edges)</em></td>
-					<td><strong>Extremely high context footprint</strong> <br><em>(model reads irrelevant source lines)</em> vs. <strong>Minimal footprint</strong> <em>(single-line caller symbols)</em></td>
-					<td>❌ High hallucination risk (~12% error)<br>🎯 100% Structural Ground Truth (~2% error)</td>
+					<td><code>gograph callers UserStore.Update</code> or <code>gograph callers Repository.Update</code> <br><em>(AST-derived; interface-qualified queries use precise CHA targets)</em></td>
+					<td>Broad source context vs. compact caller rows</td>
+					<td>Default AST evidence; conservative multi-target CHA when precise</td>
 			</tr>
 			<tr>
 					<td><strong>Find interface implementers</strong></td>
-					<td>Multi-step grep searches of method receivers and receivers sets</td>
-					<td><code>gograph implementers Connection</code> <br><em>(Duck-typing interface satisfaction)</em></td>
-					<td><strong>Massive context inflation</strong> <br><em>(reading dozens of files to match signatures)</em> vs. <strong>Minimal footprint</strong> <em>(only concrete struct types)</em></td>
-					<td>❌ Highly prone to omissions<br>🎯 100% Structural Ground Truth</td>
+					<td>Multi-step searches of method receivers and method sets</td>
+					<td><code>gograph implementers Connection</code></td>
+					<td>Many file reads vs. concrete type rows</td>
+					<td>Heuristic AST mode; package-qualified precise mode when available</td>
 			</tr>
 			<tr>
 					<td><strong>Trace wrapped errors</strong></td>
-					<td>Grepping for substring matches inside formatting blocks</td>
-					<td><code>gograph errorflow &quot;invalid token&quot;</code> <br><em>(Reversed call graph BFS of <code>%w</code> wraps)</em></td>
-					<td><strong>High context inflation</strong> <br><em>(scanning format strings across call paths)</em> vs. <strong>Minimal footprint</strong> <em>(structured error flow paths)</em></td>
-					<td>❌ Misses wrapping context<br>🎯 100% Structural Ground Truth</td>
+					<td>String searches inside formatting blocks</td>
+					<td><code>gograph errorflow &quot;invalid token&quot;</code></td>
+					<td>Broad scans vs. structured candidate paths</td>
+					<td>Navigation heuristic, not SSA data-flow proof</td>
+			</tr>
+			<tr>
+					<td><strong>Review untrusted-data paths</strong></td>
+					<td>Repeated searches for request reads and sensitive APIs</td>
+					<td><code>gograph flow --no-tests</code></td>
+					<td>One structured source-to-sink report</td>
+					<td>Interprocedural heuristic with explicit confidence, not exploitability proof</td>
 			</tr>
 	</tbody>
 </table>
@@ -287,13 +306,13 @@
 <p>Suppose an agent needs to add a required field to a struct named <code>Config</code>.</p>
 <ul>
 <li>
-<p><strong>The Unix Way (Manual Grepping)</strong>:</p>
+<p><strong>The text-search route</strong>:</p>
 <ol>
 <li>Agent runs <code>grep -rn &quot;type Config struct&quot; .</code> to locate the type definition.</li>
 <li>Agent tries to locate every composite literal declaration to see where it is initialized: <code>grep -rn &quot;Config{&quot; .</code>.</li>
 <li>Because <code>Config</code> is a common word, it matches test utilities, local files, config parser variables, and external package docs.</li>
-<li>The agent is forced to inspect multiple different files manually to see if the block matches.</li>
-<li><strong>Total cost</strong>: Massive token consumption, 5-10 sequential tool calls, high risk of missing initialization sites inside test suites.</li>
+<li>The agent inspects the matching files to determine which results are Go
+composite literals for the intended type.</li>
 </ol>
 </li>
 <li>
@@ -302,41 +321,46 @@
 <li>Agent runs a single tool call:
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>gograph literals Config
 </span></span></code></pre></div></li>
-<li>gograph queries the AST database and returns the exact file, line, and code snippet of every composite literal initialization site (<code>Config{...}</code>) in milliseconds.</li>
-<li><strong>Total cost</strong>: Extremely low token cost, 1 tool call, complete structural certainty.</li>
+<li>gograph queries the AST graph and returns file/line rows for matching composite literals (<code>Config{...}</code>).</li>
+<li>This is one focused syntax-based query. Generated or dynamically
+constructed values remain outside its scope.</li>
 </ol>
 </li>
 </ul>
 <hr>
 <h2 id="-empirical-case-study-gograph-codebase-benchmark">🔬 Empirical Case Study: gograph Codebase Benchmark<a hidden class="anchor" aria-hidden="true" href="#-empirical-case-study-gograph-codebase-benchmark">#</a></h2>
-<p>To verify these savings, we ran both generic Unix tools and <code>gograph</code> directly against the <strong><code>gograph</code> repository itself</strong> (which consists of <strong>16 Go packages, 70 Go files, 518 AST symbols, and 5,443 call edges</strong>).</p>
+<p>The following is a historical point-in-time benchmark from an earlier gograph revision (16 packages, 70 Go files, 518 AST symbols, and 5,443 call edges). Current repository counts differ.</p>
 <p>Here are the concrete, measured results:</p>
 <h3 id="case-1-broad-symbol-queries">Case 1: Broad Symbol Queries<a hidden class="anchor" aria-hidden="true" href="#case-1-broad-symbol-queries">#</a></h3>
 <p>An agent needs to locate symbols matching the word <code>&quot;Symbol&quot;</code>.</p>
 <ul>
 <li><strong>The Unix Way (<code>grep -rn &quot;Symbol&quot; .</code>)</strong>: Returns <strong>842 matching lines</strong> from comments, markdown guides, local variables, and unrelated documentation blocks, completely flooding the context window.</li>
-<li><strong>The <code>gograph</code> Way (<code>gograph query Symbol</code>)</strong>: Returns <strong>exactly 83 structured results</strong> (only actual structs, functions, and active call edges), immediately filtering out <strong>90% of search noise</strong> and saving massive token costs.</li>
+<li><strong>The <code>gograph</code> Way (<code>gograph query Symbol</code>)</strong>: Returned <strong>83 structured results</strong> in that snapshot, about <strong>90% fewer rows</strong> than the text search. The two commands return different kinds of evidence, so this is a noise comparison rather than a correctness benchmark.</li>
 </ul>
 <h3 id="case-2-tracking-callers-of-a-helper-function">Case 2: Tracking Callers of a Helper Function<a hidden class="anchor" aria-hidden="true" href="#case-2-tracking-callers-of-a-helper-function">#</a></h3>
 <p>An agent needs to track callers of the function <code>loadGraph</code>.</p>
 <ul>
 <li><strong>The Unix Way (<code>grep -rn &quot;loadGraph&quot; .</code>)</strong>: Returns <strong>158 matching lines</strong> across comments, markdown docs, function declarations, and call expressions.</li>
-<li><strong>The <code>gograph</code> Way (<code>gograph callers loadGraph</code>)</strong>: Returns <strong>exactly 56 structural caller edges</strong> mapped precisely to their AST call sites.</li>
+<li><strong>The <code>gograph</code> Way (<code>gograph callers loadGraph</code>)</strong>: Returned <strong>56 AST-derived call-site rows</strong> in that snapshot.</li>
 </ul>
 <h3 id="case-3-viewing-function-source-code">Case 3: Viewing Function Source Code<a hidden class="anchor" aria-hidden="true" href="#case-3-viewing-function-source-code">#</a></h3>
 <p>An agent needs to read the definition of <code>normalizeSymbolName</code>.</p>
 <ul>
 <li><strong>The Unix Way</strong>: Agent greps for the declaration and then must call <code>view_file</code> to read the entire <code>internal/search/advanced.go</code> file (or guess line ranges).</li>
-<li><strong>The <code>gograph</code> Way (<code>gograph source normalizeSymbolName</code>)</strong>: Instantly returns <strong>exactly 12 lines of code</strong> containing only the clean function block.</li>
+<li><strong>The <code>gograph</code> Way (<code>gograph source normalizeSymbolName</code>)</strong>: Returned the 12-line function block in that snapshot.</li>
 </ul>
 <hr>
 <h2 id="model-context-protocol-mcp-open--client-agnostic">Model Context Protocol (MCP): Open &amp; Client-Agnostic<a hidden class="anchor" aria-hidden="true" href="#model-context-protocol-mcp-open--client-agnostic">#</a></h2>
-<p>gograph implements a complete native <a href="https://modelcontextprotocol.io">Model Context Protocol</a> server. Because MCP is an open-standard protocol, <strong>gograph is completely client-agnostic</strong>.</p>
-<p>Any editor, CLI wrapper, custom Python/Node script, or agent framework (such as LangChain, LlamaIndex, or AutoGPT) that supports standard MCP over stdio can connect to and leverage gograph out-of-the-box.</p>
+<p>gograph implements a stdio <a href="https://modelcontextprotocol.io">Model Context Protocol</a>
+server. MCP clients that support local stdio servers can register the <code>gograph</code>
+binary and its tool schemas.</p>
+<p>Client configuration and support vary; use the integration instructions for
+your host rather than assuming identical behavior across every MCP client.</p>
 <h3 id="starting-the-server-standard-io">Starting the Server (Standard I/O)<a hidden class="anchor" aria-hidden="true" href="#starting-the-server-standard-io">#</a></h3>
 <p>To start the MCP JSON-RPC server over standard I/O:</p>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>gograph mcp <span style="color:#f92672">[</span>path<span style="color:#f92672">]</span>
-</span></span></code></pre></div><p>If <code>.gograph/graph.json</code> does not exist when the server starts, it automatically runs <code>gograph build</code> first to ensure a completely frictionless, zero-barrier client connection.</p>
+</span></span></code></pre></div><p>If <code>.gograph/graph.json</code> does not exist, startup creates an in-memory AST graph; it does not publish CLI build artifacts. Source-analysis tools check source freshness and newer persisted artifacts per call, then rebuild after edits in the current requested mode. Persisted-index tools use the disk snapshot; precise and precise-fallback sessions re-run CHA/SSA, and a failed precise refresh is returned visibly.</p>
+<p>The server exposes 65 endpoints: 61 CLI-equivalent query, analysis, and workflow tools plus four session lifecycle tools. <code>gograph_flow</code> matches the CLI <code>flow</code> filters (<code>term</code>, <code>source</code>, <code>sink</code>, <code>config</code>, and <code>no_tests</code>) and returns structured source, sink, severity, confidence, and path data.</p>
 <hr>
 <h2 id="-client-integration-examples">🛠️ Client Integration Examples<a hidden class="anchor" aria-hidden="true" href="#-client-integration-examples">#</a></h2>
 <p>Since the MCP server communicates over standard stdio streams, it plugs seamlessly into any compliant client environment. Here are configurations for several common developer setups:</p>
@@ -377,22 +401,21 @@
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>gograph add-claude-plugin
 </span></span></code></pre></div><p>This single command performs three critical setup steps:</p>
 <ol>
-<li><strong>Claude Configuration</strong>: Registers the <code>gograph mcp</code> server under the local Claude desktop/CLI configuration.</li>
-<li><strong>Workspace Steering</strong>: Configures or appends gograph rules to your repository&rsquo;s <code>CLAUDE.md</code> to instruct the model to prefer gograph over general grep search.</li>
-<li><strong>Pre-Tool-Use Hook Guard</strong>: Installs a Git hook that intercepts incoming tool calls.</li>
+<li><strong>Claude Desktop Configuration</strong>: Registers <code>gograph mcp &lt;absolute-project-path&gt;</code> in Claude Desktop&rsquo;s config.</li>
+<li><strong>Shared Steering</strong>: Adds rules to <code>~/.claude/CLAUDE.md</code>.</li>
+<li><strong>Claude Code Hook</strong>: Installs <code>~/.claude/hooks/gograph-guard.sh</code> and registers it in <code>~/.claude/settings.json</code>.</li>
 </ol>
+<p>Claude Code MCP registration is separate; run the <code>claude mcp add gograph -- gograph mcp .</code> command printed by the installer. The installer exits non-zero if any of its three file/configuration steps fail.</p>
 <hr>
-<h2 id="the-hook-guard-blocking-general-grep">The Hook Guard: Blocking general grep<a hidden class="anchor" aria-hidden="true" href="#the-hook-guard-blocking-general-grep">#</a></h2>
-<p>AI agents are highly habituated to executing raw <code>grep</code> or <code>find</code> commands to look for code patterns. In large Go codebases, this causes two severe issues:</p>
-<ol>
-<li><strong>Hallucination</strong>: The agent gets overwhelmed by noise (mocks, test helpers, matches inside unexported package dependencies) and hallucinates.</li>
-<li><strong>Token Waste</strong>: Grepping large chunks of source files blows up the context window.</li>
-</ol>
+<h2 id="the-hook-guard-steering-structural-go-searches">The Hook Guard: Steering structural Go searches<a hidden class="anchor" aria-hidden="true" href="#the-hook-guard-steering-structural-go-searches">#</a></h2>
+<p>AI agents often execute <code>grep</code> or <code>rg</code> for both literal searches and Go symbol
+questions. The former is appropriate; the latter mixes declarations, comments,
+strings, mocks, and unrelated same-name symbols.</p>
 <p>gograph solves this structurally with the <strong>Hook Guard</strong>:</p>
 <pre tabindex="0"><code>[Agent wants to run grep]
            │
            ▼
-   .git/hooks/PreToolUse
+   ~/.claude/hooks/gograph-guard.sh
            │
            ▼
    gograph hook-guard  ◄── Intercepts symbol query
@@ -404,18 +427,21 @@
 &#34;Use gograph instead&#34;
 </code></pre><p>If the agent tries to run <code>grep -rn &quot;MyStruct&quot; .</code>, the hook guard blocks the command with exit code <code>2</code> and returns a helpful message:</p>
 <blockquote>
-<p><em>Blocked: Do not use grep to look for Go symbols. Run <code>gograph query MyStruct</code> or <code>gograph callers MyStruct</code> instead for precise results.</em></p>
+<p><em>Blocked: This looks like a Go symbol search. Start with <code>gograph query MyStruct</code> or <code>gograph callers MyStruct</code>. If precision fell back or a known
+call is missing, verify with <code>gopls</code> or targeted source/text search.</em></p>
 </blockquote>
-<p>This structurally forces the agent to use AST-accurate call graphs and dependency queries, dropping the hallucination rate from 12% to under 2%.</p>
+<p>The hook is a steering aid, not a security boundary: it targets likely Go-identifier searches and intentionally allows comment, documentation, and non-Go searches.</p>
 <hr>
 <h2 id="workspace-steering-rules">Workspace Steering Rules<a hidden class="anchor" aria-hidden="true" href="#workspace-steering-rules">#</a></h2>
 <p>When <code>add-claude-plugin</code> runs, it adds these explicit directives to <code>CLAUDE.md</code> to keep the model on track:</p>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-markdown" data-lang="markdown"><span style="display:flex;"><span># Go Codebase Navigation Steering
 </span></span><span style="display:flex;"><span>
-</span></span><span style="display:flex;"><span><span style="color:#66d9ef">-</span> NEVER use general bash <span style="color:#e6db74">`grep`</span>, <span style="color:#e6db74">`find`</span>, or <span style="color:#e6db74">`sed`</span> to locate Go symbols, structs, or callers.
-</span></span><span style="display:flex;"><span><span style="color:#66d9ef">-</span> ALWAYS use the native gograph MCP tools (<span style="color:#e6db74">`gograph_query`</span>, <span style="color:#e6db74">`gograph_callers`</span>, <span style="color:#e6db74">`gograph_source`</span>, etc.).
-</span></span><span style="display:flex;"><span><span style="color:#66d9ef">-</span> ALWAYS run <span style="color:#e6db74">`gograph_plan`</span> prior to editing any symbol to discover downstream caller risks.
-</span></span><span style="display:flex;"><span><span style="color:#66d9ef">-</span> ALWAYS run <span style="color:#e6db74">`gograph_build`</span> with <span style="color:#e6db74">`--precise`</span> and run <span style="color:#e6db74">`gograph_review`</span> after editing to verify test coverage.
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">-</span> Use native gograph MCP tools first for supported structural Go queries.
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">-</span> Use text search for literals, comments, generated/non-indexed files, and non-Go content.
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">-</span> If precision is <span style="color:#e6db74">`ast`</span>/<span style="color:#e6db74">`precise_fallback`</span>, results are ambiguous, or a known call is missing, verify with <span style="color:#e6db74">`gopls`</span> or targeted source/text search and disclose the fallback.
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">-</span> Run <span style="color:#e6db74">`gograph_plan`</span> before editing a symbol to inspect indexed downstream risks.
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">-</span> For security reviews, use <span style="color:#e6db74">`gograph_flow`</span> before broad source searches; inspect every reported path because it is static, path-insensitive evidence rather than proof.
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">-</span> After editing, run CLI <span style="color:#e6db74">`gograph build . --precise`</span>, <span style="color:#e6db74">`gograph_review`</span> with <span style="color:#e6db74">`uncommitted=true`</span>, and the repository&#39;s required tests and checks.
 </span></span></code></pre></div>
 
   </div>

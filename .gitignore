@@ -3,9 +3,11 @@
 bin/
 bin/gograph-test
 /gograph
-docs/ARCHITECTURAL_GUIDELINES.mdcoverage.out
-docs/FUTURE_IDEAS.md
-docs/TODO.md
+docs/ARCHITECTURAL_GUIDELINES.md
+coverage.out
+.release-mcpb/
+.release-work/
+dist/
 
 # local agent instructions
 CLAUDE.md
@@ -32,3 +34,4 @@ llm-wiki/api-surface.md
 llm-wiki/packages/*
 !llm-wiki/packages/README.md
 opencode.json
+docs/private

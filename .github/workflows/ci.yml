@@ -64,3 +64,29 @@ jobs:
 
     - name: Vulnerability Check
       run: govulncheck ./...
+
+    - name: Build and structurally validate all MCP bundles
+      shell: bash
+      run: |
+        set -euo pipefail
+        make mcpb-build
+        version="$(awk -F ' = ' '$1 == "current_version" { print $2 }' .bumpversion.cfg)"
+        test -n "$version"
+        go run ./cmd/mcpb-release render-server \
+          --version "$version" \
+          --input .release-mcpb \
+          --output "$RUNNER_TEMP/server.json"
+        make mcpb-verify MCPB_SERVER="$RUNNER_TEMP/server.json"
+
+    - name: Smoke-test the native MCP bundle
+      run: make mcpb-smoke
+
+    - name: Install pinned Hugo
+      env:
+        HUGO_VERSION: '0.164.0'
+      run: |
+        wget -q "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.deb" -O "$RUNNER_TEMP/hugo.deb"
+        sudo dpkg -i "$RUNNER_TEMP/hugo.deb"
+
+    - name: Build documentation site
+      run: make docs-check

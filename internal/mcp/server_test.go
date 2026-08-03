@@ -144,6 +144,9 @@ func TestMCPStaleInspectsPersistedIndexWithoutRefresh(t *testing.T) {
 	if !strings.Contains(text, `"is_stale": true`) {
 		t.Fatalf("expected stale persisted index, got %s", text)
 	}
+	if !strings.Contains(text, `"changed_files": [`) || !strings.Contains(text, `"build_context_changed": false`) {
+		t.Fatalf("stale MCP contract omitted stable collection/context fields: %s", text)
+	}
 	if got := rebuilds.Load(); got != 0 {
 		t.Fatalf("gograph_stale rebuilt %d time(s), want 0", got)
 	}
@@ -270,6 +273,23 @@ func TestAllToolAnnotations(t *testing.T) {
 		wantOpenWorld := name == "gograph_doc"
 		if ann.OpenWorldHint == nil || *ann.OpenWorldHint != wantOpenWorld {
 			t.Errorf("tool %q: OpenWorldHint = %v, want %t", name, ann.OpenWorldHint, wantOpenWorld)
+		}
+	}
+}
+
+func TestToolDescriptionsUsePrecisionAwareRefreshContract(t *testing.T) {
+	g := &graph.Graph{}
+	s := mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), mockBuildBaseline(), "dev")
+
+	staleDescriptions := []string{
+		"rebuilds its in-memory AST graph only when source changed",
+		"refreshes in-memory AST analysis",
+	}
+	for name, registered := range s.ListTools() {
+		for _, staleDescription := range staleDescriptions {
+			if strings.Contains(registered.Tool.Description, staleDescription) {
+				t.Errorf("tool %q still advertises the obsolete AST-only refresh policy %q", name, staleDescription)
+			}
 		}
 	}
 }

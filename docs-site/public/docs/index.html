@@ -179,7 +179,7 @@
   </div>
 </header>
 <div class="post-content md-content"><p>Welcome to the <code>gograph</code> documentation portal!</p>
-<p>gograph is a developer and AI agent tool built to index, trace, and query Go codebases using AST-accurate call graphs and dependency maps.</p>
+<p>gograph is a developer and AI agent tool built to index, trace, and query Go codebases using AST-derived call graphs and dependency maps.</p>
 <hr>
 <h2 id="-documentation-map">🗺️ Documentation Map<a hidden class="anchor" aria-hidden="true" href="#-documentation-map">#</a></h2>
 <p>Explore the documentation across four primary categories:</p>
@@ -191,12 +191,12 @@
 <h3 id="-command-reference">📝 <a href="/docs/command-reference/">Command Reference</a><a hidden class="anchor" aria-hidden="true" href="#-command-reference">#</a></h3>
 <p>An exhaustive command manual detailing all gograph capabilities.</p>
 <ul>
-<li><strong>Topics</strong>: Indexing commands, Search &amp; Navigation, Call Graph traversal, Interface resolution, Packages &amp; Imports, Concurrency mapping, custom error flows, and composite literals mapping.</li>
+<li><strong>Topics</strong>: Indexing commands, Search &amp; Navigation, Call Graph traversal, Interface resolution, Packages &amp; Imports, security flow analysis, Concurrency mapping, custom error flows, and composite literals mapping.</li>
 </ul>
 <h3 id="-ai-agent-integration">🤖 <a href="/docs/agent-integration/">AI Agent Integration</a><a hidden class="anchor" aria-hidden="true" href="#-ai-agent-integration">#</a></h3>
-<p>Connect gograph with AI coding assistants (like Claude Code, Cursor, and custom LLM workflows) to save context tokens and drop hallucination rates.</p>
+<p>Connect gograph with AI coding assistants (like Claude Code, Cursor, and custom LLM workflows) to reduce broad file reads and unsupported structural guesses.</p>
 <ul>
-<li><strong>Topics</strong>: Model Context Protocol (MCP) server stdio setup, auto-building, Claude desktop plugin installation, and the smart Pre-Tool-Use hook guard.</li>
+<li><strong>Topics</strong>: MCP stdio setup, in-memory refresh behavior, Claude Desktop/plugin configuration, and the Claude Code PreToolUse hook guard.</li>
 </ul>
 <h3 id="-agent-workflows">⚙️ <a href="/docs/workflows/">Agent Workflows</a><a hidden class="anchor" aria-hidden="true" href="#-agent-workflows">#</a></h3>
 <p>Discover safe development workflows and optimization protocols.</p>
@@ -215,14 +215,14 @@
   <div class="entry-content">
     <p>Prerequisites Go 1.26 or later A Go module repository (go.mod present) Install Homebrew (recommended)
 brew install ozgurcd/tap/gograph gograph version Go install
-go install github.com/ozgurcd/gograph@latest From source
+go install github.com/ozgurcd/gograph/cmd/gograph@latest gograph version From source
 git clone https://github.com/ozgurcd/gograph cd gograph make build # produces bin/gograph sudo make install # copies to /usr/local/bin Step 1 — Build the graph Navigate to the root of any Go module and run:
 gograph build . This walks every .go file, extracts the AST, and writes:
 ...</p>
   </div>
   <footer class="entry-footer">
 
-<span>3 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
+<span>4 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
   <a class="entry-link" aria-label="post link to Getting Started" href="https://gograph.identuum.ai/docs/getting-started/"></a>
 </article>
 
@@ -233,30 +233,29 @@ gograph build . This walks every .go file, extracts the AST, and writes:
   </header>
   <div class="entry-content">
     <p>This reference documents every command available in the gograph CLI, compiled directly from the production source code.
-Indexing &amp; Core Commands build gograph build [path] [--precise] Walks and parses a Go repository. Generates the structured graph at .gograph/graph.json and nine targeted Markdown reports in .gograph/. Adds .gograph/ to the Git repository root .gitignore when available; outside Git, falls back to the build target .gitignore. If no Go files are found after ignore filtering, exits without writing artifacts.
-Arguments: path (optional, defaults to .) Flags: --precise: Enables type-checked Class Hierarchy Analysis (CHA) using Go’s type-checker to resolve dynamic interface dispatches to concrete caller/callee relationships. Slower, requires code to be compilable. stale gograph stale Checks if any .go source files in the repository are newer than .gograph/graph.json. Returns a list of files that have been modified since the last build.
+Indexing &amp; Core Commands build gograph build [path] [--precise] Walks and parses a Go repository. Generates the structured graph at .gograph/graph.json and nine targeted Markdown reports in .gograph/. Adds .gograph/ to the Git repository root .gitignore when available; outside Git, falls back to the build target .gitignore. Git-ignored files and directories use the same exclusion policy in build, stale, and changes. If no Go files are found or none parse successfully, exits without replacing existing artifacts. Partial parse failures are recorded in graph.json, which is committed with an atomic rename.
 ...</p>
   </div>
   <footer class="entry-footer">
 
-<span>8 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
+<span>13 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
   <a class="entry-link" aria-label="post link to Command Reference" href="https://gograph.identuum.ai/docs/command-reference/"></a>
 </article>
 
 <article class="post-entry"> 
   <header class="entry-header">
-    <h2 class="entry-hint-parent">AI Agent Integration &amp; Token Reduction
+    <h2 class="entry-hint-parent">AI Agent Integration
     </h2>
   </header>
   <div class="entry-content">
-    <p>gograph is built from the ground up to be an agent-first tool. While humans can query the CLI, the primary design target is AI coding agents (such as Claude Code, Cursor, Copilot, Google Antigravity, or OpenCode) that need accurate, structured repository intelligence without context-window inflation.
-🚫 The Problem: Unix Tools are Expensive &amp; Blind In modern AI agent loops, models are highly habituated to using standard Unix text-processing commands (grep, find, sed) to understand and navigate code. For Go, this is an inefficient, token-expensive, and error-prone anti-pattern.
+    <p>gograph is an agent-oriented static-analysis tool. Humans can use the CLI, while MCP clients such as Claude Code, Cursor, Copilot, Antigravity, and OpenCode can request the same structured repository evidence. Results follow the documented AST, precise-analysis, and heuristic limits; they are not runtime proof.
+Text search, gopls, and gograph have different jobs rg, grep, and find are appropriate for literal text, documentation, configuration, generated content, and non-Go files. Text matching alone cannot resolve Go interface satisfaction or distinguish a call expression from a comment or string.
 ...</p>
   </div>
   <footer class="entry-footer">
 
 <span>7 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
-  <a class="entry-link" aria-label="post link to AI Agent Integration & Token Reduction" href="https://gograph.identuum.ai/docs/agent-integration/"></a>
+  <a class="entry-link" aria-label="post link to AI Agent Integration" href="https://gograph.identuum.ai/docs/agent-integration/"></a>
 </article>
 
 <article class="post-entry"> 
@@ -272,7 +271,7 @@ Verify Index Status: gograph stats gograph stale If stale or missing, run gograp
   </div>
   <footer class="entry-footer">
 
-<span>2 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
+<span>3 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
   <a class="entry-link" aria-label="post link to Agent Workflows" href="https://gograph.identuum.ai/docs/workflows/"></a>
 </article>
     </main>

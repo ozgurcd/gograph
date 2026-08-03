@@ -6,9 +6,12 @@
 [![Homebrew](https://img.shields.io/badge/homebrew-available-orange)](https://github.com/ozgurcd/homebrew-tap)
 [![Docs](https://img.shields.io/badge/docs-gograph.identuum.ai-blue)](https://gograph.identuum.ai)
 
-**Stop burning tokens on `grep`. Give your AI agent a graph.**
+**Give Go coding agents a compiler-aware map for safer refactors.**
 
-`gograph` builds a local, AST-aware call graph of your Go repository and exposes **61 query, analysis, and workflow capabilities** through CLI and MCP so coding agents can navigate packages, symbols, call chains, routes, SQL, env vars, security flows, and tests without broad file reads.
+`gograph` builds a local structural graph of your Go repository, with optional
+type-checked CHA/SSA enrichment. Its CLI and MCP workflows help coding agents
+trace callers and interface implementations, plan change impact, and enforce
+architecture without embeddings or a hosted code index.
 
 ![Gograph Demo](gograph-demo.gif)
 
@@ -19,39 +22,57 @@
 ```bash
 # Install
 brew install ozgurcd/tap/gograph
+# or: go install github.com/ozgurcd/gograph/cmd/gograph@latest
 
-# Build the graph
-gograph build . --precise
+# Build a fast AST graph, then verify it
+gograph build .
+gograph stats
 
-# Try it — who calls ValidateToken?
-gograph callers "ValidateToken"
-
-# Full context in ONE call (node + source + callers + callees + tests)
-gograph context "ValidateToken"
-
-# Change plan before editing (callers, tests, routes, SQL, env risk)
-gograph plan "ValidateToken"
-
-# Find potential untrusted-data paths to security-sensitive operations
+# Start with repository-wide results that require no guessed symbol
+gograph summary
+gograph hotspot --top 5
 gograph flow --no-tests
+```
+
+Homebrew and `go install` install the normal `gograph` CLI. MCP clients that
+support MCP Bundles can instead discover the local stdio server in the
+[official MCP Registry](https://registry.modelcontextprotocol.io) as
+`io.github.ozgurcd/gograph`. Registry/MCPB installation is a separate
+distribution path; it does not install the Homebrew formula or configure the
+Claude Code marketplace plugin. The Registry is currently in preview. See
+[Official MCP Registry and MCPB installation](docs/mcp-registry.md) for client
+support, target selection, and current limitations.
+
+Choose a real function or method shown by `summary`, `hotspot`, or
+`gograph complexity`, then substitute its name below:
+
+```bash
+gograph context "YourSymbol" # source + callers + callees + tests
+
+# For compilable repositories, enrich the graph before a major refactor
+gograph build . --precise
+gograph plan "YourSymbol"
 ```
 
 Build artifacts are written under the target `.gograph/` directory. `gograph`
 adds `.gograph/` to the enclosing Git repository root `.gitignore` when
 available, falls back to the build target `.gitignore` outside Git, and exits
 without replacing artifacts if no Go files are found or no source file parses
-successfully. Individual ignored files and ignored directories use the same
-scanner policy for building, freshness checks, and change detection.
+successfully. Go build constraints, cmd/go package-directory rules, generated
+sources, module-mode ignore directives, and Git ignores use the same scanner
+policy for building, freshness checks, and change detection.
 
 ## Why gograph?
 
-*Illustrative point-in-time benchmark from an earlier gograph revision (counts vary as the repository evolves):*
-| Task | `grep -rn` | `gograph` | Savings |
+*Illustrative point-in-time output comparison from an earlier gograph revision
+(counts vary as the repository evolves; these commands return different kinds
+of evidence):*
+| Task | `grep -rn` | `gograph` | Observed output difference |
 |---|---|---|---|
-| Find callers of `loadGraph` | 158 noisy lines (comments, docs, vars) | 56 exact structural call sites | ~65% noise eliminated |
+| Find callers of `loadGraph` | 158 matching lines (comments, docs, vars) | 56 AST-derived call-site rows | ~65% fewer rows in that run |
 | Locate symbol definitions | 842 lines matching "Symbol" | 83 true type/method declarations | ~90% noise eliminated |
-| Read one function body | `cat` dumps 180+ lines of the whole file | `source` extracts the exact 12-line function | ~93% fewer tokens |
-| Understand a symbol fully | 4–5 separate tool calls | 1 call: `context` bundles everything | 80% fewer tool calls |
+| Read one function body | `cat` displays 180+ lines of the whole file | `source` extracts the 12-line function | ~93% fewer source lines in that run |
+| Gather common symbol context | Separate node, source, caller, callee, and test queries | `context` bundles those fields | Five evidence types in one response |
 
 ## Key Features
 
@@ -59,9 +80,9 @@ scanner policy for building, freshness checks, and change detection.
 
 **Native MCP Server** — every query and analysis capability has an MCP endpoint for Claude, Cursor, Copilot, and other MCP clients. Host integration and CI artifact commands (`build`, `gate`, `snapshot`, plugin/hook installation, server startup, help, and version) remain CLI-only.
 
-**Explicit Freshness Model** — CLI analysis reads the last persisted graph. MCP source-analysis tools check freshness per call, preserve the latest graph while source is unchanged, and rebuild in memory after edits. MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot. A precise graph is preserved until source changes.
+**Explicit Freshness Model** — CLI analysis reads the last persisted graph. `gograph stale` is a tri-state predicate in text and JSON modes: exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error. MCP source-analysis tools check freshness per call, adopt a newer persisted precise graph, and rebuild in memory after edits using the latest requested analysis mode. MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot.
 
-**Token-Saving Composites** — `context` replaces 5 calls. `plan` replaces 8. `explain` synthesizes architectural narratives. Built to minimize agent round-trips.
+**Compact Composite Workflows** — `context`, `plan`, and `explain` combine source and graph evidence that would otherwise require several separate queries. Actual tool-call and token savings depend on the repository and task.
 
 **Narrow by Design** — never runs target repository binaries or tests and does not read `.env`, key, certificate, or credential files. AI worktree directories (`.claude/`, `.cursor/`, `.agents/`) are excluded. Precise analysis and external documentation use the installed Go toolchain.
 
@@ -69,7 +90,7 @@ scanner policy for building, freshness checks, and change detection.
 
 **Security Flow Analysis** — `flow` follows potential HTTP request, decoded JSON, and environment data across assignments and function calls to SQL query text, process execution, filesystem paths, and outbound HTTP targets. Findings include severity, confidence, and source-to-sink path steps; MCP exposes the same analysis as `gograph_flow`.
 
-**Integrity-Aware Indexing** — `graph.json` is atomically replaced only after a successful parse, records complete/partial build health, and exposes parsed/scanned counts through `gograph stats`. `gate` refuses to evaluate a stale graph.
+**Integrity-Aware Indexing** — `graph.json` is atomically replaced only after a successful parse, records complete/partial build health and `ast`/`precise`/`precise_fallback` analysis status, and exposes both through `gograph stats`. `gate` refuses to evaluate a stale graph.
 
 **Agent Compliance Auditing** — session telemetry tracks whether agents run `plan` before edits and `review` after. Grades agent behavior A–F with actionable recommendations.
 
@@ -133,6 +154,16 @@ Omit `for` to trust the return value for every sink kind. `function` accepts the
 
 ## AI Agent Integration
 
+**Official MCP Registry (preview):** MCPB-capable clients can discover
+`io.github.ozgurcd/gograph`. The bundle asks for the root directory of the Go
+project and launches the bundled executable with separate arguments equivalent
+to `gograph mcp <project-directory>`. Releases provide macOS, Linux, and
+Windows bundles for both amd64 and arm64. The current Registry package schema
+cannot select by CPU architecture, so choose the asset whose filename matches
+the host; do not assume a client will select it automatically. All analysis
+still runs locally over stdio, with no hosted gograph service or remote
+telemetry.
+
 **Desktop config, shared rules, and Claude Code hook setup:**
 ```bash
 gograph add-claude-plugin
@@ -144,20 +175,23 @@ This registers the Claude Desktop MCP server, injects shared `CLAUDE.md` steerin
 /plugin marketplace add ozgurcd/gograph
 /plugin install gograph@gograph
 ```
-Discovers gograph through Claude Code's plugin marketplace and ships a `SKILL.md` that auto-activates on Go work, teaching the agent the mandatory workflow (`capabilities` → `build` → `plan` → `context` → edit → `build --precise` → `review`) and that `grep`/`rg`/`find` must not be used for Go symbol search.
+Discovers gograph through Claude Code's plugin marketplace and ships a `SKILL.md` that auto-activates on Go work, teaching the agent the workflow (`capabilities` → `build` → `plan` → `context` → edit → `build --precise` → `review`), when to use structural queries, and when to verify with `gopls` or targeted text/source search.
 
-You still need the `gograph` binary installed (`brew install ozgurcd/tap/gograph` or `go install github.com/ozgurcd/gograph@latest`). Use `gograph add-claude-plugin` for Claude Desktop MCP wiring plus shared rules and the Claude Code hook; register the Claude Code MCP server with the printed `claude mcp add` command. Use the plugin marketplace when you prefer discovery from Claude Code's plugin UI.
+You still need the `gograph` binary installed (`brew install ozgurcd/tap/gograph` or `go install github.com/ozgurcd/gograph/cmd/gograph@latest`). Use `gograph add-claude-plugin` for Claude Desktop MCP wiring plus shared rules and the Claude Code hook; register the Claude Code MCP server with the printed `claude mcp add` command. Use the plugin marketplace when you prefer discovery from Claude Code's plugin UI.
 
 **Other agents** (Cursor, Copilot, Antigravity, etc.):
 ```bash
 gograph mcp .   # Run as MCP server over stdio
 ```
 Add to your `.cursorrules` or AI system prompt:
-> Before answering architecture or repository questions, inspect the available `gograph_*` MCP tools and use them instead of grep/find. Run `gograph capabilities` first.
+> Before answering architecture or repository questions, inspect the available
+> `gograph_*` MCP tools and run `gograph capabilities`. Prefer gograph for
+> supported structural queries; use `gopls` or targeted source/text search when
+> results are ambiguous, precision fell back, or a known source call is missing.
 
 Query and composed-analysis commands support `--json` for machine-readable output:
 ```bash
-gograph callers "ValidateToken" --json
+gograph callers "YourSymbol" --json
 # → {"schema_version": "1", "command": "callers", "status": "ok", "count": 2, "results": [...]}
 ```
 
@@ -189,19 +223,39 @@ When you run `gograph build .`, the generated `GRAPH_REPORT.md` gives your AI a 
 
 ---
 
-## Why not use a Language Server (`gopls`)?
+## How does gograph complement `gopls`?
 
-`gopls` is optimized for human IDEs. `gograph` is optimized for terminal-based LLMs:
+[`gopls`](https://go.dev/gopls/features/mcp) is the Go project's
+compiler-backed language server. It provides live workspace diagnostics,
+navigation, references, implementations, refactoring support, and an
+experimental MCP server. It should remain the first choice for editor and
+compiler-aware workspace operations.
 
-1. **Protocol Mismatch** — `gopls` returns `file:line:col` coordinates. Agents must then burn tokens running `cat`/`sed` to read the actual code. `gograph` extracts the exact structural slice and formats it as Markdown.
-2. **Graph-Level Diagnostics** — `gopls` does hover and go-to-definition. `gograph` does reverse-BFS error tracing, full blast radius analysis, and PR-level change plans across the entire call graph.
-3. **Composable Intelligence** — `gopls` answers one question at a time. `gograph context` bundles node + source + callers + callees + tests in a single call. `gograph plan` aggregates impact, routes, SQL, env, and test risk into one checklist.
+`gograph` adds a different layer for repository and agent workflows:
+
+1. **Persisted snapshots** — CLI analysis can inspect a stable graph artifact,
+   while MCP refreshes source-analysis state and preserves the requested
+   precision mode.
+2. **Repository-level analyses** — change impact, reachability, routes, SQL,
+   environment reads, security-flow candidates, coupling, and policy gates are
+   represented together.
+3. **Composed responses** — `context`, `plan`, `review`, and `summary` package
+   related evidence for agent workflows rather than exposing only one language
+   operation at a time.
+
+Use `gopls` for live compiler-backed navigation and refactoring, `rg` for text
+and non-Go searches, and gograph when a persisted repository graph or composed
+change-analysis workflow is useful. See [the benchmark guidance](docs/benchmarking.md)
+for how to measure these different workflows without assuming one tool is a
+drop-in replacement for another.
 
 <details>
 <summary><strong>Correctness model</strong></summary>
 
 - **Default mode** uses Go AST parsing and best-effort heuristics. Tolerates incomplete or non-compiling repositories.
-- **Precise mode** attempts type-checked enrichment and needs compilable packages for CHA/SSA results. If enrichment fails, the command warns and still publishes the AST graph. Interface implementation edges use package-qualified type IDs; unresolved function values are not expanded to every signature-compatible function.
+- **Precise mode** attempts type-checked enrichment and needs compilable, build-selected packages for CHA/SSA results. If enrichment fails or omits an indexed non-test source file, the command warns, publishes the AST graph, and records `precise_fallback`; successful and AST-only builds record `precise` and `ast` respectively.
+- Each precise interface invocation is represented by one call edge per valid named in-repository CHA target. `callers Interface.Method` (including methods inherited from embedded interfaces and concrete methods promoted from embedded fields) expands through the interface's implementers and reports a shared source expression once; concrete receiver notation and fully-qualified method IDs remain available for disambiguation. Compiler-generated promoted-method forwarding is stored as a traversal-only synthetic edge and is hidden from call-site output.
+- CHA is conservative rather than points-to precise: it may retain implementations that cannot occur in one runtime configuration. Reflection, `unsafe`, plugins, unresolved function values, test-only packages, unnamed concrete types, and module-external implementations can still be incomplete.
 - Callback references are retained only when they resolve to repository callables, and exact call edges are deduplicated before serialization.
 - Mutation queries ignore ordinary local assignments and retain owning type information when statically known, so `Type.Field` disambiguates same-named fields.
 - Synchronization extraction requires a receiver tied to a known `sync` type. Error messages come from `panic`, `errors.New`, and `fmt.Errorf`, including import aliases.

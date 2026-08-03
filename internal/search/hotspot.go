@@ -27,14 +27,12 @@ type HotspotResult struct {
 // (which can dominate rankings — `baseReq`, `newTestSvc`, etc. — in
 // test-heavy codebases). When true, every edge counts.
 func Hotspot(g *graph.Graph, top int, includeTests bool) []HotspotResult {
-	// Count how many times each raw callee name appears in call edges.
-	incomingRaw := make(map[string]int)
-	for _, c := range g.Calls {
-		if !includeTests && isTestFile(c.File) {
-			continue
-		}
-		incomingRaw[c.CalleeRaw]++
-	}
+	// Count distinct source expressions per resolved target. Wrapper targets
+	// forward their counts to the promoted source method; unresolved legacy
+	// calls retain the raw-name fallback.
+	incomingByID, incomingRaw := sourceTargetCallCounts(g.Calls, func(call graph.CallEdge) bool {
+		return includeTests || !isTestFile(call.File)
+	})
 
 	var results []HotspotResult
 	for _, s := range g.Symbols {
@@ -48,7 +46,7 @@ func Hotspot(g *graph.Graph, top int, includeTests bool) []HotspotResult {
 		}
 
 		// Aggregate all plausible callee string forms for this symbol.
-		count := 0
+		count := incomingByID[s.ID]
 		count += incomingRaw[s.Name]
 		count += incomingRaw[displayName]
 		count += incomingRaw[s.ID]

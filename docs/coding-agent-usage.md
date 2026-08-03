@@ -7,7 +7,7 @@ How `gograph` helps coding agents (Claude Code, Cursor, Copilot, Gemini, Codeium
 Coding agents typically explore a repo by reading raw files and grepping. This is fine for small projects but becomes expensive in larger Go codebases:
 
 - **Context burn** — each `Read` of a 500-line file fills the context window with bodies the agent doesn't need just to learn that a function exists.
-- **Slow first-orientation** — answering "where does X live?" or "what calls Y?" can take 5–15 tool calls of grep + read.
+- **Repeated first-orientation** — answering "where does X live?" or "what calls Y?" can require several text searches and source reads.
 - **Missed structure** — agents read files in isolation and miss the package layout, import graph, and call relationships that a human would skim from a directory tree.
 - **Stale mental model** — after edits, the agent's earlier reads no longer reflect reality.
 
@@ -22,19 +22,19 @@ A single command (`gograph build .`) emits `graph.json` plus nine focused Markdo
 | `GRAPH_REPORT.md` + split reports | Human + agent readable summaries for symbols, dependencies, routes, SQL, errors, configuration, concurrency, and tests. |
 | `graph.json` | Machine-readable full graph — dependencies, packages, files, structs, interfaces, funcs, methods, imports, call edges, env reads, SQL queries, errors, concurrency primitives, test edges. |
 
-*Note: Use `gograph build . --precise` for type-checked interface, CHA, and SSA enrichment. That enrichment requires compilable packages; if it fails, gograph warns and retains the AST graph.*
+*Note: Use `gograph build . --precise` for type-checked interface, CHA, and SSA enrichment. That enrichment requires compilable, build-selected packages; if type/load analysis fails or omits an indexed non-test file, gograph warns, retains the AST graph, and records `precise_fallback`.*
 
 And query commands the agent can invoke without re-parsing:
 
 ```sh
 gograph query <term>            # symbol/package/file/import/call substring search (works great for finding specific test names!)
 gograph focus <package>         # isolate context for a specific package
-gograph callers <function> [--no-tests] [--depth N] # who calls it; --depth 2-10 expands N hops up the call graph
+gograph callers <function|Interface.Method> [--no-tests] [--depth N] [--exact] # who calls it; interface-qualified queries expand precise CHA targets
 gograph callees <function> [--no-tests] [--depth N] # what it calls; --depth 2-10 expands N hops down
 gograph implementers <interface> # which structs implement an interface
 gograph interfaces <struct>     # which interfaces a struct satisfies (precise if --precise used)
 gograph fields <struct>         # extract fields and types of a struct
-gograph source <symbol>         # extract exact source code of a symbol (USE THIS instead of grep to read function bodies, mock stubs, or full interface definitions)
+gograph source <symbol>         # extract the indexed declaration's source block
 gograph impact <symbol>         # find downstream callers (blast radius)
 gograph impact --uncommitted    # find blast radius of all uncommitted code changes
 gograph impact --since main     # blast radius of all symbols changed since main (PR-level)
@@ -45,12 +45,12 @@ gograph sql [term]              # map raw SQL queries to their execution functio
 gograph errors                  # custom error variables and panics mapped to their source
 gograph embeds <struct>         # find which structs embed a target struct
 gograph public <pkg>            # list only the exported API surface of a package
-gograph envs [term]             # list every environment variable read in the codebase
+gograph envs [term]             # list indexed environment reads
 gograph concurrency [term]      # map goroutines, channels, mutexes, waitgroups, sync.Once
 gograph tests [symbol]          # find which test functions exercise a named symbol
 gograph path <from> <to>        # shortest call chain between two symbols (BFS traversal)
-gograph stale                   # check if graph.json is out of date vs source files
-gograph stats                   # compact index health summary: schema/build status and package/file/symbol/call/route/SQL/env/test/flow-function counts
+gograph stale                   # check selected files and build context vs graph.json
+gograph stats                   # compact index health summary: schema/build/precision status and package/file/symbol/call/route/SQL/env/test/flow-function counts
 gograph godobj                  # find god-object struct candidates (default thresholds)
 gograph godobj --methods 10 --fields 12 --calls 30 --top 5  # custom thresholds
 gograph complexity              # cyclomatic complexity for all functions, highest first
@@ -58,7 +58,7 @@ gograph complexity "Run"        # complexity for a specific function by name
 gograph coupling                # package fan-in, fan-out, and instability table
 gograph coupling "internal/auth" # filter to a specific package
 gograph coupling --internal-only # exclude standard-library and third-party packages
-# --- PRIMARY TOKEN SAVERS ---
+# --- COMPOSED AGENT WORKFLOWS ---
 gograph context "ValidateToken" --exact # node + source + callers + callees + tests + role in ONE call
 gograph context --uncommitted    # context for ALL uncommitted symbols bundled — replaces 5-8 sequential calls after plan --uncommitted
 gograph explain "ValidateToken"  # LLM-ready narrative: role, complexity, SQL, env, routes, interfaces (use to understand purpose)
@@ -86,7 +86,7 @@ gograph arity --min 5            # find functions with many arguments (long para
 gograph skeleton                 # output the whole repository's API signatures (bodies stripped)
 gograph constructors <struct>    # find factory functions returning a named struct
 gograph literals <struct>        # all Foo{...} composite literal sites — run before adding/removing a required field
-gograph usages <type>            # every place a type appears in param/return/field/iface-method — run before changing an interface
+gograph usages <type>            # indexed param/return/field/interface-method uses — review before changing an interface
 gograph returnusage <function>   # how each caller uses the return value (discarded/assigned/partially_ignored/returned/passed) — run before changing a return signature
 gograph schema <table>           # find structs mapped to a database table or schema via tags
 gograph globals <pkg>            # find pkg-level vars, consts, and functions mutating them
@@ -97,7 +97,7 @@ gograph endpoint <route>         # full vertical slice for one HTTP endpoint: ha
 gograph capabilities             # print token-optimized AI agent cheat sheet
 gograph wiki [--output dir]      # generate llm-wiki/ — curated, machine-first markdown pages (overview, architecture,
                                  # hotspots, routes, env, errors, concurrency, per-package docs, api-surface).
-                                 # Run once per session for zero-cost codebase orientation.
+                                 # Run once per session for generated codebase orientation.
                                  # Default output: ./llm-wiki/  (add llm-wiki/ to .gitignore)
 gograph summary                  # single-call briefing: top 3 hotspots + worst instability + highest complexity +
                                  # orphan count + god-object count. Replaces 5 separate tool calls. [--json]
@@ -128,7 +128,7 @@ Running `gograph add-claude-plugin` performs three installation steps in one com
 |---|---|---|
 | **MCP server** | Registers gograph so Claude has native tool access | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) |
 | **CLAUDE.md rules** | Injects steering instructions Claude reads at session start | `~/.claude/CLAUDE.md` |
-| **PreToolUse hook** | Intercepts `grep`/`rg` on Go symbols and redirects to gograph | `~/.claude/hooks/gograph-guard.sh` + `~/.claude/settings.json` |
+| **PreToolUse hook** | Intercepts broad `grep`/`rg` Go-symbol searches and suggests structural tools | `~/.claude/hooks/gograph-guard.sh` + `~/.claude/settings.json` |
 
 ### How the hook works
 
@@ -136,21 +136,36 @@ The hook (`gograph hook-guard`) is invoked automatically by Claude Code before e
 
 1. Reads the tool call JSON from stdin.
 2. Checks if the command is `grep` or `rg`.
-3. If targeting `.go` files and the search pattern looks like a Go identifier (PascalCase/camelCase, 3+ chars) → **blocks** with exit code `2` and tells Claude which `gograph` tool to use instead.
+3. If the search can cover Go files and every non-exempt pattern branch is either one Go identifier or an identifier-only alternation (3+ ASCII identifier characters per branch) → **blocks** with exit code `2` and tells Claude which `gograph` tool to use instead.
 4. Otherwise → **allows** with exit code `0`.
 
 **Allowed through (not blocked):**
-- Searches explicitly targeting non-Go files (`*.yaml`, `*.md`, `*.sql`, etc.)
-- Comment/doc searches (TODO, FIXME, HACK, etc.)
-- Searches in `docs/`, `.github/`, `testdata/`, `migrations/`
-- Patterns that don't look like Go identifiers (short strings, regex with special chars)
+- Searches targeting only non-Go files (`*.yaml`, `*.md`, `*.sql`, etc.)
+- Comment/doc-only searches (TODO, FIXME, HACK, etc.)
+- Searches targeting only `docs/`, `.github/`, `testdata/`, or `migrations/`
+- Patterns containing non-identifier regex or literal text. In particular,
+  literal-pipe patterns in fixed-string mode and escaped pipes in `grep -E`/`rg`
+  remain text searches.
 
 **Blocked and redirected:**
 ```bash
 grep -r "ValidateToken" .        # → gograph_query "ValidateToken"
-rg "UserService" --include=*.go  # → gograph_context "UserService"
+rg "UserService" -g '*.go' .     # → gograph_context "UserService"
 grep -rn "runCheck" .            # → gograph_callers "runCheck"
+grep -rn 'LoadUser\|SaveUser' .   # basic grep alternation → LoadUser first
+rg 'LoadUser|SaveUser' -g '*.go'  # ripgrep alternation → LoadUser first
 ```
+
+Alternation follows the selected search dialect: basic `grep` uses `\|`, while
+`grep -E` and `rg` use bare `|`. The hook parses direct `grep`/`rg` arguments,
+option values, quotes, and the first shell pipeline stage; malformed or dynamic
+shell syntax fails open.
+
+The hook is steering, not a correctness boundary. If graph precision is
+`ast`/`precise_fallback`, a result is ambiguous, or a known call is missing,
+verify with `gopls` or a targeted source/text search and disclose that fallback.
+Literal, comment, generated/non-indexed, and non-Go searches belong in text
+search from the start.
 
 ## Concrete agent workflows
 
@@ -160,8 +175,8 @@ grep -rn "runCheck" .            # → gograph_callers "runCheck"
 - Graph freshness: `gograph stats` + `gograph stale`
 - Understand a symbol: `gograph context <symbol>` (raw data) or `gograph explain <symbol>` (narrative — use when you need to understand purpose and architecture)
 - Before editing: `gograph plan <symbol>` (callers, tests, SQL/env/route risk)
-- Before a package refactor: `gograph dependents <pkg>` (every consumer)
-- After editing: `gograph build . --precise`, then `gograph review --uncommitted`
+- Before a package refactor: `gograph dependents <pkg>` (indexed import consumers)
+- After editing: `gograph build . --precise`, then `gograph review --uncommitted`, followed by the repository's required tests and checks
 - Before done: `gograph check --uncommitted`
 - If API-facing changes exist: `gograph check --since main` (or `master`)
 *(Note: The baseline ref must exist locally.)*
@@ -199,19 +214,28 @@ Instead of `ls -R` + reading 10 random files, the agent reads `.gograph/GRAPH_RE
 `gograph query X` returns file:line locations for matching symbols, packages, files, imports, and call sites — typically one tool call vs. several `grep` rounds.
 
 ### 3. Impact analysis before a refactor
-`gograph callers SomeFunc` lists every call site without the agent having to grep all `.go` files. It **returns the exact line of code** so the agent can immediately see the arguments passed to the function. Combined with `callees`, the agent can reason about blast radius before editing. Use the `--no-tests` flag (`gograph callers SomeFunc --no-tests`) to instantly filter out test callers when checking production usage.
+`gograph callers SomeFunc` lists indexed call sites with source locations and
+the recorded call expression. Combined with `callees`, it provides a static
+blast-radius starting point before editing. Use `--no-tests` (`gograph callers
+SomeFunc --no-tests`) to filter indexed test callers. Dynamic calls, external
+implementations, and incomplete/fallback analysis still require verification.
 
 ### 4. Configuration / secrets surface
-`gograph envs` lists every `os.Getenv` / `os.LookupEnv` / `viper.GetString` site with file, line, and enclosing function — one command vs. grepping every file. Filter by name: `gograph envs DATABASE`.
+`gograph envs` lists recognized `os.Getenv`, `os.LookupEnv`, and supported
+configuration-read sites with file, line, and enclosing function. Filter by
+name: `gograph envs DATABASE`.
 
 ### 5. Interface satisfaction discovery
 `gograph interfaces Worker` uses duck-typing to show which interfaces `Worker` satisfies without running the compiler. Essential when mocking a service layer for tests.
 
 ### 6. Concurrency audit
-`gograph concurrency` shows every goroutine spawn, channel send, mutex lock, WaitGroup, and `sync.Once.Do` across the codebase. Filter: `gograph concurrency goroutine` or `gograph concurrency mutex`.
+`gograph concurrency` shows recognized goroutine, channel, and typed `sync`
+operations in indexed files. Filter: `gograph concurrency goroutine` or
+`gograph concurrency mutex`.
 
 ### 7. Test coverage lookup
-`gograph tests ValidateToken` instantly shows which `Test*` functions exercise `ValidateToken` — no grepping test files needed.
+`gograph tests ValidateToken` shows statically mapped `Test*` functions that
+reference `ValidateToken`. This is not a coverage or runtime-execution claim.
 
 ### 8. Call chain pathfinding
 `gograph path CreateUser sql` performs BFS over the call graph to find the shortest path between two symbols. Example output:
@@ -221,17 +245,45 @@ Call path: CreateUser → sql
   2. [path] UserService.Create — calls db.ExecContext (service/user.go:88)
   3. [path] db.ExecContext (service/user.go:88)
 ```
-This lets an agent confirm whether an HTTP handler actually reaches a given SQL call without reading every file in between.
+This lets an agent inspect whether the indexed graph contains a candidate path
+from an HTTP handler to a SQL call without first reading every intermediate
+file. It does not prove that the path executes at runtime.
 
 ### 9. Graph freshness check
-`gograph stale` compares `graph.json`'s `generated_at` timestamp against files selected by the same scanner and Git-ignore rules as `build`. It displays the graph age, the newest source file, and its modification time. If any indexed source file is newer, it lists the changed files and tells the agent to re-run `gograph build .`. It uses the root recorded in `graph.json`, so results are identical from repository subdirectories. Agents should run this before any structural analysis.
+`gograph stale` compares the selected-file inventory, effective Go build context, and source modification times with the persisted graph. It detects added, deleted, newly inactive, and newly active source files even when timestamps alone cannot. It displays the graph age, changed files, and whether the build context changed, then tells the agent to re-run `gograph build .` when needed. It uses the root recorded in `graph.json`, so results are identical from repository subdirectories. Agents should run this before any structural analysis.
+
+The command uses the same tri-state exit contract in text and JSON modes: `0`
+means the graph is current, `2` means it is stale, and `1` means an operational
+or JSON serialization error. Exit `2` is an expected freshness result, not a failed check.
+Scripts—especially those using `set -e`—must branch explicitly:
+
+```sh
+set -e
+if gograph stale; then
+  echo "Graph is current."
+else
+  status=$?
+  case "$status" in
+    2) gograph build . ;;
+    *) exit "$status" ;;
+  esac
+fi
+```
+
+Avoid `gograph stale || gograph build .`: that also rebuilds after exit `1` and
+can mask a real freshness-check failure.
 
 ### 10. Reading Internal Implementations (Mock Stubs, Algorithms)
-When you need to read the actual body of a method (e.g., to check if a mock repository has a `panic("not implemented")` stub), or when you need to see the **full list of method signatures in an interface**, **do not use `grep` to find the line number.** 
+When you need to read an indexed method body (for example, to check whether a
+mock repository has a `panic("not implemented")` stub), or inspect an indexed
+interface declaration, start with `gograph source` rather than locating it with
+a broad text search.
 
 Simply run:
 `gograph source NotificationSender`
-It will instantly extract and print the entire source block for that specific method or interface, bypassing the need for manual file reads.
+It extracts the matching declaration's source block. If names are ambiguous,
+use receiver notation or a fully-qualified ID; if the declaration is absent or
+analysis fell back, verify with `gopls` or a targeted source search.
 
 ### 11. Reachability-based dead code
 `gograph orphans` performs a BFS from runtime roots (`main`, `init`), test/benchmark/fuzz roots, HTTP handlers, and exported symbols that can serve as external roots (excluding exports confined under `internal/`). A function called only by other dead code is also reported.
@@ -298,11 +350,12 @@ graph                                                         3       8  0.27
 ```
 
 ### 15. Symbol context bundle (primary token saver)
-`gograph context <symbol>` is the single highest-impact token-saving command. It bundles the following into one response:
+`gograph context <symbol>` is a composed command that bundles the following
+indexed evidence into one response:
 - **Node** — kind, file, line, signature, doc string
 - **Source** — the raw function body extracted from the source file
-- **Callers** — every function that calls this symbol
-- **Callees** — every function this symbol calls
+- **Callers** — functions with retained call edges to this symbol
+- **Callees** — retained call edges from this symbol
 - **Tests** — test functions that exercise this symbol
 
 Without this command, an agent needs 4–5 separate tool calls to gather the same information.
@@ -400,7 +453,10 @@ Analyzed 2 modified symbols.
    - Emits Custom Errors/Panics: true
    - Uses Concurrency Primitives: false
 ```
-If you are an agent making autonomous edits, you must always run `gograph build . --precise` followed by `gograph review --uncommitted` as your final step to verify no regressions were introduced.
+If you are an agent making autonomous edits, run `gograph build . --precise`
+followed by `gograph review --uncommitted` as a final static review step. Then
+run the repository's tests and required checks; gograph review alone cannot
+prove that no regression was introduced.
 
 ### 18. Change Risk Evaluation (gograph risk)
 `gograph risk <symbol>` (or `gograph risk --uncommitted`) evaluates the risk profile of a set of changes or a target symbol. It calculates a normalized 0–100 risk score and provides a verdict: `SAFE` (0–30), `REVIEW` (31–70), or `DANGER` (>70).
@@ -639,7 +695,8 @@ Direct imports (14):
 Transitive imports (24):
   ...
 ```
-This tells an agent exactly which packages will be affected if `cli` changes, without requiring it to follow import chains manually.
+This reports packages connected through the indexed import graph so the agent
+can prioritize review without following each import manually.
 
 ### 18. Change detection
 `gograph changes` compares every source file's modification time against `graph.json`'s `generated_at` timestamp and reports:
@@ -724,11 +781,21 @@ Agents that support the Model Context Protocol (like Claude Desktop, Cursor, and
   }
 }
 ```
+
+MCPB-capable clients can obtain the same local stdio server from the preview
+official Registry under `io.github.ozgurcd/gograph`. Registry installation
+prompts for `/path/to/repo`; it is separate from Homebrew, `go install`, and
+the Claude Code marketplace plugin. Six bundles cover macOS, Linux, and
+Windows on amd64 and arm64, but current Registry metadata cannot select CPU
+architecture portably. Choose the matching asset filename, or use the manual
+configuration above. See [Official MCP Registry and MCPB
+Distribution](mcp-registry.md).
+
 `gograph` exposes a registered MCP tool suite for the highest-value agent workflows directly to the agent as executable tools, bypassing the need for terminal commands.
 
 MCP agents should call `gograph_capabilities` first when they need to discover available gograph tools and recommended workflows.
 
-At startup, the MCP server loads the persisted graph or creates an in-memory AST graph when none exists. Source-analysis tools check freshness per call, preserve the latest graph while source is unchanged, and rebuild in memory after edits; rebuild failures are returned visibly. `gograph_stale`, default `gograph_changes`, and `gograph_stats` intentionally inspect persisted `graph.json`. A precise graph is preserved until source changes; restoring precise CHA/SSA after edits requires another explicit precise build.
+At startup, the MCP server loads the persisted graph or creates an in-memory AST graph when none exists. Source-analysis tools check freshness per call, adopt a newer persisted precise graph, and rebuild in memory after edits using the latest requested analysis mode; rebuild failures and precise fallbacks are returned visibly. A precise or precise-fallback session therefore re-attempts CHA/SSA after an edit instead of silently serving AST-only analysis. `gograph_stale`, default `gograph_changes`, and `gograph_stats` intentionally inspect persisted `graph.json`.
 
 MCP annotations distinguish side effects: analysis tools are read-only;
 `gograph_session_create` and `gograph_session_end` mutate telemetry state;
@@ -741,14 +808,14 @@ so parallel MCP traffic never replaces process-global stdout.
 
 The current suite registers 65 MCP endpoints: 61 query, analysis, and workflow tools plus four session lifecycle tools. The live `gograph_capabilities` payload is tested against the server registry.
 - **`gograph_capabilities`**: Discover available tools and workflows.
-- **`gograph_stale`**: Check whether `.gograph/graph.json` is outdated relative to Go source files. Returns JSON with `is_stale`, `graph_age`, `newest_source_mtime`, `newest_source_file`, and `changed_files[]`.
+- **`gograph_stale`**: Check whether `.gograph/graph.json` is outdated relative to selected Go source files or the effective build context. Returns JSON with `is_stale`, `graph_age`, `newest_source_mtime`, `newest_source_file`, `changed_files[]`, and `build_context_changed`.
 - **`gograph_session_create`**: Start a telemetry audit session for tracking agent compliance and tool success metrics.
 - **`gograph_session_end`**: End the active telemetry session cleanly and write end-of-session logs.
 - **`gograph_session_audit`**: Review and grade agent compliance (Plan rule, Review rule, Composability/Efficiency) and tool success rates.
 - **`gograph_session_cleanup`**: Delete all stale inactive session telemetry logs to keep the repository clean.
 - **`gograph_query`**: Accepts `term` or a `terms` array; multiple terms use the CLI's OR semantics.
 - **`gograph_focus`**
-- **`gograph_callers`**: Supports `depth` (1-10), `no_tests`, and exact matching, equivalent to the CLI traversal options.
+- **`gograph_callers`**: Supports `depth` (1-10), `no_tests`, and exact matching, equivalent to the CLI traversal options. In a precise graph, `Interface.Method` resolves through every recorded implementer while returning a shared source call site once.
 - **`gograph_callees`**: Supports `depth` (1-10) and `no_tests`, equivalent to the CLI traversal options.
 - **`gograph_implementers`**
 - **`gograph_fields`**
@@ -796,7 +863,7 @@ The current suite registers 65 MCP endpoints: 61 query, analysis, and workflow t
 - **`gograph_globals`**
 - **`gograph_mocks`**
 - **`gograph_explain`**: LLM-ready architectural summary. Synthesizes callers (prod vs test), callees, complexity, SQL, env, routes, concurrency, test coverage, interface satisfaction, and an opinionated role classification into one structured narrative.
-- **`gograph_stats`**: Compact index health summary. Returns schema version, build timestamp, complete/partial build status, parsed/scanned file counts, parse-failure count, and graph entity counts including persisted flow functions. Use this as a quick sanity check at the start of any analysis session.
+- **`gograph_stats`**: Compact index health summary. Returns schema version, build timestamp, complete/partial build status, analysis precision (`ast`, `precise`, or `precise_fallback`), parsed/scanned file counts, parse-failure count, and graph entity counts including persisted flow functions. Use this as a quick sanity check at the start of any analysis session.
 - **`gograph_trace`**: Alias for `gograph_errorflow`. Kept for backward compatibility — prefer `gograph_errorflow` directly.
 - **`gograph_diagram`**: Mermaid architecture diagram of the repository package dependency graph. Parameters: `group_by` (package/module/service/file), `max_depth` (0=unlimited), `include_stdlib` (bool). Use for onboarding or communicating package structure.
 - **`gograph_check`**: Run static policy checks (`boundaries`, `api_drift`, `require_tests_for_changed_routes`, `require_tests_for_changed_exported_symbols`, `test_coverage`, `no_orphans`, `new_globals`, `max_arity`, and `max_complexity`). Parameters: `since` (Git baseline), `uncommitted` (bool), `config` (path to checks.json). CLI and MCP share one validated Git baseline builder. Changed-route checks map by handler identity and include body-only changes. Returns structured JSON with status, findings, and summary counts. For CI enforcement with non-zero exit codes, use CLI `gograph gate`.
@@ -826,7 +893,10 @@ The current suite registers 65 MCP endpoints: 61 query, analysis, and workflow t
 
    > Before answering architecture or repository questions, run `gograph capabilities` and follow the instructions it prints.
 
-   The `gograph capabilities` command will output a token-optimized cheat sheet of commands and tell the agent everything it needs to know to stop grepping and start using the graph.
+   The `gograph capabilities` command prints the current command surface and
+   workflow guidance. Use gograph for supported structural questions, `gopls`
+   for live compiler-backed operations, and targeted text search for literals,
+   comments, generated/non-indexed files, and verification fallbacks.
 
 4. **Optional — refresh on demand.** Have the agent run `gograph build .` after creating/renaming/removing symbols, or wire it into a `pre-commit` / `Makefile` target.
 
@@ -919,35 +989,39 @@ gograph session cleanup
 - **Project metadata reads** — in addition to `.go` files, gograph reads `go.mod`, `.gitignore`, Git state, `.gograph/graph.json`, and user-selected gograph JSON/YAML configs, including `.gograph/flow.json`. It does not intentionally read `.env`, key, certificate, kubeconfig, or tfstate files.
 - **Targeted source output** — `source` and `context` return requested Go source, and inline route-handler bodies are stored in `graph.json` so endpoint analysis can return them. Other graph data is structural metadata.
 - **Generated files skipped** — `.pb.go`, `_generated.go`, files with `// Code generated` headers are excluded so they don't pollute the map.
-- **AI agent worktrees and ignored paths excluded** — `.claude/`, `.cursor/`, `.agents/` directories are skipped entirely, and both individual files and directories listed in `.gitignore` are excluded via `git check-ignore`. The same scanner policy powers build, stale, and changes.
+- **Inactive and ignored paths excluded** — Go build constraints, GOOS/GOARCH filenames, cgo state, cmd/go's hidden/underscore/`testdata` package-directory rules, Go 1.26 module ignore directives, generated sources, `.claude/`, `.cursor/`, `.agents/`, and Git-ignored paths are excluded consistently. The same scanner policy powers build, stale, and changes.
 - **Subdirectory aware** — all query commands auto-discover the project root by walking up to the nearest `.gograph/` directory. Agents do not need to `cd` back to the repo root before running `plan`, `review`, or any other query.
 - **Crash-safe graph publication** — output files are mode `0640`; `graph.json` is synced to a temporary file and atomically renamed, and the Git repository root `.gitignore` is appended to, never overwritten.
 
 The agent gains a local structural view without a hosted gograph dependency; normal filesystem and local toolchain permissions still apply.
 
-## Cost / token comparison (rough)
+## Measuring workflow cost
 
-For a mid-sized Go service (~50 files, ~300 symbols):
+Do not assume a fixed token reduction. Repository size, selected command,
+client envelopes, tokenizer, follow-up reads, cache state, and whether the
+static result answers the task all affect cost.
 
-| Approach | Approximate tool calls | Approximate tokens consumed |
-|---|---|---|
-| Grep + read raw files to answer "what calls IssueToken?" | 6–12 | 8k–25k |
-| `gograph callers IssueToken` | 1 | <500 |
-| Initial repo orientation (read 8 files) | 8+ | 30k–60k |
-| Read `GRAPH_REPORT.md` once | 1 | 2k–6k |
-
-Numbers vary by repo, but the order-of-magnitude win is consistent: structural questions stop competing with implementation reads for context window space.
+For a defensible comparison, choose representative tasks and manually reviewed
+expected answers. Record actual tool calls, model tokens, wall-clock time,
+false positives, false negatives, fallback searches, and task success. The
+local harness in `scripts/benchmark.go` reports only command latency and raw
+payload size; it deliberately does not invent follow-up-read penalties.
 
 ## Limitations the agent should know about
 
 - **Go only.** No multi-language parsing.
-- **Call edges are best-effort text form** from the AST — no type resolution, so overloaded names and method receivers may collide. Treat `callers`/`callees` results as a starting point, not ground truth. **Workaround:** when you need to disambiguate same-named methods/functions or query symbols cleanly:
-  1. Use standard Go **package-qualified dot-notation** (e.g. `service.GenerateRequest`, `graph.Graph` or `graph.Graph.Build`). All query commands support package-qualified dot notation dynamically.
+- **Default call edges are best-effort AST evidence.** Without precise enrichment, overloaded names and method receivers may collide and interface dispatch can be unresolved. Treat `callers`/`callees` results as navigation evidence, not runtime proof. **Workaround:** when you need to disambiguate same-named methods/functions or query symbols cleanly:
+  1. Use standard Go **package-qualified dot-notation** (e.g. `service.GenerateRequest`, `graph.Graph` or `graph.Graph.Build`) with call-graph commands that advertise symbol selectors. `callers` also accepts `Interface.Method` on a precise graph.
   2. For precise target matching with no same-name conflation, pass the fully-qualified symbol ID (e.g., `gograph callers 'github.com/foo/bar/internal/auth::(*Service).Validate'`). The same FQ-ID syntax works for `callees`, `impact`, and `path` (both endpoints). Requires `--precise` mode at build time.
+- **Precise interface dispatch is a CHA over-approximation.** One interface invocation can have several valid named in-repository targets; gograph retains all of them and interface-qualified caller queries deduplicate the source expression. Promoted concrete methods are represented by their wrapper target plus a traversal-only synthetic forwarding edge to the declared method. CHA can include implementations that are not instantiated in a particular runtime configuration, while reflection, `unsafe`, plugins, unresolved function values, test-only packages, unnamed concrete types, and module-external implementations can still cause omissions. If `go/packages` omits any indexed non-test file, the graph is marked `precise_fallback` instead of claiming full precision.
+- **Graph call counts are edge counts.** In a precise graph, one interface call expression contributes one edge per retained concrete target, and promoted-method forwarding can add explicitly marked synthetic traversal edges. Current caller/callee call-site output hides forwarding edges and deduplicates parallel targets for presentation. Older v2 binaries can decode the additive fields but may count or display synthetic records as ordinary edges, so use the current binary with newly generated precise graphs.
 - **No cross-repo / module-external edges.** External dependencies are extracted from `go.mod` to summarize the tech stack, but call edges into third-party packages are not resolved.
 - **Security flow is a conservative heuristic.** It is path-insensitive, uses field/root approximation, and matches call/return context for at most 16 nested repository calls. Default graphs have weaker method/interface resolution than precise graphs. Reflection, globals, arbitrary heap aliases, and unresolved dynamic calls can cause misses or false positives. External-call propagation is marked low confidence. A finding is not an exploitability claim.
-- **CLI snapshot vs MCP refresh.** CLI analysis reflects the last `gograph build`. MCP source-analysis tools check freshness per call and rebuild in memory only after source changes, while MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot. A precise graph remains active until source changes.
+- **CLI snapshot vs MCP refresh.** CLI analysis reflects the last `gograph build`. MCP source-analysis tools check both source freshness and newer persisted graphs, then rebuild in memory after source changes using the current requested mode. A precise refresh that falls back fails the analysis request visibly; MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot.
 
 ## TL;DR
 
-`gograph` turns "agent re-reads the repo every conversation" into "agent reads one map file, then issues targeted queries." For Go projects worked on by coding agents, it reduces context cost and improves structural navigation while keeping analysis local and avoiding target-program execution.
+`gograph` gives coding agents a persisted Go repository map and targeted
+structural queries. It can reduce repeated exploration while keeping graph
+artifacts local and avoiding target-program execution, but its results must be
+interpreted according to the analysis mode and limitations above.

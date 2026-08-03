@@ -2,21 +2,38 @@ BINARY    = gograph
 BUILD_DIR = bin
 CMD       = ./cmd/gograph
 INSTALL   = /usr/local/bin
+MCPB_VERSION ?= $(shell awk -F ' = ' '$$1 == "current_version" { print $$2 }' .bumpversion.cfg)
+MCPB_OUTPUT  ?= .release-mcpb
+MCPB_SERVER  ?= server.json
+RELEASE_REMOTE ?= origin
+override GORELEASER_VERSION := v2.17.0
 
-.PHONY: build test format-check run-build clean bump-patch bump-minor bump-major install release
+.PHONY: build test format-check run-build clean bump-patch bump-minor bump-major install release release-dry-run release-verify release-go-check release-goreleaser-check mcpb-build mcpb-verify mcpb-smoke mcpb-check docs-check
 
 build:
 	$(eval VERSION := $(shell grep '^current_version' .bumpversion.cfg | awk '{print $$3}'))
 	$(eval GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown"))
 	$(eval DIRTY := $(shell git diff --quiet || echo '-dirty'))
 	@mkdir -p $(BUILD_DIR)
-	go build -ldflags "-X main.version=$(VERSION)-$(GIT_COMMIT)$(DIRTY)" -o $(BUILD_DIR)/$(BINARY) $(CMD)
+	go build -ldflags "-X main.version=$(VERSION)-$(GIT_COMMIT)$(DIRTY) -X main.releaseVersionMarker=gograph-release-version=/$(VERSION)-$(GIT_COMMIT)$(DIRTY)/" -o $(BUILD_DIR)/$(BINARY) $(CMD)
 	@echo "Built $(BUILD_DIR)/$(BINARY) v$(VERSION)-$(GIT_COMMIT)$(DIRTY)"
 
-release: test
-	@echo "Bumping patch version, committing, and tagging..."
-	bump2version patch --allow-dirty
-	git push origin main --tags
+release:
+	go run ./cmd/mcpb-release auto-release --repository-root . --remote "$(RELEASE_REMOTE)"
+
+release-dry-run:
+	go run ./cmd/mcpb-release auto-release --repository-root . --remote "$(RELEASE_REMOTE)" --dry-run
+
+release-verify: release-go-check test mcpb-check docs-check release-goreleaser-check
+
+release-go-check:
+	go mod verify
+	go mod tidy -diff
+	go vet ./...
+
+release-goreleaser-check: mcpb-check
+	go run ./cmd/mcpb-release render-goreleaser --repository-root . --input .goreleaser.yaml --output "$(MCPB_OUTPUT)/.goreleaser.snapshot.yaml" --mcpb-output "$(MCPB_OUTPUT)" --dist "$(MCPB_OUTPUT)/goreleaser-dist"
+	go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) release --snapshot --clean --skip=publish --config "$(MCPB_OUTPUT)/.goreleaser.snapshot.yaml"
 
 # install only copies whatever is already in bin/ — no implicit build.
 install:
@@ -57,11 +74,27 @@ test-fuzz:
 	@echo "Running FuzzSchema for 5s..."
 	go test -fuzz=FuzzSchema -fuzztime=5s ./internal/search
 
+mcpb-build:
+	go run ./cmd/mcpb-release build --version "$(MCPB_VERSION)" --output "$(MCPB_OUTPUT)"
+
+mcpb-verify:
+	go run ./cmd/mcpb-release verify --version "$(MCPB_VERSION)" --input "$(MCPB_OUTPUT)" --server "$(MCPB_SERVER)"
+
+mcpb-smoke:
+	go run ./cmd/mcpb-release smoke --version "$(MCPB_VERSION)" --input "$(MCPB_OUTPUT)"
+
+mcpb-check: mcpb-build
+	$(MAKE) mcpb-verify MCPB_VERSION="$(MCPB_VERSION)" MCPB_OUTPUT="$(MCPB_OUTPUT)" MCPB_SERVER="$(MCPB_SERVER)"
+	$(MAKE) mcpb-smoke MCPB_VERSION="$(MCPB_VERSION)" MCPB_OUTPUT="$(MCPB_OUTPUT)"
+
+docs-check:
+	hugo --source docs-site --renderToMemory --minify
+
 run-build:
 	go run $(CMD) build .
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) $(MCPB_OUTPUT)
 
 bump-patch:
 	bump2version --no-commit patch --allow-dirty

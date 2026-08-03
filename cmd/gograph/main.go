@@ -11,7 +11,15 @@ import (
 // Falls back to "dev" when built without ldflags.
 var version = "dev"
 
+// releaseVersionMarker gives artifact validation an exact, dependency-proof
+// marker. It is intentionally not a runtime compatibility requirement for
+// downstream builders that historically set only main.version.
+var releaseVersionMarker = "gograph-release-version=/dev/"
+
 func main() {
+	if releaseVersionMarker == "" {
+		os.Exit(2)
+	}
 	if version != "dev" {
 		cli.Version = version
 	}

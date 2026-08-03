@@ -1,0 +1,62 @@
+---
+title: Official MCP Registry Distribution
+type: decision
+status: current
+updated: 2026-07-13
+sources:
+  - SRC-20260712-mcp-registry-spec
+  - SRC-20260712-mcpb-spec
+---
+
+# Official MCP Registry Distribution
+
+## Live publication
+
+The official Registry entry `io.github.ozgurcd/gograph` version `1.5.0` is active and marked latest. The exact API record is `https://registry.modelcontextprotocol.io/v0.1/servers/io.github.ozgurcd%2Fgograph/versions/1.5.0`; discovery search returns exactly one matching server. GitHub release `v1.5.0` is at `https://github.com/ozgurcd/gograph/releases/tag/v1.5.0`.
+
+The immutable tag `v1.5.0` dereferences to implementation commit `e4f96315ec4edb805dddbdd584fffbc022f18c6d`. Workflow recovery commit `4299e2806a87c43343584f941159a413ade156d3` added the release-test binary prerequisite and an explicit existing-tag dispatch path without moving that tag. Successful release and Registry publication run `29242849952` used GitHub OIDC. The initial tag-triggered run failed before creating any release or Registry state because existing CLI contract tests expected `bin/gograph`; this was corrected on `main`, and the original tag was reverified and published through the safe dispatch path.
+
+Post-publication verification downloaded all 14 release assets. All six ordinary archives and all six MCPBs matched `checksums.txt`; `server.json` and `checksums.txt` matched GitHub's asset digests. The downloaded native MCPB initialized as gograph 1.5.0 and returned 65 tools. The Homebrew tap formula is 1.5.0 and its four platform archive URLs and hashes match the published release.
+
+## Identity and pinned formats
+
+Metadata includes immutable GitHub repository ID `1233398203`, website `https://gograph.identuum.ai`, and stdio transport. Validation pins Registry schema `2025-12-11`, MCPB manifest `0.4` from `@anthropic-ai/mcpb@2.1.2`, `mcp-publisher v1.7.9`, and the local ordinary-archive gate to GoReleaser `v2.17.0`. Vendored schemas and provenance are under `internal/mcpbundle/schemas/`.
+
+## Representation
+
+Each deterministic MCPB ZIP contains only `manifest.json`, `LICENSE`, and `server/gograph` (or `server/gograph.exe`). The binary is built with CGO disabled, trimpath, no VCS embedding, and an exact linked release marker. Portable build metadata validation checks OS, architecture, baseline architecture level, module, and CGO-disabled link settings. Linux must have no dynamic interpreter or libraries; Darwin and Windows may use only platform system libraries.
+
+The manifest requires a `project_directory` directory input and launches without a shell:
+
+```json
+"command": "${__dirname}/server/gograph",
+"args": ["mcp", "${user_config.project_directory}"]
+```
+
+Registry packages omit `packageArguments`; the embedded MCPB launch configuration is authoritative, avoiding duplicate arguments.
+
+## Targets and limitation
+
+Six assets named `gograph_<version>_<goos>_<goarch>.mcpb` cover darwin, linux, and windows on amd64 and arm64. The manifest declares the truthful OS and namespaced architecture metadata. Registry packages currently have no OS/CPU selector, and MCPB has no standard CPU field, so preview clients may require manual asset choice. Homebrew or `go install` plus `gograph mcp <project-directory>` remains the fallback.
+
+## Maintainer release command
+
+The normal patch-release flow is: commit the feature or fix on any clean attached branch whose HEAD descends from the fetched official remote's `main`, then run `make release`. No version argument is supplied, and local `main` may be stale. The coordinator validates that the selected remote has exactly one fetch URL and one effective push URL and that both identify the official `ozgurcd/gograph` repository. It fetches remote `main`, requires it to be an ancestor of the captured source HEAD, requires the current version's remote baseline tag in that history, computes the next stable patch, and rejects reuse of local, remote, GitHub, or Registry release state.
+
+Preparation uses a unique ignored `.release-work/` transaction. The coordinator updates only `.bumpversion.cfg`, `plugin.json`, and the deterministically rendered `server.json`; builds and verifies all six MCPBs; and runs `make release-verify`. That gate includes module verification and tidiness, `go vet`, unit and race tests, lint/static/vulnerability checks, MCPB schema/layout/hash checks, native initialization plus `tools/list`, documentation, and a pinned non-publishing GoReleaser snapshot for ordinary archives and Homebrew. Exact owned-file bytes and modes are rechecked before and after the release commit.
+
+After verification, the coordinator creates the release metadata commit and annotated `v<version>` tag on the still-checked-out source branch. It never checks out, merges, rebases, force-pushes, moves local `main`, or pushes the source branch ref. It atomically pushes the captured verified commit to the official remote's `main` together with only the new tag, so the tag workflow can require that exact commit on `main`.
+
+`make release-dry-run` performs the same preparation, verification, and immutable-state checks, then restores owned metadata without creating a commit, tag, or remote update. Restoration is compare-and-swap so a concurrent editor change is not overwritten. If tagging or a transient atomic push fails, the verified commit and any local tag remain for a same-version retry. If that unchanged commit later reaches remote `main` without its tag, a rerun atomically compares the captured newer `main` tip and publishes only the missing tag. A genuinely divergent remote fails closed and requires manual reconciliation of the unpublished local state. A rerun from an already-tagged and published release commit is a no-op, including when remote `main` subsequently advances.
+
+## Publication invariants
+
+The tag workflow is `verify -> release -> registry`.
+
+- Verify requires the tag commit on `main`, aligned versions, all repository checks, six deterministic bundles, schema/layout/hash checks, native initialize plus `tools/list`, docs, and a GoReleaser dry run.
+- Release alone receives `contents: write`. It preserves ordinary archives and checksums while adding MCPBs and `server.json`; it never replaces assets. The generated Homebrew formula is reconciled idempotently afterward so a tap failure is safely rerunnable.
+- Registry receives only `contents: read` and `id-token: write`, verifies public assets and hashes, verifies the pinned publisher checksum, authenticates with GitHub OIDC, publishes, and waits for exact-version `active` status.
+- Matching immutable state is a no-op. Missing state proceeds. Partial or divergent state fails closed. Never reuse or rewrite a tag, release, asset, or Registry version.
+- If a tag-triggered run fails before publication, fix the workflow on `main` and dispatch `release.yml` with the existing tag input. The recovery path checks out, dereferences, and fully re-verifies that tag; it does not move or recreate it.
+
+MCPB changes distribution only: gograph remains local over stdio with no hosted telemetry. Registry and client support remain preview limitations; CLI, graph, Homebrew, Go installation, and ordinary archives remain compatible.

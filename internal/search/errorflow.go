@@ -130,6 +130,9 @@ func ErrorFlow(g *graph.Graph, term string, includeTests bool) *ErrorFlowReport 
 
 	revAdj := make(map[string][]graph.CallEdge)
 	for _, c := range g.Calls {
+		if c.Synthetic {
+			continue
+		}
 		if isTestFile(c.File) {
 			continue
 		}

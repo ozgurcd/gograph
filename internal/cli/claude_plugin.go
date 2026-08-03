@@ -15,11 +15,11 @@ const claudeMDBlock = `
 <!-- gograph-start: do not remove -->
 ## Gograph — Go Repository Intelligence
 
-Rules (enforced when gograph MCP server is connected):
+Rules (applied when gograph MCP server is connected):
 
-1. NEVER use grep, rg, find, or glob to search for Go symbols, functions, structs, or types. Use gograph_query instead.
-2. Before editing any symbol, run gograph_plan with symbol and with_context=true — this returns the change plan AND full context for every inspect_first symbol in one call.
-3. After editing Go code, run gograph_review with uncommitted=true to verify test coverage and blast radius.
+1. Use gograph_query first for supported structural Go symbol searches. Use grep/rg for literals, comments, generated or non-indexed files, and targeted verification. If graph precision is ast/precise_fallback, results are ambiguous, or a known call is missing, cross-check with gopls or source/text search and disclose the fallback.
+2. Before editing any symbol, run gograph_plan with symbol and with_context=true — this returns a static change plan and context for inspect_first symbols in one call.
+3. After editing Go code, run gograph_review with uncommitted=true to inspect test mappings and the indexed blast radius; it is not proof that runtime behavior is unchanged.
 4. To understand a symbol, use gograph_context — it returns node, source, callers, callees, tests, and an architectural role classification in one call. Use uncommitted=true to get context for all uncommitted symbols at once.
 5. Run gograph_capabilities at the start of any Go coding session.
 <!-- gograph-end: do not remove -->
@@ -27,7 +27,7 @@ Rules (enforced when gograph MCP server is connected):
 
 const hookScript = `#!/bin/sh
 # gograph-guard: Smart PreToolUse hook for Claude Code.
-# Intercepts grep/rg calls targeting Go symbols and redirects to gograph MCP tools.
+# Intercepts broad grep/rg calls targeting Go symbols and suggests gograph MCP tools.
 # Installed automatically by: gograph add-claude-plugin
 exec gograph hook-guard
 `

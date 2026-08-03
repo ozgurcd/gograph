@@ -141,7 +141,7 @@ func Endpoint(g *graph.Graph, query string, depth int, includeTests bool) []Endp
 
 	// Build a callee index: callerName → list of calleeRaw
 	calleeIndex := make(map[string][]string)
-	for _, c := range g.Calls {
+	for _, c := range sourceCallSites(g.Calls) {
 		calleeIndex[c.CallerName] = append(calleeIndex[c.CallerName], c.CalleeRaw)
 	}
 

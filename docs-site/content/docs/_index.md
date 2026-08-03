@@ -11,7 +11,7 @@ gograph is a developer and AI agent tool built to index, trace, and query Go cod
 
 ## 🗺️ Documentation Map
 
-Explore the documentation across four primary categories:
+Explore the documentation across five primary categories:
 
 ### 🚀 [Getting Started](/docs/getting-started/)
 Set up gograph on your system, initialize your first repository graph index, and run basic queries.
@@ -28,3 +28,8 @@ Connect gograph with AI coding assistants (like Claude Code, Cursor, and custom 
 ### ⚙️ [Agent Workflows](/docs/workflows/)
 Discover safe development workflows and optimization protocols.
 - **Topics**: Onboarding to fresh codebases, the plan-to-review edit lifecycle, and package refactoring dependencies extraction.
+
+### 📦 [Official MCP Registry](/docs/mcp-registry/)
+Install a platform-specific MCP Bundle from the preview Registry and select the
+Go project directory it analyzes.
+- **Topics**: MCPB versus Homebrew/`go install`, six release targets, local data handling, and the current CPU-selection limitation.

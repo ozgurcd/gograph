@@ -174,3 +174,127 @@ Implemented CLI `gograph flow` and MCP `gograph_flow`; persisted AST flow facts,
 Flow self-analysis found and fixed external/local same-name resolution, multi-return contamination, and cross-caller return leakage. Indexed return values plus bounded 16-frame call-site matching reduced self-scan findings from 160 fabricated/noisy paths to 53 coherent review leads.
 Verification: full tests and race tests passed; go vet, staticcheck, golangci-lint, go mod tidy -diff, govulncheck, grype, Hugo, make build, precise self-build, live text/JSON flow queries, and MCP/CLI parity contracts passed. Final precise index parsed 106/106 files and stored 1,013 flow functions. Policy check had zero errors and 74 pre-existing boundary warnings.
 Normalized the security-flow page link into the index's Schemas and Security section after the initial governed append placed it below Logs.
+## [2026-07-12] session | Preserve complete precise interface dispatch
+
+- Replaced single-target interface enrichment with deterministic parallel call edges: one source-provenance-preserving edge per valid named in-repository CHA target.
+- Added exact source columns and traversal-only synthetic wrapper-to-declared-method forwarding for promoted methods; presentation and source metrics deduplicate call expressions while traversal, reachability, impact, and orphan analysis retain every target.
+- Added Interface.Method caller resolution through precise implementer edges, including embedded interfaces and promoted methods, with consistent bare, concrete dot, fully-qualified ID, exact, CLI, and MCP behavior.
+- Persisted `ast`, `precise`, and `precise_fallback` status, exposed it through CLI/MCP stats, and retained additive graph-v2 wire compatibility with explicit older-reader caveats.
+- Made MCP refresh precision-aware: source edits recompute the requested mode, later precise artifact publications are adopted even across overlapping build timestamps, AST-only artifacts cannot downgrade precise sessions, and fallback is surfaced as an analysis error.
+- Updated help, capabilities, README, release notes, architectural/coding-agent guidance, and docs-site content with the representation, compatibility contract, and remaining CHA/static-analysis limits.
+- Added focused real-build, search, graph, CLI, MCP-handler, refresh, reachability, promoted-method, determinism, and precision-status regressions.
+- Verification passed: formatting, build, `go mod tidy -diff`, module verification, full unit and race suites, vet, staticcheck, golangci-lint, govulncheck, grype, coverage, and both fuzz targets. The precise self-build completed 115/115 parsed files with `precision: precise`; Hugo produced 32 pages and wiki generation produced 21 pages.
+
+## [2026-07-12] maintenance | Normalize interface-dispatch log formatting
+
+- Removed the extra trailing blank line left by the governed session append; no project facts changed.
+## [2026-07-12] maintenance | Correct onboarding and product positioning
+
+- Corrected all maintained Go-install examples to the executable package at `github.com/ozgurcd/gograph/cmd/gograph`; a build through that import path produced a runnable `gograph version vdev` binary.
+- Replaced guessed-symbol Quick Start flows with repository-wide `build`, `stats`, `summary`, `hotspot`, and `flow` commands, followed by clearly labeled project-specific symbol placeholders.
+- Removed unsupported absolute accuracy, hallucination-rate, and fixed token-savings claims from current site, plugin, hook, benchmark, and agent guidance. Historical snapshot counts remain labeled as point-in-time output comparisons with different semantics.
+- Reframed gograph as complementary to `gopls` and targeted text search. Durable agent guidance now requires cross-checking AST/fallback, ambiguous, or known-missing results and forbids treating zero callers/orphans as proof.
+- Removed the benchmark harness's fabricated 1,250-token gopls penalty; it now reports only observed latency and raw payload-size estimates with an explicit non-equivalence warning.
+- Regenerated the tracked 32-page Hugo output. The independent render contains the corrected install path and no forbidden claim patterns.
+- Updated GitHub repository homepage metadata from the repository URL to `https://gograph.identuum.ai` and verified it through GitHub.
+- Verification passed: gofmt, module verify/tidy, build, unit tests, race tests, vet, staticcheck, golangci-lint, govulncheck, JSON validation, Hugo builds, diff checks, and live execution of every guaranteed Quick Start command.
+- No commit or push was made. The GitHub Pages deployment will reflect the corrected source after the working tree is intentionally committed and pushed to `main`.
+## [2026-07-12] maintenance | Normalize comparison wording
+
+- Replaced the final “token cost comparison” table label with neutral output-shape and analysis-caveat language.
+- Reworded the historical case study's composite-command section to describe combined evidence categories without claiming a fixed number of replaced calls.
+- Regenerated the 32-page Hugo output and a clean independent render after the wording changes.
+## [2026-07-12] maintenance | Re-audit private codebase findings
+
+- Re-audited all eight findings and five future risks in `docs/private/gograph-findings.md` against v1.4.96 and remediation commit `7a4592a`.
+- Current status: five findings resolved and three partially resolved; four future risks resolved in core scope and precise implementer fallback remains partial.
+- Confirmed remaining correctness gaps: selector-name collisions in AST callback recovery, package-insensitive changed-route handler matching, incomplete graphs accepted by `gate`, and package-insensitive legacy/AST implementer fallback.
+- Recorded optional hardening for MCP refresh throughput, scanner error propagation, extractor coverage, baseline cancellation tests, and release verification.
+- Updated `project.md` so durable guidance discloses these limitations.
+- Verification passed: `go test ./... -count=1`, focused graph/parser/MCP/search/baseline tests, race tests for CLI/MCP, and clean `gofmt -l .`.
+
+## [2026-07-12] maintenance | Normalize findings re-audit log formatting
+
+- Consumed the extra trailing blank line left by the previous governed append as the separator for this maintenance entry; no project facts changed.
+
+## 2026-07-12 — Official MCP Registry and MCPB publication
+
+- Added standards-compliant `io.github.ozgurcd/gograph` Registry metadata and deterministic binary MCPBs for darwin/linux/windows on amd64/arm64.
+- Pinned and vendored Registry 2025-12-11 and MCPB 0.4 schemas, with strict layout, target, version, hash, argv, and native MCP contract validation.
+- Added a verified GoReleaser pipeline that preserves ordinary archives and Homebrew, then publishes through least-privilege GitHub OIDC using pinned `mcp-publisher v1.7.9`.
+- Documented Registry preview CPU-selection limitations and retained the local stdio/no-hosted-telemetry model.
+
+## [2026-07-12] maintenance | Close Registry publication log formatting
+
+- Consumed the governed append's trailing blank line as this entry's separator; no release facts changed.
+## [2026-07-13] release | Publish official MCP Registry entry
+
+- Published `io.github.ozgurcd/gograph` 1.5.0 as an active/latest official Registry entry through GitHub OIDC.
+- Created immutable tag `v1.5.0` at `e4f96315ec4edb805dddbdd584fffbc022f18c6d` and GitHub release `https://github.com/ozgurcd/gograph/releases/tag/v1.5.0`.
+- The initial tag run failed before publication because release tests lacked `bin/gograph`; commit `4299e2806a87c43343584f941159a413ade156d3` added that prerequisite and a safe existing-tag dispatch path. The tag was not moved or recreated.
+- Successful run `29242849952` verified the tag, published ordinary assets and six MCPBs, reconciled Homebrew, authenticated with pinned `mcp-publisher v1.7.9`, and verified Registry activation.
+- Independent verification downloaded all 14 assets, matched all 12 checksummed artifacts plus GitHub digests for `server.json` and `checksums.txt`, initialized the downloaded native MCPB with 65 tools, and confirmed the v1.5.0 Homebrew formula.
+## [2026-07-13] release | Restore automatic patch release workflow
+
+- Restored the maintainer UX to `git commit` followed by `make release`, with the next patch version selected automatically and no `VERSION` argument.
+- Added a fail-closed release coordinator that owns exact metadata changes, validates official remote and immutable state, creates an annotated tag, and atomically pushes the captured commit plus that tag.
+- Added dry-run, compare-and-swap rollback, same-version resume/no-op behavior, and focused regression coverage for failure and recovery paths.
+- Expanded the pre-tag gate with module verification/tidiness, `go vet`, and a pinned GoReleaser v2.17.0 non-publishing snapshot alongside the full tests, race tests, lint, security, MCPB, smoke, and documentation checks.
+- Full `make release-verify MCPB_OUTPUT=.release-work/full-verify` passed without creating a commit, tag, push, GitHub release, or Registry version.
+
+## [2026-07-13] maintenance | Close automatic release log formatting
+
+- Consumed the governed append's trailing blank line as this entry's separator; no release facts changed.
+
+## [2026-07-13] maintenance | Allow releases from fast-forward working branches
+
+- Corrected `make release` so any clean attached branch whose HEAD descends from fetched official `main` can be the release source; local `main` may remain stale and untouched.
+- Kept remote `main` as the fixed publication target and atomically pushes only the captured verified commit plus the new tag; the source branch ref is never pushed by the coordinator.
+- Added fail-closed validation for a single official fetch URL and single effective official push URL, exact metadata modes, detached HEAD, branch/HEAD races, preflight and concurrent remote divergence, feature-branch retries, and missing-tag recovery when remote `main` already contains the release commit.
+- Verified the repository's current topology (`agent/mcp-registry-publishing` ahead of `origin/main`) and confirmed the final full non-publishing release gate passes, including unit/race tests, vet, lint/static/security checks, six MCPBs, MCP smoke, docs, and GoReleaser snapshot.
+- No release commit, version tag, push, GitHub release, or Registry publication was created during this correction.
+## [2026-07-13] maintenance | Fix hook-guard alternation parsing
+
+- Fixed GitHub issue #27: basic-grep `\|` alternations now preserve every identifier while extended grep/ripgrep, literal pipes, fixed strings, and shell pipelines retain their real semantics.
+- Added a deterministic direct-command lexer/classifier with known option arity, ordered selectors, case toggles, and descriptor-aware redirection; unsupported dynamic syntax still fails open.
+- Added unit/E2E regressions for the reporter's command and updated maintained docs/release notes.
+- Verification passed: precise 133-file build, graph checks, full unit/race/lint/static/security suites, coverage, fuzzing, and Hugo.
+
+## [2026-07-13] maintenance | Close hook-guard log formatting
+
+- Consumed the governed append's trailing blank line as this entry's separator; no project facts changed.
+
+## [2026-07-14] maintenance | Merge hook-guard alternation fix
+
+- Merged PR #28 at `f2d8de75c6ba16d72ffbccad5657a19e7650fdd9`; the `Closes #27` trailer closed the reporter's issue and a follow-up comment thanked @serdardalgic.
+- Final PR CI run 29308791305 passed unit/E2E tests, race, vet, static analysis, vulnerability checks, all six MCPBs, native MCP smoke, and documentation.
+- Corrected ordinary CI to verify candidate MCPBs against ephemeral metadata rendered from those exact artifacts. Release-time `mcpb-verify`, committed `server.json`, byte comparisons, and immutable v1.5.1 hashes remain unchanged and fail closed.
+
+## 2026-07-15 — Build-context-aware file selection (issue #30)
+
+- Added a shared cmd/go-resolved build-context snapshot for GOENV/GOFLAGS tags, GOOS/GOARCH, cgo, compiler, tool tags, and release tags.
+- Scanner selection now uses go/build.Context.ImportDir; inactive constrained/platform/cgo files contribute no graph records, while active constrained tests and invalid files remain available to AST analysis.
+- Precise loading receives the same pinned environment and build tags; the coverage invariant and repository-wide fallback remain unchanged.
+- Regressions cover the ignored package-main tool, MCP plan/review/check, custom and legacy tags, platform files, cgo, tests, explicit ignore activation, and nested-module fallback.
+
+## [2026-07-18] maintenance | Harden build-context-aware file selection
+
+- Completed GitHub issue #30 with one cmd/go-resolved configuration shared by AST scanning and precise package loading.
+- Excluded inactive modern and legacy build constraints, GOOS/GOARCH and cgo files, generated sources, wildcard-excluded directories, Git-ignored paths, and Go 1.26 go.mod ignore paths while retaining active constrained tests.
+- Added selected-file and module-selection freshness fingerprints so MCP/CLI refresh detects additions, deletions, active/inactive transitions, custom-tag changes, nested-module boundaries, and module identity changes.
+- Preserved precise coverage reconciliation and repository-wide fallback for genuine package-loader gaps.
+- Aligned module/GOPATH symbol identity and canonical path handling across explicit-root symlinks, module-subdirectory symlinks, invocation PWD changes, and symlinked go.mod files.
+- Exact v1.5.2 reproduction indexed the ignored package-main tool and fell back; the patched build indexed only the active library, reached precise mode, and returned no main symbol.
+- Focused regressions, full tests, race checks, lint/static/security checks, coverage, fuzzing, precise self-review, and the release pipeline are the required publication evidence.
+
+## [2026-07-18] maintenance | Close build-context log formatting
+
+- Consumed the governed append's trailing blank line as this entry's separator; no project facts changed.
+## [2026-08-03] maintenance | Complete strict stale exit contract
+
+- Reconciled PR #26 with current `main` without rebasing or discarding newer build-context freshness behavior.
+- Made `gograph stale` return `0` when current, `2` when stale, and `1` for operational or JSON serialization errors in both text and JSON modes.
+- Preserved JSON output failure precedence and classified the expected stale result as successful session telemetry.
+- Added regression coverage for text/JSON exit codes, build-context-only staleness, JSON failure precedence, subdirectory behavior, and session audit accounting.
+- Updated CLI help, user documentation, release notes, and the durable agent workflow contract, including safe `set -e` handling.
+- Verification passed: focused and full tests, race detector, vet, Staticcheck, GolangCI-Lint, govulncheck, coverage, fuzzing, Hugo, precise gograph review, and the CI-equivalent MCPB build/verify/smoke workflow.

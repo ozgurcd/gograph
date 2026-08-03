@@ -8,6 +8,13 @@ import "time"
 //
 //	instead of relative file paths ("internal/pkg/file.go::Symbol").
 //	This makes IDs stable across file renames within the same package.
+//
+// Optional v2 fields remain additive at the JSON wire level. Newer readers
+// normalize missing precision to AST-only, missing columns to line-only
+// locations, and missing synthetic markers to ordinary source calls. Older v2
+// readers can decode new graphs, but do not understand the presentation-only
+// semantics of additional synthetic forwarding records and may count or show
+// them as ordinary edges.
 const Version = "2"
 
 // Graph is the top-level data structure written to .gograph/graph.json.
@@ -37,13 +44,61 @@ type Graph struct {
 }
 
 // BuildMetadata records whether every scanned source file contributed to the
-// graph. Partial graphs remain queryable, but consumers can detect omissions.
+// graph and the requested precision outcome. Parse completeness and precision
+// are independent: a complete AST graph may have PrecisionFallback when the
+// optional type-checked enrichment could not run.
 type BuildMetadata struct {
-	ScannedFiles int            `json:"scanned_files"`
-	ParsedFiles  int            `json:"parsed_files"`
-	Complete     bool           `json:"complete"`
-	Failures     []BuildFailure `json:"failures,omitempty"`
-	Warnings     []string       `json:"warnings,omitempty"`
+	ScannedFiles int           `json:"scanned_files"`
+	ParsedFiles  int           `json:"parsed_files"`
+	Complete     bool          `json:"complete"`
+	Precision    PrecisionMode `json:"precision,omitempty"`
+	// BuildContextFingerprint hashes effective build and module-selection
+	// inputs, including nested module boundaries. The historical JSON field
+	// name is retained for schema-v2 compatibility.
+	BuildContextFingerprint string         `json:"build_context_fingerprint,omitempty"`
+	Failures                []BuildFailure `json:"failures,omitempty"`
+	Warnings                []string       `json:"warnings,omitempty"`
+}
+
+// PrecisionMode records both the requested analysis strength and its outcome.
+// The zero value is reserved for graph.json files written before precision
+// metadata existed; EffectivePrecision treats those legacy graphs as AST-only.
+type PrecisionMode string
+
+const (
+	// PrecisionAST is the normal parser-only graph produced without --precise.
+	PrecisionAST PrecisionMode = "ast"
+	// PrecisionPrecise means type-checked CHA/SSA enrichment completed.
+	PrecisionPrecise PrecisionMode = "precise"
+	// PrecisionFallback means precise enrichment was requested but failed, so
+	// the AST graph was retained. The request is durable: refreshers should try
+	// precise enrichment again after source changes because the edit may fix the
+	// type-checking failure.
+	PrecisionFallback PrecisionMode = "precise_fallback"
+)
+
+// EffectivePrecision normalizes legacy or unrecognized metadata to AST-only.
+// Older graph files cannot prove that precise enrichment was requested, so the
+// backward-compatible and deterministic policy is to preserve AST behavior.
+func (m *BuildMetadata) EffectivePrecision() PrecisionMode {
+	if m == nil {
+		return PrecisionAST
+	}
+	switch m.Precision {
+	case PrecisionPrecise, PrecisionFallback:
+		return m.Precision
+	case PrecisionAST, "":
+		return PrecisionAST
+	default:
+		return PrecisionAST
+	}
+}
+
+// PreciseRequested reports whether future in-memory refreshes should attempt
+// precise enrichment. A fallback still represents an explicit precise request.
+func (m *BuildMetadata) PreciseRequested() bool {
+	mode := m.EffectivePrecision()
+	return mode == PrecisionPrecise || mode == PrecisionFallback
 }
 
 type BuildFailure struct {
@@ -278,19 +333,26 @@ type CallEdge struct {
 	CalleeRaw      string `json:"callee_raw"`
 	// CalleeSymbolID is the *resolved* fully-qualified symbol ID of the
 	// callee (e.g. "github.com/foo/bar/internal/auth::(*Service).Validate"),
-	// populated by the precise/CHA pass when type info uniquely resolves
-	// the call target. Empty when:
+	// populated by the precise/CHA pass when type info resolves a possible
+	// call target. A dynamic interface invocation is represented by parallel
+	// CallEdges with identical source provenance and one CalleeSymbolID per
+	// valid in-repository CHA target. Empty when:
 	//   - gograph was built without --precise
 	//   - the callee is in stdlib or a non-source package the type-checker
 	//     didn't load
-	//   - the call site is dynamic (interface method, function value, etc.)
-	//     and CHA couldn't pin a single concrete target
+	//   - the dynamic call target is unresolved or outside the repository
 	// Consumers should prefer CalleeSymbolID for exact symbol matching
 	// (eliminates the (*A).M vs (*B).M name-conflation footgun) and fall
 	// back to CalleeRaw for legacy or unresolvable edges.
 	CalleeSymbolID string `json:"callee_symbol_id,omitempty"`
 	File           string `json:"file"`
 	Line           int    `json:"line"`
+	Column         int    `json:"column,omitempty"`
+	// Synthetic marks an identity-only forwarding edge introduced by precise
+	// analysis for an SSA method wrapper. It has no source call site and is
+	// retained for graph traversal/reachability only; presentation layers must
+	// not report it as a file:line invocation.
+	Synthetic bool `json:"synthetic,omitempty"`
 	// ReturnUsage describes how the caller consumes the return value.
 	// Values: "discarded", "assigned", "partially_ignored", "returned",
 	//         "goroutine", "deferred", "" (nested/passed as argument).

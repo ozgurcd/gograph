@@ -1,22 +1,26 @@
 ---
 title: "gograph"
-description: "Local AST-based Go codebase analysis tool for token reduction in AI agents. Build a semantic graph of your Go repository to dramatically cut context window costs."
+description: "A local structural graph for safer Go refactors, repository-level analysis, and coding-agent workflows."
 ---
 
-## What is gograph?
+## Compiler-aware repository context for Go coding agents
 
-
-gograph walks a Go repository, parses selected `.go` files, and stores a structured graph in `.gograph/graph.json`. CLI analysis reads that persisted snapshot. The MCP server loads or auto-builds an in-memory graph, checks freshness per source-analysis call, and rebuilds only after edits; persisted-index tools (`stale`, default `changes`, and `stats`) retain CLI semantics. Default AST analysis does not execute target code; precise mode and `doc` invoke the local Go toolchain.
+gograph builds a local structural graph of a Go repository, with optional
+type-checked CHA/SSA enrichment. Use it to trace callers and interface
+implementations, plan change impact, and enforce architecture through CLI or
+MCP without embeddings or a hosted code index.
 
 ```bash
-gograph build .                        # index the repo — fast, tolerates broken code
-gograph build . --precise              # type-checked CHA — use before refactors
-gograph callers ValidateToken          # who calls this?
-gograph plan HandleLogin               # safe-edit plan before changing a function
-gograph errorflow "invalid token"      # trace an error to the HTTP layer
-gograph flow --no-tests                # potential untrusted-data security paths
-gograph changes --git main             # what changed since main?
+gograph build .           # fast AST graph; tolerates incomplete packages
+gograph stats             # verify build health and analysis precision
+gograph summary           # repository overview; no symbol name required
+gograph hotspot --top 5   # choose a real symbol for context or plan
+gograph flow --no-tests   # potential production source-to-sink paths
 ```
+
+For a compilable repository, run `gograph build . --precise` before a major
+refactor. Then pass a real function or method reported by `hotspot`, `summary`,
+or `complexity` to `gograph context` and `gograph plan`.
 
 ### Real Command Output Example
 
@@ -36,15 +40,20 @@ $ gograph callers loadGraph
 
 
 
-## 🧠 Designed for AI Agents (Massive Token Reduction & Context Savings)
+## Designed for focused agent workflows
 
-AI coding assistants and agent systems (like Claude Code, Cursor, Copilot, Google Antigravity, and OpenCode) are highly habituated to using standard Unix tools (`grep`, `find`) to search and navigate Go repositories. In large Go codebases, this is highly inaccurate, slow, and expensive.
+Text search remains useful for strings, documentation, configuration, and
+non-Go files. Language servers provide live compiler-backed navigation and
+refactoring. gograph adds persisted repository structure and composed
+change-analysis responses for coding agents such as Claude Code, Cursor,
+Copilot, Antigravity, and OpenCode.
 
-gograph completely transforms this dynamic:
-
-* **Less Search Noise**: Generic `grep` mixes declarations with mocks, logs, comments, and strings. gograph returns AST-derived relationships, with documented heuristic limits for dynamic dispatch, routes, tests, and error flow.
-* **Dramatic Token Reduction**: By replacing broad text scans with precise, symbol-focused graph queries, gograph drastically reduces the context size sent to the model, saving significant token overhead.
-* **Agent-Oriented Workflows**: Composed tools such as `context`, `plan`, `review`, and `summary` reduce repeated exploration calls and keep structural evidence compact.
+* **Focused structural evidence**: AST-derived results avoid comments and raw
+  string matches when the question is about Go symbols or relationships.
+* **Explicit correctness modes**: Build metadata distinguishes AST-only,
+  successful precise analysis, and visible precise fallback.
+* **Composed workflows**: `context`, `plan`, `review`, and `summary` combine
+  related graph evidence. Savings depend on the repository and task.
 
 
 
@@ -58,8 +67,17 @@ brew install ozgurcd/tap/gograph
 
 **Go install**
 ```bash
-go install github.com/ozgurcd/gograph@latest
+go install github.com/ozgurcd/gograph/cmd/gograph@latest
 ```
+
+**Official MCP Registry / MCPB (preview)**
+```text
+io.github.ozgurcd/gograph
+```
+This installs a platform-specific local MCP bundle in clients that support
+MCPB; it does not place the CLI on `PATH`. Select the Go project directory and
+the macOS/Linux/Windows amd64/arm64 asset matching the host. See the
+[Registry guide](/docs/mcp-registry/) for the current CPU-selection limitation.
 
 **From source**
 ```bash
@@ -72,8 +90,8 @@ sudo make install
 ## How it works
 
 1. **`gograph build .`** — walks Go files selected by the shared scanner, extracts symbols, validated call edges, imports, HTTP routes, SQL queries, environment reads, struct fields, error declarations, and typed synchronization primitives. Writes everything under the target `.gograph/` directory, adds `.gograph/` to the enclosing Git repository root `.gitignore` when available, and falls back to the build target `.gitignore` outside Git. A zero-file or zero-successful-parse build does not replace existing artifacts; partial failures are recorded in atomically published graph metadata.
-2. **CLI query commands** — read persisted `graph.json`; rebuild after source changes. MCP source-analysis tools preserve the latest graph while unchanged and rebuild in memory after edits.
-3. **`--precise` mode** — attempts type-checked CHA/SSA enrichment. It needs compilable packages for precise data; if enrichment fails, gograph warns and retains the AST graph.
+2. **CLI query commands** — read persisted `graph.json`; rebuild after source changes. MCP source-analysis tools check source freshness and newer persisted artifacts, adopt a newer precise graph, and rebuild after edits in the current requested mode. A failed precise refresh is returned visibly.
+3. **`--precise` mode** — attempts type-checked CHA/SSA enrichment. It needs compilable, build-selected packages for precise data; if type/load analysis fails or omits an indexed non-test file, gograph warns, retains the AST graph, and records `precise_fallback` (`precise` and `ast` identify the other modes).
 
 ## What it captures
 
@@ -93,7 +111,10 @@ sudo make install
 
 ## Why use it?
 
-Standard tooling — `grep`, `find`, language servers — answer file-level questions. gograph answers structural questions:
+Use `rg` for text and non-Go searches and
+[`gopls`](https://go.dev/gopls/features/mcp) for live compiler-backed
+navigation, diagnostics, implementations, and refactoring. gograph complements
+them with persisted repository-level questions such as:
 
 - What is the **blast radius** of changing this function?
 - What **interfaces** does this struct satisfy?

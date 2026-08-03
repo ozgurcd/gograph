@@ -6,7 +6,7 @@ description: "Install gograph, build your first graph, and run your first querie
 
 ## Prerequisites
 
-- Go 1.26 or later
+- Go 1.26.5 or later
 - A Go module repository (`go.mod` present)
 
 ## Install
@@ -19,8 +19,19 @@ gograph version
 
 **Go install**
 ```bash
-go install github.com/ozgurcd/gograph@latest
+go install github.com/ozgurcd/gograph/cmd/gograph@latest
+gograph version
 ```
+
+**Official MCP Registry / MCPB (preview)**
+
+MCPB-capable clients can discover `io.github.ozgurcd/gograph` in the official
+Registry. This installs a self-contained local MCP server bundle rather than a
+CLI on `PATH`. Select the bundle matching macOS, Linux, or Windows and the
+host's amd64/arm64 architecture, then choose the root directory of the Go
+project to analyze. Current Registry metadata cannot select CPU architecture
+portably, so verify the asset filename instead of assuming automatic client
+selection. See [Official MCP Registry](/docs/mcp-registry/) for details.
 
 **From source**
 ```bash
@@ -66,7 +77,7 @@ Partial parse failures are retained in `graph.json` build metadata.
 gograph build . --precise
 ```
 
-Attempts Go type loading plus CHA/SSA enrichment on top of the AST pass. Compilable packages are required for precise data; if enrichment fails, gograph warns and retains the AST graph. Use before major refactors or blast-radius analysis.
+Attempts Go type loading plus CHA/SSA enrichment on top of the AST pass. Compilable, build-selected packages are required for precise data; if enrichment fails or omits an indexed non-test source file, gograph warns and retains the AST graph. Successful, fallback, and AST-only status is persisted as `precise`, `precise_fallback`, or `ast`. A precise interface invocation retains every valid named in-repository CHA target, so `callers Repository.Delete` can resolve direct, embedded-interface, and promoted concrete methods without dropping alternative implementations. Promoted wrappers forward through traversal-only synthetic edges that do not appear as source call sites. CHA can still over-approximate runtime targets, while reflection, plugins, `unsafe`, test-only packages, unnamed concrete types, and module-external implementations remain incomplete. Use before major refactors or blast-radius analysis.
 
 **When to use which:**
 
@@ -96,6 +107,7 @@ sqls:           29
 env_reads:      14
 test_edges:     522
 build_status:   complete
+precision:      precise
 parsed_files:   187/187
 parse_failures: 0
 ```
@@ -104,36 +116,43 @@ parse_failures: 0
 gograph stale
 ```
 
-Lists indexed source files that are newer than `graph.json`. It uses the same ignore policy as `build`, and all filesystem-backed commands resolve the repository root recorded in the graph, so it works identically from subdirectories. Rebuild if any files are listed.
+Compares the current selected-file inventory, effective Go build context, and source modification times with `graph.json`. It uses the same build-constraint and ignore policy as `build`, and all filesystem-backed commands resolve the repository root recorded in the graph, so it works identically from subdirectories. Exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error; text and `--json` modes use the same contract. Rebuild only for status `2`.
 
-## Step 3 — First queries
+## Step 3 — Run repository-wide queries
 
 ```bash
-# Find a symbol
-gograph query ValidateToken
+# No project-specific symbol names are required for these commands
+gograph summary
+gograph hotspot --top 5
+gograph flow --no-tests
+```
 
-# Read its source
-gograph source ValidateToken
+Choose a real function or method reported by `summary`, `hotspot`, or
+`gograph complexity`, then replace `YourSymbol` below with that name:
+
+```bash
+# Read its source and surrounding graph context
+gograph source YourSymbol
+gograph context YourSymbol
 
 # Who calls it?
-gograph callers ValidateToken
+gograph callers YourSymbol
 
 # What does it call?
-gograph callees ValidateToken
+gograph callees YourSymbol
 
 # Full blast radius
-gograph impact ValidateToken
+gograph impact YourSymbol
 
 # Before editing it
-gograph plan ValidateToken
-
-# Review potential production source-to-sink security paths
-gograph flow --no-tests
+gograph plan YourSymbol
 ```
 
 ### Example: Reading Symbol Source Code
 
-Running `gograph source` directly against the codebase returns only the exact AST-extracted code block of the target symbol:
+The following is captured, repository-specific output from running
+`gograph source normalizeSymbolName` in the gograph repository. Your project
+will have different symbol names and locations:
 
 ```text
 $ gograph source normalizeSymbolName
@@ -180,4 +199,4 @@ You can check whether a rebuild is needed:
 gograph stale
 ```
 
-The MCP server checks source freshness per analysis call and rebuilds its in-memory AST graph only after edits. MCP `stale`, default `changes`, and `stats` still inspect the persisted graph. A precise graph is preserved until source changes.
+The MCP server checks source freshness and newer persisted graphs per analysis call. After an edit it rebuilds in memory using the current requested mode, so a precise session re-runs CHA/SSA rather than silently becoming AST-only; if that refresh cannot complete precisely, the analysis call returns an error. MCP `stale`, default `changes`, and `stats` still inspect the persisted graph.

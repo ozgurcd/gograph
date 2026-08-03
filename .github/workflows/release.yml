@@ -3,31 +3,369 @@ name: Release
 on:
   push:
     tags:
-      - '*' # Triggers on any tag push
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to verify and publish without rewriting it
+        required: true
+        type: string
 
-permissions:
-  contents: write # Needed for goreleaser to create GitHub releases
+permissions: {}
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+  GO_VERSION: '1.26.5'
+  GORELEASER_VERSION: 'v2.17.0'
+  HUGO_VERSION: '0.164.0'
+  MCP_PUBLISHER_VERSION: 'v1.7.9'
+  MCP_PUBLISHER_LINUX_AMD64_SHA256: 'ab128162b0616090b47cf245afe0a23f3ef08936fdce19074f5ba0a4469281ac'
 
 jobs:
-  goreleaser:
+  verify:
+    name: Verify release candidate
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - name: Checkout tagged source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          fetch-depth: 0 # Required for Goreleaser to generate changelog
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: '1.26.5'
+          go-version: ${{ env.GO_VERSION }}
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v7
+      - name: Validate tag, versions, and main ancestry
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "release tag must be an exact semantic version (vX.Y.Z): $tag" >&2
+            exit 1
+          fi
+          version="${tag#v}"
+          config_version="$(awk -F ' = ' '$1 == "current_version" { print $2 }' .bumpversion.cfg)"
+          plugin_version="$(jq -er '.version' plugin.json)"
+          server_version="$(jq -er '.version' server.json)"
+          for declared in "$config_version" "$plugin_version" "$server_version"; do
+            if [[ "$declared" != "$version" ]]; then
+              echo "tag $tag does not match declared version $declared" >&2
+              exit 1
+            fi
+          done
+          tagged_commit="$(git rev-parse "${tag}^{}")"
+          checked_out_commit="$(git rev-parse HEAD)"
+          if [[ "$tagged_commit" != "$checked_out_commit" ]]; then
+            echo "checked-out commit $checked_out_commit is not tagged commit $tagged_commit" >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$tagged_commit" refs/remotes/origin/main; then
+            echo "tagged commit $tagged_commit is not contained in origin/main" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Verify dependencies and formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          go mod verify
+          go mod tidy -diff
+          unformatted="$(gofmt -l .)"
+          if [[ -n "$unformatted" ]]; then
+            echo "The following Go files are not formatted:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: Build and test
+        run: |
+          go build -v ./...
+          mkdir -p bin
+          go build -o bin/gograph ./cmd/gograph
+          go test -v ./...
+          go test -race ./...
+          go vet ./...
+
+      - name: Install pinned analysis tools
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+          go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
+
+      - name: Run static and vulnerability analysis
+        run: |
+          staticcheck ./...
+          golangci-lint run ./...
+          govulncheck ./...
+
+      - name: Build and validate MCP bundles
+        run: |
+          go run ./cmd/mcpb-release build --version "${{ steps.metadata.outputs.version }}" --output .release-mcpb
+          go run ./cmd/mcpb-release render-server --version "${{ steps.metadata.outputs.version }}" --input .release-mcpb --output "$RUNNER_TEMP/server.json"
+          cmp server.json "$RUNNER_TEMP/server.json"
+          go run ./cmd/mcpb-release verify --version "${{ steps.metadata.outputs.version }}" --input .release-mcpb --server server.json
+          go run ./cmd/mcpb-release smoke --version "${{ steps.metadata.outputs.version }}" --input .release-mcpb
+
+      - name: Preflight immutable Registry version
+        shell: bash
+        run: |
+          set -euo pipefail
+          state="$(go run ./cmd/mcpb-release registry-state --server server.json)"
+          case "$state" in
+            missing|matching|pending) ;;
+            *) echo "unexpected Registry state: $state" >&2; exit 1 ;;
+          esac
+
+      - name: Build documentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          wget -q "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.deb" -O "$RUNNER_TEMP/hugo.deb"
+          sudo dpkg -i "$RUNNER_TEMP/hugo.deb"
+          hugo --source docs-site --destination "$RUNNER_TEMP/gograph-site" --minify
+
+      - name: Validate GoReleaser configuration and artifacts
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
         with:
           distribution: goreleaser
-          version: '~> v2'
+          version: ${{ env.GORELEASER_VERSION }}
+          args: release --snapshot --clean --skip=publish
+
+  release:
+    name: Publish GitHub release and Homebrew formula
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Rebuild and verify immutable MCP bundles
+        run: |
+          go run ./cmd/mcpb-release build --version "${{ needs.verify.outputs.version }}" --output .release-mcpb
+          go run ./cmd/mcpb-release render-server --version "${{ needs.verify.outputs.version }}" --input .release-mcpb --output "$RUNNER_TEMP/server.json"
+          cmp server.json "$RUNNER_TEMP/server.json"
+          go run ./cmd/mcpb-release verify --version "${{ needs.verify.outputs.version }}" --input .release-mcpb --server server.json
+
+      - name: Inspect existing GitHub release
+        id: release_state
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          state="$(go run ./cmd/mcpb-release github-release-state \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --server server.json)"
+          case "$state" in
+            missing) echo "publish=true" >> "$GITHUB_OUTPUT" ;;
+            matching) echo "publish=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "unexpected release state: $state" >&2; exit 1 ;;
+          esac
+
+      - name: Run GoReleaser
+        if: steps.release_state.outputs.publish == 'true'
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+        with:
+          distribution: goreleaser
+          version: ${{ env.GORELEASER_VERSION }}
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+      - name: Verify published GitHub assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          test "$(go run ./cmd/mcpb-release github-release-state \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --server server.json)" = matching
+
+      - name: Generate Homebrew formula for an existing matching release
+        if: steps.release_state.outputs.publish == 'false'
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+        with:
+          distribution: goreleaser
+          version: ${{ env.GORELEASER_VERSION }}
+          args: release --clean --skip=publish
+
+      - name: Reconcile and verify Homebrew formula
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          formula_path="dist/homebrew/Formula/gograph.rb"
+          test -s "$formula_path"
+          desired_version="${{ needs.verify.outputs.version }}"
+          grep -Fq "version \"$desired_version\"" "$formula_path"
+          published_checksums="$RUNNER_TEMP/published-checksums.txt"
+          curl --fail --location --silent --show-error \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/checksums.txt" \
+            --output "$published_checksums"
+          for asset in \
+            gograph_Darwin_arm64.tar.gz \
+            gograph_Darwin_x86_64.tar.gz \
+            gograph_Linux_arm64.tar.gz \
+            gograph_Linux_x86_64.tar.gz; do
+            local_hash="$(awk -v name="$asset" '$2 == name { print $1 }' dist/checksums.txt)"
+            published_hash="$(awk -v name="$asset" '$2 == name { print $1 }' "$published_checksums")"
+            test -n "$local_hash" && test "$local_hash" = "$published_hash"
+            grep -Fq "/releases/download/${RELEASE_TAG}/$asset" "$formula_path"
+            grep -Fq "sha256 \"$published_hash\"" "$formula_path"
+          done
+          remote_path="$RUNNER_TEMP/gograph.rb"
+          metadata="$(gh api repos/ozgurcd/homebrew-tap/contents/Formula/gograph.rb 2>/dev/null || true)"
+          if [[ -n "$metadata" ]]; then
+            gh api -H 'Accept: application/vnd.github.raw+json' \
+              repos/ozgurcd/homebrew-tap/contents/Formula/gograph.rb > "$remote_path"
+            if cmp -s "$formula_path" "$remote_path"; then
+              echo "Homebrew formula already matches"
+              exit 0
+            fi
+            remote_version="$(sed -n 's/^  version "\([^"]*\)"/\1/p' "$remote_path")"
+            if [[ -z "$remote_version" ]]; then
+              echo "existing Homebrew formula has no parseable version" >&2
+              exit 1
+            fi
+            if [[ "$remote_version" != "$desired_version" ]]; then
+              newest="$(printf '%s\n' "$desired_version" "$remote_version" | sort -V | tail -n 1)"
+              if [[ "$newest" == "$remote_version" ]]; then
+                echo "refusing to downgrade Homebrew from $remote_version to $desired_version" >&2
+                exit 1
+              fi
+            fi
+          fi
+          encoded="$(base64 < "$formula_path" | tr -d '\n')"
+          request=(--method PUT repos/ozgurcd/homebrew-tap/contents/Formula/gograph.rb
+            -f "message=chore: update gograph to $desired_version"
+            -f "content=$encoded"
+            -f branch=main)
+          if [[ -n "$metadata" ]]; then
+            request+=(-f "sha=$(jq -er '.sha' <<< "$metadata")")
+          fi
+          gh api "${request[@]}" >/dev/null
+          gh api -H 'Accept: application/vnd.github.raw+json' \
+            repos/ozgurcd/homebrew-tap/contents/Formula/gograph.rb > "$remote_path"
+          cmp "$formula_path" "$remote_path"
+
+  registry-preflight:
+    name: Verify Registry publication inputs
+    needs: [verify, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      publish: ${{ steps.registry_state.outputs.publish }}
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Verify released MCP bundles and inspect Registry state
+        id: registry_state
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(go run ./cmd/mcpb-release github-release-state \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --server server.json)" = matching
+          state="$(go run ./cmd/mcpb-release registry-state --server server.json)"
+          case "$state" in
+            missing) echo "publish=true" >> "$GITHUB_OUTPUT" ;;
+            matching|pending) echo "publish=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "unexpected Registry state: $state" >&2; exit 1 ;;
+          esac
+
+  registry-publish:
+    name: Publish official MCP Registry metadata
+    needs: [verify, release, registry-preflight]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
+
+      - name: Install pinned MCP publisher
+        if: needs.registry-preflight.outputs.publish == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/mcp-publisher.tar.gz"
+          url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error "$url" --output "$archive"
+          echo "${MCP_PUBLISHER_LINUX_AMD64_SHA256}  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" mcp-publisher
+          "$RUNNER_TEMP/mcp-publisher" --version 2>&1 | grep -Fq 'mcp-publisher 1.7.9'
+
+      - name: Authenticate with GitHub OIDC
+        if: needs.registry-preflight.outputs.publish == 'true'
+        run: "$RUNNER_TEMP/mcp-publisher login github-oidc"
+
+      - name: Publish Registry metadata
+        if: needs.registry-preflight.outputs.publish == 'true'
+        run: "$RUNNER_TEMP/mcp-publisher publish server.json"
+
+  registry-verify:
+    name: Verify active Registry publication
+    needs: [verify, release, registry-publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Verify active Registry entry
+        run: |
+          test "$(go run ./cmd/mcpb-release registry-state --server server.json --wait 2m)" = matching

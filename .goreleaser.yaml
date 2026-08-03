@@ -14,10 +14,12 @@ builds:
       - amd64
       - arm64
     main: ./cmd/gograph
+    mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
-      - -s -w -X main.version={{.Version}}
+      - -s -w -X main.version={{.Version}} -X main.releaseVersionMarker=gograph-release-version=/{{.Version}}/
 archives:
-  - format: tar.gz
+  - formats:
+      - tar.gz
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -27,11 +29,12 @@ archives:
       {{- if .Arm }}v{{ .Arm }}{{ end }}
     format_overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
 checksum:
   name_template: 'checksums.txt'
-snapshot:
-  name_template: "{{ incpatch .Version }}-next"
+  extra_files:
+    - glob: ./.release-mcpb/*.mcpb
 changelog:
   sort: asc
   filters:
@@ -39,8 +42,21 @@ changelog:
       - '^docs:'
       - '^test:'
 
+release:
+  # MCP bundles are built and verified before GoReleaser starts. Keep them
+  # outside dist/ because `release --clean` removes that directory.
+  extra_files:
+    - glob: ./.release-mcpb/*.mcpb
+    - glob: ./server.json
+  # Published release assets are immutable. The workflow verifies a complete
+  # matching release as a no-op and fails on a partial or divergent release.
+  replace_existing_artifacts: false
+
 brews:
   - name: gograph
+    # The release workflow publishes this generated formula idempotently after
+    # GitHub assets are final. This keeps tap failures safely rerunnable.
+    skip_upload: true
     repository:
       owner: ozgurcd
       name: homebrew-tap

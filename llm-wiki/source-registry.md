@@ -21,3 +21,31 @@ This registry tracks raw sources ingested into the wiki.
 - **SRC-20260614-gograph-legacy-concurrency**: [Gograph Legacy Concurrency](sources/SRC-20260614-gograph-legacy-concurrency.md) (Ingested from `raw/inbox/legacy-llm-wiki/concurrency.md`)
 - **SRC-20260614-gograph-legacy-hotspots**: [Gograph Legacy Hotspots](sources/SRC-20260614-gograph-legacy-hotspots.md) (Ingested from `raw/inbox/legacy-llm-wiki/hotspots.md`)
 - **SRC-20260614-gograph-legacy-api-surface**: [Gograph Legacy API Surface](sources/SRC-20260614-gograph-legacy-api-surface.md) (Ingested from `raw/inbox/legacy-llm-wiki/api-surface.md`)
+
+### SRC-20260712-mcp-registry-spec
+
+- Title: Official MCP Registry publishing and package specifications
+- Raw path: https://github.com/modelcontextprotocol/registry/tree/2d3262c8aa34bae8e1a6060c958b207e26e72ff7/docs/modelcontextprotocol-io
+- Source summary: sources/SRC-20260712-mcp-registry-spec.md
+- Source type: web page
+- Trust level: external
+- Received date: 2026-07-12
+- Ingest date: 2026-07-12
+- Status: current
+- Derived pages:
+  - mcp-registry.md
+- Notes: Registered by Scrinium.
+
+### SRC-20260712-mcpb-spec
+
+- Title: Official MCPB 2.1.2 manifest specification
+- Raw path: https://github.com/modelcontextprotocol/mcpb/tree/2a788100a60db19a6b1c018fb1cf84ae85de9537
+- Source summary: sources/SRC-20260712-mcpb-spec.md
+- Source type: web page
+- Trust level: external
+- Received date: 2026-07-12
+- Ingest date: 2026-07-12
+- Status: current
+- Derived pages:
+  - mcp-registry.md
+- Notes: Registered by Scrinium.

@@ -54,3 +54,55 @@ func TestReachableOrphans(t *testing.T) {
 		}
 	}
 }
+
+func TestReachableOrphans_DoesNotConflateExactSameNamedSymbols(t *testing.T) {
+	const (
+		publicDeleteID   = "github.com/org/repo/pkg/api::(*API).Delete"
+		internalDeleteID = "github.com/org/repo/internal/store::(*Store).Delete"
+	)
+	g := &graph.Graph{Symbols: []graph.SymbolNode{
+		{
+			ID:       publicDeleteID,
+			Name:     "Delete",
+			Receiver: "*API",
+			Kind:     graph.KindMethod,
+			File:     "pkg/api/delete.go",
+		},
+		{
+			ID:       internalDeleteID,
+			Name:     "Delete",
+			Receiver: "*Store",
+			Kind:     graph.KindMethod,
+			File:     "internal/store/delete.go",
+		},
+	}}
+
+	orphans := search.ReachableOrphans(g)
+	if len(orphans) != 1 || orphans[0].Name != internalDeleteID {
+		t.Fatalf("exact public root made an unrelated same-named method reachable: %#v", orphans)
+	}
+}
+
+func TestReachableOrphans_UnresolvedCalleeUsesNameFallback(t *testing.T) {
+	const (
+		rootID = "github.com/org/repo/pkg/api::Start"
+		workID = "github.com/org/repo/internal/jobs::work"
+	)
+	g := &graph.Graph{
+		Symbols: []graph.SymbolNode{
+			{ID: rootID, Name: "Start", Kind: graph.KindFunction, File: "pkg/api/start.go"},
+			{ID: workID, Name: "work", Kind: graph.KindFunction, File: "internal/jobs/work.go"},
+		},
+		Calls: []graph.CallEdge{{
+			CallerSymbolID: rootID,
+			CallerName:     "Start",
+			CalleeRaw:      "jobs.work",
+			File:           "pkg/api/start.go",
+			Line:           12,
+		}},
+	}
+
+	if orphans := search.ReachableOrphans(g); len(orphans) != 0 {
+		t.Fatalf("unresolved legacy call did not reach its uniquely named symbol: %#v", orphans)
+	}
+}
