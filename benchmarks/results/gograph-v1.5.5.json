@@ -2,11 +2,11 @@
   "schema_version": "1",
   "suite": "refactor-shop-structural-evidence",
   "description": "A controlled Go refactor fixture with manually reviewable structural ground truth.",
-  "generated_at": "2026-08-04T19:38:00Z",
-  "source_revision": "2f8b82ff807b47682d589e788f653278d7bf1314",
+  "generated_at": "2026-08-04T19:44:43Z",
+  "source_revision": "376a7d6ac121eb8899517a043730bc9016edae2f",
   "source_dirty": true,
   "binary_version": "gograph version v1.5.5-11363b9",
-  "runner_sha256": "ba4c712bdfe3b6956434efe96bc9474201b3b1f986a691d15ac398e842911d2c",
+  "runner_sha256": "96481811fd48c1095cad04881376d89b927590e6d26f676a75f711474d380dcf",
   "fixture_sha256": "d3c3e6a35b53ef2e5c571fd4b84a5be5a43875f79a02170397103b15fe6c04ad",
   "suite_sha256": "cfe4fec5a2f3cc8e4b2218a038c89c277cebf117d35293dc770d5dc7fef129dc",
   "analysis_mode": "precise",
@@ -45,7 +45,7 @@
       "gograph": {
         "label": "gograph precise graph",
         "tool_calls": 1,
-        "median_millis": 9,
+        "median_millis": 6,
         "output_bytes": 516,
         "output_lines": 23,
         "output_sha256": "ee1d5d94784066c9ed0cda67c16f2bff807eabd4434dbe7515eda6aec3d8164c",
@@ -75,7 +75,7 @@
       "baseline": {
         "label": "literal text search",
         "tool_calls": 1,
-        "median_millis": 7,
+        "median_millis": 2,
         "output_bytes": 228,
         "output_lines": 3,
         "output_sha256": "459de6f55956d6739598f98f6e0d05ee2233ebca64099fc2828306dff12573b2",
@@ -127,7 +127,7 @@
       "gograph": {
         "label": "gograph precise graph",
         "tool_calls": 1,
-        "median_millis": 11,
+        "median_millis": 6,
         "output_bytes": 492,
         "output_lines": 19,
         "output_sha256": "85e670c0cff182c6d461a0e8088475c4d851b9747c3b28d158e8afd27ea9deaa",
@@ -157,7 +157,7 @@
       "baseline": {
         "label": "selector text search",
         "tool_calls": 1,
-        "median_millis": 6,
+        "median_millis": 2,
         "output_bytes": 82,
         "output_lines": 1,
         "output_sha256": "3c3c9e29f6f946de8f875f76c07d203bc7228f9b4fa856516da95c173c80734c",
@@ -219,7 +219,7 @@
       "gograph": {
         "label": "gograph composed context",
         "tool_calls": 1,
-        "median_millis": 13,
+        "median_millis": 6,
         "output_bytes": 3506,
         "output_lines": 101,
         "output_sha256": "dfdfbeae9ccaf0cd6733233032dd3e8e27f510fe604a96d8eb9c9f120b8737e1",
@@ -259,7 +259,7 @@
       "baseline": {
         "label": "targeted text-search checklist",
         "tool_calls": 3,
-        "median_millis": 18,
+        "median_millis": 8,
         "output_bytes": 886,
         "output_lines": 13,
         "output_sha256": "da0a3a44b83386f7beb4e166c39bfab4f3f34a8cc8205e3f2eee9ed8d14985ca",

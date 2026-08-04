@@ -183,7 +183,9 @@ func runBenchmark(repositoryRoot, suitePath, gographBin, outputPath, demoOutputP
 	if err != nil {
 		return fmt.Errorf("create fixture workspace: %w", err)
 	}
-	defer os.RemoveAll(fixtureDir)
+	defer func() {
+		_ = os.RemoveAll(fixtureDir)
+	}()
 	if err := copyDirectory(fixtureSource, fixtureDir); err != nil {
 		return fmt.Errorf("materialize fixture: %w", err)
 	}
@@ -408,9 +410,13 @@ func writeFileAtomically(path string, data []byte) error {
 		return fmt.Errorf("create temporary output: %w", err)
 	}
 	tempName := temp.Name()
-	defer os.Remove(tempName)
+	defer func() {
+		_ = os.Remove(tempName)
+	}()
 	if _, err := temp.Write(data); err != nil {
-		temp.Close()
+		if closeErr := temp.Close(); closeErr != nil {
+			return fmt.Errorf("write temporary output: %w (close temporary output: %v)", err, closeErr)
+		}
 		return fmt.Errorf("write temporary output: %w", err)
 	}
 	if err := temp.Close(); err != nil {
