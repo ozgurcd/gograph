@@ -5,11 +5,11 @@
 - `raw/` is the immutable source layer.
 - `llm-wiki/` is the maintained knowledge layer.
 - `AGENTS.md` plus wiki workflow, schema, and security pages are the agent schema.
-- [project.md](project.md) — Project identity, non-goals, correctness model, and package layout.
-- [agent-contract.md](agent-contract.md) — Workflow lifecycle, checklists, tool matrices, and auditing.
+- [project.md](project.md) — Project identity, correctness model, analysis modes, and MCP refresh/publication contract.
+- [agent-contract.md](agent-contract.md) — Workflow lifecycle, verification, CLI/MCP parity, context fidelity, and auditing.
 - [agent-rules.md](agent-rules.md) — Workflow guidelines and rules for development.
 - [scrinium-guide.md](scrinium-guide.md) — Reference guide for using Scrinium.
-- [mcp-registry.md](mcp-registry.md) — Official MCP Registry identity, MCPB representation, release invariants, and preview limits.
+- [mcp-registry.md](mcp-registry.md) — Live v1.5.3 Registry identity, MCPB representation, release invariants, and preview limits.
 
 ## Generated Reports (rebuilt dynamically)
 
@@ -24,6 +24,9 @@
 ## Package Notes
 
 - [packages/README.md](packages/README.md) — Index of package-level implementation notes.
+- Executables: [cmd/gograph](packages/cmd-gograph.md), [cmd/mcpb-release](packages/cmd-mcpb-release.md), and [scripts](packages/scripts.md).
+- Core infrastructure: [baseline](packages/internal-baseline.md), [buildctx](packages/internal-buildctx.md), [cli](packages/internal-cli.md), [graph](packages/internal-graph.md), [mcp](packages/internal-mcp.md), and [mcpbundle](packages/internal-mcpbundle.md).
+- Analysis pipeline: [parser](packages/internal-parser.md), [precise](packages/internal-precise.md), [report](packages/internal-report.md), [rootfind](packages/internal-rootfind.md), [scanner](packages/internal-scanner.md), [search](packages/internal-search.md), [session](packages/internal-session.md), and [wiki](packages/internal-wiki.md).
 
 ## Drafts
 
@@ -46,10 +49,11 @@
 - [sources/SRC-20260614-gograph-legacy-api-surface.md](sources/SRC-20260614-gograph-legacy-api-surface.md) — Source summary for legacy API surface report.
 - [sources/SRC-20260712-mcp-registry-spec.md](sources/SRC-20260712-mcp-registry-spec.md) — Pinned official Registry publishing specification.
 - [sources/SRC-20260712-mcpb-spec.md](sources/SRC-20260712-mcpb-spec.md) — Pinned official MCPB 2.1.2 specification.
+- [sources/SRC-20260803-gograph-live-distribution.md](sources/SRC-20260803-gograph-live-distribution.md) — Live v1.5.3 GitHub release and official MCP Registry verification.
 
 ## Workflows
 
-- [contributing.md](contributing.md) — How to add commands, MCP tools, and verify package boundaries.
+- [contributing.md](contributing.md) — Code-first capability parity, package boundaries, verification, and Scrinium workflow.
 - `workflows/ingest.md` — How to process raw sources into the wiki.
 - `workflows/query.md` — How to answer questions from the wiki and file durable answers.
 - `workflows/lint.md` — How to health-check the wiki.

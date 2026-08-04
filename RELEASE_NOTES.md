@@ -80,7 +80,7 @@
 - Precise interface-satisfaction edges now carry package-qualified interface and concrete type IDs, preventing same-name collisions across packages.
 - Synchronization extraction requires receivers tied to `sync.Mutex`, `sync.RWMutex`, `sync.WaitGroup`, or `sync.Once`. Error-message extraction is restricted to `panic`, `errors.New`, and `fmt.Errorf`, with import-alias support.
 - Builds with zero successful parses fail without replacing an existing index. Partial builds record scanned/parsed counts and per-file failures in `graph.json`; `stats` reports complete/partial status.
-- `graph.json` is written to a synced temporary file and atomically renamed into place.
+- `graph.json` is written to a synced temporary file and renamed into place; same-directory replacement is atomic on Unix-like systems.
 - Mutation extraction no longer classifies ordinary local-variable assignments as struct/global mutations. Mutation edges retain their owning type when statically known, and `mutate Type.Field` now filters same-named fields on unrelated types.
 - Summary, gate baselines, gate evaluation, and architectural snapshots now use the same reachability-based orphan definition as the `orphans` CLI/MCP feature.
 
@@ -94,6 +94,27 @@
 
 ### MCP Safety
 
+- Added opt-in `gograph mcp [path] --persist-refresh`. MCP refreshes remain
+  in-memory by default, including fixed plugin and MCPB configurations. When
+  enabled, a confirmed-fresh refresh writes or overwrites `graph.json` and all
+  nine Markdown reports under `.gograph/` without changing `.gitignore`.
+- Persistent refresh keeps only the latest project state rather than a
+  per-branch cache. Writers coordinate with `.gograph/.artifacts.lock`. A
+  failed initial auto-build publication prevents startup; a later
+  tool-triggered publication failure is returned as an MCP tool error. The
+  fresh in-memory graph remains pending and publication is retried on a later
+  refresh-capable call without repeating graph analysis. Because default
+  `gograph_changes` compares against the persisted graph, successful
+  publication advances that comparison baseline.
+- Artifact publication stages and syncs the graph plus nine reports under a
+  cross-process lock, replaces reports first, and replaces `graph.json` last
+  as the commit marker. Same-directory replacements are atomic on Unix-like
+  systems but are not guaranteed atomic by Go on non-Unix platforms; the
+  complete ten-file bundle is not one atomic filesystem transaction. The
+  `.artifacts.lock` file remains as separate operational coordination state.
+- A failed manual `build --precise` retry cannot replace a still-fresh
+  successful precise artifact with `precise_fallback`; explicit AST builds
+  remain authoritative and can still downgrade intentionally.
 - A running MCP server now adopts a newer persisted precise graph and preserves the requested precise mode across source refreshes. Source edits re-run precision analysis (including after a prior fallback) instead of silently downgrading to an AST-only graph; a failed precise refresh is returned to the client as an error.
 - MCP handlers serialize graph rebuild/publication, eliminating shared-graph races and concurrent duplicate rebuilds.
 - Session audit output uses injected writers instead of replacing process-global stdout.
@@ -109,10 +130,42 @@
   or JSON serialization errors. Automation—especially `set -e` scripts—must branch
   explicitly on `2` so genuine errors are not treated as rebuild requests.
 - MCP callers/callees now expose CLI-equivalent depth and test filtering; callers/context expose exact matching; errors exposes test filtering; endpoint exposes test-edge inclusion.
+- MCP callers, callees, impact, endpoint, dependents, deps, path, and coupling
+  now accept `mermaid=true`, matching the eight CLI commands that support
+  `--mermaid`. Caller/callee CLI depth is clamped to the documented 1-10 range;
+  endpoint depth is clamped to the shared 1-20 range.
+- MCP context now preserves all ambiguous node matches, top-level role,
+  structured test rows, and source-read errors. Contextual plans preserve the
+  same data, and CLI `plan --with-context --json` now emits its requested
+  `inspect_contexts` instead of silently ignoring the flag.
+- CLI endpoint JSON output now honors the global `--json` flag, boundary
+  violations exit non-zero in JSON as well as text mode, and MCP arity accepts
+  a zero threshold like the CLI. MCP endpoint and `go doc` response
+  descriptions now match their actual schemas.
+- CLI path and skeleton now honor the advertised global `--json` output mode;
+  their default text and Mermaid presentations are unchanged.
+- CLI JSON success envelopes always include `count`, normalize empty
+  collection results to `[]`, and use structured error envelopes for invalid
+  invocations and operational failures. `check --json` now follows the common
+  envelope while preserving its non-zero policy-failure exit, and API drift
+  counts reflect concrete additions, removals, and changes.
+- Output flags are validated against the command surface and are mutually
+  exclusive instead of being silently ignored. Empty `--files-only` results
+  write zero lines; endpoint not-found and clean uncommitted plan/review modes
+  return successful empty results consistently across text, JSON, and MCP.
+- Mermaid callers now honors exact matching, and impact diagrams use their
+  intended 20-hop traversal rather than inheriting the 10-hop callers cap.
+  CLI/MCP errorflow and trace now share one structured payload, including
+  related-test rows, and context payloads share transport-safe node, role,
+  test, and source-error fields.
 - Added `gograph_boundaries_create`, the MCP equivalent of CLI `boundaries --create`, with mutating/non-idempotent annotations and repository-root path containment.
 - `gograph_capabilities` now lists every live registered tool, including flow, trace, diagram, check, and boundary creation. A regression test compares the payload to the exact server registry (65 endpoints total).
 - CLI help now documents every canonical command and implemented mode, including summary, untested, doc, gate initialization, exact context/caller lookup, filtered SQL, coupling scope, hotspot test edges, and contextual plans. Regression tests cover both command names and these option surfaces in help and capabilities output.
 - Claude integration installation exits non-zero on partial failure instead of reporting success when required files could not be written.
+- Claude Desktop installation no longer warns that a graph must be built
+  manually; MCP startup already creates a missing graph. Capabilities and
+  generated guidance now name the actual governed wiki entry points and
+  distinguish default in-memory refresh from opt-in artifact publication.
 
 ### Verification
 
@@ -143,9 +196,9 @@ and process-level tests cover the reported escaped-pipe false negative.
 ### Documentation
 
 - Documented interface-qualified caller queries, multi-target CHA representation, precision metadata/status, precision-aware MCP refresh, compatibility behavior, and the remaining conservative static-analysis limits.
-Updated CLI help, MCP capability and annotation descriptions, README, command reference, getting-started guide, coding-agent usage guide, contributor checks, and the agent skill for graph integrity, shared root/scanner behavior, policy checks, MCP side effects, and CI verification.
-Corrected safety and I/O claims: default AST analysis does not execute target code, but gograph reads project/config metadata; precise mode and `doc` invoke the local Go toolchain; source/context and inline endpoint handlers can return source; session telemetry is local rather than absent. Documented exact CLI/MCP parity boundaries and output-mode support.
-Updated the vendored Hugo templates to supported language direction and locale APIs, removing deprecation warnings from the documentation build.
+- Updated CLI help, MCP capability and annotation descriptions, README, command reference, getting-started guide, coding-agent usage guide, contributor checks, and the agent skill for graph integrity, shared root/scanner behavior, policy checks, MCP side effects, and CI verification.
+- Corrected safety and I/O claims: default AST analysis does not execute target code, but gograph reads project/config metadata; precise mode and `doc` invoke the local Go toolchain; source/context and inline endpoint handlers can return source; session telemetry is local rather than absent. Documented exact CLI/MCP parity boundaries and output-mode support.
+- Updated the vendored Hugo templates to supported language direction and locale APIs, removing deprecation warnings from the documentation build.
 - Corrected every maintained `go install` example to target the executable
   package at `github.com/ozgurcd/gograph/cmd/gograph`.
 - Reworked Quick Start and getting-started flows to begin with repository-wide
@@ -156,6 +209,11 @@ Updated the vendored Hugo templates to supported language direction and locale A
   Reframed gograph as complementary to `gopls` and targeted text search, and
   changed the comparison harness to report only observed command latency and
   raw payload size without a fabricated follow-up penalty.
+- Re-audited maintained documentation, CLI help, MCP schemas, integration
+  metadata, and agent guidance against source behavior. Corrected persistence,
+  publication ordering, freshness fallback, gate baseline, session telemetry,
+  CLI-only host operations, Mermaid parity, installer, and Registry release
+  guidance; regenerated the public site and governed wiki pages.
 
 ---
 

@@ -148,7 +148,7 @@ The call graph mapped that `loadGraph` is called from **56 locations** across th
 - The snapshot save/diff engine (`internal/cli/snapshot.go`).
 - The CI check and gate command handlers.
 
-At the time of this snapshot, persisted CLI analysis commands — from `callers` to `plan`, `review`, `risk`, `wiki`, `summary`, and `explain` — depended on `loadGraph` to deserialize the graph. The MCP server has a distinct freshness model: source-analysis tools refresh an in-memory graph in the current requested mode, while persisted-index tools retain snapshot semantics.
+At the time of this snapshot, persisted CLI analysis commands — from `callers` to `plan`, `review`, `risk`, `wiki`, `summary`, and `explain` — depended on `loadGraph` to deserialize the graph. The MCP server has a distinct freshness model: source-analysis tools refresh an in-memory graph in the current requested mode, while `stale`, default `changes`, and `stats` retain snapshot semantics. Refreshes remain in memory by default; a current server can opt into publishing `graph.json` plus nine reports with `gograph mcp [path] --persist-refresh`.
 
 ### 4.3 Auditing Unused Code (`gograph orphans`)
 We checked for indexed functions and methods that were not reachable from the
@@ -265,7 +265,7 @@ Beyond individual commands, `gograph` now supports architectural layering rules 
 gograph boundaries
 ```
 
-This checks whether any package imports violate declared constraints — for example, ensuring that CLI handler packages never import repository packages directly. When violations are found, the output pinpoints the exact forbidden import edge with file and line number. This can be run in CI as `gograph gate` with configurable thresholds for complexity, coupling, and dead code.
+This checks whether any package imports violate declared constraints — for example, ensuring that CLI handler packages never import repository packages directly. When violations are found, the output pinpoints the exact forbidden import edge with file and line number. Run `gograph boundaries` directly in CI for this policy. `gograph gate` is a separate stale-safe quality threshold command configured by the project-root `.gograph.yml`.
 
 ### 4.8 Agent Session Telemetry (`gograph session`)
 One of the most unique capabilities is agent compliance tracking. When AI agents work in the repository, `gograph session create` starts a telemetry session that records:
@@ -316,6 +316,11 @@ evidence categories in one response:
 - **`gograph summary`** — repository briefing with hotspots, instability,
   complexity, orphan candidates, and god-object candidates.
 
+For a visual response, the CLI supports `--mermaid` on `callers`, `callees`,
+`impact`, `endpoint`, `dependents`, `deps`, `path`, and `coupling`. Their MCP
+counterparts accept `mermaid: true` and return Mermaid flowchart text instead
+of their normal responses.
+
 ### Evaluation Guidance
 The defensible benefit is measurable at the tool boundary: fewer search calls and fewer irrelevant source lines returned for structural questions. Accuracy still depends on the analysis mode and feature limitations; teams should evaluate task success and token use on their own repositories rather than treating static-analysis output as runtime proof.
 
@@ -362,11 +367,15 @@ gograph wiki --output llm-wiki
 ### 6.3 Continuous Integration
 To enforce structural integrity and prevent dead code, integrate `gograph` directly in your pre-commit hooks or GitHub Actions:
 
+Run `gograph gate init` once, review the generated `.gograph.yml`, and commit
+it. Thresholds such as `max_complexity` and `max_new_coupling_edges` belong in
+that file; they are not `gate` command flags. The CI step is then:
+
 ```yaml
 - name: Run gograph structural gate
   run: |
     gograph build . --precise
-    gograph gate --max-complexity 30 --max-coupling 15
+    gograph gate
 ```
 
 Use text search, `gopls`, and gograph together: text search for literals and

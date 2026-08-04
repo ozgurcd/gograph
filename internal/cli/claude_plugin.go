@@ -117,11 +117,6 @@ func installMCPServer() error {
 		projectPath = absPath
 	}
 
-	// Warn if graph has not been built yet
-	if _, err := os.Stat(filepath.Join(projectPath, ".gograph", "graph.json")); os.IsNotExist(err) {
-		fmt.Printf("⚠️  No graph found at %s — run 'gograph build .' in your project first.\n", projectPath)
-	}
-
 	mcpServers["gograph"] = map[string]interface{}{
 		"command": gographPath,
 		"args":    []string{"mcp", projectPath},

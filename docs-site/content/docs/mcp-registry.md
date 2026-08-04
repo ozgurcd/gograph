@@ -47,6 +47,17 @@ The manifest does not construct a shell command. It passes `mcp` and the
 selected directory as separate argument values. Configure a separate project
 directory for each repository-specific server instance.
 
+The fixed bundle arguments omit `--persist-refresh`, so MCP refreshes stay in
+memory and do not overwrite project artifacts. To opt into latest-state
+publication, use a custom local registration with that flag. The opt-in mode
+does not update `.gitignore` and is not a per-branch cache. It publishes
+`graph.json` plus nine Markdown reports under `.gograph/`: graph/report
+publishers coordinate through `.artifacts.lock`, rename reports first, and
+rename `graph.json` last as the commit marker. Same-directory replacement is
+atomic on Unix-like systems but is not guaranteed atomic by Go on non-Unix
+platforms; the complete bundle is not one atomic transaction, and the lock
+file remains as separate operational state.
+
 ## Supported targets
 
 Every release supplies six genuine MCPB archives:

@@ -15,6 +15,60 @@ type ErrorFlowReport struct {
 	RelatedTests    []Result
 }
 
+// ErrorFlowPayload is the shared JSON representation used by the CLI and both
+// MCP errorflow names. It preserves structured related-test rows as well as the
+// compatibility list of test names.
+type ErrorFlowPayload struct {
+	Query       string        `json:"query"`
+	Summary     string        `json:"summary"`
+	Definitions []Result      `json:"definitions"`
+	Sites       []Result      `json:"sites"`
+	Paths       []TraceResult `json:"paths"`
+	Tests       []string      `json:"tests"`
+	TestResults []Result      `json:"test_results"`
+	Limitations []string      `json:"limitations"`
+}
+
+func NewErrorFlowPayload(report *ErrorFlowReport) ErrorFlowPayload {
+	payload := ErrorFlowPayload{
+		Query:       report.Term,
+		Summary:     "ErrorFlow Report for " + report.Term,
+		Definitions: nonNilResults(report.DefinitionSites),
+		Sites:       nonNilResults(report.ReturnSites),
+		Paths:       nonNilTraceResults(report.Paths),
+		TestResults: nonNilResults(report.RelatedTests),
+		Tests:       make([]string, 0, len(report.RelatedTests)),
+		Limitations: []string{
+			"Errorflow uses heuristic static call-graph and AST reference analysis. It does not perform SSA or full data-flow tracking.",
+		},
+	}
+	for _, test := range report.RelatedTests {
+		payload.Tests = append(payload.Tests, test.Name)
+	}
+	return payload
+}
+
+// Count returns the number of concrete evidence rows, so a report containing
+// definitions, return sites, or tests is not mislabeled empty merely because
+// no complete entrypoint path was found.
+func (p ErrorFlowPayload) Count() int {
+	return len(p.Definitions) + len(p.Sites) + len(p.Paths) + len(p.TestResults)
+}
+
+func nonNilResults(results []Result) []Result {
+	if results == nil {
+		return []Result{}
+	}
+	return results
+}
+
+func nonNilTraceResults(results []TraceResult) []TraceResult {
+	if results == nil {
+		return []TraceResult{}
+	}
+	return results
+}
+
 func (r *ErrorFlowReport) String() string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "ErrorFlow Report for %q\n", r.Term)

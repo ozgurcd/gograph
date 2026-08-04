@@ -74,6 +74,27 @@ func TestGographCapabilities(t *testing.T) {
 	if !ok || len(workflows) == 0 {
 		t.Errorf("expected recommended_workflows object, got %v", workflows)
 	}
+	sessionStart, ok := workflows["session_start"].([]any)
+	if !ok {
+		t.Fatalf("expected session_start workflow array, got %T", workflows["session_start"])
+	}
+	wantStart := []string{
+		"READ llm-wiki/index.md",
+		"READ llm-wiki/project.md",
+		"READ llm-wiki/agent-rules.md",
+		"READ llm-wiki/agent-contract.md",
+	}
+	if len(sessionStart) < len(wantStart) {
+		t.Fatalf("session_start workflow = %v, want at least %v", sessionStart, wantStart)
+	}
+	for i, want := range wantStart {
+		if got, _ := sessionStart[i].(string); got != want {
+			t.Errorf("session_start[%d] = %q, want %q", i, got, want)
+		}
+	}
+	if strings.Contains(text, "llm-wiki/README.md") || strings.Contains(text, "llm-wiki/rules.md") {
+		t.Errorf("capabilities retain paths for wiki pages that are not part of the current layout")
+	}
 
 	// 3. Output includes limitations
 	limitations, ok := out["limitations"].([]any)

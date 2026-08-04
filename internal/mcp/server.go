@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,23 +53,45 @@ func boolArg(args map[string]any, name string) bool {
 	return value
 }
 
-func intArg(args map[string]any, name string, fallback, min, max int) int {
-	value := fallback
-	switch raw := args[name].(type) {
+func integerArg(args map[string]any, name string, fallback int) (int, error) {
+	raw, exists := args[name]
+	if !exists {
+		return fallback, nil
+	}
+	var value int
+	switch raw := raw.(type) {
 	case float64:
+		maxExclusive := float64(math.MaxInt) + 1
+		minInclusive := float64(math.MinInt)
+		if math.IsNaN(raw) || math.IsInf(raw, 0) || math.Trunc(raw) != raw || raw < minInclusive || raw >= maxExclusive {
+			return 0, fmt.Errorf("%s must be an integer", name)
+		}
 		value = int(raw)
 	case int:
 		value = raw
 	case int64:
+		if raw < int64(math.MinInt) || raw > int64(math.MaxInt) {
+			return 0, fmt.Errorf("%s must be an integer", name)
+		}
 		value = int(raw)
+	default:
+		return 0, fmt.Errorf("%s must be an integer", name)
+	}
+	return value, nil
+}
+
+func intArg(args map[string]any, name string, fallback, min, max int) (int, error) {
+	value, err := integerArg(args, name, fallback)
+	if err != nil {
+		return 0, err
 	}
 	if value < min {
-		return min
+		return min, nil
 	}
 	if max > 0 && value > max {
-		return max
+		return max, nil
 	}
-	return value
+	return value, nil
 }
 
 // MCPResponse is the stable structured data payload returned by complex tools.
@@ -76,7 +99,10 @@ type MCPResponse struct {
 	Query          string               `json:"query,omitempty"`
 	Summary        string               `json:"summary,omitempty"`
 	Source         string               `json:"source,omitempty"`
+	SourceError    string               `json:"source_error,omitempty"`
 	Node           *search.Result       `json:"node,omitempty"`
+	Nodes          []search.Result      `json:"nodes,omitempty"`
+	Role           string               `json:"role,omitempty"`
 	Callers        []search.Result      `json:"callers,omitempty"`
 	Callees        []search.Result      `json:"callees,omitempty"`
 	Findings       []search.Result      `json:"findings,omitempty"`
@@ -98,8 +124,55 @@ type MCPResponse struct {
 	Limitations    []string             `json:"limitations,omitempty"`
 }
 
+type symbolContext = search.ContextPayload
+
+func newSymbolContext(symbol string, result *search.ContextResult) symbolContext {
+	return search.NewContextPayload(symbol, result)
+}
+
 // ExposeToolsForTesting allows tests to access internal tool handlers. Set to a non-nil map before calling NewServer.
 var ExposeToolsForTesting map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)
+
+// ServerOptions configures behavior that affects the MCP server's advertised
+// contract. PersistRefresh is opt-in because source-analysis tools can replace
+// generated artifacts under .gograph when it is enabled.
+type ServerOptions struct {
+	PersistRefresh bool
+}
+
+func resolveServerOptions(options []ServerOptions) ServerOptions {
+	if len(options) == 0 {
+		return ServerOptions{}
+	}
+	return options[len(options)-1]
+}
+
+func toolRefreshesGraph(name string) bool {
+	switch name {
+	case "gograph_capabilities",
+		"gograph_stale",
+		"gograph_stats",
+		"gograph_doc",
+		"gograph_session_create",
+		"gograph_session_end",
+		"gograph_session_audit",
+		"gograph_session_cleanup":
+		return false
+	default:
+		return true
+	}
+}
+
+func persistRefreshDescription(description string) string {
+	replacer := strings.NewReplacer(
+		"Read-only; no persistent side effects.", "",
+		"Read-only; no side effects.", "",
+		"Read-only apart from temporary baseline extraction.", "Git baseline extraction uses a temporary directory that is removed after the call.",
+		"Read-only; archives only a temp directory that is removed after the call.", "Git baseline extraction uses a temporary directory that is removed after the call.",
+	)
+	description = strings.Join(strings.Fields(replacer.Replace(description)), " ")
+	return description + " Because this server was started with --persist-refresh, a successful stale-graph refresh may replace generated artifacts under .gograph before this tool runs."
+}
 
 // NewServer creates and returns the MCP server with all tools registered.
 // version is passed in by the caller (cli.Version) so this package does not
@@ -110,7 +183,9 @@ func NewServer(
 	buildGraph func(string) (*graph.Graph, error),
 	buildBaseline func(context.Context, string) (*graph.Graph, error),
 	version string,
+	options ...ServerOptions,
 ) *server.MCPServer {
+	selectedOptions := resolveServerOptions(options)
 	s := server.NewMCPServer(
 		"gograph",
 		version,
@@ -151,15 +226,21 @@ func NewServer(
 		destructive := behavior.destructive
 		idempotent := behavior.idempotent
 		openWorld := behavior.openWorld
+		if selectedOptions.PersistRefresh && toolRefreshesGraph(tool.Name) {
+			readOnly = false
+			destructive = true
+			tool.Description = persistRefreshDescription(tool.Description)
+		}
 
 		tool.Annotations.ReadOnlyHint = &readOnly
 		tool.Annotations.DestructiveHint = &destructive
 		tool.Annotations.IdempotentHint = &idempotent
 		tool.Annotations.OpenWorldHint = &openWorld
 
-		// Wrap the handler to record command telemetry into the active session.
-		// This ensures that MCP invocations of plan/review/context/etc. are
-		// counted by gograph_session_audit — identical to what the CLI does in Run().
+		// Wrap the handler to record observational command telemetry into an
+		// active session. MCP records command, duration, and status so plan/review
+		// calls count toward the audit; unlike CLI Run, it has no intention field
+		// and deliberately omits tool arguments.
 		toolName := tool.Name
 		instrumentedHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			handlerMu.Lock()
@@ -196,20 +277,37 @@ func NewServer(
 		mcp.WithDescription("List all available gograph MCP tools, their purposes, and recommended agent workflows. No prerequisites — this tool always works regardless of graph state. Read-only; no side effects. WHEN TO USE: Call once per session to orient before issuing analytical queries. NOT TO USE: Do not repeat after capabilities are cached in context. RETURNS: Structured JSON with every registered tool name, one-line purposes, recommended workflow sequences, and known static-analysis limitations."),
 	)
 	addTool(capabilitiesTool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		startupGraph := "auto-builds an in-memory graph when it is missing"
+		if selectedOptions.PersistRefresh {
+			startupGraph = "auto-builds and publishes graph.json plus nine reports when the artifact is missing"
+		}
 		resp := map[string]any{
 			"summary":      "gograph MCP capabilities",
-			"prerequisite": "The MCP server loads .gograph/graph.json when present and auto-builds an in-memory graph when it is missing. Source-analysis tools check source freshness and newer persisted graphs per call, then rebuild after edits using the latest requested analysis mode; gograph_stale, gograph_changes without git_ref, and gograph_stats inspect the persisted index. Run `gograph build . --precise` for type-checked CHA/SSA enrichment; MCP adopts a newer precise graph and re-runs precision after source changes instead of silently downgrading to AST-only analysis. Session lifecycle tools write local telemetry, gograph_session_cleanup deletes stale logs, gograph_boundaries_create writes configuration, and gograph_wiki writes documentation. gograph_doc invokes the local Go toolchain and is annotated open-world because module resolution follows the user's Go environment.",
+			"prerequisite": "The MCP server loads .gograph/graph.json when present and " + startupGraph + ". Source-analysis tools check source freshness and newer persisted graphs per call, then rebuild after edits using the latest requested analysis mode; gograph_stale, gograph_changes without git_ref, and gograph_stats inspect the persisted index, or the startup auto-build fallback when no artifact exists. Run `gograph build . --precise` for type-checked CHA/SSA enrichment; MCP adopts a newer precise graph and re-runs precision after source changes instead of silently downgrading to AST-only analysis. Session lifecycle tools write local telemetry, gograph_session_cleanup deletes stale logs, gograph_boundaries_create writes configuration, and gograph_wiki writes documentation. When an audit session is active, non-session MCP calls append observational command telemetry even when their analysis contract is read-only. gograph_doc invokes the local Go toolchain and is annotated open-world because module resolution follows the user's Go environment.",
+			"refresh_persistence": map[string]any{
+				"enabled":            selectedOptions.PersistRefresh,
+				"artifact_directory": ".gograph",
+				"scope":              "latest successful refresh only; not a multi-branch cache",
+				"artifact_set":       "graph.json plus nine Markdown reports; .artifacts.lock remains as operational coordination state",
+				"updates_gitignore":  false,
+				"failure_behavior":   "startup publication failure prevents serving; later failures are returned and the fresh in-memory graph is retried without rebuilding",
+				"tool_annotations":   "refresh-capable tools are non-read-only only when persistence is enabled",
+			},
+			"mermaid": map[string]any{
+				"parameter": "set mermaid=true to return Markdown-fenced Mermaid instead of structured JSON",
+				"tools":     []string{"gograph_callers", "gograph_callees", "gograph_impact", "gograph_endpoint", "gograph_dependents", "gograph_deps", "gograph_path", "gograph_coupling"},
+			},
 			"tools": []map[string]string{
 				{"name": "gograph_capabilities", "purpose": "List all available tools and recommended workflows. No prerequisites."},
-				{"name": "gograph_stale", "purpose": "Check whether .gograph/graph.json is outdated vs selected source files or the effective Go build context. Run this first as a pre-flight check; if stale, run `gograph build .`."},
+				{"name": "gograph_stale", "purpose": "Check whether persisted graph.json, or the startup fallback when no artifact exists, is outdated versus selected source files or the effective Go build context."},
 				{"name": "gograph_session_create", "purpose": "Start a telemetry audit session for tracking agent compliance and tool success metrics."},
 				{"name": "gograph_session_end", "purpose": "End the active telemetry session cleanly and write end-of-session logs."},
 				{"name": "gograph_session_audit", "purpose": "Review and grade agent compliance (Plan rule, Review rule, Composability/Efficiency) and tool success rates."},
 				{"name": "gograph_session_cleanup", "purpose": "Delete all stale inactive session telemetry logs to keep the repository clean."},
 				{"name": "gograph_query", "purpose": "Search symbols, packages, files, and imports by one term or an OR-combined terms array."},
 				{"name": "gograph_focus", "purpose": "Full structural summary of one package: files, symbols, internal call edges, and imports. Use before editing an unfamiliar package."},
-				{"name": "gograph_context", "purpose": "Pre-flight bundle for one symbol: node metadata, source, callers, callees, tests, and role in one call. Use uncommitted=true for all currently modified symbols. Replaces 4–5 separate calls."},
-				{"name": "gograph_plan", "purpose": "Pre-edit plan: which symbols to inspect first, tests, routes, env, risk flags. Set with_context=true to inline full context for each symbol."},
+				{"name": "gograph_context", "purpose": "Pre-flight bundle: first node plus all ambiguous nodes, source/source_error, callers, callees, structured tests, and top-level role. Use uncommitted=true for all modified symbols."},
+				{"name": "gograph_plan", "purpose": "Pre-edit plan: symbols to inspect first, tests, routes, env, and risk flags. Set with_context=true to inline the same complete context bundles."},
 				{"name": "gograph_review", "purpose": "Post-edit scope summary: changed symbols, tests, routes, env, SQL, and risk flags. Use uncommitted=true after editing."},
 				{"name": "gograph_risk", "purpose": "Evaluate the change risk profile of target symbol(s) or uncommitted changes. Returns 0-100 risk score and verdict (SAFE/REVIEW/DANGER)."},
 				{"name": "gograph_callers", "purpose": "Direct callers of a function or Interface.Method (one-hop fan-in). Precise interface queries expand every recorded implementation and deduplicate shared source sites."},
@@ -223,8 +321,8 @@ func NewServer(
 				{"name": "gograph_orphans", "purpose": "Dead code: functions unreachable from any entry point via full BFS reachability."},
 				{"name": "gograph_boundaries", "purpose": "Verify imports against architecture constraints in .gograph/boundaries.json. Returns pass/fail and violation list."},
 				{"name": "gograph_boundaries_create", "purpose": "Create a baseline .gograph/boundaries.json from current package imports; refuses to overwrite."},
-				{"name": "gograph_endpoint", "purpose": "Full vertical slice for one HTTP route: handler, BFS call chain, SQL, env reads. Query by route pattern, path fragment, or handler name."},
-				{"name": "gograph_api", "purpose": "API drift detection: compares exported symbols between current tree and a git baseline ref. Returns added/removed/changed."},
+				{"name": "gograph_endpoint", "purpose": "Full vertical slice for one HTTP route: handler, 1-20-depth BFS call chain, SQL, and env reads. include_tests adds routes registered in *_test.go; mermaid selects flowchart output."},
+				{"name": "gograph_api", "purpose": "API drift detection: compares exported symbols with a Git ref or saved graph path ending in .json. Returns added/removed/changed."},
 				{"name": "gograph_routes", "purpose": "All HTTP routes in the codebase: method, path, handler. Use before gograph_endpoint."},
 				{"name": "gograph_flow", "purpose": "Find potential paths from HTTP requests, decoded JSON, or environment values to SQL query text, process execution, filesystem access, or outbound HTTP."},
 				{"name": "gograph_errorflow", "purpose": "Trace error sentinel propagation: definition sites, return sites, and upstream call chains to entry points."},
@@ -235,12 +333,12 @@ func NewServer(
 				{"name": "gograph_tests", "purpose": "Test functions that exercise a named symbol. Omit symbol to list all test edges."},
 				{"name": "gograph_hotspot", "purpose": "Functions ranked by fan-in (incoming call count). High fan-in = highest-risk change target."},
 				{"name": "gograph_httpcalls", "purpose": "All outbound HTTP client calls via net/http (Get, Post, PostForm, Head). Filter by method or URL."},
-				{"name": "gograph_changes", "purpose": "Symbols modified/added/deleted. Without git_ref: uncommitted changes. With git_ref: static diff vs that ref."},
+				{"name": "gograph_changes", "purpose": "Symbols modified/added/deleted. Without git_ref: changes since the persisted graph. With git_ref: static diff vs that ref."},
 				{"name": "gograph_path", "purpose": "Shortest BFS call chain between two symbols. Confirms whether a handler reaches a given function."},
 				{"name": "gograph_complexity", "purpose": "Cyclomatic complexity per function, sorted highest first. Labels: LOW/MEDIUM/HIGH/VERY HIGH."},
 				{"name": "gograph_coupling", "purpose": "Fan-in (Ca), fan-out (Ce), and instability I=Ce/(Ca+Ce) per package. 0=stable, 1=unstable."},
 				{"name": "gograph_returnusage", "purpose": "How each caller uses a function's return value: discarded/assigned/partially_ignored/returned/passed. Run before changing a return signature."},
-				{"name": "gograph_arity", "purpose": "Functions with too many parameters (long parameter list smell). Default minimum: 5."},
+				{"name": "gograph_arity", "purpose": "Functions meeting an inclusive parameter-count threshold. Default minimum: 5; min=0 includes zero-arity functions."},
 				{"name": "gograph_concurrency", "purpose": "All concurrency primitives: goroutines, channels, mutex, WaitGroup, Once, select. Filter by kind."},
 				{"name": "gograph_fixtures", "purpose": "Test helper structs and factory functions in *_test.go files for a package. Not external data files."},
 				{"name": "gograph_godobj", "purpose": "God Object candidates scored by method count, field count, and outgoing calls. Exceeding any enabled threshold qualifies a candidate."},
@@ -263,11 +361,11 @@ func NewServer(
 				{"name": "gograph_check", "purpose": "Run static policy checks and return structured pass/warn/fail findings."},
 				{"name": "gograph_summary", "purpose": "Single-call codebase briefing: top 3 hotspots, worst instability package, highest complexity function, orphan count, and god-object count. Replaces 5 separate tool calls."},
 				{"name": "gograph_untested", "purpose": "Sweep the full graph and return production functions that have callers but zero test edges — the coverage gap not visible from orphans or per-symbol tests lookups."},
-				{"name": "gograph_doc", "purpose": "Fetch Go doc (signature + doc comment) for any stdlib or third-party symbol via `go doc`. No graph required — use when a call chain leads outside the project."},
+				{"name": "gograph_doc", "purpose": "Fetch Go doc for a stdlib or third-party symbol. No graph required; returns a one-element JSON array with query and raw-text output."},
 				{"name": "gograph_wiki", "purpose": "Generate the llm-wiki/ directory: machine-first markdown pages covering overview, architecture, hotspots, routes, env, errors, concurrency, per-package docs, and API surface."},
 			},
 			"recommended_workflows": map[string][]string{
-				"session_start":  {"READ llm-wiki/README.md", "READ llm-wiki/project.md", "READ llm-wiki/rules.md", "READ llm-wiki/agent-contract.md", "gograph_summary", "gograph_stale"},
+				"session_start":  {"READ llm-wiki/index.md", "READ llm-wiki/project.md", "READ llm-wiki/agent-rules.md", "READ llm-wiki/agent-contract.md", "gograph_summary", "gograph_stale"},
 				"before_edit":    {"gograph_context", "gograph_plan"},
 				"after_edit":     {"gograph_review", "gograph_risk", "gograph_api", "gograph_boundaries"},
 				"error_changes":  {"gograph_errorflow", "gograph_review"},
@@ -353,11 +451,12 @@ func NewServer(
 
 	// Tool: gograph_callers
 	callersTool := mcp.NewTool("gograph_callers",
-		mcp.WithDescription("Find functions and methods that call the specified function or interface method. Defaults to one-hop fan-in; depth 2-10 expands callers-of-callers. In a precise graph, Interface.Method expands through all recorded implementations and reports a shared source call site once. The MCP server refreshes source analysis before the call. Read-only; no persistent side effects. WHEN TO USE: Before renaming, removing, or changing a function or interface method signature. NOT TO USE: For unbounded upstream blast radius (use gograph_impact); for downstream callees (use gograph_callees). RETURNS: Caller symbols with package paths, file locations, and call-site line numbers."),
+		mcp.WithDescription("Find functions and methods that call the specified function or interface method. Defaults to one-hop fan-in; depth 2-10 expands callers-of-callers. In a precise graph, Interface.Method expands through all recorded implementations and reports a shared source call site once. The MCP server refreshes source analysis before the call. Read-only; no persistent side effects. WHEN TO USE: Before renaming, removing, or changing a function or interface method signature. NOT TO USE: For unbounded upstream blast radius (use gograph_impact); for downstream callees (use gograph_callees). RETURNS: Caller symbols with package paths, file locations, and call-site line numbers; with mermaid=true, Mermaid flowchart text."),
 		mcp.WithString("function", mcp.Required(), mcp.Description("The target function or method (supports short name 'BuildGraph', interface notation 'Repository.Delete', concrete dot-notation 'Store.Delete', or a fully-qualified ID)")),
-		mcp.WithNumber("depth", mcp.Description("Traversal depth from 1 to 10 (default 1)")),
+		mcp.WithInteger("depth", mcp.Description("Traversal depth from 1 to 10 (default 1)")),
 		mcp.WithBoolean("no_tests", mcp.Description("Exclude call edges originating in *_test.go files")),
 		mcp.WithBoolean("exact", mcp.Description("Require an exact symbol-name or fully-qualified-ID match")),
+		mcp.WithBoolean("mermaid", mcp.Description("Return Mermaid flowchart text instead of the normal response")),
 	)
 	addTool(callersTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -373,9 +472,15 @@ func NewServer(
 		if !ok {
 			return mcp.NewToolResultError("function must be a string"), nil
 		}
-		depth := intArg(args, "depth", 1, 1, 10)
+		depth, err := intArg(args, "depth", 1, 1, 10)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		includeTests := !boolArg(args, "no_tests")
 		exact := boolArg(args, "exact")
+		if boolArg(args, "mermaid") {
+			return mcp.NewToolResultText(search.CallersToMermaid(g, fn, depth, includeTests, exact)), nil
+		}
 		var results []search.Result
 		if depth > 1 {
 			results = search.CallersDepth(g, fn, depth, includeTests, exact)
@@ -387,10 +492,11 @@ func NewServer(
 
 	// Tool: gograph_callees
 	calleesTool := mcp.NewTool("gograph_callees",
-		mcp.WithDescription("Find functions and methods called by the specified function. Defaults to one-hop fan-out; depth 2-10 expands the downstream call graph. The MCP server refreshes source analysis before the call. Read-only; no persistent side effects. WHEN TO USE: To understand a function's downstream dependencies. NOT TO USE: For upstream callers (use gograph_callers); for package dependency trees (use gograph_deps). RETURNS: Callee symbols with package paths, file locations, and call-site line numbers."),
+		mcp.WithDescription("Find functions and methods called by the specified function. Defaults to one-hop fan-out; depth 2-10 expands the downstream call graph. The MCP server refreshes source analysis before the call. Read-only; no persistent side effects. WHEN TO USE: To understand a function's downstream dependencies. NOT TO USE: For upstream callers (use gograph_callers); for package dependency trees (use gograph_deps). RETURNS: Callee symbols with package paths, file locations, and call-site line numbers; with mermaid=true, Mermaid flowchart text."),
 		mcp.WithString("function", mcp.Required(), mcp.Description("The name of the calling function to inspect callees for (supports short name 'Serve', dot-notation 'graph.Graph.Build', or fully-qualified ID)")),
-		mcp.WithNumber("depth", mcp.Description("Traversal depth from 1 to 10 (default 1)")),
+		mcp.WithInteger("depth", mcp.Description("Traversal depth from 1 to 10 (default 1)")),
 		mcp.WithBoolean("no_tests", mcp.Description("Exclude call edges originating in *_test.go files")),
+		mcp.WithBoolean("mermaid", mcp.Description("Return Mermaid flowchart text instead of the normal response")),
 	)
 	addTool(calleesTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -406,8 +512,14 @@ func NewServer(
 		if !ok {
 			return mcp.NewToolResultError("function must be a string"), nil
 		}
-		depth := intArg(args, "depth", 1, 1, 10)
+		depth, err := intArg(args, "depth", 1, 1, 10)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		includeTests := !boolArg(args, "no_tests")
+		if boolArg(args, "mermaid") {
+			return mcp.NewToolResultText(search.CalleesToMermaid(g, fn, depth, includeTests)), nil
+		}
 		var results []search.Result
 		if depth > 1 {
 			results = search.CalleesDepth(g, fn, depth, includeTests)
@@ -511,10 +623,11 @@ func NewServer(
 
 	// Tool: gograph_impact
 	impactTool := mcp.NewTool("gograph_impact",
-		mcp.WithDescription("Traverse the call graph backwards to find every symbol that transitively calls the target — the full upstream blast radius of a change. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. Three modes: (1) single symbol via `symbol`; (2) uncommitted-changes blast radius via `uncommitted=true`; (3) git-ref changes blast radius via `since`. WHEN TO USE: Before refactoring a core function to see what breaks; use uncommitted=true after editing to verify scope. NOT TO USE: For direct one-hop callers only (use gograph_callers instead). RETURNS: Transitive list of upstream affected symbols; JSON with count:0 message when no symbols are modified or no callers found."),
+		mcp.WithDescription("Traverse the call graph backwards to find every symbol that transitively calls the target — the full upstream blast radius of a change. The MCP server checks freshness before the call. Read-only; no side effects. Three modes: (1) single symbol via `symbol`; (2) uncommitted changes via `uncommitted=true`; (3) git-ref changes via `since`. WHEN TO USE: Before refactoring a core function to see what breaks. NOT TO USE: For direct one-hop callers only (use gograph_callers). RETURNS: Transitive upstream affected symbols; with mermaid=true, Mermaid flowchart text; count:0 JSON when no changed symbols exist."),
 		mcp.WithString("symbol", mcp.Description("Symbol name for single-symbol blast radius (supports short name 'ValidateToken', dot-notation 'graph.Graph', or fully-qualified ID)")),
 		mcp.WithBoolean("uncommitted", mcp.Description("If true, compute blast radius of all uncommitted modified symbols")),
 		mcp.WithString("since", mcp.Description("Git ref (e.g. 'main', 'HEAD~5'): blast radius of all symbols changed since this ref")),
+		mcp.WithBoolean("mermaid", mcp.Description("Return Mermaid flowchart text instead of the normal response")),
 	)
 	addTool(impactTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -542,6 +655,9 @@ func NewServer(
 				names = append(names, s.Name)
 			}
 			reason := fmt.Sprintf("downstream impact of changes since %s (%d symbols)", ref, len(names))
+			if boolArg(args, "mermaid") {
+				return mcp.NewToolResultText(search.ImpactMultipleToMermaid(g, names, true)), nil
+			}
 			results := search.ImpactMultiple(g, names, reason, true)
 			return formatResults(results), nil
 		}
@@ -556,6 +672,9 @@ func NewServer(
 				return mcp.NewToolResultText(`{"count":0,"message":"No uncommitted modified symbols found."}`), nil
 			}
 			reason := fmt.Sprintf("downstream impact of uncommitted changes (%d symbols)", len(syms))
+			if boolArg(args, "mermaid") {
+				return mcp.NewToolResultText(search.ImpactMultipleToMermaid(g, syms, true)), nil
+			}
 			results := search.ImpactMultiple(g, syms, reason, true)
 			return formatResults(results), nil
 		}
@@ -564,6 +683,9 @@ func NewServer(
 		sym, ok := args["symbol"].(string)
 		if !ok || sym == "" {
 			return mcp.NewToolResultError("must provide symbol, set uncommitted=true, or provide a since ref"), nil
+		}
+		if boolArg(args, "mermaid") {
+			return mcp.NewToolResultText(search.ImpactToMermaid(g, sym, true)), nil
 		}
 		results := search.Impact(g, sym, true)
 		return formatResults(results), nil
@@ -651,8 +773,9 @@ func NewServer(
 	endpointTool := mcp.NewTool("gograph_endpoint",
 		mcp.WithDescription("Build a full vertical slice for one HTTP route: the matched handler symbol, a BFS call chain downstream (default depth 5), all SQL queries emitted in that chain, and all env vars read. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. LIMITATION: Nested route-group prefixes (e.g. Gin/Echo/Chi Group()) are lost at the static AST level. Always query by the final route path suffix or, ideally, by the handler function symbol name (e.g., 'CreateUser'). WHEN TO USE: When auditing what an API endpoint does end-to-end — its downstream dependencies, database queries, and configuration reads. NOT TO USE: For listing all routes (use gograph_routes first to find the pattern); for raw handler source code only (use gograph_source). RETURNS: Array of endpoint slices with route, handler, call chain, SQL, and env fields; found:false with a suggestion when the query does not match any route. `query` accepts route pattern (\"POST /api/users\"), path fragment (\"/users\"), or handler name. `depth` controls call-chain BFS depth (default: 5)."),
 		mcp.WithString("query", mcp.Required(), mcp.Description(`Route pattern ("POST /api/users"), final path suffix ("POST /users"), or handler symbol name ("CreateUser"). NOTE: Nested route-group prefixes are lost statically.`)),
-		mcp.WithNumber("depth", mcp.Description("BFS depth for call chain traversal (default: 5)")),
-		mcp.WithBoolean("include_tests", mcp.Description("Include call-chain edges originating in *_test.go files")),
+		mcp.WithInteger("depth", mcp.Description("BFS depth for call chain traversal, clamped to 1-20 (default: 5)")),
+		mcp.WithBoolean("include_tests", mcp.Description("Include routes registered in *_test.go files")),
+		mcp.WithBoolean("mermaid", mcp.Description("Return Mermaid flowchart text instead of structured JSON")),
 	)
 	addTool(endpointTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -665,7 +788,10 @@ func NewServer(
 		if query == "" {
 			return mcp.NewToolResultError("query is required"), nil
 		}
-		depth := intArg(args, "depth", 5, 1, 20)
+		depth, err := intArg(args, "depth", 5, 1, 20)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		slices := search.Endpoint(g, query, depth, boolArg(args, "include_tests"))
 		if len(slices) == 0 {
 			b, _ := json.MarshalIndent(map[string]any{
@@ -674,6 +800,9 @@ func NewServer(
 				"message": "No matching HTTP routes found. Run gograph_routes to see available routes.",
 			}, "", "  ")
 			return mcp.NewToolResultText(string(b)), nil
+		}
+		if boolArg(args, "mermaid") {
+			return mcp.NewToolResultText(search.EndpointToMermaid(slices)), nil
 		}
 		b, _ := json.MarshalIndent(map[string]any{
 			"query":  query,
@@ -687,8 +816,8 @@ func NewServer(
 	// Tool: gograph_api
 
 	apiTool := mcp.NewTool("gograph_api",
-		mcp.WithDescription("Detect public API surface drift by comparing exported Go symbols (functions, types, interfaces) between the current working tree and a baseline git reference. Uses `git archive` to snapshot the baseline — requires git to be available and the `since` ref to be a valid branch, tag, or commit. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; archives only a temp directory that is removed after the call. WHEN TO USE: Before releasing or merging a PR to catch breaking-change regressions — exported symbols added, removed, or renamed since the baseline. NOT TO USE: For listing current exports without a diff baseline (use gograph_public or gograph_skeleton instead). RETURNS: JSON with added[], removed[], and changed[] arrays of exported symbol names since the baseline ref; empty arrays indicate no API drift."),
-		mcp.WithString("since", mcp.Required(), mcp.Description("The baseline git reference (e.g., 'main' or 'HEAD~1') to compare against")),
+		mcp.WithDescription("Detect public API surface drift by comparing exported Go symbols (functions, types, interfaces) between the current working tree and a baseline. A `since` value ending in `.json` loads a saved graph; otherwise gograph validates the value as a Git ref and uses `git archive` to build a temporary baseline. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only apart from reading the selected graph or extracting a temporary archive that is removed after the call. WHEN TO USE: Before releasing or merging a PR to catch breaking-change regressions — exported symbols added, removed, or renamed since the baseline. NOT TO USE: For listing current exports without a diff baseline (use gograph_public or gograph_skeleton instead). RETURNS: JSON with added[], removed[], and changed[] arrays of exported symbol names since the baseline; empty arrays indicate no API drift."),
+		mcp.WithString("since", mcp.Required(), mcp.Description("A baseline Git ref (for example 'main' or 'HEAD~1') or saved graph path ending in .json")),
 	)
 	addTool(apiTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -737,7 +866,7 @@ func NewServer(
 
 	// Tool: gograph_context
 	contextTool := mcp.NewTool("gograph_context",
-		mcp.WithDescription("Fetch a pre-flight context bundle for a single Go symbol: AST node metadata, source code, direct callers, direct callees, linked test functions, and architectural role classification — all in one call. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. Set uncommitted=true to bundle context for all currently modified symbols at once. WHEN TO USE: As the first call before editing a symbol — eliminates 4–5 separate tool roundtrips. NOT TO USE: For package-level orientation (use gograph_focus); for transitive blast radius (use gograph_impact). RETURNS: JSON with node, source, callers[], callees[], tests[], and role; empty object {} when symbol not found. With uncommitted=true, returns a contexts[] array; count:0 when no uncommitted symbols exist."),
+		mcp.WithDescription("Fetch a pre-flight context bundle for a single Go symbol: AST node metadata, source code, direct callers, direct callees, linked test functions, and architectural role classification — all in one call. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only analysis; an active audit session may append local command telemetry. Set uncommitted=true to bundle context for all currently modified symbols at once. WHEN TO USE: As the first call before editing a symbol — eliminates 4–5 separate tool roundtrips. NOT TO USE: For package-level orientation (use gograph_focus); for transitive blast radius (use gograph_impact). RETURNS: JSON with node (first match), nodes[] (all matches), source, callers[], callees[], tests[], test_results[], and top-level role; empty object {} when symbol not found. With uncommitted=true, returns a contexts[] array; count:0 when no uncommitted symbols exist."),
 		mcp.WithString("symbol", mcp.Description("The exact name, dot-notation 'graph.Graph', or ID of the symbol to retrieve context for.")),
 		mcp.WithBoolean("uncommitted", mcp.Description("If true, return context for all uncommitted modified symbols bundled in one response.")),
 		mcp.WithBoolean("exact", mcp.Description("Require an exact symbol-name or fully-qualified-ID match in single-symbol mode.")),
@@ -768,35 +897,13 @@ func NewServer(
 				}, "", "  ")
 				return mcp.NewToolResultText(string(data)), nil
 			}
-			type symbolContext struct {
-				Symbol  string          `json:"symbol"`
-				Role    string          `json:"role,omitempty"`
-				Node    *search.Result  `json:"node,omitempty"`
-				Source  string          `json:"source,omitempty"`
-				Callers []search.Result `json:"callers,omitempty"`
-				Callees []search.Result `json:"callees,omitempty"`
-				Tests   []string        `json:"tests,omitempty"`
-			}
 			var contexts []symbolContext
 			for _, sym := range syms {
 				r := search.Context(g, root, sym, false)
 				if r == nil {
 					continue
 				}
-				sc := symbolContext{
-					Symbol:  sym,
-					Role:    r.Role,
-					Source:  r.Source,
-					Callers: r.Callers,
-					Callees: r.Callees,
-				}
-				if len(r.Node) > 0 {
-					sc.Node = &r.Node[0]
-				}
-				for _, t := range r.Tests {
-					sc.Tests = append(sc.Tests, t.Name)
-				}
-				contexts = append(contexts, sc)
+				contexts = append(contexts, newSymbolContext(sym, r))
 			}
 			data, err := json.MarshalIndent(map[string]any{
 				"summary":  fmt.Sprintf("Context for %d uncommitted symbol(s)", len(contexts)),
@@ -817,21 +924,14 @@ func NewServer(
 		if result == nil {
 			return mcp.NewToolResultText("{}"), nil
 		}
-		var node *search.Result
-		if len(result.Node) > 0 {
-			node = &result.Node[0]
-		}
-		resp := MCPResponse{
-			Summary: "Context for " + symbol,
-			Node:    node,
-			Source:  result.Source,
-			Callers: result.Callers,
-			Callees: result.Callees,
-			Risk:    map[string]any{"role": result.Role},
-		}
-		resp.TestResults = result.Tests
-		for _, t := range result.Tests {
-			resp.Tests = append(resp.Tests, t.Name)
+		resp := struct {
+			Summary string `json:"summary"`
+			search.ContextPayload
+			Risk map[string]any `json:"risk"`
+		}{
+			Summary:        "Context for " + symbol,
+			ContextPayload: search.NewContextPayload(symbol, result),
+			Risk:           map[string]any{"role": result.Role},
 		}
 		data, err := json.MarshalIndent(resp, "", "  ")
 		if err != nil {
@@ -876,16 +976,6 @@ func NewServer(
 		planRes := search.Plan(g, symbolNames, title)
 		withContext, _ := args["with_context"].(bool)
 
-		type inspectContext struct {
-			Symbol  string          `json:"symbol"`
-			Role    string          `json:"role,omitempty"`
-			Node    *search.Result  `json:"node,omitempty"`
-			Source  string          `json:"source,omitempty"`
-			Callers []search.Result `json:"callers,omitempty"`
-			Callees []search.Result `json:"callees,omitempty"`
-			Tests   []string        `json:"tests,omitempty"`
-		}
-
 		resp := map[string]any{
 			"summary":       "Change plan for " + planRes.Title,
 			"inspect_first": planRes.ReadFirst,
@@ -902,26 +992,13 @@ func NewServer(
 
 		if withContext {
 			root := g.Root
-			var contexts []inspectContext
+			var contexts []symbolContext
 			for _, sym := range planRes.ReadFirst {
-				r := search.Context(g, root, sym.Name, false)
+				_, r := search.ContextForPlanResult(g, root, sym)
 				if r == nil {
 					continue
 				}
-				ic := inspectContext{
-					Symbol:  sym.Name,
-					Role:    r.Role,
-					Source:  r.Source,
-					Callers: r.Callers,
-					Callees: r.Callees,
-				}
-				if len(r.Node) > 0 {
-					ic.Node = &r.Node[0]
-				}
-				for _, t := range r.Tests {
-					ic.Tests = append(ic.Tests, t.Name)
-				}
-				contexts = append(contexts, ic)
+				contexts = append(contexts, newSymbolContext(sym.Name, r))
 			}
 			resp["inspect_contexts"] = contexts
 		}
@@ -1138,20 +1215,7 @@ func NewServer(
 		noTests, _ := args["no_tests"].(bool)
 		report := search.ErrorFlow(g, term, !noTests)
 
-		resp := MCPResponse{
-			Query:       report.Term,
-			Summary:     "ErrorFlow Report for " + report.Term,
-			Definitions: report.DefinitionSites,
-			Sites:       report.ReturnSites,
-			Paths:       report.Paths,
-			Risk:        map[string]any{},
-			Limitations: []string{
-				"Errorflow uses heuristic static call-graph and AST reference analysis. It does not perform SSA or full data-flow tracking.",
-			},
-		}
-		for _, t := range report.RelatedTests {
-			resp.Tests = append(resp.Tests, t.Name)
-		}
+		resp := search.NewErrorFlowPayload(report)
 		data, err := json.MarshalIndent(resp, "", "  ")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -1184,8 +1248,9 @@ func NewServer(
 
 	// Tool: gograph_dependents
 	dependentsTool := mcp.NewTool("gograph_dependents",
-		mcp.WithDescription("Find all packages that import the named package (inverse of gograph_deps). The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: Before a package-level interface change or removal — see every dependent package that will be affected. NOT TO USE: For a single function's callers (use gograph_callers); for the package's own outgoing imports (use gograph_deps). RETURNS: List of dependent package names and paths; empty when nothing imports the package (it may be a top-level entry point)."),
+		mcp.WithDescription("Find all packages that import the named package (inverse of gograph_deps). The MCP server refreshes source analysis before the call. Read-only; no side effects. WHEN TO USE: Before a package-level interface change or removal. NOT TO USE: For a single function's callers (use gograph_callers). RETURNS: Dependent packages; with mermaid=true, Mermaid flowchart text."),
 		mcp.WithString("package", mcp.Required(), mcp.Description("The package to find dependents for (e.g., 'internal/auth', 'auth', or a full import path)")),
+		mcp.WithBoolean("mermaid", mcp.Description("Return Mermaid flowchart text instead of the normal response")),
 	)
 	addTool(dependentsTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -1202,6 +1267,9 @@ func NewServer(
 			return mcp.NewToolResultError("package must be a non-empty string"), nil
 		}
 		results := search.Dependents(g, pkg)
+		if boolArg(args, "mermaid") {
+			return mcp.NewToolResultText(search.DependentsToMermaid(pkg, results)), nil
+		}
 		return formatResults(results), nil
 	})
 
@@ -1311,8 +1379,9 @@ func Serve(
 	buildGraph func(string) (*graph.Graph, error),
 	buildBaseline func(context.Context, string) (*graph.Graph, error),
 	version string,
+	options ...ServerOptions,
 ) error {
-	s := NewServer(g, rebuild, buildGraph, buildBaseline, version)
+	s := NewServer(g, rebuild, buildGraph, buildBaseline, version, options...)
 	return server.ServeStdio(s)
 }
 
@@ -1599,7 +1668,7 @@ func initNewTools(
 	// Tool: gograph_hotspot
 	hotspotTool := mcp.NewTool("gograph_hotspot",
 		mcp.WithDescription("Rank functions by incoming call count (fan-in) to identify the most-depended-on symbols in the codebase. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. `top` controls result count (default: 10; 0 = all). Set include_tests=true to count test-file call edges — by default excluded so test helpers don't dominate rankings in test-heavy codebases. WHEN TO USE: When deciding where to invest refactoring effort or documentation — high fan-in functions are the highest-risk change targets. NOT TO USE: For single-package metrics (use gograph_focus or gograph_coupling); for complexity scores (use gograph_complexity). RETURNS: Ranked list of function names with fan-in count and package location."),
-		mcp.WithNumber("top", mcp.Description("Number of results to return (default: 10, 0 = all)")),
+		mcp.WithInteger("top", mcp.Description("Number of results to return (default: 10, 0 = all)")),
 		mcp.WithBoolean("include_tests", mcp.Description("Include call edges from *_test.go files. Default false — production fan-in only, otherwise test helpers (baseReq, newTestFoo, etc.) tend to dominate rankings in test-heavy codebases.")),
 	)
 	addTool(hotspotTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1611,8 +1680,10 @@ func initNewTools(
 		top := 10
 		includeTests := false
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
-			if n, ok := args["top"].(float64); ok {
-				top = int(n)
+			var err error
+			top, err = integerArg(args, "top", top)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			if b, ok := args["include_tests"].(bool); ok {
 				includeTests = b
@@ -1628,9 +1699,10 @@ func initNewTools(
 
 	// Tool: gograph_deps
 	depsTool := mcp.NewTool("gograph_deps",
-		mcp.WithDescription("List the import dependencies of a named package. With transitive=false (default), returns only direct imports. With transitive=true, returns the full BFS closure of all transitive imports. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: When auditing package layering, understanding what a package pulls in, or mapping import chains before removing a dependency. NOT TO USE: For reverse lookup of who imports the package (use gograph_dependents); for symbol-level call tracing (use gograph_callers/gograph_impact). RETURNS: JSON with direct[] and transitive[] import path arrays; {\"found\":false} when the package is not in the graph."),
+		mcp.WithDescription("List the import dependencies of a named package. With transitive=false (default), returns direct imports; true returns the BFS closure. The MCP server refreshes source analysis before the call. Read-only; no side effects. WHEN TO USE: When auditing package layering. NOT TO USE: For reverse lookup (use gograph_dependents). RETURNS: direct[] and transitive[] arrays; with mermaid=true, Mermaid flowchart text; found:false when absent."),
 		mcp.WithString("package", mcp.Required(), mcp.Description("The target package path or name to inspect (e.g., 'internal/search', 'internal/cli')")),
 		mcp.WithBoolean("transitive", mcp.Description("If true, return the full transitive import closure via Breadth-First Search (BFS)")),
+		mcp.WithBoolean("mermaid", mcp.Description("Return Mermaid flowchart text instead of structured JSON")),
 	)
 	addTool(depsTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -1650,6 +1722,9 @@ func initNewTools(
 		result := search.Deps(g, pkg, transitive)
 		if result == nil {
 			return mcp.NewToolResultText(fmt.Sprintf(`{"package":%q,"found":false}`, pkg)), nil
+		}
+		if boolArg(args, "mermaid") {
+			return mcp.NewToolResultText(search.DepsToMermaid(g, result)), nil
 		}
 		data, err := json.MarshalIndent(result, "", "  ")
 		if err != nil {
@@ -1698,9 +1773,10 @@ func initNewTools(
 
 	// Tool: gograph_path
 	pathTool := mcp.NewTool("gograph_path",
-		mcp.WithDescription("Find the shortest call chain between two symbols — BFS from `from` to `to` through the call graph. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: When confirming whether a handler can reach a utility function, debugging surprising call chains, or tracing execution flow between two non-adjacent symbols. NOT TO USE: For direct callers only (use gograph_callers); for all transitive upstream callers (use gograph_impact). RETURNS: JSON with from, to, found bool, and steps[] containing the symbol chain; found:false when no call path exists between the two symbols."),
+		mcp.WithDescription("Find the shortest BFS call chain from one symbol to another. The MCP server refreshes source analysis before the call. Read-only; no side effects. WHEN TO USE: To confirm reachability between non-adjacent symbols. NOT TO USE: For all transitive upstream callers (use gograph_impact). RETURNS: from, to, found, and steps[]; with mermaid=true, Mermaid flowchart text."),
 		mcp.WithString("from", mcp.Required(), mcp.Description("The starting symbol name")),
 		mcp.WithString("to", mcp.Required(), mcp.Description("The target symbol name")),
+		mcp.WithBoolean("mermaid", mcp.Description("Return Mermaid flowchart text instead of structured JSON")),
 	)
 	addTool(pathTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -1723,6 +1799,9 @@ func initNewTools(
 		chain := search.Path(g, from, to, true)
 		if len(chain) == 0 {
 			return mcp.NewToolResultText(fmt.Sprintf(`{"from":%q,"to":%q,"found":false}`, from, to)), nil
+		}
+		if boolArg(args, "mermaid") {
+			return mcp.NewToolResultText(search.PathToMermaid(chain)), nil
 		}
 		data, err := json.MarshalIndent(map[string]any{
 			"from":  from,
@@ -1777,10 +1856,11 @@ func initNewTools(
 
 	// Tool: gograph_coupling
 	couplingTool := mcp.NewTool("gograph_coupling",
-		mcp.WithDescription("Report fan-in (Ca), fan-out (Ce), and instability ratio (I = Ce/(Ca+Ce)) per package. Instability range [0,1]: 0 = maximally stable, 1 = maximally unstable. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. `package` filters by name substring; `include_stdlib` adds stdlib (default false); `internal_only` restricts to this module's packages only. WHEN TO USE: When evaluating package isolation, planning architectural layering, or identifying packages that are too tightly coupled. NOT TO USE: For single-function complexity (use gograph_complexity or gograph_hotspot); for reverse package dependency lookup (use gograph_dependents). RETURNS: Array of package coupling records with Ca, Ce, and instability score; empty when no packages match the filter."),
+		mcp.WithDescription("Report fan-in (Ca), fan-out (Ce), and instability I=Ce/(Ca+Ce) per package. The MCP server refreshes source analysis before the call. Read-only; no side effects. package filters by substring; include_stdlib and internal_only control scope. WHEN TO USE: To evaluate package isolation. RETURNS: Package coupling records; with mermaid=true, Mermaid flowchart text."),
 		mcp.WithString("package", mcp.Description("Optional package name substring to filter results")),
 		mcp.WithBoolean("include_stdlib", mcp.Description("Include standard-library packages in the report. Default false — users asking 'how coupled is my code?' rarely care about stdlib coupling.")),
 		mcp.WithBoolean("internal_only", mcp.Description("Restrict the report to the project's own packages (anything starting with the module path from go.mod). Strictly stronger than excluding stdlib — also excludes third-party deps.")),
+		mcp.WithBoolean("mermaid", mcp.Description("Return Mermaid flowchart text instead of structured JSON")),
 	)
 	addTool(couplingTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -1790,6 +1870,7 @@ func initNewTools(
 		}
 		term := ""
 		opts := search.CouplingOptions{}
+		mermaid := false
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if p, ok := args["package"].(string); ok {
 				term = p
@@ -1802,6 +1883,10 @@ func initNewTools(
 					opts.ModuleOnly = mod
 				}
 			}
+			mermaid = boolArg(args, "mermaid")
+		}
+		if mermaid {
+			return mcp.NewToolResultText(search.CouplingToMermaid(g, term, opts)), nil
 		}
 		results := search.Coupling(g, term, opts)
 		data, err := json.MarshalIndent(results, "", "  ")
@@ -1813,8 +1898,8 @@ func initNewTools(
 
 	// Tool: gograph_arity
 	arityTool := mcp.NewTool("gograph_arity",
-		mcp.WithDescription("Find functions and methods with more parameters than a threshold — the long-parameter-list smell. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. `min` sets the minimum argument count to flag (default: 5). WHEN TO USE: During code smell audits to identify candidates for parameter-struct refactoring. NOT TO USE: For struct field counts (use gograph_fields or gograph_godobj). RETURNS: List of functions exceeding the threshold with parameter count, signature, and file location; empty when all functions are below the threshold."),
-		mcp.WithNumber("min", mcp.Description("Minimum argument count to report (default: 5)")),
+		mcp.WithDescription("Find functions and methods with at least a threshold number of parameters — the long-parameter-list smell. The MCP server checks freshness before this call. Read-only; no side effects. `min` sets the inclusive minimum (default: 5; 0 includes zero-arity functions), matching CLI --min. WHEN TO USE: During code smell audits. NOT TO USE: For struct field counts (use gograph_fields or gograph_godobj). RETURNS: Functions meeting the threshold with parameter count, signature, and file location."),
+		mcp.WithInteger("min", mcp.Description("Inclusive minimum argument count to report (default: 5; 0 includes zero-arity functions)")),
 	)
 	addTool(arityTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -1824,8 +1909,10 @@ func initNewTools(
 		}
 		minArgs := 5
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
-			if n, ok := args["min"].(float64); ok && n > 0 {
-				minArgs = int(n)
+			var err error
+			minArgs, err = integerArg(args, "min", minArgs)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 		}
 		results := search.Arity(g, minArgs)
@@ -1900,10 +1987,10 @@ func initNewTools(
 	// Tool: gograph_godobj
 	godobjTool := mcp.NewTool("gograph_godobj",
 		mcp.WithDescription("Detect God Object anti-pattern candidates by scoring structs on method count, field count, and outgoing call count. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. Thresholds: `methods` (default: 5), `fields` (default: 8), `calls` (default: 15); `top` limits results (default: 10). Exceeding any enabled threshold qualifies a struct, and the combined excess determines rank. WHEN TO USE: During architecture reviews to find monolithic structs that should be decomposed. NOT TO USE: For general struct layout inspection (use gograph_fields); for single-function complexity (use gograph_complexity). RETURNS: Ranked candidates with method, field, and call counts; empty when no threshold is exceeded."),
-		mcp.WithNumber("methods", mcp.Description("Minimum method count (default: 5)")),
-		mcp.WithNumber("fields", mcp.Description("Minimum field count (default: 8)")),
-		mcp.WithNumber("calls", mcp.Description("Minimum outgoing call count (default: 15)")),
-		mcp.WithNumber("top", mcp.Description("Maximum results to return (default: 10)")),
+		mcp.WithInteger("methods", mcp.Description("Minimum method count (default: 5)")),
+		mcp.WithInteger("fields", mcp.Description("Minimum field count (default: 8)")),
+		mcp.WithInteger("calls", mcp.Description("Minimum outgoing call count (default: 15)")),
+		mcp.WithInteger("top", mcp.Description("Maximum results to return (default: 10)")),
 	)
 	addTool(godobjTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -1913,17 +2000,33 @@ func initNewTools(
 		}
 		p := search.DefaultGodObjectParams()
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
-			if n, ok := args["methods"].(float64); ok && n >= 0 {
-				p.MinMethods = int(n)
+			methods, err := integerArg(args, "methods", p.MinMethods)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			if n, ok := args["fields"].(float64); ok && n >= 0 {
-				p.MinFields = int(n)
+			fields, err := integerArg(args, "fields", p.MinFields)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			if n, ok := args["calls"].(float64); ok && n >= 0 {
-				p.MinCalls = int(n)
+			calls, err := integerArg(args, "calls", p.MinCalls)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			if n, ok := args["top"].(float64); ok && n >= 0 {
-				p.Top = int(n)
+			top, err := integerArg(args, "top", p.Top)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			if methods >= 0 {
+				p.MinMethods = methods
+			}
+			if fields >= 0 {
+				p.MinFields = fields
+			}
+			if calls >= 0 {
+				p.MinCalls = calls
+			}
+			if top >= 0 {
+				p.Top = top
 			}
 		}
 		candidates := search.GodObjects(g, p)
@@ -2033,7 +2136,7 @@ func initNewTools(
 			noTests = v
 		}
 		result := search.ErrorFlow(g, term, !noTests)
-		data, err := json.MarshalIndent(result, "", "  ")
+		data, err := json.MarshalIndent(search.NewErrorFlowPayload(result), "", "  ")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -2044,7 +2147,7 @@ func initNewTools(
 	diagramTool := mcp.NewTool("gograph_diagram",
 		mcp.WithDescription("Refresh source analysis and generate a Mermaid architecture diagram of the package dependency graph. Read-only; no side effects. WHEN TO USE: Onboarding, architecture review, or communicating package structure. Use group_by=module for monorepos and group_by=file for drill-downs. NOT TO USE: For call-graph traversal or single-package focus. RETURNS: Mermaid text; use max_depth or coarser grouping for large graphs."),
 		mcp.WithString("group_by", mcp.Description("Grouping level: 'package' (default), 'module', 'service', or 'file'")),
-		mcp.WithNumber("max_depth", mcp.Description("Maximum BFS depth from graph roots (0 = unlimited)")),
+		mcp.WithInteger("max_depth", mcp.Description("Maximum BFS depth from graph roots (0 = unlimited)")),
 		mcp.WithBoolean("include_stdlib", mcp.Description("If true, include Go standard library packages in the diagram")),
 	)
 	addTool(diagramTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -2061,8 +2164,10 @@ func initNewTools(
 			if v, ok := args["group_by"].(string); ok && v != "" {
 				groupBy = v
 			}
-			if v, ok := args["max_depth"].(float64); ok {
-				maxDepth = int(v)
+			var err error
+			maxDepth, err = integerArg(args, "max_depth", maxDepth)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			if v, ok := args["include_stdlib"].(bool); ok {
 				includeStdlib = v
@@ -2074,8 +2179,8 @@ func initNewTools(
 
 	// Tool: gograph_check
 	checkTool := mcp.NewTool("gograph_check",
-		mcp.WithDescription("Refresh source analysis and run static policy checks: boundaries, API drift, changed-route/export tests, test coverage, orphans, globals, arity, and complexity. Git baselines use the same validated builder as CLI. Read-only apart from temporary baseline extraction. WHEN TO USE: During PR review or pre-commit analysis. NOT TO USE: For CI process exit enforcement (use CLI gograph gate). RETURNS: Structured pass/warn/fail status, findings, and summary counts."),
-		mcp.WithString("since", mcp.Description("Git ref for api_drift baseline (e.g. 'main', 'HEAD~5', 'v1.4.50')")),
+		mcp.WithDescription("Refresh source analysis and run static policy checks: boundaries, API drift, changed-route/export tests, test coverage, orphans, globals, arity, and complexity. Baselines use the same validated builder as CLI: a value ending in `.json` loads a saved graph, otherwise it is treated as a Git ref and extracted temporarily. WHEN TO USE: During PR review or pre-commit analysis. NOT TO USE: For CI process exit enforcement (use CLI gograph gate). RETURNS: Structured pass/warn/fail status, findings, and summary counts."),
+		mcp.WithString("since", mcp.Description("Git ref or saved graph path ending in .json for the api_drift baseline")),
 		mcp.WithBoolean("uncommitted", mcp.Description("If true, include uncommitted changes in the analysis scope")),
 		mcp.WithString("config", mcp.Description("Optional path to a checks.json config file (defaults to .gograph/checks.json if present)")),
 	)
@@ -2326,7 +2431,7 @@ func initNewTools(
 	untestedTool := mcp.NewTool("gograph_untested",
 		mcp.WithDescription("Sweep the full graph in one pass and return all production functions and methods that have at least one non-test caller but zero attributed test edges. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: During test coverage audits or pre-release hardening — finds the functions most at risk of regressions (high callers, no tests). Distinct from gograph_orphans (zero callers) — untested symbols ARE used in production but lack test coverage. Replaces N sequential `gograph_tests <sym>` calls across the full codebase. NOT TO USE: For a single symbol's tests (use gograph_tests); for unreachable dead code (use gograph_orphans). RETURNS: JSON array sorted by caller_count descending, each entry with name, kind, file, line, caller_count, and package; empty array when all called symbols have test coverage."),
 		mcp.WithString("pkg", mcp.Description("Optional package name substring to filter results (e.g. 'cli', 'search')")),
-		mcp.WithNumber("top", mcp.Description("Limit results to top N by caller count (0 = all, default)")),
+		mcp.WithInteger("top", mcp.Description("Limit results to top N by caller count (0 = all, default)")),
 	)
 	addTool(untestedTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -2343,8 +2448,10 @@ func initNewTools(
 			if v, ok := args["pkg"].(string); ok {
 				pkg = v
 			}
-			if v, ok := args["top"].(float64); ok {
-				top = int(v)
+			var err error
+			top, err = integerArg(args, "top", top)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 		}
 
@@ -2372,7 +2479,7 @@ func initNewTools(
 
 	// Tool: gograph_doc
 	docTool := mcp.NewTool("gograph_doc",
-		mcp.WithDescription("Fetch the Go documentation (signature + doc comment) for any package, stdlib symbol, or third-party symbol by running `go doc <query>`. No graph build required — works without .gograph/graph.json. WHEN TO USE: When following a call chain into stdlib (fmt, net/http, io) or a third-party dependency (pgx, gin, zap) and you need the signature or method listing without reading source files. NOT TO USE: For project-internal symbols (use gograph_source or gograph_context instead — they return callers/callees too). RETURNS: The raw `go doc` output text including package declaration, function/type/method signature, and full doc comment; error message when the symbol is not found or go is not on PATH."),
+		mcp.WithDescription("Fetch Go documentation for a package, stdlib symbol, or third-party symbol by running `go doc <query>`. No graph is required. WHEN TO USE: When a call chain reaches code outside the project. NOT TO USE: For project-internal symbols (use gograph_source or gograph_context). RETURNS: A one-element JSON array containing {query, output}, where output is the raw go doc text; an error when the symbol is not found or go is unavailable."),
 		mcp.WithString("query", mcp.Required(), mcp.Description("The go doc query string. Examples: 'fmt.Errorf', 'net/http.HandleFunc', 'io.Reader', 'github.com/jackc/pgx/v5.Conn.QueryRow'")),
 	)
 	addTool(docTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

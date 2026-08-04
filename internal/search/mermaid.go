@@ -167,7 +167,7 @@ func visibleForwardingTargets(g *graph.Graph, targetID string) []string {
 	return visible
 }
 
-func mermaidResolvedFrontier(g *graph.Graph, term string) map[string]bool {
+func mermaidResolvedFrontier(g *graph.Graph, term string, exactMatch bool) map[string]bool {
 	frontier := make(map[string]bool)
 	resolved, interfaceMethodQuery := resolvedCallTargetIDs(g, term)
 	for id := range resolved {
@@ -181,6 +181,23 @@ func mermaidResolvedFrontier(g *graph.Graph, term string) map[string]bool {
 	}
 
 	tl := strings.ToLower(term)
+	if exactMatch {
+		// Match Callers' exact-mode fallback for call edges that do not carry a
+		// resolved symbol ID. Dot-qualified legacy call text also keeps the
+		// same normalization used by Callers.
+		frontier[tl] = true
+		if strings.Contains(term, ".") {
+			replaced := strings.ReplaceAll(tl, ".", "::")
+			for _, call := range g.Calls {
+				raw := strings.ToLower(call.CalleeRaw)
+				if strings.Contains(raw, replaced) {
+					frontier[raw] = true
+				}
+			}
+		}
+		return expandTransparentCallerTargets(g, frontier)
+	}
+
 	for _, symbol := range g.Symbols {
 		if MatchSymbol(symbol, term) ||
 			(!isFullyQualifiedID(term) && (strings.Contains(strings.ToLower(symbol.Name), tl) ||
@@ -310,16 +327,25 @@ func CouplingToMermaid(g *graph.Graph, term string, opts CouplingOptions) string
 }
 
 // CallersToMermaid traces caller chains backwards up to maxDepth.
-func CallersToMermaid(g *graph.Graph, term string, maxDepth int, includeTests bool) string {
+func CallersToMermaid(g *graph.Graph, term string, maxDepth int, includeTests, exactMatch bool) string {
 	if maxDepth <= 0 {
 		maxDepth = 1
 	} else if maxDepth > 10 {
 		maxDepth = 10
 	}
+	return callersToMermaid(g, term, maxDepth, includeTests, exactMatch)
+}
 
+// callersToMermaid performs the traversal with a caller-selected bound. Public
+// callers diagrams cap their depth at 10, while impact diagrams intentionally
+// inspect up to 20 upstream hops.
+func callersToMermaid(g *graph.Graph, term string, maxDepth int, includeTests, exactMatch bool) string {
+	if maxDepth <= 0 {
+		maxDepth = 1
+	}
 	mg := newMermaidGraph()
 	allCalls := visibleMermaidCallEdges(g, includeTests)
-	frontier := mermaidResolvedFrontier(g, term)
+	frontier := mermaidResolvedFrontier(g, term, exactMatch)
 
 	symMap := make(map[string]string)
 	for _, s := range g.Symbols {
@@ -396,7 +422,7 @@ func CalleesToMermaid(g *graph.Graph, term string, maxDepth int, includeTests bo
 
 	mg := newMermaidGraph()
 	allCalls := visibleMermaidCallEdges(g, includeTests)
-	frontier := mermaidResolvedFrontier(g, term)
+	frontier := mermaidResolvedFrontier(g, term, false)
 
 	symMap := make(map[string]string)
 	for _, s := range g.Symbols {
@@ -477,7 +503,7 @@ func PathToMermaid(chain []Result) string {
 
 // ImpactToMermaid draws downstream blast radius in TD style.
 func ImpactToMermaid(g *graph.Graph, term string, includeTests bool) string {
-	return CallersToMermaid(g, term, 20, includeTests)
+	return callersToMermaid(g, term, 20, includeTests, false)
 }
 
 // ImpactMultipleToMermaid draws the combined blast radius for multiple starting symbols.
@@ -500,7 +526,7 @@ func ImpactMultipleToMermaid(g *graph.Graph, terms []string, includeTests bool) 
 	// Seed frontier from all terms.
 	frontier := make(map[string]bool)
 	for _, term := range terms {
-		for key := range mermaidResolvedFrontier(g, term) {
+		for key := range mermaidResolvedFrontier(g, term, false) {
 			frontier[key] = true
 		}
 	}

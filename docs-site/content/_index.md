@@ -51,7 +51,9 @@ Copilot, Antigravity, and OpenCode.
 * **Focused structural evidence**: AST-derived results avoid comments and raw
   string matches when the question is about Go symbols or relationships.
 * **Explicit correctness modes**: Build metadata distinguishes AST-only,
-  successful precise analysis, and visible precise fallback.
+  successful precise analysis, and visible precise fallback. A failed precise
+  retry does not replace an existing fresh precise artifact covering the same
+  selected sources.
 * **Composed workflows**: `context`, `plan`, `review`, and `summary` combine
   related graph evidence. Savings depend on the repository and task.
 
@@ -89,9 +91,9 @@ sudo make install
 
 ## How it works
 
-1. **`gograph build .`** — walks Go files selected by the shared scanner, extracts symbols, validated call edges, imports, HTTP routes, SQL queries, environment reads, struct fields, error declarations, and typed synchronization primitives. Writes everything under the target `.gograph/` directory, adds `.gograph/` to the enclosing Git repository root `.gitignore` when available, and falls back to the build target `.gitignore` outside Git. A zero-file or zero-successful-parse build does not replace existing artifacts; partial failures are recorded in atomically published graph metadata.
-2. **CLI query commands** — read persisted `graph.json`; rebuild after source changes. MCP source-analysis tools check source freshness and newer persisted artifacts, adopt a newer precise graph, and rebuild after edits in the current requested mode. A failed precise refresh is returned visibly.
-3. **`--precise` mode** — attempts type-checked CHA/SSA enrichment. It needs compilable, build-selected packages for precise data; if type/load analysis fails or omits an indexed non-test file, gograph warns, retains the AST graph, and records `precise_fallback` (`precise` and `ast` identify the other modes).
+1. **`gograph build .`** — walks Go files selected by the shared scanner, extracts symbols, validated call edges, imports, HTTP routes, SQL queries, environment reads, struct fields, error declarations, and typed synchronization primitives. Graph/report publishers coordinate with the persistent operational file `.gograph/.artifacts.lock`, stage `graph.json` plus nine reports, rename the reports first, and rename `graph.json` last as the commit marker. Same-directory replacement is atomic on Unix-like systems but is not guaranteed atomic by Go on non-Unix platforms; the ten-file bundle is not one atomic filesystem transaction, so a crash can leave reports ahead of the graph marker. The build adds `.gograph/` to the enclosing Git repository root `.gitignore` when available and falls back to the build target `.gitignore` outside Git. A zero-file or zero-successful-parse build does not replace existing artifacts; partial failures are recorded in graph metadata.
+2. **Queries and refreshes** — graph-backed CLI analysis reads the last persisted `graph.json`; commands whose contract reads source, Git, or other local state do so directly. MCP source-analysis tools check source freshness and newer persisted artifacts, adopt a newer compatible precise graph, and rebuild after edits in the current requested mode. Those refreshes stay in memory by default. `gograph mcp [path] --persist-refresh` opts into publishing the latest successful refresh with the same graph-last protocol; a failed precise refresh is returned visibly.
+3. **`--precise` mode** — attempts type-checked CHA/SSA enrichment. It needs compilable, build-selected packages for precise data; if type/load analysis fails or omits an indexed non-test file, gograph warns and normally records `precise_fallback` on the retained AST graph. A failed retry keeps an existing fresh successful precise artifact covering the same selected sources instead of downgrading it (`ast` identifies an explicitly requested AST build).
 
 ## What it captures
 

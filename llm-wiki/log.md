@@ -298,3 +298,28 @@ Normalized the security-flow page link into the index's Schemas and Security sec
 - Added regression coverage for text/JSON exit codes, build-context-only staleness, JSON failure precedence, subdirectory behavior, and session audit accounting.
 - Updated CLI help, user documentation, release notes, and the durable agent workflow contract, including safe `set -e` handling.
 - Verification passed: focused and full tests, race detector, vet, Staticcheck, GolangCI-Lint, govulncheck, coverage, fuzzing, Hugo, precise gograph review, and the CI-equivalent MCPB build/verify/smoke workflow.
+## [2026-08-03] maintenance | Add opt-in MCP refresh artifact persistence
+
+- Added `gograph mcp [path] --persist-refresh` to publish the latest successful startup build or stale MCP refresh to `.gograph`; default and fixed plugin/MCPB launches remain in-memory-only.
+- Unified current CLI and MCP artifact writers behind a cross-process lock, freshness and precision guards, previous-graph baseline derivation, complete graph/report staging, and graph-last commit-marker publication.
+- Preserved authoritative manual build semantics while preventing failed precise retries and background AST/fallback refreshes from replacing a fresh precise artifact.
+- Made startup publication failures fatal and later failures visible and retryable from the valid pending in-memory graph without a forced rebuild.
+- Updated CLI/MCP contracts, privacy and integration documentation, release notes, and durable project guidance. The behavior is explicitly latest-state publication, not a branch-indexed cache, and MCP persistence does not edit `.gitignore`.
+- Verification passed: full unit and race suites, fuzzing, build, vet, Staticcheck, GolangCI-Lint, module verification/tidiness, coverage, docs build, Windows cross-compilation, and govulncheck; independent API, test, and safety reviews found no blockers.
+- Reframed GitHub issue #32 with the implemented scope, acceptance criteria, non-goals, and crash-window limitation, and posted a verification comment. The issue remains open because no commit or push was made.
+
+## [2026-08-03] maintenance | Normalize MCP persistence log formatting
+
+- Consumed the governed append's trailing blank line as this entry's separator; no project or issue facts changed.
+
+## [2026-08-04] maintenance | Code-first CLI/MCP parity and refresh publication
+
+- Implemented opt-in `gograph mcp [path] --persist-refresh` publication with a cross-process `.gograph/.artifacts.lock`, graph-last bundle ordering, stale-candidate rejection, precision retention, baseline preservation, retry behavior, and a two-process contention regression. Default MCP and fixed Registry/plugin launches remain in-memory-only.
+- Reconciled CLI and MCP behavior from current handlers: exact/qualified context resolution, duplicate-name plan contexts, Mermaid parity for eight graph tools, shared context/errorflow payloads, strict JSON/empty/error contracts, mutually exclusive command-specific output modes, integer-only MCP numeric parameters, strict CLI arity, and Windows-safe installer tests.
+- Reconciled maintained documentation, integrations, generated Hugo output, curated wiki pages, and all 24 generated wiki pages against the final precise graph and live v1.5.3 distribution evidence. Documentation now records the retained lock file and qualifies same-directory rename guarantees on non-Unix platforms.
+- Verification passed: precise build (152 files, 17 packages, 1636 symbols, 15440 calls), full unit tests, repository race tests, 65.6% coverage run, fuzz targets, go vet, staticcheck, golangci-lint, module verify/tidy, docs check, govulncheck (no reachable vulnerabilities), Windows amd64 CLI/release cross-builds, Linux amd64 CLI cross-build, and git diff hygiene.
+- Gograph audit session `docsparity_20260803_231508` completed with plan and review rules satisfied (grade C; 76.8%, reduced by command composability).
+
+- Index maintenance: added direct links for every generated package page after the final graph regeneration.
+
+- Scrinium maintenance completed with all session requirements satisfied and append-only log hygiene restored.

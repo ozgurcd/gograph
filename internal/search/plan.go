@@ -17,6 +17,54 @@ type PlanResult struct {
 	TouchesSQL string   `json:"touches_sql"` // "yes", "no"
 }
 
+// ContextForPlanResult resolves a location-bearing ReadFirst row back to its
+// canonical symbol before building context. Plan rows intentionally use the
+// compact Result shape, so re-querying row.Name alone can conflate unrelated
+// same-named symbols from different packages. The file and declaration line
+// retain enough identity to recover the stable SymbolNode ID.
+//
+// The returned string is the canonical ID when resolution succeeds, or the
+// original display name when a legacy/incomplete graph has no matching symbol.
+func ContextForPlanResult(g *graph.Graph, rootDir string, row Result) (string, *ContextResult) {
+	if symbol := symbolForPlanResult(g, row); symbol != nil && symbol.ID != "" {
+		if result := Context(g, rootDir, symbol.ID, true); result != nil {
+			return symbol.ID, result
+		}
+	}
+	return row.Name, Context(g, rootDir, row.Name, false)
+}
+
+func symbolForPlanResult(g *graph.Graph, row Result) *graph.SymbolNode {
+	var locationMatches []*graph.SymbolNode
+	for i := range g.Symbols {
+		symbol := &g.Symbols[i]
+		if symbol.File != row.File || (row.Line > 0 && symbol.Line != row.Line) {
+			continue
+		}
+		locationMatches = append(locationMatches, symbol)
+	}
+	for _, symbol := range locationMatches {
+		if matchSymbolExact(*symbol, row.Name) {
+			return symbol
+		}
+	}
+
+	// Older call edges can retain the caller's file but only the call-site
+	// line. Fall back to exact display-name matching within that file.
+	var fileMatch *graph.SymbolNode
+	for i := range g.Symbols {
+		symbol := &g.Symbols[i]
+		if symbol.File != row.File || !matchSymbolExact(*symbol, row.Name) {
+			continue
+		}
+		if fileMatch != nil {
+			return nil
+		}
+		fileMatch = symbol
+	}
+	return fileMatch
+}
+
 func (r *PlanResult) String() string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Change plan for %s\n\n", r.Title)

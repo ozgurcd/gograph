@@ -22,38 +22,33 @@ func runCheck(args []string) int {
 		a := args[i]
 		switch {
 		case a == "--config":
-			if i+1 < len(args) {
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				configPath = args[i+1]
 				i++
 			} else {
-				if !jsonMode {
-					fmt.Fprintln(os.Stderr, "missing value for --config")
-				}
-				return 1
+				return checkError("missing value for --config")
 			}
 		case strings.HasPrefix(a, "--config="):
 			configPath = strings.TrimPrefix(a, "--config=")
+			if configPath == "" {
+				return checkError("missing value for --config")
+			}
 		case a == "--uncommitted":
 			uncommitted = true
 		case a == "--since":
-			if i+1 < len(args) {
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				sinceRef = args[i+1]
 				i++
 			} else {
-				if !jsonMode {
-					fmt.Fprintln(os.Stderr, "missing value for --since")
-				}
-				return 1
+				return checkError("missing value for --since")
 			}
 		case strings.HasPrefix(a, "--since="):
 			sinceRef = strings.TrimPrefix(a, "--since=")
-		default:
-			if !strings.HasPrefix(a, "-") {
-				if !jsonMode {
-					fmt.Fprintf(os.Stderr, "unknown argument: %s\n", a)
-				}
-				return 1
+			if sinceRef == "" {
+				return checkError("missing value for --since")
 			}
+		default:
+			return checkError(fmt.Sprintf("unknown argument: %s", a))
 		}
 	}
 
@@ -80,16 +75,10 @@ func runCheck(args []string) int {
 	if configPath != "" {
 		data, err := os.ReadFile(configPath)
 		if err != nil {
-			if !jsonMode {
-				fmt.Fprintf(os.Stderr, "failed to read config: %v\n", err)
-			}
-			return 1
+			return checkError(fmt.Sprintf("failed to read config: %v", err))
 		}
 		if err := json.Unmarshal(data, config); err != nil {
-			if !jsonMode {
-				fmt.Fprintf(os.Stderr, "failed to parse config: %v\n", err)
-			}
-			return 1
+			return checkError(fmt.Sprintf("failed to parse config: %v", err))
 		}
 	}
 	if config.BoundariesConfig != "" && !filepath.IsAbs(config.BoundariesConfig) {
@@ -103,20 +92,14 @@ func runCheck(args []string) int {
 
 	g, err := loadGraph(".")
 	if err != nil {
-		if !jsonMode {
-			fmt.Fprintf(os.Stderr, "failed to load graph: %v\n", err)
-		}
-		return 1
+		return checkError(fmt.Sprintf("failed to load graph: %v", err))
 	}
 
 	var baselineGraph *graph.Graph
 	if config.Baseline != "" {
 		baselineGraph, err = BuildBaselineGraphFromGitRefAtRoot(graphRoot(g), config.Baseline, BuildGraph)
 		if err != nil {
-			if !jsonMode {
-				fmt.Fprintf(os.Stderr, "failed to build baseline graph: %v\n", err)
-			}
-			return 1
+			return checkError(fmt.Sprintf("failed to build baseline graph: %v", err))
 		}
 	}
 
@@ -131,15 +114,18 @@ func runCheck(args []string) int {
 
 	report, err := search.RunChecks(p)
 	if err != nil {
-		if !jsonMode {
-			fmt.Fprintf(os.Stderr, "check failed: %v\n", err)
-		}
-		return 1
+		return checkError(fmt.Sprintf("check failed: %v", err))
 	}
 
 	if jsonMode {
-		data, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Println(string(data))
+		code := PrintJSON(okEnvelope("check", "", report, len(report.Findings)))
+		if code != 0 {
+			return code
+		}
+		if report.Status == string(search.CheckFailed) {
+			return 1
+		}
+		return 0
 	} else {
 		fmt.Println("Status:", report.Status)
 		if len(report.Findings) > 0 {
@@ -197,4 +183,12 @@ func runCheck(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func checkError(message string) int {
+	if jsonMode {
+		return PrintJSON(errEnvelope("check", message))
+	}
+	fmt.Fprintln(os.Stderr, message)
+	return 1
 }

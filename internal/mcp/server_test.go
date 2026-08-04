@@ -277,6 +277,156 @@ func TestAllToolAnnotations(t *testing.T) {
 	}
 }
 
+func TestPersistRefreshUpdatesOnlyRefreshingToolContracts(t *testing.T) {
+	g := &graph.Graph{}
+	defaultTools := mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), mockBuildBaseline(), "dev").ListTools()
+	persistTools := mcppkg.NewServer(
+		g,
+		mockRebuild(g),
+		mockBuildGraph(),
+		mockBuildBaseline(),
+		"dev",
+		mcppkg.ServerOptions{PersistRefresh: true},
+	).ListTools()
+
+	nonRefreshing := map[string]bool{
+		"gograph_capabilities":    true,
+		"gograph_stale":           true,
+		"gograph_stats":           true,
+		"gograph_doc":             true,
+		"gograph_session_create":  true,
+		"gograph_session_end":     true,
+		"gograph_session_audit":   true,
+		"gograph_session_cleanup": true,
+	}
+	assertSameHint := func(toolName, hintName string, got, want *bool) {
+		t.Helper()
+		if got == nil || want == nil {
+			if got != want {
+				t.Errorf("tool %q: %s = %v, want %v", toolName, hintName, got, want)
+			}
+			return
+		}
+		if *got != *want {
+			t.Errorf("tool %q: %s = %t, want %t", toolName, hintName, *got, *want)
+		}
+	}
+
+	refreshingCount := 0
+	for name, persisted := range persistTools {
+		baseline, ok := defaultTools[name]
+		if !ok {
+			t.Errorf("persist-refresh server registered unexpected tool %q", name)
+			continue
+		}
+		got := persisted.Tool.Annotations
+		want := baseline.Tool.Annotations
+		if nonRefreshing[name] {
+			assertSameHint(name, "ReadOnlyHint", got.ReadOnlyHint, want.ReadOnlyHint)
+			assertSameHint(name, "DestructiveHint", got.DestructiveHint, want.DestructiveHint)
+			assertSameHint(name, "IdempotentHint", got.IdempotentHint, want.IdempotentHint)
+			assertSameHint(name, "OpenWorldHint", got.OpenWorldHint, want.OpenWorldHint)
+			if persisted.Tool.Description != baseline.Tool.Description {
+				t.Errorf("non-refreshing tool %q description changed in persist mode", name)
+			}
+			continue
+		}
+
+		refreshingCount++
+		if got.ReadOnlyHint == nil || *got.ReadOnlyHint {
+			t.Errorf("refreshing tool %q: ReadOnlyHint = %v, want false", name, got.ReadOnlyHint)
+		}
+		if got.DestructiveHint == nil || !*got.DestructiveHint {
+			t.Errorf("refreshing tool %q: DestructiveHint = %v, want true", name, got.DestructiveHint)
+		}
+		assertSameHint(name, "IdempotentHint", got.IdempotentHint, want.IdempotentHint)
+		assertSameHint(name, "OpenWorldHint", got.OpenWorldHint, want.OpenWorldHint)
+
+		description := persisted.Tool.Description
+		if !strings.Contains(description, "--persist-refresh") || !strings.Contains(description, ".gograph") {
+			t.Errorf("refreshing tool %q does not disclose persistence: %q", name, description)
+		}
+		for _, contradiction := range []string{
+			"Read-only; no persistent side effects.",
+			"Read-only; no side effects.",
+			"Read-only apart from temporary baseline extraction.",
+			"Read-only; archives only a temp directory that is removed after the call.",
+		} {
+			if strings.Contains(description, contradiction) {
+				t.Errorf("refreshing tool %q retains contradictory description %q", name, contradiction)
+			}
+		}
+	}
+	if len(persistTools) != 65 || len(nonRefreshing) != 8 || refreshingCount != 57 {
+		t.Fatalf("tool classification: total=%d non-refreshing=%d refreshing=%d, want 65/8/57", len(persistTools), len(nonRefreshing), refreshingCount)
+	}
+	boundariesCreate := persistTools["gograph_boundaries_create"].Tool.Annotations.IdempotentHint
+	if boundariesCreate == nil || *boundariesCreate {
+		t.Fatalf("gograph_boundaries_create IdempotentHint = %v, want false", boundariesCreate)
+	}
+}
+
+func TestCapabilitiesReportRefreshPersistenceMode(t *testing.T) {
+	tests := []struct {
+		name    string
+		enabled bool
+	}{
+		{name: "disabled by default"},
+		{name: "enabled", enabled: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			previous := mcppkg.ExposeToolsForTesting
+			handlers := make(map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error))
+			mcppkg.ExposeToolsForTesting = handlers
+			t.Cleanup(func() { mcppkg.ExposeToolsForTesting = previous })
+
+			options := []mcppkg.ServerOptions(nil)
+			if tt.enabled {
+				options = append(options, mcppkg.ServerOptions{PersistRefresh: true})
+			}
+			mcppkg.NewServer(
+				&graph.Graph{},
+				mockRebuild(&graph.Graph{}),
+				mockBuildGraph(),
+				mockBuildBaseline(),
+				"dev",
+				options...,
+			)
+
+			text := callTool(t, handlers["gograph_capabilities"], nil)
+			var payload map[string]any
+			if err := json.Unmarshal([]byte(text), &payload); err != nil {
+				t.Fatalf("decode capabilities: %v", err)
+			}
+			persistence, ok := payload["refresh_persistence"].(map[string]any)
+			if !ok {
+				t.Fatalf("refresh_persistence = %#v, want object", payload["refresh_persistence"])
+			}
+			if got, ok := persistence["enabled"].(bool); !ok || got != tt.enabled {
+				t.Errorf("refresh_persistence.enabled = %#v, want %t", persistence["enabled"], tt.enabled)
+			}
+			if got := persistence["artifact_directory"]; got != ".gograph" {
+				t.Errorf("refresh_persistence.artifact_directory = %#v, want .gograph", got)
+			}
+			if got, _ := persistence["scope"].(string); !strings.Contains(got, "not a multi-branch cache") {
+				t.Errorf("refresh_persistence.scope = %q, want branch-cache limitation", got)
+			}
+			if got := persistence["artifact_set"]; got != "graph.json plus nine Markdown reports; .artifacts.lock remains as operational coordination state" {
+				t.Errorf("refresh_persistence.artifact_set = %#v", got)
+			}
+			if got, ok := persistence["updates_gitignore"].(bool); !ok || got {
+				t.Errorf("refresh_persistence.updates_gitignore = %#v, want false", persistence["updates_gitignore"])
+			}
+			for _, field := range []string{"failure_behavior", "tool_annotations"} {
+				if got, _ := persistence[field].(string); got == "" {
+					t.Errorf("refresh_persistence.%s = %#v, want non-empty contract", field, persistence[field])
+				}
+			}
+		})
+	}
+}
+
 func TestToolDescriptionsUsePrecisionAwareRefreshContract(t *testing.T) {
 	g := &graph.Graph{}
 	s := mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), mockBuildBaseline(), "dev")

@@ -2,10 +2,17 @@
 
 First off, thank you for considering contributing to `gograph`! It's people like you that make open source such a great community.
 
-## Language Extensibility
-As mentioned in the README, `gograph` was initially built exclusively for Go. If you are looking to add parsers or support for other languages, we highly encourage this! Please open an issue titled `Feature Request: Support for [Language]` to discuss the implementation approach before writing extensive code.
+## Language Scope
+
+`gograph` intentionally analyzes Go repositories. Multi-language parsing is a
+current non-goal; open an issue before proposing any change to that product and
+architecture boundary.
 
 ## Development Setup
+
+Install the Go version declared by [`go.mod`](go.mod) (currently Go 1.26.5 or
+newer) and GNU Make. The Makefile injects version metadata, so repository builds
+must use `make build` rather than a raw `go build` command.
 
 1. Fork the repository on GitHub.
 2. Clone your fork locally:
@@ -17,7 +24,6 @@ As mentioned in the README, `gograph` was initially built exclusively for Go. If
    ```bash
    make build
    ```
-   *(If you don't have make, simply run `go build -o bin/gograph ./cmd/gograph`)*
 4. Run tests:
    ```bash
    make test
@@ -31,6 +37,27 @@ As mentioned in the README, `gograph` was initially built exclusively for Go. If
 4. **Commit:** Write clear, concise commit messages.
 5. **Push:** Push to your fork and submit a Pull Request against the `main` branch.
 6. **Review:** Maintainers will review your PR, suggest changes if needed, and merge it.
+
+## CLI, MCP, and Documentation Contracts
+
+Query, analysis, and workflow features must have semantically equivalent CLI
+and MCP entry points with tests for both. Host/build operations such as
+`build`, `gate`, `snapshot`, plugin/hook installation, MCP server startup,
+help, and version may remain CLI-only. Output presentation may differ by
+transport: CLI commands use flags such as `--json`, `--files-only`, and
+`--mermaid`, while MCP tools expose typed parameters and content payloads.
+
+Document user-visible behavior in `README.md`,
+`docs/coding-agent-usage.md`, CLI help/capabilities, the public docs site,
+`RELEASE_NOTES.md`, and any affected integration metadata. For visual parity,
+the eight graph-oriented CLI commands that accept `--mermaid` have MCP tools
+with an optional `mermaid=true` parameter; both surfaces return
+Markdown-fenced Mermaid for that presentation.
+
+Use Scrinium for durable wiki maintenance. Read `llm-wiki/index.md`,
+`llm-wiki/project.md`, `llm-wiki/agent-rules.md`, and
+`llm-wiki/agent-contract.md` before project changes. Do not edit the protected
+`agent-rules.md` directly; propose changes through Scrinium's draft workflow.
 
 ## Publishing an MCP Registry Release
 

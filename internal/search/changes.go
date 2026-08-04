@@ -20,14 +20,14 @@ const (
 	// The symbol may or may not have changed — agents should inspect it.
 	ChangeModified ChangeStatus = "modified"
 	// ChangeNew means the declaration was found in a changed file but is not
-	// recorded in graph.json — it was likely added since the last build.
+	// recorded in graph.json — it was likely added since the graph was persisted.
 	ChangeNew ChangeStatus = "new"
 	// ChangeDeleted means a symbol from graph.json lives in a file that no
 	// longer exists on disk — it was likely removed.
 	ChangeDeleted ChangeStatus = "deleted"
 )
 
-// ChangedSymbol is a symbol affected by source changes since the last build.
+// ChangedSymbol is a symbol affected by source changes since the graph was persisted.
 type ChangedSymbol struct {
 	// Name is the symbol name or declaration identifier.
 	Name string `json:"name"`
@@ -50,7 +50,7 @@ type ChangesResult struct {
 }
 
 // Changes compares the current source tree against graph.json to report what
-// has likely changed since the last build. It identifies:
+// has likely changed since the graph was persisted. It identifies:
 //   - Symbols in files newer than the graph (ChangeModified)
 //   - Top-level declarations in changed files not found in the graph (ChangeNew)
 //   - Graph symbols whose source files no longer exist (ChangeDeleted)

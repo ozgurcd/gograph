@@ -48,12 +48,15 @@ max_instability: 0.95
 max_god_object_methods: 20
 
 # allow_new_orphans: when false, gate fails if the orphan count grows
-# vs. the saved baseline (set up with 'gograph snapshot save baseline').
+# versus the immediately preceding persisted graph. Each successful build
+# embeds that previous graph's metrics automatically; the first publication
+# has no baseline, so delta gates are skipped until a later build.
 # Use to prevent adding dead code over time.
 allow_new_orphans: false
 
-# max_new_coupling_edges: fail if the number of new import edges (vs.
-# baseline) exceeds N. Use to slow uncontrolled package coupling growth.
+# max_new_coupling_edges: fail if new import edges versus the immediately
+# preceding persisted graph exceed N. Named snapshots are independent and
+# do not establish this gate baseline.
 max_new_coupling_edges: 10
 `
 
@@ -236,9 +239,9 @@ func runGateInit() int {
 	fmt.Println("  1. Review the template — each threshold is commented.")
 	fmt.Println("  2. Tune values to your codebase (run 'gograph complexity',")
 	fmt.Println("     'gograph coupling', 'gograph godobj' to see current numbers).")
-	fmt.Println("  3. (Optional) Save a baseline for orphan/coupling-edge gating:")
-	fmt.Println("     gograph snapshot save baseline")
-	fmt.Println("  4. Run the gate:")
+	fmt.Println("  3. Build after each change; the previous persisted graph automatically")
+	fmt.Println("     becomes the orphan/coupling baseline (the first build skips deltas).")
+	fmt.Println("  4. Run the gate against the newly built graph:")
 	fmt.Println("     gograph gate")
 	return 0
 }

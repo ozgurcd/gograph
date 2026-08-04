@@ -51,7 +51,7 @@ gograph build .
 
 This walks every `.go` file, extracts the AST, and writes:
 
-- `.gograph/graph.json` — the machine-readable graph (all queries read from this)
+- `.gograph/graph.json` — the machine-readable graph used by graph-backed CLI queries
 - `.gograph/GRAPH_REPORT.md` — master index report
 - `.gograph/graph-symbols.md` — all symbols
 - `.gograph/graph-routes.md` — HTTP routes
@@ -63,6 +63,15 @@ This walks every `.go` file, extracts the AST, and writes:
 - `.gograph/graph-tests.md` — test edge mapping
 
 `graph.json` also stores compact security-flow facts used by `gograph flow`; findings and sanitizer policy are evaluated when queried rather than written as a Markdown report.
+
+Graph/report publishers coordinate through `.gograph/.artifacts.lock`. They
+stage the graph and all nine reports, rename reports first, and rename
+`graph.json` last as the publication commit marker. Same-directory replacement
+is atomic on Unix-like systems but is not guaranteed atomic by Go on non-Unix
+platforms. The complete ten-file bundle is not a single transaction; a crash
+can leave newer reports beside the previous `graph.json`. The lock file remains
+as separate operational state. Consumers should treat `graph.json` as the
+authoritative marker.
 
 `.gograph/` is automatically added to the Git repository root `.gitignore`.
 Outside a Git worktree, `gograph` falls back to the build target `.gitignore`.
@@ -77,7 +86,7 @@ Partial parse failures are retained in `graph.json` build metadata.
 gograph build . --precise
 ```
 
-Attempts Go type loading plus CHA/SSA enrichment on top of the AST pass. Compilable, build-selected packages are required for precise data; if enrichment fails or omits an indexed non-test source file, gograph warns and retains the AST graph. Successful, fallback, and AST-only status is persisted as `precise`, `precise_fallback`, or `ast`. A precise interface invocation retains every valid named in-repository CHA target, so `callers Repository.Delete` can resolve direct, embedded-interface, and promoted concrete methods without dropping alternative implementations. Promoted wrappers forward through traversal-only synthetic edges that do not appear as source call sites. CHA can still over-approximate runtime targets, while reflection, plugins, `unsafe`, test-only packages, unnamed concrete types, and module-external implementations remain incomplete. Use before major refactors or blast-radius analysis.
+Attempts Go type loading plus CHA/SSA enrichment on top of the AST pass. Compilable, build-selected packages are required for precise data; if enrichment fails or omits an indexed non-test source file, gograph warns and retains the AST graph. Successful, fallback, and AST-only status is persisted as `precise`, `precise_fallback`, or `ast`, except that a failed retry keeps an existing fresh successful precise artifact covering the same sources. A precise interface invocation retains every valid named in-repository CHA target, so `callers Repository.Delete` can resolve direct, embedded-interface, and promoted concrete methods without dropping alternative implementations. Promoted wrappers forward through traversal-only synthetic edges that do not appear as source call sites. CHA can still over-approximate runtime targets, while reflection, plugins, `unsafe`, test-only packages, unnamed concrete types, and module-external implementations remain incomplete. Use before major refactors or blast-radius analysis.
 
 **When to use which:**
 
@@ -95,21 +104,22 @@ gograph stats
 Prints schema version, build timestamp, and counts:
 
 ```
-schema_version: 2
-generated_at:   2026-05-22T18:00:00Z
-packages:       24
-files:          187
-symbols:        1843
-calls:          6201
-imports:        412
-routes:         38
-sqls:           29
-env_reads:      14
-test_edges:     522
-build_status:   complete
-precision:      precise
-parsed_files:   187/187
-parse_failures: 0
+schema_version : 2
+generated_at   : 2026-05-22 18:00:00 UTC
+precision      : precise
+packages       : 24
+files          : 187
+symbols        : 1843
+calls          : 6201
+imports        : 412
+routes         : 38
+sqls           : 29
+env_reads      : 14
+test_edges     : 522
+flow_functions : 311
+build_status   : complete
+parsed_files   : 187/187
+parse_failures : 0
 ```
 
 ```bash
@@ -174,7 +184,7 @@ func normalizeSymbolName(name string) string {
 
 ## Output formats
 
-Result-list queries support text, JSON, and files-only output:
+Many result-list queries support text, JSON, and files-only output:
 
 ```bash
 gograph callers Foo              # text: [kind] Name — detail  (file:line)
@@ -182,11 +192,37 @@ gograph callers Foo --json       # {"schema_version":"1","command":"callers","st
 gograph callers Foo --files-only # flat list of unique file paths
 ```
 
-Composed-analysis commands also support JSON where documented. Operational commands (`build`, `wiki`, `gate`, `snapshot`, sessions, installation, help, and version) remain text. Use `--files-only` only for result-list queries.
+Successful JSON envelopes always include `count`; empty collection results use
+`[]`. Operational failures use `status: "error"` and exit 1. Policy findings
+can make `check --json` exit 1 while still returning its structured report.
+
+`--files-only` is implemented by `query`, `focus`, `node`, `public`, `fields`,
+`embeds`, `imports`, `callers`, `callees`, `impact`, `implementers`, `envs`,
+`interfaces`, `concurrency`, `tests`, `routes`, `sql`, `errors`, `flow`,
+`orphans`, `mutate`, `constructors`, `literals`, `usages`, `returnusage`,
+`schema`, `globals`, `mocks`, `fixtures`, `boundaries`, `httpcalls`, and
+`dependents`. Empty files-only results write zero lines.
+
+Composed-analysis commands also support JSON where documented. Operational
+commands (`build`, `wiki`, `gate`, `snapshot`, installation, help, and version)
+remain text. Session create/end/cleanup are text; `session audit` additionally
+supports raw JSON.
+
+`--mermaid` is a global CLI output flag for `callers`, `callees`, `impact`,
+`endpoint`, `dependents`, `deps`, `path`, and `coupling`. Bare
+`gograph --mermaid` is shorthand for the package architecture `diagram`.
+Request only one of `--json`, `--files-only`, or `--mermaid`; unsupported or
+conflicting output flags fail instead of being silently ignored.
+
+`-i <message>` / `--intention <message>` is also global and may appear before
+or after the command. When a CLI audit session is active, it is mandatory for
+analytical commands and is stored with command telemetry; operational and
+index-status commands do not require it.
 
 ## Rebuilding
 
-CLI analysis does **not** auto-update. Rebuild whenever source files change:
+Graph-backed CLI analysis does **not** auto-update. Rebuild whenever source
+files change:
 
 ```bash
 gograph build .           # fast rebuild, tolerates broken code
@@ -199,4 +235,20 @@ You can check whether a rebuild is needed:
 gograph stale
 ```
 
-The MCP server checks source freshness and newer persisted graphs per analysis call. After an edit it rebuilds in memory using the current requested mode, so a precise session re-runs CHA/SSA rather than silently becoming AST-only; if that refresh cannot complete precisely, the analysis call returns an error. MCP `stale`, default `changes`, and `stats` still inspect the persisted graph.
+The MCP server checks source freshness and newer persisted graphs per analysis call. After an edit it rebuilds in memory using the current requested mode, so a precise session re-runs CHA/SSA rather than silently becoming AST-only; if that refresh cannot complete precisely, the analysis call returns an error. MCP `stale`, default `changes`, and `stats` inspect the persisted graph when present, or the startup in-memory fallback when no artifact exists.
+
+MCP refreshes are in-memory by default. Start with
+`gograph mcp [path] --persist-refresh` to publish successful refreshes to the
+latest `.gograph/graph.json` and nine reports. Publication uses the same
+`.artifacts.lock` and graph-last commit marker described above; it is not a
+bundle-atomic transaction, and the lock file remains as separate operational
+state. The option does not update `.gitignore` and is not a branch cache.
+Publication failure is returned as a tool error and retried
+later without rebuilding the fresh graph; failure to publish a required
+startup auto-build prevents the server from starting. A successful publication
+advances the persisted baseline used by default `changes`.
+
+For visual output through MCP, set `mermaid: true` on `gograph_callers`,
+`gograph_callees`, `gograph_impact`, `gograph_endpoint`,
+`gograph_dependents`, `gograph_deps`, `gograph_path`, or `gograph_coupling`.
+The selected tool returns Mermaid flowchart text instead of its normal response.

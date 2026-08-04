@@ -295,7 +295,7 @@ func TestCallersMermaid_InterfaceMethodUsesSharedTargetResolver(t *testing.T) {
 	}
 	var baseline string
 	for _, query := range queries {
-		got := search.CallersToMermaid(g, query, 1, false)
+		got := search.CallersToMermaid(g, query, 1, false, false)
 		if !strings.Contains(got, "Run") || !strings.Contains(got, "PostgresStateRepository") || !strings.Contains(got, "MemoryStateRepository") {
 			t.Errorf("CallersToMermaid(%q) lost an interface target:\n%s", query, got)
 		}
@@ -306,14 +306,14 @@ func TestCallersMermaid_InterfaceMethodUsesSharedTargetResolver(t *testing.T) {
 		}
 	}
 
-	concrete := search.CallersToMermaid(g, postgresDeleteID, 1, false)
+	concrete := search.CallersToMermaid(g, postgresDeleteID, 1, false, false)
 	if !strings.Contains(concrete, "Run") || !strings.Contains(concrete, "PostgresStateRepository") || strings.Contains(concrete, "MemoryStateRepository") {
 		t.Fatalf("concrete FQ caller diagram did not stay target-specific:\n%s", concrete)
 	}
 
 	withoutProof := interfaceDeleteGraph()
 	withoutProof.Implements = nil
-	if diagram := search.CallersToMermaid(withoutProof, "StateRepository.Delete", 1, false); strings.Contains(diagram, "Run") {
+	if diagram := search.CallersToMermaid(withoutProof, "StateRepository.Delete", 1, false, false); strings.Contains(diagram, "Run") {
 		t.Fatalf("interface caller diagram widened to unrelated Delete methods without proven targets:\n%s", diagram)
 	}
 	if impact := search.Impact(withoutProof, "StateRepository.Delete", false); len(impact) != 0 {
@@ -370,7 +370,7 @@ func TestPromotedForwardingIsTransparentToImpactAndMermaid(t *testing.T) {
 
 	callerQueries := []string{"Store.Delete", declaredID, wrapperID}
 	for _, query := range callerQueries {
-		diagram := search.CallersToMermaid(g, query, 2, false)
+		diagram := search.CallersToMermaid(g, query, 2, false, false)
 		if !strings.Contains(diagram, "Purge") || !strings.Contains(diagram, "main") || !strings.Contains(diagram, "DeletePart") {
 			t.Errorf("caller diagram %q did not traverse promoted forwarding:\n%s", query, diagram)
 		}

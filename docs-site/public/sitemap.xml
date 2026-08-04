@@ -14,6 +14,9 @@
     <loc>https://gograph.identuum.ai/docs/workflows/</loc>
   </url>
   <url>
+    <loc>https://gograph.identuum.ai/docs/mcp-registry/</loc>
+  </url>
+  <url>
     <loc>https://gograph.identuum.ai/posts/analyzing-go-codebase-with-gograph/</loc>
     <lastmod>2026-06-24T00:00:00Z</lastmod>
   </url>

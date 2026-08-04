@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Effective date:** 2026-05-16
+**Effective date:** 2026-08-03
 
 ## Overview
 
@@ -12,12 +12,22 @@ Gograph collects **no data**. Specifically:
 
 - **No code is uploaded.** All AST parsing and graph analysis runs locally against files on your filesystem.
 - **No remote telemetry.** Optional audit sessions write command metadata to `.gograph/sessions/`; raw query results are not logged or transmitted.
-- **Local MCP transport.** The MCP server communicates over stdio and opens no listening port. Default AST indexing makes no application-service calls. Precise mode and `gograph doc` invoke the installed Go toolchain, which follows the user's configured module cache/proxy/network policy.
+- **Local MCP transport.** The MCP server communicates over stdio and opens no listening port. Default AST indexing makes no application-service calls. Precise mode and `gograph doc` invoke the installed Go toolchain, which follows the user's configured module cache/proxy/network policy. MCP refreshes remain in memory unless the server is explicitly started with `--persist-refresh`.
 - **No accounts or authentication.** Gograph requires no login, API key, or user account.
 
 ## Repository Data
 
 When you run `gograph build .`, it reads selected Go source plus project metadata such as `go.mod`, `.gitignore`, and Git ignore state. Other commands may read graph/config JSON or YAML and Git state; `flow` reads `.gograph/flow.json` when present or a user-selected sanitizer policy inside the graph root. It writes `.gograph/graph.json`, Markdown reports, snapshots, boundary/check configuration, wiki pages, and optional session logs locally. `source`/`context` return requested Go source, inline route-handler bodies may be stored in the graph, and compact source/transfer/sink facts are stored for query-time security-flow analysis.
+
+`gograph mcp [path] --persist-refresh` is an explicit local-write mode. After
+a successful source refresh it writes or overwrites `.gograph/graph.json` and
+the generated Markdown reports under the analyzed project, using
+`.gograph/.artifacts.lock` for local writer coordination. It does not change
+`.gitignore`; fixed plugin and MCP bundle configurations leave the option off.
+Only the latest state is retained, not a history or per-branch cache. An
+initial auto-build publication failure prevents server startup. A later
+tool-triggered failure is returned to that tool, while the server keeps the
+fresh in-memory graph for a publication retry.
 
 ## Third-Party Services
 

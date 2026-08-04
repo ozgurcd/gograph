@@ -2,51 +2,43 @@
 title: Contributing Guidelines
 type: workflow
 status: current
-updated: 2026-06-13
+updated: 2026-08-04
 sources:
   - SRC-20260614-gograph-legacy-contributing
 ---
 
 # Contributing to gograph
 
-This document outlines the workflows and standards for adding commands, writing MCP tools, maintaining codebase style, and verifying boundaries.
+## Scope and source of truth
 
-## Adding a New Command
-Ensure new commands conform to these design constraints:
-- **Token Efficiency**: The command must reduce context usage compared to raw text queries.
-- **Local-Only**: Must execute entirely offline with zero network latency.
-- **Deterministic**: Output must be predictable.
-- **Compositional**: Codebase search features should compose neatly on top of the `*graph.Graph` model.
+gograph intentionally analyzes Go repositories; other-language parsers are a non-goal. Derive behavior from current source, tests, live CLI help, and the MCP tool registry rather than copying older documentation. The module currently requires Go 1.26.5 as declared by `go.mod`.
 
-### Implementation Sequence
-1. **Search**: Implement pure algorithmic functions in `internal/search/` (no I/O, operates purely on `*graph.Graph`).
-2. **CLI Wiring**: Create the execution handler (`runXxx()`) in `internal/cli/cli.go` and add a matching dispatch block to the `Run()` switch.
-3. **MCP Tool**: Register the tool in `internal/mcp/server.go` following the standard MCP tool schema.
-4. **Docs & Help**: Update help text constant, update the capabilities list in `gograph_capabilities`, and update the project README.
+## Adding or changing a capability
 
-## CLI/MCP Parity
-Every CLI capability must have a corresponding MCP tool:
-- Parameter naming and argument types must match (CLI flags → MCP parameters).
-- Filtering, sorting, and indexing logics must match.
-- Collections in MCP must serialize as empty arrays (`[]`) rather than `null`.
--サーフェイス direct error messages rather than wrapping them.
+1. Implement graph data in `internal/graph` or extraction in `internal/parser` when needed.
+2. Implement query/analysis logic in `internal/search` without importing CLI or MCP packages.
+3. Add the CLI handler and dispatch in `internal/cli`.
+4. Add the semantically equivalent MCP tool and typed parameters in `internal/mcp`.
+5. Add CLI and MCP regression coverage, including schemas, error behavior, freshness, and transport-specific output. Keep `internal/cli/output_modes.go` synchronized with every supported CLI presentation.
+6. Update live help/capabilities, README, maintained guides, public site, integrations, release notes, and affected wiki pages.
 
-## Code Style & Import Boundaries
-- **Go 1.26**: Strictly use Go 1.26 constructs.
-- **Complexity**: Keep function cyclomatic complexity under 20. Decompose functions exceeding this boundary.
-- **Boundary Rules**:
-  - `internal/graph`: Core structures (no internal package imports; standard library only).
-  - `internal/parser`: AST parsing and scope resolution (imports `internal/graph`).
-  - `internal/search`: Search/queries (imports `internal/graph`; must not import `internal/cli` or `internal/mcp`).
-  - `internal/wiki`: Wiki file generator (imports `internal/graph`, `internal/search`).
-  - `internal/cli` and `internal/mcp`: Exposes tools and handles IO (may import all internal packages).
+Query, analysis, and workflow features belong on both CLI and MCP. Intentional CLI-only host/build operations include `build`, `gate`, `snapshot`, plugin/hook installation, MCP server startup, help, and version. Session CLI actions map to four `gograph_session_*` endpoints. Output presentation may differ: CLI `--json` and `--files-only` map to structured MCP content, while CLI `--mermaid` maps to `mermaid=true` for callers, callees, impact, endpoint, dependents, deps, path, and coupling.
 
-Verify package boundaries via `gograph boundaries`.
+## Package boundaries and style
 
-## Release Verification Checklist
-Before proposing any release or finishing work:
-- Run `make test-coverage` and check coverage levels.
-- Run `make test-fuzz` to execute fuzz tests.
-- Rebuild binary using `make build` (never run `go build` directly, as it bypasses version injection).
-- Run `gograph build . --precise` and verify clean graph status.
-- Update capabilities list, CLI help text, README, and `RELEASE_NOTES.md` (top block).
+- `internal/graph`: core data structures; standard library only.
+- `internal/parser`: tolerant AST extraction; imports graph.
+- `internal/search`: graph algorithms and narrowly scoped filesystem/Git reads; never imports CLI or MCP.
+- `internal/wiki`: generated wiki rendering from graph/search data.
+- `internal/cli` and `internal/mcp`: transport, process, persistence, and integration wiring.
+- Keep deterministic ordering and explicit AST/precise/fallback semantics.
+- Surface errors directly, serialize successful empty collections as `[]` with count zero, preserve command-aware JSON error envelopes, and test ambiguous symbol names.
+- Document local I/O, Go-toolchain/network behavior, audit telemetry, and artifact mutation accurately.
+
+## Build and verification
+
+Use `make build` so version metadata is injected; do not substitute a raw repository binary build. Before finishing a change, run the repository-required formatting, unit, race, vet, staticcheck, golangci-lint, module verify/tidy, coverage, fuzz, vulnerability, documentation, and cross-platform build checks. Rebuild the repository graph precisely when compilable, inspect `stats`, and run a post-edit `review --uncommitted`. Static graph evidence does not replace compiler and test results.
+
+## Scrinium governance
+
+Start Scrinium from the repository's `scrinium.json`, call `capabilities` and `begin_session`, then read `index.md`, `agent-rules.md`, and relevant workflow pages. Write durable wiki changes through Scrinium. `agent-rules.md`, `architecture/*`, and `core-decisions/*` are protected; propose their changes through a draft. Update the canonical log, index, and source registry when session status requires it, and do not report completion until `finish_session` succeeds.

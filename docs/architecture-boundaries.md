@@ -1,6 +1,8 @@
 # Architecture Boundary Enforcement
 
-`gograph boundaries` is an active enforcement tool that allows you to define strict rules for how packages interact with each other in your repository. It acts as an automated guardrail for your codebase, preventing developers (and AI agents) from introducing architectural tech debt.
+`gograph boundaries` enforces package-import constraints recorded in the
+current graph. It acts as an automated guardrail against new indexed imports
+that violate the repository's configured layers.
 
 ## Why Use It?
 
@@ -24,9 +26,15 @@ gograph boundaries --create
 ```
 
 This will automatically:
-1. Scan your graph and group packages into layers (based on the top two directories, e.g., `internal/handler`).
-2. Calculate every single active import between these layers (including third-party packages).
-3. Generate a `.gograph/boundaries.json` file.
+
+1. Group packages under `internal/`, `pkg/`, and `cmd/` by their first two
+   directories (for example `internal/handler`). Other packages use their first
+   directory, and the repository-root package uses `.`.
+2. Record selected non-standard-library imports between those layers. External
+   imports are deduplicated to host/owner patterns such as
+   `github.com/gin-gonic/**`.
+3. Generate `.gograph/boundaries.json`. Creation refuses to overwrite an
+   existing file.
 
 Because this file maps your *exact current state*, running `gograph boundaries` immediately afterward will yield **0 violations**.
 
@@ -77,8 +85,12 @@ otherwise excluded files remain subject to the documented scanner limits.
 
 ### Implicit Allowances
 To prevent the JSON file from becoming an unreadable mess, `gograph` uses intelligent implicit allowances:
-1. **Standard Library:** Imports from the standard library (e.g., `fmt`, `net/http`) are **always permitted** and do not need to be listed.
-2. **Self-Directory:** A file is always allowed to import another file in the exact same directory.
+1. **Standard-library heuristic:** An import whose first path segment contains
+   no dot is treated as standard library and is always permitted (for example
+   `fmt` or `net/http`). This is intentionally simple and can also exempt a
+   dotless local/module import path.
+2. **Same package directory:** An import resolved to the exact same package
+   directory as the importing file is implicitly allowed.
 3. **Same Layer:** A file is allowed to import another file within the exact same layer (e.g., `internal/domain/models` importing `internal/domain/errors`), provided they both match the same layer's `packages` definition.
 
 ## CI/CD and Agent Integration

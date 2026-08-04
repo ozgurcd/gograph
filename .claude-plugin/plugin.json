@@ -1,7 +1,7 @@
 {
   "name": "gograph",
   "version": "0.1.0",
-  "description": "Local Go repository intelligence for Claude Code: AST-aware call graphs, impact, security-flow candidates, and 61 query and analysis capabilities via the gograph MCP server.",
+  "description": "Claude Code workflow guidance for local gograph: AST-aware call graphs, impact, security-flow candidates, and 61 query, analysis, and workflow capabilities through a separately registered MCP server.",
   "author": {
     "name": "ozgurcd",
     "url": "https://github.com/ozgurcd"

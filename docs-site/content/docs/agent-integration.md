@@ -114,11 +114,45 @@ your host rather than assuming identical behavior across every MCP client.
 
 To start the MCP JSON-RPC server over standard I/O:
 ```bash
-gograph mcp [path]
+gograph mcp [path] [--persist-refresh]
 ```
-If `.gograph/graph.json` does not exist, startup creates an in-memory AST graph; it does not publish CLI build artifacts. Source-analysis tools check source freshness and newer persisted artifacts per call, then rebuild after edits in the current requested mode. Persisted-index tools use the disk snapshot; precise and precise-fallback sessions re-run CHA/SSA, and a failed precise refresh is returned visibly.
+By default, if `.gograph/graph.json` does not exist, startup creates an in-memory AST graph without publishing CLI build artifacts. Source-analysis tools check source freshness and newer persisted artifacts per call, then rebuild after edits in the current requested mode. `gograph_stale`, default `gograph_changes`, and `gograph_stats` use the persisted graph when one exists and otherwise inspect the startup in-memory fallback. Precise and precise-fallback sessions re-run CHA/SSA, and a failed precise refresh is returned visibly. A failed precise publication retry cannot replace an existing fresh successful precise artifact covering the same selected sources.
 
-The server exposes 65 endpoints: 61 CLI-equivalent query, analysis, and workflow tools plus four session lifecycle tools. `gograph_flow` matches the CLI `flow` filters (`term`, `source`, `sink`, `config`, and `no_tests`) and returns structured source, sink, severity, confidence, and path data.
+Refresh publication is opt-in. `--persist-refresh` writes or overwrites
+`.gograph/graph.json` and the nine reports after a successful refresh, without
+changing `.gitignore`. It keeps only the latest state and is not a branch
+cache. A failed initial auto-build publication prevents startup. A later
+tool-triggered failure is returned as a tool error and retried using the
+already-fresh in-memory graph. Graph/report publishers wait up to 30 seconds on
+`.gograph/.artifacts.lock`, stage all ten artifacts, rename reports first, and
+rename `graph.json` last as the commit marker. Same-directory replacement is
+atomic on Unix-like systems but is not guaranteed atomic by Go on non-Unix
+platforms, and the bundle is not one atomic transaction; a crash can leave
+reports ahead of the previous graph marker. The lock file remains as separate
+operational state. Because default `gograph_changes` compares
+with persisted `graph.json`, successful publication advances that comparison
+baseline. Fixed Registry/plugin configurations omit the flag. When persistence
+is enabled, refresh-capable MCP tools advertise non-read-only, destructive
+annotations because a stale refresh may replace these generated artifacts.
+In the default mode, read-only annotations describe the analysis contract. If
+an audit session is active, every non-session MCP call also appends local
+observational command/status telemetry; tool arguments and query results are
+not logged. MCP tools do not expose or enforce the CLI's `--intention` field,
+so MCP audit records have an empty intention.
+
+Eight graph-oriented MCP tools match the CLI's Mermaid surface. Set
+`mermaid: true` on `gograph_callers`, `gograph_callees`, `gograph_impact`,
+`gograph_endpoint`, `gograph_dependents`, `gograph_deps`, `gograph_path`, or
+`gograph_coupling`; a successful match returns Mermaid flowchart text instead
+of the tool's normal response. `gograph_diagram` always returns Mermaid
+architecture text.
+
+The server exposes 65 endpoints: 61 tools corresponding to CLI query,
+analysis, and workflow commands plus four session lifecycle tools. Tool
+arguments and transport-level status presentation can differ from CLI flags
+and process exit codes. `gograph_flow` matches the CLI `flow` filters (`term`,
+`source`, `sink`, `config`, and `no_tests`) and returns structured source,
+sink, severity, confidence, and path data.
 
 ### Official Registry / MCPB installation
 
@@ -151,8 +185,13 @@ To add gograph as an MCP server in **Cursor**:
 4. Configure the fields:
    - **Name**: `gograph`
    - **Type**: `command`
-   - **Command**: `gograph mcp` *(if not globally in PATH, specify the absolute path: `/opt/homebrew/bin/gograph mcp`)*
+   - **Command**: `gograph mcp /absolute/path/to/go-project` *(if not globally in PATH, also use the absolute binary path)*
 5. Click **Save**. 
+
+Use an explicit project path for global client configuration; bare `gograph
+mcp` analyzes the process working directory selected by the client. Add
+`--persist-refresh` only if Cursor should publish refreshed artifacts; the
+default command keeps source refreshes in memory.
 
 Cursor will automatically start the background stdio session, parse the JSON schemas, and register every `gograph` capability as a native agent tool in Composer and Chat!
 
@@ -167,12 +206,15 @@ Add the following block to your global or workspace-local `mcp_config.json` file
   "mcpServers": {
     "gograph": {
       "command": "gograph",
-      "args": ["mcp"],
+      "args": ["mcp", "/absolute/path/to/go-project"],
       "env": {}
     }
   }
 }
 ```
+
+Append `"--persist-refresh"` to `args` only when this server should publish
+refreshed artifacts; leave it out for the default in-memory behavior.
 
 Save the file. Windsurf will instantly hot-reload the configuration and expose all `gograph` analytical features to the AI critic and coder loop!
 

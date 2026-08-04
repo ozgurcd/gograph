@@ -17,7 +17,10 @@ reads.
 
 1. Build `gograph` with `make build` (the default binary path is
    `bin/gograph`).
-2. You must have `gopls` installed and available in your `$PATH`.
+2. Run `bin/gograph build .` in the repository being benchmarked. The harness
+   invokes the graph-backed `context` command, so rebuild the graph whenever
+   the checked-out source changes.
+3. You must have `gopls` installed and available in your `$PATH`.
 
 ## Standard Execution
 

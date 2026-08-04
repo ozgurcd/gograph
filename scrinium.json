@@ -2,7 +2,7 @@
     "wiki_root": "./llm-wiki",
     "write_governance": {
         "protected_files": [
-            "rules.md",
+            "agent-rules.md",
             "architecture/*",
             "core-decisions/*"
         ]

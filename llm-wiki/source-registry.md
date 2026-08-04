@@ -49,3 +49,17 @@ This registry tracks raw sources ingested into the wiki.
 - Derived pages:
   - mcp-registry.md
 - Notes: Registered by Scrinium.
+
+### SRC-20260803-gograph-live-distribution
+
+- Title: gograph v1.5.3 live GitHub and MCP Registry records
+- Raw path: https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.ozgurcd%2Fgograph
+- Source summary: sources/SRC-20260803-gograph-live-distribution.md
+- Source type: official Registry API and GitHub release
+- Trust level: external
+- Received date: 2026-08-03
+- Ingest date: 2026-08-03
+- Status: current
+- Derived pages:
+  - Pending review
+- Notes: Registered by Scrinium.

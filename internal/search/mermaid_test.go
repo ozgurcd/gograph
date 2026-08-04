@@ -1,6 +1,7 @@
 package search_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -81,7 +82,7 @@ func TestMermaidOutputGenerators(t *testing.T) {
 
 	// 5. Test CallersToMermaid
 	t.Run("CallersToMermaid", func(t *testing.T) {
-		got := search.CallersToMermaid(g, "SaveUser", 2, true)
+		got := search.CallersToMermaid(g, "SaveUser", 2, true, false)
 		if !strings.Contains(got, "flowchart LR") || !strings.Contains(got, "CreateUser") {
 			t.Errorf("unexpected callers output:\n%s", got)
 		}
@@ -135,6 +136,57 @@ func TestMermaidOutputGenerators(t *testing.T) {
 			t.Errorf("unexpected endpoint output:\n%s", got)
 		}
 	})
+}
+
+func TestCallersToMermaidExactAvoidsSubstringCollisions(t *testing.T) {
+	g := &graph.Graph{
+		Symbols: []graph.SymbolNode{
+			{ID: "example.com/mermaid::Load", Name: "Load", Kind: graph.KindFunction},
+			{ID: "example.com/mermaid::Preload", Name: "Preload", Kind: graph.KindFunction},
+			{ID: "example.com/mermaid::ExactCaller", Name: "ExactCaller", Kind: graph.KindFunction},
+			{ID: "example.com/mermaid::CollisionCaller", Name: "CollisionCaller", Kind: graph.KindFunction},
+		},
+		Calls: []graph.CallEdge{
+			{CallerSymbolID: "example.com/mermaid::ExactCaller", CallerName: "ExactCaller", CalleeSymbolID: "example.com/mermaid::Load", CalleeRaw: "Load"},
+			{CallerSymbolID: "example.com/mermaid::CollisionCaller", CallerName: "CollisionCaller", CalleeSymbolID: "example.com/mermaid::Preload", CalleeRaw: "Preload"},
+		},
+	}
+
+	fuzzy := search.CallersToMermaid(g, "Load", 1, true, false)
+	if !strings.Contains(fuzzy, "CollisionCaller") {
+		t.Fatalf("fuzzy callers diagram did not include the substring collision:\n%s", fuzzy)
+	}
+	exact := search.CallersToMermaid(g, "Load", 1, true, true)
+	if !strings.Contains(exact, "ExactCaller") || strings.Contains(exact, "CollisionCaller") || strings.Contains(exact, "Preload") {
+		t.Fatalf("exact callers diagram did not preserve exact caller semantics:\n%s", exact)
+	}
+}
+
+func TestCallersAndImpactMermaidUseTheirOwnDepthBounds(t *testing.T) {
+	g := &graph.Graph{}
+	for i := 0; i <= 21; i++ {
+		name := fmt.Sprintf("Hop%02d", i)
+		id := "example.com/depth::" + name
+		g.Symbols = append(g.Symbols, graph.SymbolNode{ID: id, Name: name, Kind: graph.KindFunction})
+		if i > 0 {
+			previous := fmt.Sprintf("Hop%02d", i-1)
+			g.Calls = append(g.Calls, graph.CallEdge{
+				CallerSymbolID: id,
+				CallerName:     name,
+				CalleeSymbolID: "example.com/depth::" + previous,
+				CalleeRaw:      previous,
+			})
+		}
+	}
+
+	callers := search.CallersToMermaid(g, "Hop00", 20, true, false)
+	if !strings.Contains(callers, `["Hop10"]`) || strings.Contains(callers, `["Hop11"]`) {
+		t.Fatalf("public callers diagram did not clamp depth to 10:\n%s", callers)
+	}
+	impact := search.ImpactToMermaid(g, "Hop00", true)
+	if !strings.Contains(impact, `["Hop20"]`) || strings.Contains(impact, `["Hop21"]`) {
+		t.Fatalf("impact diagram did not traverse exactly its 20-hop bound:\n%s", impact)
+	}
 }
 
 func TestDiagramToMermaid(t *testing.T) {

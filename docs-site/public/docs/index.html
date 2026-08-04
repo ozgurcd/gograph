@@ -182,7 +182,7 @@
 <p>gograph is a developer and AI agent tool built to index, trace, and query Go codebases using AST-derived call graphs and dependency maps.</p>
 <hr>
 <h2 id="-documentation-map">🗺️ Documentation Map<a hidden class="anchor" aria-hidden="true" href="#-documentation-map">#</a></h2>
-<p>Explore the documentation across four primary categories:</p>
+<p>Explore the documentation across five primary categories:</p>
 <h3 id="-getting-started">🚀 <a href="/docs/getting-started/">Getting Started</a><a hidden class="anchor" aria-hidden="true" href="#-getting-started">#</a></h3>
 <p>Set up gograph on your system, initialize your first repository graph index, and run basic queries.</p>
 <ul>
@@ -196,12 +196,18 @@
 <h3 id="-ai-agent-integration">🤖 <a href="/docs/agent-integration/">AI Agent Integration</a><a hidden class="anchor" aria-hidden="true" href="#-ai-agent-integration">#</a></h3>
 <p>Connect gograph with AI coding assistants (like Claude Code, Cursor, and custom LLM workflows) to reduce broad file reads and unsupported structural guesses.</p>
 <ul>
-<li><strong>Topics</strong>: MCP stdio setup, in-memory refresh behavior, Claude Desktop/plugin configuration, and the Claude Code PreToolUse hook guard.</li>
+<li><strong>Topics</strong>: MCP stdio setup, default in-memory refreshes, opt-in artifact publication, CLI/MCP Mermaid output, Claude Desktop/plugin configuration, and the Claude Code PreToolUse hook guard.</li>
 </ul>
 <h3 id="-agent-workflows">⚙️ <a href="/docs/workflows/">Agent Workflows</a><a hidden class="anchor" aria-hidden="true" href="#-agent-workflows">#</a></h3>
 <p>Discover safe development workflows and optimization protocols.</p>
 <ul>
 <li><strong>Topics</strong>: Onboarding to fresh codebases, the plan-to-review edit lifecycle, and package refactoring dependencies extraction.</li>
+</ul>
+<h3 id="-official-mcp-registry">📦 <a href="/docs/mcp-registry/">Official MCP Registry</a><a hidden class="anchor" aria-hidden="true" href="#-official-mcp-registry">#</a></h3>
+<p>Install a platform-specific MCP Bundle from the preview Registry and select the
+Go project directory it analyzes.</p>
+<ul>
+<li><strong>Topics</strong>: MCPB versus Homebrew/<code>go install</code>, six release targets, local data handling, and the current CPU-selection limitation.</li>
 </ul>
 
 
@@ -213,16 +219,15 @@
     </h2>
   </header>
   <div class="entry-content">
-    <p>Prerequisites Go 1.26 or later A Go module repository (go.mod present) Install Homebrew (recommended)
+    <p>Prerequisites Go 1.26.5 or later A Go module repository (go.mod present) Install Homebrew (recommended)
 brew install ozgurcd/tap/gograph gograph version Go install
-go install github.com/ozgurcd/gograph/cmd/gograph@latest gograph version From source
-git clone https://github.com/ozgurcd/gograph cd gograph make build # produces bin/gograph sudo make install # copies to /usr/local/bin Step 1 — Build the graph Navigate to the root of any Go module and run:
-gograph build . This walks every .go file, extracts the AST, and writes:
+go install github.com/ozgurcd/gograph/cmd/gograph@latest gograph version Official MCP Registry / MCPB (preview)
+MCPB-capable clients can discover io.github.ozgurcd/gograph in the official Registry. This installs a self-contained local MCP server bundle rather than a CLI on PATH. Select the bundle matching macOS, Linux, or Windows and the host’s amd64/arm64 architecture, then choose the root directory of the Go project to analyze. Current Registry metadata cannot select CPU architecture portably, so verify the asset filename instead of assuming automatic client selection. See Official MCP Registry for details.
 ...</p>
   </div>
   <footer class="entry-footer">
 
-<span>4 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
+<span>7 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
   <a class="entry-link" aria-label="post link to Getting Started" href="https://gograph.identuum.ai/docs/getting-started/"></a>
 </article>
 
@@ -233,12 +238,13 @@ gograph build . This walks every .go file, extracts the AST, and writes:
   </header>
   <div class="entry-content">
     <p>This reference documents every command available in the gograph CLI, compiled directly from the production source code.
-Indexing &amp; Core Commands build gograph build [path] [--precise] Walks and parses a Go repository. Generates the structured graph at .gograph/graph.json and nine targeted Markdown reports in .gograph/. Adds .gograph/ to the Git repository root .gitignore when available; outside Git, falls back to the build target .gitignore. Git-ignored files and directories use the same exclusion policy in build, stale, and changes. If no Go files are found or none parse successfully, exits without replacing existing artifacts. Partial parse failures are recorded in graph.json, which is committed with an atomic rename.
+Global Flags Global flags may appear before or after the command:
+--json: Structured output for query and composed-analysis commands. --files-only: Deduplicated paths for the commands listed under Output Modes; an empty result writes zero lines. --mermaid: Mermaid output for callers, callees, impact, endpoint, dependents, deps, path, and coupling. Bare gograph --mermaid is shorthand for gograph diagram. -i &lt;message&gt; / --intention &lt;message&gt;: Technical rationale recorded with CLI command telemetry. It is mandatory for analytical commands while an audit session is active; session, MCP startup, build, installation, help, version, stale, stats, capabilities, wiki, and doc commands do not require it. Request only one of --json, --files-only, or --mermaid; unsupported or conflicting output flags fail instead of being silently ignored.
 ...</p>
   </div>
   <footer class="entry-footer">
 
-<span>13 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
+<span>18 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
   <a class="entry-link" aria-label="post link to Command Reference" href="https://gograph.identuum.ai/docs/command-reference/"></a>
 </article>
 
@@ -254,7 +260,7 @@ Text search, gopls, and gograph have different jobs rg, grep, and find are appro
   </div>
   <footer class="entry-footer">
 
-<span>7 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
+<span>10 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
   <a class="entry-link" aria-label="post link to AI Agent Integration" href="https://gograph.identuum.ai/docs/agent-integration/"></a>
 </article>
 
@@ -273,6 +279,23 @@ Verify Index Status: gograph stats gograph stale If stale or missing, run gograp
 
 <span>3 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
   <a class="entry-link" aria-label="post link to Agent Workflows" href="https://gograph.identuum.ai/docs/workflows/"></a>
+</article>
+
+<article class="post-entry">
+  <header class="entry-header">
+    <h2 class="entry-hint-parent">Official MCP Registry
+    </h2>
+  </header>
+  <div class="entry-content">
+    <p>gograph is published to the official Model Context Protocol Registry as:
+io.github.ozgurcd/gograph The official Registry is currently in preview. Its API, stored data, and client support may change before general availability.
+Registry installation is a separate path Homebrew and go install place the normal gograph CLI on PATH. You then configure an MCP client to run gograph mcp &lt;project-directory&gt;. The Claude Code marketplace entry supplies workflow guidance but still needs that binary and a project registration.
+...</p>
+  </div>
+  <footer class="entry-footer">
+
+<span>3 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
+  <a class="entry-link" aria-label="post link to Official MCP Registry" href="https://gograph.identuum.ai/docs/mcp-registry/"></a>
 </article>
     </main>
     

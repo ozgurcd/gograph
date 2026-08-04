@@ -2,7 +2,7 @@
 title: Rules and Constraints
 type: schema
 status: current
-updated: 2026-06-13
+updated: 2026-08-04
 sources:
   - SRC-20260614-gograph-legacy-rules
 ---
@@ -23,7 +23,7 @@ This document details the binding rules and architectural constraints for develo
 
 ## 3. Build & Versioning
 - Always build the binary using `make build`. Direct compilation via `go build` is forbidden because it bypasses version injection.
-- Go version is strictly locked to Go 1.26 (verified in `go.mod`).
+- The minimum Go version is 1.26.5, as declared by `go.mod`; CI and release builds must not use an older patch.
 
 ## 4. Verification Requirements
 - All tests must pass before completing any implementation.
@@ -41,7 +41,7 @@ This document details the binding rules and architectural constraints for develo
 - Ensure parity between CLI flags and MCP tool parameters (matching names, types, logic, and output schemas).
 
 ## 6. Architectural Boundaries
-- The tool must remain entirely local (no remote network calls).
+- Product analysis and MCP transport remain local and open no application-service connection. Precise analysis and `doc` invoke the installed Go toolchain, which may use its configured module cache/proxy/network policy.
 - Static analysis must not execute user code or run target binaries/tests.
 - Maintain package layout boundaries:
   - `internal/graph`: Core data models (stdlib only).

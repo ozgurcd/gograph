@@ -37,6 +37,13 @@
       <description>Recommended operational workflows for developers and AI agents using gograph.</description>
     </item>
     <item>
+      <title>Official MCP Registry</title>
+      <link>https://gograph.identuum.ai/docs/mcp-registry/</link>
+      <pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate>
+      <guid>https://gograph.identuum.ai/docs/mcp-registry/</guid>
+      <description>Discover and install gograph as a local MCP Bundle, select the correct platform asset, and understand the preview limitations.</description>
+    </item>
+    <item>
       <title>Analyzing a Go Codebase with gograph — Starting with Itself</title>
       <link>https://gograph.identuum.ai/posts/analyzing-go-codebase-with-gograph/</link>
       <pubDate>Wed, 24 Jun 2026 00:00:00 +0000</pubDate>

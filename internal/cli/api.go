@@ -47,7 +47,7 @@ func runAPI(args []string) int {
 	res := search.APIDrift(baselineGraph, currentGraph, baselineRef)
 
 	if jsonMode {
-		return PrintJSON(okEnvelope("api", baselineRef, res, 0))
+		return PrintJSON(okEnvelope("api", baselineRef, res, apiDriftItemCount(res)))
 	}
 
 	fmt.Printf("API / contract drift since %s\n", baselineRef)
@@ -126,4 +126,24 @@ func runAPI(args []string) int {
 	fmt.Println("Note: Contract drift is based on static AST and graph comparison. It identifies likely compatibility risks but does not prove runtime behavior.")
 
 	return 0
+}
+
+// apiDriftItemCount counts concrete contract changes. Affected tests and
+// mocks are consequences of those changes, not additional drift items.
+func apiDriftItemCount(res *search.APIDriftResult) int {
+	if res == nil {
+		return 0
+	}
+	return len(res.ExportedSymbols.Added) +
+		len(res.ExportedSymbols.Removed) +
+		len(res.ExportedSymbols.Changed) +
+		len(res.Interfaces.Added) +
+		len(res.Interfaces.Removed) +
+		len(res.Interfaces.Changed) +
+		len(res.Structs.Added) +
+		len(res.Structs.Removed) +
+		len(res.Structs.Changed) +
+		len(res.Routes.Added) +
+		len(res.Routes.Removed) +
+		len(res.Routes.Changed)
 }

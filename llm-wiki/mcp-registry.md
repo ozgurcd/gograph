@@ -2,17 +2,18 @@
 title: Official MCP Registry Distribution
 type: decision
 status: current
-updated: 2026-07-13
+updated: 2026-08-04
 sources:
   - SRC-20260712-mcp-registry-spec
   - SRC-20260712-mcpb-spec
+  - SRC-20260803-gograph-live-distribution
 ---
 
 # Official MCP Registry Distribution
 
 ## Live publication
 
-The official Registry entry `io.github.ozgurcd/gograph` version `1.5.0` is active and marked latest. The exact API record is `https://registry.modelcontextprotocol.io/v0.1/servers/io.github.ozgurcd%2Fgograph/versions/1.5.0`; discovery search returns exactly one matching server. GitHub release `v1.5.0` is at `https://github.com/ozgurcd/gograph/releases/tag/v1.5.0`.
+The official Registry entry `io.github.ozgurcd/gograph` has active immutable versions 1.5.0 through 1.5.3. Registry discovery marks version `1.5.3` latest; its exact API record is `https://registry.modelcontextprotocol.io/v0.1/servers/io.github.ozgurcd%2Fgograph/versions/1.5.3`. GitHub release `v1.5.3`, published 2026-07-19, is at `https://github.com/ozgurcd/gograph/releases/tag/v1.5.3`. The checked-in `server.json`, local tag, GitHub release, and Registry package hashes agree on 1.5.3; the tag dereferences to `5a9f44f757846fa8a92d91abddbc25ba4ad71377`.
 
 The immutable tag `v1.5.0` dereferences to implementation commit `e4f96315ec4edb805dddbdd584fffbc022f18c6d`. Workflow recovery commit `4299e2806a87c43343584f941159a413ade156d3` added the release-test binary prerequisite and an explicit existing-tag dispatch path without moving that tag. Successful release and Registry publication run `29242849952` used GitHub OIDC. The initial tag-triggered run failed before creating any release or Registry state because existing CLI contract tests expected `bin/gograph`; this was corrected on `main`, and the original tag was reverified and published through the safe dispatch path.
 
@@ -34,6 +35,8 @@ The manifest requires a `project_directory` directory input and launches without
 ```
 
 Registry packages omit `packageArguments`; the embedded MCPB launch configuration is authoritative, avoiding duplicate arguments.
+
+The fixed MCPB launch intentionally omits `--persist-refresh`, so refreshes remain in memory and do not replace CLI artifacts. Durable refresh publication requires a custom local registration using `gograph mcp <project-directory> --persist-refresh`; that mode publishes only the latest graph plus nine reports, retains `.gograph/.artifacts.lock` as operational coordination state, and does not edit `.gitignore`. Reports are renamed first and `graph.json` last as the commit marker. Same-directory replacement is atomic on Unix-like systems but is not guaranteed atomic by Go on non-Unix platforms; the ten-file bundle is not one atomic transaction.
 
 ## Targets and limitation
 

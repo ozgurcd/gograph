@@ -596,6 +596,8 @@ func TestCapabilitiesDocumentsImplementedModes(t *testing.T) {
 
 	capabilities := string(out)
 	for _, want := range []string{
+		"llm-wiki/index.md",
+		"llm-wiki/agent-rules.md",
 		"build . --precise  then  review --uncommitted",
 		"callers <fn> [--no-tests] [--depth N] [--exact]",
 		"coupling [pkg] [--include-stdlib] [--internal-only]",
@@ -608,9 +610,19 @@ func TestCapabilitiesDocumentsImplementedModes(t *testing.T) {
 		"source: http_request | decoded_json | environment",
 		"sink: sql_query | process_execution | filesystem | outbound_http",
 		"tests are included by default; sanitizer policy is evaluated at query time",
+		"MCP refreshes stay in memory by default",
+		"--persist-refresh",
+		"not a branch cache",
+		"does not edit .gitignore",
+		"last persisted graph",
 	} {
 		if !strings.Contains(capabilities, want) {
 			t.Errorf("gograph capabilities does not document implemented mode %q", want)
+		}
+	}
+	for _, stale := range []string{"llm-wiki/README.md", "llm-wiki/rules.md", "since last build"} {
+		if strings.Contains(capabilities, stale) {
+			t.Errorf("gograph capabilities retains stale guidance %q", stale)
 		}
 	}
 }

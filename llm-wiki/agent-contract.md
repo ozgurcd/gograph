@@ -2,7 +2,7 @@
 title: Agent Workflow Contract
 type: workflow
 status: current
-updated: 2026-08-03
+updated: 2026-08-04
 sources:
   - SRC-20260614-gograph-legacy-agent-contract
 ---
@@ -55,3 +55,11 @@ After editing Go code:
 | Post-edit review | `gograph_review` | tests, vet, linters, and runtime checks |
 
 Prefer composed calls such as `gograph_context` or `gograph_plan` when they match the question. Measure actual tool calls and tokens instead of assuming a fixed saving.
+
+## CLI and MCP contract
+
+The 61 query, analysis, and workflow capabilities must remain semantically equivalent across CLI and MCP; four additional MCP endpoints implement session lifecycle. Host/build operations (`build`, `gate`, `snapshot`, integration installation, MCP startup, help, and version) are intentionally CLI-only. Presentation is transport-specific: CLI `--json` and the supported `--files-only` commands correspond to structured MCP content, while the eight graph-oriented Mermaid commands use MCP `mermaid=true`. The CLI validates output-mode support and rejects conflicting modes. Successful JSON envelopes always carry `count`, collection-shaped empties use `[]`, and hard failures use an error envelope; `session audit --json` deliberately returns its native audit object.
+
+CLI analytical commands require `--intention` while an audit session is active. MCP schemas do not expose or enforce an intention parameter. Instead, active sessions record observational MCP command, duration, success/failure, and empty intention; arguments and query results are omitted. Read-only annotations describe the functional analysis contract, with this local audit telemetry as an observational exception. When `--persist-refresh` is enabled, refresh-capable tools advertise filesystem mutation and may replace the latest graph/report artifacts.
+
+Context responses must not hide ambiguity or source-read failures. CLI JSON and MCP share a transport-safe payload with compatibility `node`, all matches in `nodes[]`, top-level `role`, test names plus structured `test_results[]`, and `source_error` when source extraction fails. Contextual plan modes on both transports must include their requested inspect contexts. CLI JSON, MCP `gograph_errorflow`, and the `trace` alias likewise share definition sites, return sites, paths, test evidence, and the static-analysis limitation.

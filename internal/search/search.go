@@ -292,8 +292,9 @@ func Callees(g *graph.Graph, name string, includeTests bool, exactMatch bool) []
 		sname := strings.ToLower(s.Name)
 		full := strings.ToLower(fmt.Sprintf("(%s).%s", s.Receiver, s.Name))
 		if exactMatch {
-			// Exact: only seed when the name matches precisely.
-			if sname == nl || strings.ToLower(s.ID) == nl {
+			// Exact: accept every documented identity form without falling
+			// back to the fuzzy substring matcher.
+			if matchSymbolExact(s, name) {
 				matchedIDs[s.ID] = true
 			}
 		} else if MatchSymbol(s, name) || sname == nl || strings.Contains(full, nl) || strings.Contains(sname, nl) {
@@ -890,6 +891,48 @@ func MatchSymbol(s graph.SymbolNode, query string) bool {
 	}
 
 	return false
+}
+
+// matchSymbolExact checks the same user-facing symbol forms as MatchSymbol,
+// but never uses substring matching. In addition to bare names and canonical
+// SymbolNode IDs, it accepts package- and receiver-qualified dot notation:
+//
+//	Run
+//	cli.Run
+//	Service.Run
+//	(*Service).Run
+//	service.Service.Run
+//	(*service.Service).Run
+//
+// Parentheses and pointer markers describe the same receiver identity for
+// lookup purposes, so normalizing them keeps value/pointer spelling ergonomic
+// while the package, receiver, and symbol components still match exactly.
+func matchSymbolExact(s graph.SymbolNode, query string) bool {
+	query = strings.TrimSpace(query)
+	if strings.EqualFold(s.ID, query) || strings.EqualFold(s.Name, query) {
+		return true
+	}
+	if isFullyQualifiedID(query) {
+		return false
+	}
+
+	normalize := func(value string) string {
+		value = strings.ToLower(strings.TrimSpace(value))
+		value = strings.NewReplacer("(", "", ")", "", "*", "", " ", "").Replace(value)
+		return value
+	}
+
+	qualifiedQuery := normalize(query)
+	if qualifiedQuery == normalize(s.PackageName+"."+s.Name) {
+		return true
+	}
+	if s.Receiver == "" {
+		return false
+	}
+
+	receiver := strings.TrimPrefix(strings.TrimSpace(s.Receiver), "*")
+	return qualifiedQuery == normalize(receiver+"."+s.Name) ||
+		qualifiedQuery == normalize(s.PackageName+"."+receiver+"."+s.Name)
 }
 
 // FindSymbols returns all symbols matching the given query term.

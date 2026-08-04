@@ -46,6 +46,13 @@ This is equivalent to the following manual setup, without shell interpolation:
 gograph mcp /absolute/path/to/go-project
 ```
 
+The fixed bundle arguments intentionally keep `--persist-refresh` off. The
+server therefore refreshes its working graph in memory and does not publish
+refresh artifacts. Users who want successful refreshes to overwrite the
+latest `.gograph` graph and reports must use a custom local MCP registration
+that adds `--persist-refresh`; that mode does not update `.gitignore` and is
+not a branch cache.
+
 Select a different project directory for each repository-specific server
 configuration. gograph anchors its graph, source refresh, configuration, Git
 operations, and local session metadata to that analyzed project.

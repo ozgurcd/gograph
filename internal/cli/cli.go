@@ -24,7 +24,6 @@ import (
 	"github.com/ozgurcd/gograph/internal/mcp"
 	"github.com/ozgurcd/gograph/internal/parser"
 	"github.com/ozgurcd/gograph/internal/precise"
-	"github.com/ozgurcd/gograph/internal/report"
 	"github.com/ozgurcd/gograph/internal/rootfind"
 	"github.com/ozgurcd/gograph/internal/scanner"
 	"github.com/ozgurcd/gograph/internal/search"
@@ -61,7 +60,9 @@ func Run(args []string) int {
 	}
 
 	// Strip global flags before dispatch; set the package-level flags.
-	jsonMode = false
+	// Pre-scan JSON so failures raised while parsing an earlier global flag
+	// still honor a --json that appears later in the invocation.
+	jsonMode = requestsJSON(args)
 	filesOnlyMode = false
 	mermaidMode = false
 	var intention string
@@ -87,8 +88,7 @@ func Run(args []string) int {
 				intention = args[i+1]
 				i++ // skip the value
 			} else {
-				fmt.Fprintln(os.Stderr, "Error: --intention/-i flag requires a value")
-				return 1
+				return failCommand(commandFromArgs(args), "Error: --intention/-i flag requires a value")
 			}
 		default:
 			if strings.HasPrefix(a, "-i=") {
@@ -102,13 +102,8 @@ func Run(args []string) int {
 	}
 	args = filtered
 
-	// --json and --mermaid are mutually exclusive: --json emits a single
-	// structured envelope, while --mermaid emits a Mermaid diagram. Asking
-	// for both would silently produce whichever the consumer code reaches
-	// last, which is surprising and breaks piping.
-	if jsonMode && mermaidMode {
-		fmt.Fprintln(os.Stderr, "Error: --json and --mermaid cannot be combined")
-		return 1
+	if err := validateOutputModes(args); err != nil {
+		return failCommand(commandFromArgs(args), err.Error())
 	}
 
 	// Bare `gograph --mermaid` (no subcommand) → architecture overview diagram.
@@ -145,8 +140,7 @@ func Run(args []string) int {
 		activeID, err := session.GetActiveSessionID()
 		if err == nil && activeID != "" {
 			if intention == "" {
-				fmt.Fprintf(os.Stderr, "Error: Active session %q requires an intention. Please supply the --intention (-i) flag stating your technical rationale.\n", activeID)
-				return 1
+				return failCommandf(args[0], "Error: Active session %q requires an intention. Please supply the --intention (-i) flag stating your technical rationale.", activeID)
 			}
 		}
 	}
@@ -175,7 +169,7 @@ func commandTelemetryStatus(command string, exitCode int) string {
 func dispatch(args []string) int {
 	switch args[0] {
 	case "session", "--session":
-		return runSession(args[1:])
+		return runSessionWithJSONErrors(args[1:])
 	case "build":
 		return runBuild(args[1:])
 	case "query":
@@ -319,6 +313,9 @@ func dispatch(args []string) int {
 		fmt.Printf("gograph version v%s\n", Version)
 		return 0
 	default:
+		if jsonMode {
+			return failCommandf(args[0], "unknown command: %s", args[0])
+		}
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", args[0])
 		printHelp()
 		return 1
@@ -332,9 +329,9 @@ func runCapabilities() int {
 If this repository contains llm-wiki/, read its curated context pages before
 writing code or running analysis:
 
-  llm-wiki/README.md        → index of all wiki pages
+  llm-wiki/index.md         → index of all wiki pages
   llm-wiki/project.md       → project identity, non-goals, correctness model
-  llm-wiki/rules.md         → binding rules (git, build, testing, architecture)
+  llm-wiki/agent-rules.md   → binding wiki workflow and governance rules
   llm-wiki/agent-contract.md → session lifecycle and tool selection contract
 
 If generated pages are missing: gograph build . --precise && gograph wiki
@@ -346,6 +343,7 @@ need an index:
 
   gograph build .            fast, tolerates broken code — use during development
   gograph build . --precise  type-checked CHA/SSA; records precise or precise_fallback
+                               unless a failed retry can retain a fresh precise artifact
 
 After build: graph.json + Markdown reports are written to .gograph/.
 The .gograph/ ignore entry is appended to the Git repository root .gitignore
@@ -356,9 +354,16 @@ Partial builds record failed files in graph.json for machine-readable health che
   gograph stale   → checks source selection, build context, and modification times;
                     exits 0 (up to date), 1 (error), or 2 (stale)
 
-CLI queries use this persisted snapshot, so rebuild whenever source files change.
-The MCP server checks source freshness and newer persisted graphs per call. After
-edits it rebuilds in the current requested mode, so precise analysis is recomputed.
+CLI graph-backed analysis uses the last persisted graph, written by a manual build or an
+opt-in MCP publication. The MCP server checks source freshness and newer
+persisted graphs per call. After edits it rebuilds in the current requested
+mode, so precise analysis is recomputed.
+
+MCP refreshes stay in memory by default. Starting
+  gograph mcp [path] --persist-refresh
+publishes each confirmed-fresh startup build or refresh as graph.json plus nine
+reports. It keeps one latest state (not a branch cache), does not edit .gitignore,
+and returns publication failures to the triggering tool for a later retry.
 
 ━━━ COMMON WORKFLOWS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Start of any session         → summary  (top hotspots + worst instability + highest complexity + orphan/god-obj counts in ONE call)
@@ -433,9 +438,13 @@ SECURITY FLOW — potential untrusted data paths:
   --config <path>     sanitizer-return policy; defaults to .gograph/flow.json when present
 
 ━━━ OUTPUT FORMAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Result-list queries support text, JSON, and files-only output. Composed commands
-document JSON individually; operational commands remain text. Mermaid is limited
-to the graph-oriented commands listed below:
+Query and composed-analysis commands document JSON individually. Files-only is
+implemented by query, focus, node, public, fields, embeds, imports, callers,
+callees, impact, implementers, envs, interfaces, concurrency, tests, routes,
+sql, errors, flow, orphans, mutate, constructors, literals, usages,
+returnusage, schema, globals, mocks, fixtures, boundaries, httpcalls, and
+dependents. Empty files-only results write zero lines. Mermaid is limited to
+the graph-oriented commands listed below. Request only one output mode at a time:
 
   (default)       [kind] Name — detail  (file:line)  — one result per line
   --json          {"schema_version":"1","command":"...","status":"ok",
@@ -445,7 +454,8 @@ to the graph-oriented commands listed below:
                   (supported by deps, dependents, coupling, callers, callees, path, impact, endpoint)
 
 For supported commands, use --json for structured pipelines and --files-only
-when you only need involved file paths.
+when you only need involved file paths. Operational commands remain text except
+that session audit also accepts --json and returns its native audit object.
 
 ━━━ STATIC ANALYSIS LIMITATIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Know these before trusting results:
@@ -469,11 +479,13 @@ Know these before trusting results:
                         symbol name, not route string.
   impact / skeleton     can produce very large output on hotspot symbols or large repos.
                         Use callers --depth N for bounded traversal instead of impact.
-  CLI results           reflect graph.json at last build. Run 'gograph stale' first;
+  CLI snapshot results  reflect the last persisted graph. Run 'gograph stale' first;
                         exit status encodes result (0 = up to date, 1 = error, 2 = stale).
   MCP analysis          checks source freshness and newer graph.json artifacts per call;
                         edits preserve/retry the requested precision. stale/default
-                        changes/stats inspect persisted graph.json.
+                        changes/stats inspect persisted graph.json, or the startup
+                        auto-build fallback when no artifact exists. --persist-refresh
+                        can publish successful refreshes for later CLI/server processes.
   Subdirectory safe     all query commands auto-discover the project root (walks up to
                         the nearest .gograph/ directory). No need to cd back to the repo
                         root before running plan, review, or any other query.
@@ -484,7 +496,7 @@ AGENT WORKFLOW RULES (CRITICAL):
 2. AFTER editing:  run 'gograph build . --precise' then 'gograph review --uncommitted'
 
 INDEXING:
-build . [--precise]  : parse AST, atomically write graph.json + reports to .gograph/
+build . [--precise]  : parse AST, stage graph.json + reports, commit graph.json last
                        Honors Go build constraints and cmd/go package-directory rules;
                        skips generated, module-ignored, and Git-ignored sources.
 stale                : check source selection, build context, and modification times
@@ -525,9 +537,10 @@ sql [term]           : raw SQL queries mapped to their functions; optional keywo
 tests <sym>          : test functions exercising this symbol
 
 TOKEN SAVERS (COMPOSED COMMANDS — each replaces 3-8 separate calls):
-api --since <ref>    : breaking API/contract changes since a git reference
+api --since <ref|graph.json>
+                     : breaking API/contract changes since a Git ref or saved graph
 arity [--min 5]      : functions with too many arguments
-changes              : symbols modified/new/deleted since last build
+changes              : symbols modified/new/deleted since the persisted graph
 changes --git <ref>  : symbols in files changed since a git ref (e.g. main, HEAD~5, v1.4.50)
 constructors <struct>: factory functions returning this struct
 literals <struct>    : composite literal sites Foo{...} — run before adding/removing a required field
@@ -578,13 +591,14 @@ httpcalls [term]     : all outbound HTTP client calls via net/http (Get, Post, P
 summary              : hotspots + worst instability + top complexity + reachability-orphan/god-object counts
 untested [--pkg <n>] [--top N] : production functions with callers but zero test edges — coverage gaps
                        sorted by caller count (highest risk first). Replaces N 'tests <sym>' calls.
-check [--config p] [--uncommitted] [--since ref]
+check [--config p] [--uncommitted] [--since ref|graph.json]
                      : static policy checks (boundaries, API drift, changed-route/export tests,
                        test coverage, orphans, globals, arity, and complexity)
-gate                 : CI/CD enforcement against .gograph.yml thresholds; refuses stale graphs
+gate                 : CI/CD enforcement against .gograph.yml; delta gates use the previous persisted graph
 gate init            : write a commented .gograph.yml template; refuses overwrite
 snapshot <subcmd>    : architectural metric snapshots (save, diff, list, drop)
-mcp [path]           : start MCP server over stdio
+mcp [path] [--persist-refresh] : start MCP server over stdio; refreshes stay in memory by default
+                                 opt-in publishes one latest graph/report set without editing .gitignore
 gograph session <action>     : start/end audit sessions (create [word], end, audit, cleanup)
                                NOTE: MCP tool calls (gograph_plan, gograph_review) are
                                now correctly recorded in session audit counters.
@@ -617,22 +631,12 @@ func runBuild(args []string) int {
 
 	fmt.Printf("gograph build: scanning %s\n", absRoot)
 
-	var baseline *graph.GraphBaseline
-	if oldG, err := loadGraph(absRoot); err == nil {
-		baseline = &graph.GraphBaseline{
-			OrphanCount:   len(search.ReachableOrphans(oldG)),
-			CouplingEdges: len(oldG.Imports),
-		}
-	}
-
 	buildConfig, configErr := resolveBuildConfig(absRoot)
 	g, err := buildGraphWithConfig(absRoot, buildConfig, configErr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error building graph: %v\n", err)
 		return 1
 	}
-	g.Baseline = baseline
-
 	if preciseMode {
 		fmt.Println("  running type-checked precision analysis (this may take a moment)...")
 		if err := enrichGraphPreciselyWithConfig(absRoot, g, buildConfig, configErr); err != nil {
@@ -641,47 +645,26 @@ func runBuild(args []string) int {
 	}
 	sortGraph(g)
 
-	outDir := filepath.Join(absRoot, outputDir)
-	if err := os.MkdirAll(outDir, 0o750); err != nil {
-		fmt.Fprintf(os.Stderr, "error creating output dir: %v\n", err)
-		return 1
-	}
-
 	if err := writeGitignore(absRoot); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not update .gitignore: %v\n", err)
 	}
 
 	jsonPath := filepath.Join(absRoot, graphFile)
-	if err := writeJSON(jsonPath, g); err != nil {
-		fmt.Fprintf(os.Stderr, "error writing graph.json: %v\n", err)
+	publication, err := publishGraphArtifacts(absRoot, g, manualArtifactPublication)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error publishing graph artifacts: %v\n", err)
 		return 1
 	}
-
-	// Write all split markdown reports
-	reports := map[string]string{
-		reportFile: report.GenerateIndex(g),
-		symFile:    report.GenerateSymbols(g),
-		depsFile:   report.GenerateDeps(g),
-		routesFile: report.GenerateRoutes(g),
-		sqlFile:    report.GenerateSQL(g),
-		errorsFile: report.GenerateErrors(g),
-		configFile: report.GenerateConfig(g),
-		concFile:   report.GenerateConcurrency(g),
-		testsFile:  report.GenerateTests(g),
-	}
-
-	for relPath, content := range reports {
-		fullPath := filepath.Join(absRoot, relPath)
-		if err := os.WriteFile(fullPath, []byte(content), 0o640); err != nil {
-			fmt.Fprintf(os.Stderr, "error writing %s: %v\n", relPath, err)
-			return 1
-		}
-	}
+	g = publication.Graph
 
 	fmt.Printf("  packages: %d  files: %d  symbols: %d  calls: %d\n",
 		len(g.Packages), len(g.Files), len(g.Symbols), len(g.Calls))
-	fmt.Printf("  wrote %s\n", jsonPath)
-	fmt.Printf("  wrote %d markdown reports to %s/\n", len(reports), outputDir)
+	if publication.Published {
+		fmt.Printf("  wrote %s\n", jsonPath)
+		fmt.Printf("  wrote %d markdown reports to %s/\n", graphReportCount, outputDir)
+	} else {
+		fmt.Printf("  kept existing richer artifact %s\n", jsonPath)
+	}
 	return 0
 }
 
@@ -898,10 +881,6 @@ func printResults(cmd, query string, results []search.Result, emptyMsg string) i
 	if jsonMode {
 		return PrintJSON(okEnvelope(cmd, query, results, len(results)))
 	}
-	if len(results) == 0 {
-		fmt.Println(emptyMsg)
-		return 0
-	}
 	if filesOnlyMode {
 		seenFiles := make(map[string]bool)
 		for _, r := range results {
@@ -912,6 +891,10 @@ func printResults(cmd, query string, results []search.Result, emptyMsg string) i
 		}
 		return 0
 	}
+	if len(results) == 0 {
+		fmt.Println(emptyMsg)
+		return 0
+	}
 	for _, r := range results {
 		fmt.Println(r.String())
 	}
@@ -920,33 +903,23 @@ func printResults(cmd, query string, results []search.Result, emptyMsg string) i
 
 func runQuery(args []string) int {
 	if len(args) == 0 {
-		if jsonMode {
-			return PrintJSON(errEnvelope("query", "usage: gograph query <term...>"))
-		}
-		fmt.Fprintln(os.Stderr, "usage: gograph query <term...>")
-		return 1
+		return failCommand("query", "usage: gograph query <term...>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("query", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("query", err.Error())
 	}
 	results := search.Query(g, args)
 	return printResults("query", strings.Join(args, " "), results, "no results")
 }
 
 func runFocus(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph focus <package>")
-		return 1
+	if !hasSingleTarget(args) {
+		return failCommand("focus", "usage: gograph focus <package>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("focus", err.Error())
 	}
 	results := search.Focus(g, args[0])
 	return printResults("focus", args[0], results, fmt.Sprintf("no focus data found for package %q", args[0]))
@@ -954,13 +927,11 @@ func runFocus(args []string) int {
 
 func runNode(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph node <name>")
-		return 1
+		return failCommand("node", "usage: gograph node <name>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("node", err.Error())
 	}
 	results := search.Node(g, strings.Join(args, " "))
 	return printResults("node", strings.Join(args, " "), results, "no results")
@@ -968,13 +939,7 @@ func runNode(args []string) int {
 
 func runCallers(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph callers <function-or-method-name> [--no-tests] [--depth N] [--exact]")
-		return 1
-	}
-	g, err := loadGraph(".")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("callers", "usage: gograph callers <function-or-method-name> [--no-tests] [--depth N] [--exact]")
 	}
 	includeTests := true
 	depth := 1
@@ -987,22 +952,33 @@ func runCallers(args []string) int {
 		case "--exact":
 			exactMatch = true
 		case "--depth":
-			if i+1 < len(args) {
-				i++
-				if n, err := strconv.Atoi(args[i]); err == nil {
-					depth = n
-				}
-				if depth < 1 {
-					depth = 1
-				}
+			value, err := parseIntegerFlag(args, &i)
+			if err != nil {
+				return failCommand("callers", err.Error())
+			}
+			depth = value
+			if depth < 1 {
+				depth = 1
+			} else if depth > 10 {
+				depth = 10
 			}
 		default:
+			if strings.HasPrefix(args[i], "-") {
+				return failCommandf("callers", "unknown flag: %s", args[i])
+			}
 			termParts = append(termParts, args[i])
 		}
 	}
+	if !hasSingleTarget(termParts) {
+		return failCommand("callers", "usage: gograph callers <function-or-method-name> [--no-tests] [--depth N] [--exact]")
+	}
 	term := strings.Join(termParts, " ")
+	g, err := loadGraph(".")
+	if err != nil {
+		return failCommand("callers", err.Error())
+	}
 	if mermaidMode {
-		fmt.Println(search.CallersToMermaid(g, term, depth, includeTests))
+		fmt.Println(search.CallersToMermaid(g, term, depth, includeTests, exactMatch))
 		return 0
 	}
 	var results []search.Result
@@ -1016,13 +992,7 @@ func runCallers(args []string) int {
 
 func runCallees(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph callees <function-or-method-name> [--no-tests] [--depth N]")
-		return 1
-	}
-	g, err := loadGraph(".")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("callees", "usage: gograph callees <function-or-method-name> [--no-tests] [--depth N]")
 	}
 	includeTests := true
 	depth := 1
@@ -1032,20 +1002,31 @@ func runCallees(args []string) int {
 		case "--no-tests":
 			includeTests = false
 		case "--depth":
-			if i+1 < len(args) {
-				i++
-				if n, err := strconv.Atoi(args[i]); err == nil {
-					depth = n
-				}
-				if depth < 1 {
-					depth = 1
-				}
+			value, err := parseIntegerFlag(args, &i)
+			if err != nil {
+				return failCommand("callees", err.Error())
+			}
+			depth = value
+			if depth < 1 {
+				depth = 1
+			} else if depth > 10 {
+				depth = 10
 			}
 		default:
+			if strings.HasPrefix(args[i], "-") {
+				return failCommandf("callees", "unknown flag: %s", args[i])
+			}
 			termParts = append(termParts, args[i])
 		}
 	}
+	if !hasSingleTarget(termParts) {
+		return failCommand("callees", "usage: gograph callees <function-or-method-name> [--no-tests] [--depth N]")
+	}
 	term := strings.Join(termParts, " ")
+	g, err := loadGraph(".")
+	if err != nil {
+		return failCommand("callees", err.Error())
+	}
 	if mermaidMode {
 		fmt.Println(search.CalleesToMermaid(g, term, depth, includeTests))
 		return 0
@@ -1060,38 +1041,44 @@ func runCallees(args []string) int {
 }
 
 func runImplementers(args []string) int {
+	return runImplementersCommand("implementers", args)
+}
+
+func runImplementersCommand(command string, args []string) int {
 	testOnly := false
 	var termParts []string
 	for _, a := range args {
 		if a == "--test-only" {
 			testOnly = true
+		} else if strings.HasPrefix(a, "-") {
+			return failCommandf(command, "unknown flag: %s", a)
 		} else {
 			termParts = append(termParts, a)
 		}
 	}
-	if len(termParts) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: gograph implementers <interface> [--test-only]")
-		return 1
+	if !hasSingleTarget(termParts) {
+		return failCommand(command, "Usage: gograph implementers <interface> [--test-only]")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load graph: %v\n", err)
-		return 1
+		return failCommandf(command, "failed to load graph: %v", err)
 	}
 	iface := termParts[0]
 	if testOnly {
 		results := search.Mocks(g, iface)
-		return printResults("implementers", iface, results, fmt.Sprintf("No test/mock structs found implementing '%s'.", iface))
+		return printResults(command, iface, results, fmt.Sprintf("No test/mock structs found implementing '%s'.", iface))
 	}
 	results := search.Implementers(g, iface)
-	return printResults("implementers", iface, results, fmt.Sprintf("No structs found implementing '%s'.", iface))
+	return printResults(command, iface, results, fmt.Sprintf("No structs found implementing '%s'.", iface))
 }
 
 func runEnvs(args []string) int {
+	if !hasOptionalTarget(args) {
+		return failCommand("envs", "usage: gograph envs [term]")
+	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load graph: %v\n", err)
-		return 1
+		return failCommandf("envs", "failed to load graph: %v", err)
 	}
 	term := ""
 	if len(args) > 0 {
@@ -1102,24 +1089,24 @@ func runEnvs(args []string) int {
 }
 
 func runInterfaces(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: gograph interfaces <struct>")
-		return 1
+	if !hasSingleTarget(args) {
+		return failCommand("interfaces", "Usage: gograph interfaces <struct>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load graph: %v\n", err)
-		return 1
+		return failCommandf("interfaces", "failed to load graph: %v", err)
 	}
 	results := search.Interfaces(g, args[0])
 	return printResults("interfaces", args[0], results, fmt.Sprintf("No interfaces found satisfied by '%s'.", args[0]))
 }
 
 func runConcurrency(args []string) int {
+	if !hasOptionalTarget(args) {
+		return failCommand("concurrency", "usage: gograph concurrency [term]")
+	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load graph: %v\n", err)
-		return 1
+		return failCommandf("concurrency", "failed to load graph: %v", err)
 	}
 	term := ""
 	if len(args) > 0 {
@@ -1130,10 +1117,12 @@ func runConcurrency(args []string) int {
 }
 
 func runTests(args []string) int {
+	if !hasOptionalTarget(args) {
+		return failCommand("tests", "usage: gograph tests [symbol]")
+	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load graph: %v\n", err)
-		return 1
+		return failCommandf("tests", "failed to load graph: %v", err)
 	}
 	term := ""
 	if len(args) > 0 {
@@ -1163,10 +1152,37 @@ func graphRefresher(
 	root string,
 	buildAST func(string) (*graph.Graph, error),
 	buildPrecise func(string) (*graph.Graph, error),
+	publishers ...func(*graph.Graph) (graphPublication, error),
 ) func() (*graph.Graph, error) {
 	latest := initial
 	artifactPath := filepath.Join(root, graphFile)
 	artifactInfo := graphArtifactInfo(artifactPath)
+	var publisher func(*graph.Graph) (graphPublication, error)
+	if len(publishers) > 0 {
+		publisher = publishers[0]
+	}
+	pendingPublication := false
+
+	publishLatest := func() (*graph.Graph, error) {
+		if publisher == nil {
+			return latest, nil
+		}
+		publication, err := publisher(latest)
+		if err != nil {
+			pendingPublication = true
+			return nil, fmt.Errorf("persisting refreshed graph: %w", err)
+		}
+		if publication.Graph == nil {
+			pendingPublication = true
+			return nil, errors.New("persisting refreshed graph returned no graph")
+		}
+		latest = publication.Graph
+		pendingPublication = false
+		// Do not treat our own same-directory replacement as a later external build on
+		// the next tool call.
+		artifactInfo = graphArtifactInfo(artifactPath)
+		return latest, nil
+	}
 
 	return func() (*graph.Graph, error) {
 		currentArtifactInfo := graphArtifactInfo(artifactPath)
@@ -1177,6 +1193,7 @@ func graphRefresher(
 				artifactInfo = currentArtifactInfo
 				if shouldAdoptPersistedGraph(latest, persisted) {
 					latest = persisted
+					pendingPublication = false
 				}
 			}
 		}
@@ -1184,6 +1201,9 @@ func graphRefresher(
 		if latest != nil && !search.Stale(latest, root).IsStale {
 			if err := precisionFallbackError(latest); err != nil {
 				return nil, err
+			}
+			if pendingPublication {
+				return publishLatest()
 			}
 			return latest, nil
 		}
@@ -1213,7 +1233,7 @@ func graphRefresher(
 				if err := precisionFallbackError(latest); err != nil {
 					return nil, err
 				}
-				return latest, nil
+				return publishLatest()
 			}
 		}
 		return nil, fmt.Errorf("graph remained stale after %d refresh attempts (%d freshness changes)", maxAttempts, stale.ChangeCount())
@@ -1232,7 +1252,7 @@ func graphArtifactChanged(previous, current os.FileInfo) bool {
 	if previous == nil || current == nil {
 		return previous != current
 	}
-	// writeJSON publishes by atomic rename. SameFile detects that replacement
+	// writeJSON publishes by same-directory rename. SameFile detects that replacement
 	// even on filesystems whose timestamp granularity and equal-sized payloads
 	// would make a modtime+size check ambiguous.
 	return !os.SameFile(previous, current) ||
@@ -1258,36 +1278,96 @@ func shouldAdoptPersistedGraph(current, persisted *graph.Graph) bool {
 	return true
 }
 
-func runMCP(args []string) int {
-	root := "."
-	if len(args) > 0 {
-		root = args[0]
+type mcpOptions struct {
+	Root           string
+	PersistRefresh bool
+}
+
+func parseMCPArgs(args []string) (mcpOptions, error) {
+	options := mcpOptions{Root: "."}
+	rootSet := false
+	positionalOnly := false
+	for _, argument := range args {
+		if !positionalOnly {
+			switch {
+			case argument == "--":
+				positionalOnly = true
+				continue
+			case argument == "--persist-refresh":
+				options.PersistRefresh = true
+				continue
+			case strings.HasPrefix(argument, "--persist-refresh="):
+				value := strings.TrimPrefix(argument, "--persist-refresh=")
+				parsed, err := strconv.ParseBool(value)
+				if err != nil {
+					return mcpOptions{}, fmt.Errorf("invalid --persist-refresh value %q: %w", value, err)
+				}
+				options.PersistRefresh = parsed
+				continue
+			case strings.HasPrefix(argument, "-"):
+				return mcpOptions{}, fmt.Errorf("unknown mcp option %q", argument)
+			}
+		}
+		if rootSet {
+			return mcpOptions{}, fmt.Errorf("mcp accepts at most one project path")
+		}
+		options.Root = argument
+		rootSet = true
 	}
-	absRoot, err := filepath.Abs(root)
+	return options, nil
+}
+
+func prepareMCPGraph(options mcpOptions) (*graph.Graph, string, error) {
+	absRoot, err := filepath.Abs(options.Root)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to resolve path: %v\n", err)
-		return 1
+		return nil, "", fmt.Errorf("resolving path: %w", err)
 	}
 
-	g, err := loadGraph(root)
+	g, err := loadGraph(options.Root)
 	if err != nil {
 		// Graph does not exist yet — build it automatically so Claude Desktop
 		// works without requiring a manual "gograph build ." step first.
 		fmt.Fprintf(os.Stderr, "graph not found, building automatically for %s...\n", absRoot)
 		g, err = BuildGraph(absRoot)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to auto-build graph: %v\n", err)
-			return 1
+			return nil, "", fmt.Errorf("auto-building graph: %w", err)
+		}
+		if options.PersistRefresh {
+			publication, publishErr := publishGraphArtifacts(absRoot, g, refreshArtifactPublication)
+			if publishErr != nil {
+				return nil, "", fmt.Errorf("persisting auto-built graph: %w", publishErr)
+			}
+			g = publication.Graph
 		}
 	}
 	absRoot = graphRoot(g)
+	return g, absRoot, nil
+}
 
-	rebuild := graphRefresher(g, absRoot, BuildGraph, buildPreciseGraph)
+func runMCP(args []string) int {
+	options, err := parseMCPArgs(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid mcp arguments: %v\n", err)
+		return 1
+	}
+	g, absRoot, err := prepareMCPGraph(options)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to prepare MCP graph: %v\n", err)
+		return 1
+	}
+
+	var publishers []func(*graph.Graph) (graphPublication, error)
+	if options.PersistRefresh {
+		publishers = append(publishers, func(candidate *graph.Graph) (graphPublication, error) {
+			return publishGraphArtifacts(absRoot, candidate, refreshArtifactPublication)
+		})
+	}
+	rebuild := graphRefresher(g, absRoot, BuildGraph, buildPreciseGraph, publishers...)
 	buildBaseline := func(ctx context.Context, ref string) (*graph.Graph, error) {
 		return baseline.Build(ctx, absRoot, ref, BuildGraph)
 	}
 
-	if err := mcp.Serve(g, rebuild, BuildGraph, buildBaseline, Version); err != nil {
+	if err := mcp.Serve(g, rebuild, BuildGraph, buildBaseline, Version, mcp.ServerOptions{PersistRefresh: options.PersistRefresh}); err != nil {
 		fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
 		return 1
 	}
@@ -1347,43 +1427,6 @@ func graphRoot(g *graph.Graph) string {
 		return absRoot
 	}
 	return filepath.Clean(root)
-}
-
-func writeJSON(path string, v any) error {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-	if err := tmp.Chmod(0o640); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return err
-	}
-	if directory, err := os.Open(dir); err == nil {
-		_ = directory.Sync()
-		_ = directory.Close()
-	}
-	return nil
 }
 
 func writeGitignore(root string) error {
@@ -1729,13 +1772,16 @@ USAGE
 OUTPUT FLAGS
   --json                     Structured JSON for query and composed-analysis commands.
                              Operational commands such as build, wiki, gate, snapshot,
-                             session, plugin installation, help, and version remain text.
-  --files-only               Flat, deduplicated paths for commands backed by result rows.
+                             plugin installation, help, and version remain text; session
+                             audit is the raw-JSON exception.
+  --files-only               Flat, deduplicated paths for supported result-list commands;
+                             empty results write zero lines.
   --mermaid                  Output visual dependency/call diagrams in Mermaid format.
                              Supported by: deps, dependents, coupling, callers, callees,
                              path, impact, and endpoint.
                              Bare form (no subcommand): gograph --mermaid → architecture
                              overview diagram (shorthand for 'diagram').
+                             Request only one of --json, --files-only, or --mermaid.
   -i, --intention <msg>      Explain the technical rationale for executing the command.
                              MANDATORY for all analytical commands when a session is active.
 
@@ -1749,7 +1795,8 @@ INDEXING
                              Run after any major code change. Default path: .
                              Supports --precise to perform type-checked Class
                              Hierarchy/SSA enrichment. If enrichment fails, warns,
-                             publishes the AST graph, and records precise_fallback.
+                             publishes the AST graph and records precise_fallback, unless
+                             a fresh precise artifact from the same sources is retained.
                              Inactive build-constrained files, cmd/go wildcard-excluded
                              directories, generated sources, go.mod ignore paths, AI
                              worktrees, and Git-ignored paths are automatically skipped.
@@ -1839,10 +1886,13 @@ INTERFACES & TYPES
 CODE QUALITY
   check [--config]           Run static policy checks using .gograph/checks.json.
   check --uncommitted        Run checks, including uncommitted code.
-  check --since <ref>        Run checks, including API drift against a baseline.
+  check --since <ref|graph.json>
+                             Run checks against a Git ref or saved graph baseline.
   gate                       Run CI/CD enforcement checks against .gograph.yml thresholds.
                              Fails before evaluation when graph.json is stale, then fails
                              if any configured threshold is violated.
+                             Orphan/coupling deltas use the immediately preceding persisted
+                             graph embedded automatically by publication; first build skips them.
   gate init                  Write a commented .gograph.yml template; refuses overwrite.
   snapshot <subcmd>          Capture and diff architectural metrics (save, diff, list, drop).
                              Subcommands: save <name>, diff <name>, list, drop <name>.
@@ -1896,10 +1946,10 @@ CODE QUALITY
                              complexity, reachability-orphan count, and god objects.
   untested [--pkg name] [--top N]
                              Called production functions with no attributed test edge.
-  endpoint <route>           Full vertical slice for one HTTP endpoint.
+  endpoint <route>           Full vertical slice for one HTTP endpoint (depth 1-20; supports --mermaid).
                              Composes: route resolution + handler symbol +
                              full callee chain (BFS, default depth 5) + SQL
-                             emitted + env vars read. [--depth N] [--json]
+                             emitted + env vars read. [--depth N] [--json|--mermaid]
                              [--include-tests]
                              Input: route pattern ("POST /api/users"), path
                              fragment ("/users"), or handler symbol name.
@@ -1916,7 +1966,7 @@ CODE QUALITY
                              Add --transitive for the full closure (BFS).
   dependents <pkg>           Packages that import the named package (inverse of deps).
                              Essential before any package-level refactor.
-  changes                    Symbols modified/added/deleted since last 'build'.
+  changes                    Symbols modified/added/deleted since the persisted graph.
                              Surfaces new functions, deleted files, and modified
                              symbols without dumping changed files into agent context.
   changes --git <ref>        Symbols in files changed since a git ref (MODIFIED
@@ -1937,7 +1987,8 @@ CODE QUALITY
   review --uncommitted       Generate a post-edit final review report for all uncommitted changes.
   risk <symbol>              Evaluate change risk profile (blast radius, complexity, test coverage, SQL/env).
   risk --uncommitted         Evaluate risk profile for all uncommitted changes.
-  api --since <ref>          Identify breaking API and contract changes since a git reference (e.g. main).
+  api --since <ref|graph.json>
+                             Identify API/contract changes since a Git ref or saved graph baseline.
                              Run 'gograph build . --precise' before this for best results.
 
 EXTRACTION
@@ -1966,9 +2017,12 @@ AGENT INTEGRATION
                              Add llm-wiki/ to .gitignore.
   doc <pkg[.Symbol]>         Run 'go doc' for a stdlib or third-party package/symbol.
                              No graph required; executes in the current Go module.
-  mcp [path]                 Start a Model Context Protocol server over stdio.
+  mcp [path] [--persist-refresh]
+                             Start a Model Context Protocol server over stdio.
                              Exposes graph queries as native tools for AI clients;
                              adopts newer precise graphs and preserves precision on refresh.
+                             --persist-refresh is opt-in and publishes the latest successful
+                             refresh to .gograph; it is not a multi-branch graph cache.
   session <action> [word]    Manage telemetry & audit sessions. Actions:
                              - create [unique_word]: Starts an audit session.
                              - end: Ends the active session.
@@ -1991,7 +2045,7 @@ OTHER
   help, -h                   Show this help.
 
 OUTPUTS (after 'build')
-  .gograph/graph.json        Machine-readable graph (JSON), committed by atomic rename.
+  .gograph/graph.json        Machine-readable graph (JSON), committed by same-directory rename.
   .gograph/GRAPH_REPORT.md   Master index report.
   .gograph/graph-symbols.md  .gograph/graph-routes.md
   .gograph/graph-sql.md      .gograph/graph-concurrency.md
@@ -2036,11 +2090,7 @@ func runFlow(args []string) int {
 	options := search.FlowOptions{IncludeTests: true}
 	usage := "usage: gograph flow [term] [--source http_request|decoded_json|environment] [--sink sql_query|process_execution|filesystem|outbound_http] [--config path] [--no-tests]"
 	fail := func(message string) int {
-		if jsonMode {
-			return PrintJSON(errEnvelope("flow", message))
-		}
-		fmt.Fprintln(os.Stderr, message)
-		return 1
+		return failCommand("flow", message)
 	}
 
 	for index := 0; index < len(args); index++ {
@@ -2090,10 +2140,6 @@ func runFlow(args []string) int {
 	if jsonMode {
 		return PrintJSON(okEnvelope("flow", options.Term, results, len(results)))
 	}
-	if len(results) == 0 {
-		fmt.Println("No potential untrusted-data flows found.")
-		return 0
-	}
 	if filesOnlyMode {
 		seen := make(map[string]bool)
 		for _, result := range results {
@@ -2104,6 +2150,10 @@ func runFlow(args []string) int {
 				}
 			}
 		}
+		return 0
+	}
+	if len(results) == 0 {
+		fmt.Println("No potential untrusted-data flows found.")
 		return 0
 	}
 
@@ -2120,19 +2170,26 @@ func runFlow(args []string) int {
 
 // runPath finds the shortest call chain between two symbols via BFS.
 func runPath(args []string) int {
-	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: gograph path <from-symbol> <to-symbol>")
-		return 1
+	if len(args) != 2 || args[0] == "" || args[1] == "" || strings.HasPrefix(args[0], "-") || strings.HasPrefix(args[1], "-") {
+		return failCommand("path", "usage: gograph path <from-symbol> <to-symbol>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("path", err.Error())
 	}
 	chain := search.Path(g, args[0], args[1], true)
 	if len(chain) == 0 {
+		if jsonMode {
+			return PrintJSON(okEnvelope("path", args[0]+" -> "+args[1], nil, 0))
+		}
+		if filesOnlyMode {
+			return 0
+		}
 		fmt.Printf("No call path found from %q to %q.\n", args[0], args[1])
 		return 0
+	}
+	if jsonMode {
+		return PrintJSON(okEnvelope("path", args[0]+" -> "+args[1], chain, len(chain)))
 	}
 	if mermaidMode {
 		fmt.Println(search.PathToMermaid(chain))
@@ -2149,11 +2206,7 @@ func runPath(args []string) int {
 func runStale() int {
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("stale", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return exitError
+		return failCommand("stale", err.Error())
 	}
 	sr := search.Stale(g, graphRoot(g))
 	if jsonMode {
@@ -2193,11 +2246,7 @@ func staleJSONExitCode(printCode int, isStale bool) int {
 func runStats() int {
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("stats", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("stats", err.Error())
 	}
 	st := search.Stats(g)
 	if jsonMode {
@@ -2228,11 +2277,7 @@ func runStats() int {
 func runOrphans() int {
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("orphans", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("orphans", err.Error())
 	}
 	results := search.ReachableOrphans(g)
 	return printResults("orphans", "", results, "No unreachable symbols found.")
@@ -2244,38 +2289,35 @@ func runGodObj(args []string) int {
 	p := search.DefaultGodObjectParams()
 
 	// Parse --key value pairs manually (no external flag lib).
-	for i := 0; i < len(args)-1; i++ {
-		val := 0
-		if _, err := fmt.Sscanf(args[i+1], "%d", &val); err != nil {
-			fmt.Fprintf(os.Stderr, "invalid value for %s: %q\n", args[i], args[i+1])
-			return 1
-		}
-		switch args[i] {
+	for i := 0; i < len(args); i++ {
+		flag := args[i]
+		switch flag {
 		case "--methods":
-			p.MinMethods = val
-			i++
 		case "--fields":
-			p.MinFields = val
-			i++
 		case "--calls":
-			p.MinCalls = val
-			i++
 		case "--top":
-			p.Top = val
-			i++
 		default:
-			fmt.Fprintf(os.Stderr, "unknown flag: %s\n", args[i])
-			return 1
+			return failCommandf("godobj", "unknown flag: %s", flag)
+		}
+		value, err := parseIntegerFlag(args, &i)
+		if err != nil {
+			return failCommand("godobj", err.Error())
+		}
+		switch flag {
+		case "--methods":
+			p.MinMethods = value
+		case "--fields":
+			p.MinFields = value
+		case "--calls":
+			p.MinCalls = value
+		case "--top":
+			p.Top = value
 		}
 	}
 
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("godobj", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("godobj", err.Error())
 	}
 
 	candidates := search.GodObjects(g, p)
@@ -2299,22 +2341,20 @@ func runGodObj(args []string) int {
 
 func runArity(args []string) int {
 	minArgs := 5
-	for i, arg := range args {
-		if arg == "--min" && i+1 < len(args) {
-			parsed, err := strconv.Atoi(args[i+1])
-			if err == nil {
-				minArgs = parsed
-			}
+	for i := 0; i < len(args); i++ {
+		if args[i] != "--min" {
+			return failCommandf("arity", "unknown argument: %s", args[i])
 		}
+		value, err := parseIntegerFlag(args, &i)
+		if err != nil {
+			return failCommand("arity", err.Error())
+		}
+		minArgs = value
 	}
 
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("arity", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("arity", err.Error())
 	}
 	results := search.Arity(g, minArgs)
 	if jsonMode {
@@ -2335,17 +2375,16 @@ func runArity(args []string) int {
 
 // runComplexity estimates cyclomatic complexity for matching functions.
 func runComplexity(args []string) int {
+	if !hasOptionalTarget(args) {
+		return failCommand("complexity", "usage: gograph complexity [symbol]")
+	}
 	term := ""
 	if len(args) > 0 {
 		term = args[0]
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("complexity", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("complexity", err.Error())
 	}
 	results := search.Complexity(g, term)
 	if jsonMode {
@@ -2382,18 +2421,18 @@ func runCoupling(args []string) int {
 		case "--internal-only":
 			internalOnly = true
 		default:
-			if !strings.HasPrefix(a, "--") && term == "" {
-				term = a
+			if strings.HasPrefix(a, "-") {
+				return failCommandf("coupling", "unknown flag: %s", a)
 			}
+			if term != "" {
+				return failCommandf("coupling", "unexpected argument: %s", a)
+			}
+			term = a
 		}
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("coupling", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("coupling", err.Error())
 	}
 	if internalOnly {
 		opts.ModuleOnly = search.ReadModulePath(graphRoot(g))
@@ -2469,51 +2508,50 @@ func runDiagram(args []string) int {
 // runContext bundles node+source+callers+callees+tests for a symbol in one call.
 func runContext(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph context <symbol> [--limit N] [--exact]\n       gograph context --uncommitted [--limit N]")
-		return 1
+		return failCommand("context", "usage: gograph context <symbol> [--limit N] [--exact]\n       gograph context --uncommitted [--limit N]")
 	}
 
 	uncommitted := false
 	limit := 0
 	exactMatch := false
 	var termParts []string
-	i := 0
-	for i < len(args) {
+	for i := 0; i < len(args); i++ {
 		a := args[i]
-		switch {
-		case a == "--uncommitted":
+		switch a {
+		case "--uncommitted":
 			uncommitted = true
-		case a == "--exact":
+		case "--exact":
 			exactMatch = true
-		case (a == "--limit" || a == "-n") && i+1 < len(args):
-			if n, err := strconv.Atoi(args[i+1]); err == nil {
-				limit = n
+		case "--limit", "-n":
+			value, err := parseIntegerFlag(args, &i)
+			if err != nil {
+				return failCommand("context", err.Error())
 			}
-			i++
+			limit = value
 		default:
+			if strings.HasPrefix(a, "-") {
+				return failCommandf("context", "unknown flag: %s", a)
+			}
 			termParts = append(termParts, a)
 		}
-		i++
+	}
+	if uncommitted && len(termParts) > 0 {
+		return failCommand("context", "context --uncommitted cannot be combined with a symbol")
+	}
+	if !uncommitted && !hasSingleTarget(termParts) {
+		return failCommand("context", "usage: gograph context <symbol> [--limit N] [--exact]\n       gograph context --uncommitted [--limit N]")
 	}
 
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("context", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("context", err.Error())
 	}
 	root := graphRoot(g)
 
 	if uncommitted {
 		syms, err := search.UncommittedSymbols(g)
 		if err != nil {
-			if jsonMode {
-				return PrintJSON(errEnvelope("context", err.Error()))
-			}
-			fmt.Fprintln(os.Stderr, err)
-			return 1
+			return failCommand("context", err.Error())
 		}
 		if len(syms) == 0 {
 			if jsonMode {
@@ -2523,13 +2561,15 @@ func runContext(args []string) int {
 			return 0
 		}
 		var results []*search.ContextResult
+		var payloads []search.ContextPayload
 		for _, sym := range syms {
 			if r := search.Context(g, root, sym, false); r != nil {
 				results = append(results, r)
+				payloads = append(payloads, search.NewContextPayload(sym, r))
 			}
 		}
 		if jsonMode {
-			return PrintJSON(okEnvelope("context", "--uncommitted", results, len(results)))
+			return PrintJSON(okEnvelope("context", "--uncommitted", payloads, len(payloads)))
 		}
 		fmt.Printf("=== CONTEXT: %d uncommitted symbol(s) ===\n\n", len(results))
 		for _, r := range results {
@@ -2539,8 +2579,7 @@ func runContext(args []string) int {
 	}
 
 	if len(termParts) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph context <symbol> [--limit N] [--exact]\n       gograph context --uncommitted [--limit N]")
-		return 1
+		return failCommand("context", "usage: gograph context <symbol> [--limit N] [--exact]\n       gograph context --uncommitted [--limit N]")
 	}
 	term := strings.Join(termParts, " ")
 	result := search.Context(g, root, term, exactMatch)
@@ -2552,11 +2591,7 @@ func runContext(args []string) int {
 		return 0
 	}
 	if jsonMode {
-		count := len(result.Node) + len(result.Callers) + len(result.Callees) + len(result.Tests)
-		if result.Source != "" {
-			count++
-		}
-		return PrintJSON(okEnvelope("context", term, result, count))
+		return PrintJSON(okEnvelope("context", term, search.NewContextPayload(term, result), 1))
 	}
 	fmt.Printf("=== CONTEXT: %s ===\n\n", term)
 	printContextResult(result, limit)
@@ -2626,15 +2661,11 @@ func runHotspot(args []string) int {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--top":
-			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "--top requires a value")
-				return 1
+			value, err := parseIntegerFlag(args, &i)
+			if err != nil {
+				return failCommand("hotspot", err.Error())
 			}
-			if _, err := fmt.Sscanf(args[i+1], "%d", &top); err != nil {
-				fmt.Fprintf(os.Stderr, "invalid --top value: %q\n", args[i+1])
-				return 1
-			}
-			i++
+			top = value
 		case "--include-tests":
 			// Count call edges from *_test.go files. Default-off because
 			// test infrastructure tends to dominate hotspot rankings in
@@ -2642,15 +2673,13 @@ func runHotspot(args []string) int {
 			// table-driven tests). Production-fan-in is more useful for
 			// "where is this codebase concentrated" questions.
 			includeTests = true
+		default:
+			return failCommandf("hotspot", "unknown argument: %s", args[i])
 		}
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("hotspot", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("hotspot", err.Error())
 	}
 	results := search.Hotspot(g, top, includeTests)
 	if jsonMode {
@@ -2674,23 +2703,24 @@ func runHotspot(args []string) int {
 // runDeps shows direct (and optionally transitive) imports for a package.
 func runDeps(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph deps <package> [--transitive]")
-		return 1
+		return failCommand("deps", "usage: gograph deps <package> [--transitive]")
 	}
 	pkg := args[0]
+	if pkg == "" || strings.HasPrefix(pkg, "-") {
+		return failCommand("deps", "usage: gograph deps <package> [--transitive]")
+	}
 	transitive := false
 	for _, a := range args[1:] {
-		if a == "--transitive" {
+		switch a {
+		case "--transitive":
 			transitive = true
+		default:
+			return failCommandf("deps", "unknown argument: %s", a)
 		}
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("deps", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("deps", err.Error())
 	}
 	result := search.Deps(g, pkg, transitive)
 	if result == nil {
@@ -2722,18 +2752,13 @@ func runDeps(args []string) int {
 
 // runDependents lists all packages that import the named package.
 func runDependents(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph dependents <package>")
-		return 1
+	if !hasSingleTarget(args) {
+		return failCommand("dependents", "usage: gograph dependents <package>")
 	}
 	pkg := args[0]
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("dependents", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("dependents", err.Error())
 	}
 	results := search.Dependents(g, pkg)
 	if jsonMode {
@@ -2746,25 +2771,27 @@ func runDependents(args []string) int {
 	return printResults("dependents", pkg, results, fmt.Sprintf("No packages found that import %q.", pkg))
 }
 
-// runChanges reports symbols modified/added/deleted since the last build,
+// runChanges reports symbols modified/added/deleted since the persisted graph,
 // or — when --git <ref> is provided — symbols in files changed since that git ref.
 func runChanges(args []string) int {
 	// Parse --git <ref> flag.
 	var gitRef string
-	for i, a := range args {
-		if a == "--git" && i+1 < len(args) {
-			gitRef = args[i+1]
-			break
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--git":
+			if i+1 >= len(args) {
+				return failCommand("changes", "--git requires a value")
+			}
+			i++
+			gitRef = args[i]
+		default:
+			return failCommandf("changes", "unknown argument: %s", args[i])
 		}
 	}
 
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("changes", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("changes", err.Error())
 	}
 	root := graphRoot(g)
 
@@ -2772,11 +2799,7 @@ func runChanges(args []string) int {
 	if gitRef != "" {
 		result, err := search.ChangesByGitRef(g, root, gitRef)
 		if err != nil {
-			if jsonMode {
-				return PrintJSON(errEnvelope("changes", err.Error()))
-			}
-			fmt.Fprintln(os.Stderr, err)
-			return 1
+			return failCommand("changes", err.Error())
 		}
 		if jsonMode {
 			return PrintJSON(okEnvelope("changes", gitRef, result, len(result.ChangedFiles)+len(result.Symbols)))
@@ -2814,7 +2837,7 @@ func runChanges(args []string) int {
 		return 0
 	}
 
-	fmt.Printf("Changes since graph build (%s):\n\n",
+	fmt.Printf("Changes since persisted graph (%s):\n\n",
 		result.GraphAge.Format("2006-01-02 15:04:05 UTC"))
 
 	if len(result.ChangedFiles) > 0 {
@@ -2847,30 +2870,18 @@ func runChanges(args []string) int {
 
 // runSource extracts the raw source code of a named symbol.
 func runSource(args []string) int {
-	if len(args) == 0 {
-		if jsonMode {
-			return PrintJSON(errEnvelope("source", "usage: gograph source <name>"))
-		}
-		fmt.Fprintln(os.Stderr, "usage: gograph source <name>")
-		return 1
+	if !hasSingleTarget(args) {
+		return failCommand("source", "usage: gograph source <name>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("source", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("source", err.Error())
 	}
-	term := strings.Join(args, " ")
+	term := args[0]
 	root := graphRoot(g)
 	src, err := search.Source(g, root, term)
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("source", err.Error()))
-		}
-		fmt.Fprintf(os.Stderr, "source: %v\n", err)
-		return 1
+		return failCommandf("source", "source: %v", err)
 	}
 	if jsonMode {
 		return PrintJSON(okEnvelope("source", term, src, 1))
@@ -2881,14 +2892,12 @@ func runSource(args []string) int {
 
 // runPublic lists only the exported (public) API of a package.
 func runPublic(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph public <package>")
-		return 1
+	if !hasSingleTarget(args) {
+		return failCommand("public", "usage: gograph public <package>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("public", err.Error())
 	}
 	results := search.Public(g, args[0])
 	return printResults("public", args[0], results, fmt.Sprintf("No exported symbols found for package %q.", args[0]))
@@ -2896,14 +2905,12 @@ func runPublic(args []string) int {
 
 // runFields lists all fields and types of a struct.
 func runFields(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph fields <struct>")
-		return 1
+	if !hasSingleTarget(args) {
+		return failCommand("fields", "usage: gograph fields <struct>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("fields", err.Error())
 	}
 	results := search.Fields(g, args[0])
 	return printResults("fields", args[0], results, fmt.Sprintf("No fields found for struct %q.", args[0]))
@@ -2911,14 +2918,12 @@ func runFields(args []string) int {
 
 // runEmbeds finds which structs embed the given struct.
 func runEmbeds(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph embeds <struct>")
-		return 1
+	if !hasSingleTarget(args) {
+		return failCommand("embeds", "usage: gograph embeds <struct>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("embeds", err.Error())
 	}
 	results := search.Embeds(g, args[0])
 	return printResults("embeds", args[0], results, fmt.Sprintf("No structs found embedding %q.", args[0]))
@@ -2926,14 +2931,12 @@ func runEmbeds(args []string) int {
 
 // runImports finds all files importing a given package path.
 func runImports(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph imports <pkg>")
-		return 1
+	if !hasSingleTarget(args) {
+		return failCommand("imports", "usage: gograph imports <pkg>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("imports", err.Error())
 	}
 	results := search.ExternalImports(g, args[0])
 	return printResults("imports", args[0], results, fmt.Sprintf("No files found importing %q.", args[0]))
@@ -2942,14 +2945,24 @@ func runImports(args []string) int {
 // runImpact traverses the call graph backwards to find all symbols that eventually call the target.
 func runImpact(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph impact <symbol>\n       gograph impact --uncommitted\n       gograph impact --since <ref>")
-		return 1
+		return failCommand("impact", "usage: gograph impact <symbol>\n       gograph impact --uncommitted\n       gograph impact --since <ref>")
+	}
+	if args[0] == "--uncommitted" && len(args) != 1 {
+		return failCommand("impact", "impact --uncommitted does not accept additional arguments")
+	}
+	if args[0] == "--since" && len(args) != 2 {
+		return failCommand("impact", "usage: gograph impact --since <ref>")
+	}
+	if strings.HasPrefix(args[0], "-") && args[0] != "--uncommitted" && args[0] != "--since" {
+		return failCommandf("impact", "unknown flag: %s", args[0])
+	}
+	if args[0] != "--uncommitted" && args[0] != "--since" && !hasSingleTarget(args) {
+		return failCommand("impact", "usage: gograph impact <symbol>\n       gograph impact --uncommitted\n       gograph impact --since <ref>")
 	}
 
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("impact", err.Error())
 	}
 
 	if args[0] == "--uncommitted" {
@@ -2957,14 +2970,10 @@ func runImpact(args []string) int {
 	}
 
 	if args[0] == "--since" {
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: gograph impact --since <ref>")
-			return 1
-		}
 		return runImpactSince(g, args[1])
 	}
 
-	term := strings.Join(args, " ")
+	term := args[0]
 	if mermaidMode {
 		fmt.Println(search.ImpactToMermaid(g, term, true))
 		return 0
@@ -2977,8 +2986,7 @@ func runImpact(args []string) int {
 func runImpactUncommitted(g *graph.Graph) int {
 	modifiedSymbolNames, err := search.UncommittedSymbols(g)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("impact", err.Error())
 	}
 
 	if len(modifiedSymbolNames) == 0 {
@@ -2999,8 +3007,7 @@ func runImpactSince(g *graph.Graph, ref string) int {
 	root := graphRoot(g)
 	changes, err := search.ChangesByGitRef(g, root, ref)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("impact", err.Error())
 	}
 	if len(changes.Symbols) == 0 {
 		return printResults("impact", "--since "+ref, nil, fmt.Sprintf("No Go symbol changes found since %q.", ref))
@@ -3022,8 +3029,7 @@ func runImpactSince(g *graph.Graph, ref string) int {
 func runRoutes() int {
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("routes", err.Error())
 	}
 	results := search.Routes(g)
 	return printResults("routes", "", results, "No HTTP routes found.")
@@ -3031,14 +3037,16 @@ func runRoutes() int {
 
 // runSQL lists raw SQL queries mapped to the functions that run them.
 func runSQL(args []string) int {
+	if !hasOptionalTarget(args) {
+		return failCommand("sql", "usage: gograph sql [term]")
+	}
 	term := ""
 	if len(args) > 0 {
 		term = args[0]
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("sql", err.Error())
 	}
 	results := search.SQL(g, term)
 	return printResults("sql", term, results, "No SQL queries found.")
@@ -3052,17 +3060,21 @@ func runErrors(args []string) int {
 	for _, a := range args {
 		if a == "--no-tests" {
 			includeTests = false
+		} else if strings.HasPrefix(a, "-") {
+			return failCommandf("errors", "unknown flag: %s", a)
 		} else {
 			filtered = append(filtered, a)
 		}
+	}
+	if len(filtered) > 0 && !hasSingleTarget(filtered) {
+		return failCommand("errors", "usage: gograph errors [term] [--no-tests]")
 	}
 	if len(filtered) > 0 {
 		term = filtered[0]
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("errors", err.Error())
 	}
 	results := search.Errors(g, term, includeTests)
 	return printResults("errors", term, results, "No custom errors or panics found.")
@@ -3070,14 +3082,16 @@ func runErrors(args []string) int {
 
 // runHTTPCalls lists all detected HTTP client calls in the graph.
 func runHTTPCalls(args []string) int {
+	if !hasOptionalTarget(args) {
+		return failCommand("httpcalls", "usage: gograph httpcalls [term]")
+	}
 	term := ""
 	if len(args) > 0 {
 		term = args[0]
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("httpcalls", err.Error())
 	}
 	results := search.HTTPCalls(g, term)
 	return printResults("httpcalls", term, results, "No HTTP client calls found.")
@@ -3087,23 +3101,24 @@ func runHTTPCalls(args []string) int {
 func runSkeleton() int {
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("skeleton", err.Error())
 	}
-	fmt.Println(search.Skeleton(g))
+	skeleton := search.Skeleton(g)
+	if jsonMode {
+		return PrintJSON(okEnvelope("skeleton", "", skeleton, 1))
+	}
+	fmt.Println(skeleton)
 	return 0
 }
 
 // runMutate finds functions that mutate the given struct field.
 func runMutate(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph mutate <Field>")
-		return 1
+	if !hasSingleTarget(args) {
+		return failCommand("mutate", "usage: gograph mutate <Field>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("mutate", err.Error())
 	}
 	results := search.Mutate(g, args[0])
 	return printResults("mutate", args[0], results, "No mutations found for that field.")
@@ -3111,10 +3126,14 @@ func runMutate(args []string) int {
 
 // runTrace traces an error string backwards from entry points.
 func runTrace(args []string) int {
-	return runErrorFlow(args)
+	return runErrorFlowCommand("trace", args)
 }
 
 func runErrorFlow(args []string) int {
+	return runErrorFlowCommand("errorflow", args)
+}
+
+func runErrorFlowCommand(command string, args []string) int {
 	noTests := false
 	var termParts []string
 	for _, a := range args {
@@ -3125,27 +3144,20 @@ func runErrorFlow(args []string) int {
 		}
 	}
 	if len(termParts) == 0 {
-		if jsonMode {
-			return PrintJSON(errEnvelope("errorflow", "Usage: gograph errorflow <error-string|ErrSymbol> [--no-tests]"))
-		}
-		fmt.Println("Usage: gograph errorflow <error-string|ErrSymbol> [--no-tests]")
-		return 1
+		return failCommand(command, "Usage: gograph errorflow <error-string|ErrSymbol> [--no-tests]")
 	}
 
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("errorflow", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand(command, err.Error())
 	}
 
 	term := strings.Join(termParts, " ")
 	report := search.ErrorFlow(g, term, !noTests)
 
 	if jsonMode {
-		return PrintJSON(okEnvelope("errorflow", term, report, len(report.Paths)))
+		payload := search.NewErrorFlowPayload(report)
+		return PrintJSON(okEnvelope(command, term, payload, payload.Count()))
 	}
 
 	fmt.Printf("ErrorFlow Report for %q\n", term)
@@ -3201,31 +3213,24 @@ func runErrorFlow(args []string) int {
 }
 
 func runConstructors(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: gograph constructors <struct>")
-		return 1
+	if !hasSingleTarget(args) {
+		return failCommand("constructors", "Usage: gograph constructors <struct>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading graph: %v\n", err)
-		return 1
+		return failCommandf("constructors", "Error loading graph: %v", err)
 	}
 	results := search.Constructors(g, args[0])
 	return printResults("constructors", args[0], results, fmt.Sprintf("No constructors found for struct '%s'.", args[0]))
 }
 
 func runUsages(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph usages <TypeName>")
-		return 1
+	if !hasSingleTarget(args) {
+		return failCommand("usages", "usage: gograph usages <TypeName>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("usages", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("usages", err.Error())
 	}
 	results := search.Usages(g, args[0])
 	if jsonMode {
@@ -3235,17 +3240,12 @@ func runUsages(args []string) int {
 }
 
 func runReturnUsage(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph returnusage <function>")
-		return 1
+	if !hasSingleTarget(args) {
+		return failCommand("returnusage", "usage: gograph returnusage <function>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("returnusage", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("returnusage", err.Error())
 	}
 	results := search.ReturnUsages(g, args[0])
 	if jsonMode {
@@ -3255,17 +3255,12 @@ func runReturnUsage(args []string) int {
 }
 
 func runLiterals(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph literals <struct>")
-		return 1
+	if !hasSingleTarget(args) {
+		return failCommand("literals", "usage: gograph literals <struct>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("literals", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("literals", err.Error())
 	}
 	results := search.Literals(g, args[0])
 	if jsonMode {
@@ -3275,14 +3270,12 @@ func runLiterals(args []string) int {
 }
 
 func runSchema(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: gograph schema <table>")
-		return 1
+	if !hasSingleTarget(args) {
+		return failCommand("schema", "Usage: gograph schema <table>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading graph: %v\n", err)
-		return 1
+		return failCommandf("schema", "Error loading graph: %v", err)
 	}
 	results := search.Schema(g, args[0])
 	return printResults("schema", args[0], results, fmt.Sprintf("No struct found mapped to table '%s'.", args[0]))
@@ -3290,34 +3283,30 @@ func runSchema(args []string) int {
 
 func runGlobals(args []string) int {
 	term := ""
-	if len(args) > 0 {
+	if hasSingleTarget(args) {
 		term = args[0]
 	} else {
-		fmt.Fprintln(os.Stderr, "Usage: gograph globals <package>")
-		return 1
+		return failCommand("globals", "Usage: gograph globals <package>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading graph: %v\n", err)
-		return 1
+		return failCommandf("globals", "Error loading graph: %v", err)
 	}
 	results := search.Globals(g, term)
 	return printResults("globals", term, results, "No globals or mutators found.")
 }
 
 func runMocks(args []string) int {
-	return runImplementers(append([]string{"--test-only"}, args...))
+	return runImplementersCommand("mocks", append([]string{"--test-only"}, args...))
 }
 
 func runFixtures(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: gograph fixtures <package>")
-		return 1
+	if !hasSingleTarget(args) {
+		return failCommand("fixtures", "Usage: gograph fixtures <package>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading graph: %v\n", err)
-		return 1
+		return failCommandf("fixtures", "Error loading graph: %v", err)
 	}
 	results := search.Fixtures(g, args[0])
 	return printResults("fixtures", args[0], results, fmt.Sprintf("No fixtures found for package '%s'.", args[0]))
@@ -3326,25 +3315,28 @@ func runFixtures(args []string) int {
 func runBoundaries(args []string) int {
 	configPath := ".gograph/boundaries.json"
 	createMode := false
-	for i, a := range args {
-		if a == "--config" && i+1 < len(args) {
-			configPath = args[i+1]
-			break
-		}
-		if a == "--create" {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--config":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return failCommand("boundaries", "--config requires a value")
+			}
+			i++
+			configPath = args[i]
+		case "--create":
 			createMode = true
+		default:
+			return failCommandf("boundaries", "unknown argument: %s", args[i])
 		}
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading graph: %v\n", err)
-		return 1
+		return failCommandf("boundaries", "Error loading graph: %v", err)
 	}
 
 	if createMode {
 		if err := search.CreateBoundaries(g, configPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to create boundaries: %v\n", err)
-			return 1
+			return failCommandf("boundaries", "Failed to create boundaries: %v", err)
 		}
 		fmt.Printf("Successfully created baseline boundaries at %s\n", configPath)
 		return 0
@@ -3352,11 +3344,10 @@ func runBoundaries(args []string) int {
 
 	results, err := search.Boundaries(g, configPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Boundaries error: %v\n", err)
-		return 1
+		return failCommandf("boundaries", "Boundaries error: %v", err)
 	}
 	code := printResults("boundaries", configPath, results, "No boundary violations found. Architecture is clean!")
-	if len(results) > 0 && !jsonMode {
+	if len(results) > 0 {
 		// Exit with non-zero if violations exist (useful for CI/CD)
 		return 1
 	}
@@ -3365,52 +3356,54 @@ func runBoundaries(args []string) int {
 
 func runEndpoint(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: gograph endpoint <route-pattern|handler-symbol> [--depth N] [--json] [--include-tests]")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Examples:")
-		fmt.Fprintln(os.Stderr, `  gograph endpoint "POST /api/users"   # route pattern (flat routers only)`)
-		fmt.Fprintln(os.Stderr, `  gograph endpoint "/users"             # path fragment`)
-		fmt.Fprintln(os.Stderr, `  gograph endpoint "CreateUser"         # handler symbol (works with ALL routing styles)`)
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Flags:")
-		fmt.Fprintln(os.Stderr, "  --depth N         BFS depth for call chain (default: 5)")
-		fmt.Fprintln(os.Stderr, "  --include-tests   include routes registered in *_test.go files (excluded by default)")
-		fmt.Fprintln(os.Stderr, "  --json            machine-readable JSON output")
-		return 1
+		return failCommand("endpoint", `Usage: gograph endpoint <route-pattern|handler-symbol> [--depth N] [--json|--mermaid] [--include-tests]
+
+Examples:
+  gograph endpoint "POST /api/users"   # route pattern (flat routers only)
+  gograph endpoint "/users"             # path fragment
+  gograph endpoint "CreateUser"         # handler symbol (works with ALL routing styles)
+
+Flags:
+  --depth N         BFS depth for call chain, clamped to 1-20 (default: 5)
+  --include-tests   include routes registered in *_test.go files (excluded by default)
+  --json            machine-readable JSON output`)
 	}
 
 	depth := 5
 	query := args[0]
-	jsonMode := false
 	includeTests := false // tests excluded by default, consistent with other commands
-	for i, a := range args {
-		if a == "--json" {
-			jsonMode = true
-		}
-		if a == "--include-tests" {
+	if query == "" || strings.HasPrefix(query, "-") {
+		return failCommandf("endpoint", "missing endpoint query before flag %s", query)
+	}
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--include-tests":
 			includeTests = true
-		}
-		if a == "--mermaid" {
-			mermaidMode = true
-		}
-		if a == "--depth" && i+1 < len(args) {
-			if n, err := strconv.Atoi(args[i+1]); err == nil {
-				depth = n
+		case "--depth":
+			value, err := parseIntegerFlag(args, &i)
+			if err != nil {
+				return failCommand("endpoint", err.Error())
 			}
+			depth = value
+		default:
+			return failCommandf("endpoint", "unknown argument: %s", args[i])
 		}
+	}
+	if depth < 1 {
+		depth = 1
+	} else if depth > 20 {
+		depth = 20
 	}
 
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load graph: %v\n", err)
-		return 1
+		return failCommandf("endpoint", "failed to load graph: %v", err)
 	}
 
 	slices := search.Endpoint(g, query, depth, includeTests)
 	if len(slices) == 0 {
 		if jsonMode {
-			return PrintJSON(errEnvelope("endpoint", "no matching HTTP routes found for: "+query+
-				" — if using Gin/Echo/Chi groups, search by handler symbol name instead (route literals lose their prefix in grouped routers)"))
+			return PrintJSON(okEnvelope("endpoint", query, slices, 0))
 		}
 		fmt.Printf("No matching HTTP routes found for %q\n\n", query)
 		fmt.Println("Possible reasons:")
@@ -3423,7 +3416,7 @@ func runEndpoint(args []string) int {
 		fmt.Printf("  gograph endpoint \"<HandlerFunctionName>\"\n")
 		fmt.Println("")
 		fmt.Println("To find the handler name for a route, run: gograph routes")
-		return 1
+		return 0
 	}
 
 	if mermaidMode {
@@ -3508,11 +3501,16 @@ func runEndpoint(args []string) int {
 	return 0
 }
 
+type planContextJSON = search.ContextPayload
+
+func newPlanContextJSON(symbol string, result *search.ContextResult) planContextJSON {
+	return search.NewContextPayload(symbol, result)
+}
+
 // runPlan generates an operational change plan for one or more symbols or for uncommitted changes.
 func runPlan(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph plan <symbol> [--with-context]\n       gograph plan --uncommitted [--with-context]")
-		return 1
+		return failCommand("plan", "usage: gograph plan <symbol> [--with-context]\n       gograph plan --uncommitted [--with-context]")
 	}
 
 	withContext := false
@@ -3525,69 +3523,13 @@ func runPlan(args []string) int {
 		}
 	}
 	args = filtered
-
-	g, err := loadGraph(".")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-
-	var symbolNames []string
-	var title string
-
-	if len(args) > 0 && args[0] == "--uncommitted" {
-		symbolNames, err = search.UncommittedSymbols(g)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-		if len(symbolNames) == 0 {
-			fmt.Println("No uncommitted modified symbols found in the graph.")
-			return 0
-		}
-		title = "Uncommitted Changes"
-	} else if len(args) > 0 {
-		symbolNames = []string{strings.Join(args, " ")}
-		title = symbolNames[0]
-	} else {
-		fmt.Fprintln(os.Stderr, "usage: gograph plan <symbol> [--with-context]\n       gograph plan --uncommitted [--with-context]")
-		return 1
-	}
-
-	plan := search.Plan(g, symbolNames, title)
-
-	if jsonMode {
-		return PrintJSON(okEnvelope("plan", title, plan, 1))
-	}
-
-	fmt.Print(plan.String())
-
-	if withContext && len(plan.ReadFirst) > 0 {
-		root, _ := filepath.Abs(rootfind.FindRoot())
-		fmt.Println("\n=== INSPECT_FIRST CONTEXTS ===")
-		for _, sym := range plan.ReadFirst {
-			result := search.Context(g, root, sym.Name, false)
-			if result == nil {
-				continue
-			}
-			fmt.Printf("\n=== CONTEXT: %s ===\n\n", sym.Name)
-			printContextResult(result, 0)
-		}
-	}
-	return 0
-}
-
-// runReview generates a post-edit checklist for modified symbols.
-func runReview(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph review <symbol> OR gograph review --uncommitted")
-		return 1
+	if len(args) != 1 || args[0] == "" || (strings.HasPrefix(args[0], "-") && args[0] != "--uncommitted") {
+		return failCommand("plan", "usage: gograph plan <symbol> [--with-context]\n       gograph plan --uncommitted [--with-context]")
 	}
 
 	g, err := loadGraph(".")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("plan", err.Error())
 	}
 
 	var symbolNames []string
@@ -3596,10 +3538,82 @@ func runReview(args []string) int {
 	if args[0] == "--uncommitted" {
 		symbolNames, err = search.UncommittedSymbols(g)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
+			return failCommand("plan", err.Error())
 		}
 		if len(symbolNames) == 0 {
+			if jsonMode {
+				return PrintJSON(okEnvelope("plan", "Uncommitted Changes", nil, 0))
+			}
+			fmt.Println("No uncommitted modified symbols found in the graph.")
+			return 0
+		}
+		title = "Uncommitted Changes"
+	} else {
+		symbolNames = []string{args[0]}
+		title = symbolNames[0]
+	}
+
+	plan := search.Plan(g, symbolNames, title)
+	root := ""
+	var rawContexts []*search.ContextResult
+	var contexts []planContextJSON
+	if withContext && len(plan.ReadFirst) > 0 {
+		root, _ = filepath.Abs(rootfind.FindRoot())
+		for _, sym := range plan.ReadFirst {
+			_, result := search.ContextForPlanResult(g, root, sym)
+			if result == nil {
+				continue
+			}
+			rawContexts = append(rawContexts, result)
+			contexts = append(contexts, newPlanContextJSON(sym.Name, result))
+		}
+	}
+
+	if jsonMode {
+		if withContext {
+			return PrintJSON(okEnvelope("plan", title, map[string]any{
+				"plan":             plan,
+				"inspect_contexts": contexts,
+			}, 1))
+		}
+		return PrintJSON(okEnvelope("plan", title, plan, 1))
+	}
+
+	fmt.Print(plan.String())
+
+	if withContext && len(rawContexts) > 0 {
+		fmt.Println("\n=== INSPECT_FIRST CONTEXTS ===")
+		for i, result := range rawContexts {
+			fmt.Printf("\n=== CONTEXT: %s ===\n\n", contexts[i].Symbol)
+			printContextResult(result, 0)
+		}
+	}
+	return 0
+}
+
+// runReview generates a post-edit checklist for modified symbols.
+func runReview(args []string) int {
+	if len(args) != 1 || args[0] == "" || (strings.HasPrefix(args[0], "-") && args[0] != "--uncommitted") {
+		return failCommand("review", "usage: gograph review <symbol> OR gograph review --uncommitted")
+	}
+
+	g, err := loadGraph(".")
+	if err != nil {
+		return failCommand("review", err.Error())
+	}
+
+	var symbolNames []string
+	var title string
+
+	if args[0] == "--uncommitted" {
+		symbolNames, err = search.UncommittedSymbols(g)
+		if err != nil {
+			return failCommand("review", err.Error())
+		}
+		if len(symbolNames) == 0 {
+			if jsonMode {
+				return PrintJSON(okEnvelope("review", "Uncommitted Changes", nil, 0))
+			}
 			fmt.Println("No uncommitted modified symbols found in the graph.")
 			return 0
 		}
@@ -3620,21 +3634,13 @@ func runReview(args []string) int {
 }
 
 func runRisk(args []string) int {
-	if len(args) == 0 {
-		if jsonMode {
-			return PrintJSON(errEnvelope("risk", "usage: gograph risk <symbol> OR gograph risk --uncommitted"))
-		}
-		fmt.Fprintln(os.Stderr, "usage: gograph risk <symbol> OR gograph risk --uncommitted")
-		return 1
+	if len(args) != 1 || args[0] == "" || (strings.HasPrefix(args[0], "-") && args[0] != "--uncommitted") {
+		return failCommand("risk", "usage: gograph risk <symbol> OR gograph risk --uncommitted")
 	}
 
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("risk", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("risk", err.Error())
 	}
 
 	var symbolNames []string
@@ -3643,11 +3649,7 @@ func runRisk(args []string) int {
 	if args[0] == "--uncommitted" {
 		symbolNames, err = search.UncommittedSymbols(g)
 		if err != nil {
-			if jsonMode {
-				return PrintJSON(errEnvelope("risk", err.Error()))
-			}
-			fmt.Fprintln(os.Stderr, err)
-			return 1
+			return failCommand("risk", err.Error())
 		}
 		if len(symbolNames) == 0 {
 			if jsonMode {
@@ -3661,7 +3663,7 @@ func runRisk(args []string) int {
 		}
 		title = "Uncommitted Changes"
 	} else {
-		symbolNames = []string{strings.Join(args, " ")}
+		symbolNames = []string{args[0]}
 		title = symbolNames[0]
 	}
 
@@ -3676,22 +3678,14 @@ func runRisk(args []string) int {
 }
 
 func runExplain(args []string) int {
-	if len(args) == 0 {
-		if jsonMode {
-			return PrintJSON(errEnvelope("explain", "usage: gograph explain <symbol>"))
-		}
-		fmt.Fprintln(os.Stderr, "usage: gograph explain <symbol>")
-		return 1
+	if !hasSingleTarget(args) {
+		return failCommand("explain", "usage: gograph explain <symbol>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("explain", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("explain", err.Error())
 	}
-	term := strings.Join(args, " ")
+	term := args[0]
 	result := search.Explain(g, term)
 	if result == nil {
 		if jsonMode {
@@ -3748,11 +3742,7 @@ func runWiki(args []string) int {
 func runSummary() int {
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("summary", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("summary", err.Error())
 	}
 
 	hotspots := search.Hotspot(g, 3, false)
@@ -3837,32 +3827,25 @@ func runUntested(args []string) int {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--pkg":
-			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "--pkg requires a value")
-				return 1
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return failCommand("untested", "--pkg requires a value")
 			}
 			pkg = args[i+1]
 			i++
 		case "--top":
-			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "--top requires a value")
-				return 1
+			value, err := parseIntegerFlag(args, &i)
+			if err != nil {
+				return failCommand("untested", err.Error())
 			}
-			if _, err := fmt.Sscanf(args[i+1], "%d", &top); err != nil {
-				fmt.Fprintf(os.Stderr, "invalid --top value: %q\n", args[i+1])
-				return 1
-			}
-			i++
+			top = value
+		default:
+			return failCommandf("untested", "unknown argument: %s", args[i])
 		}
 	}
 
 	g, err := loadGraph(".")
 	if err != nil {
-		if jsonMode {
-			return PrintJSON(errEnvelope("untested", err.Error()))
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return failCommand("untested", err.Error())
 	}
 
 	results := search.Untested(g)
@@ -3930,13 +3913,12 @@ func runUntested(args []string) int {
 //	gograph doc github.com/jackc/pgx/v5.Conn.QueryRow
 //	gograph doc io.Reader
 func runDoc(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gograph doc <pkg[.Symbol]>")
-		fmt.Fprintln(os.Stderr, "examples:")
-		fmt.Fprintln(os.Stderr, "  gograph doc fmt.Errorf")
-		fmt.Fprintln(os.Stderr, "  gograph doc net/http.HandleFunc")
-		fmt.Fprintln(os.Stderr, "  gograph doc github.com/jackc/pgx/v5.Conn.QueryRow")
-		return 1
+	if !hasSingleTarget(args) {
+		return failCommand("doc", `usage: gograph doc <pkg[.Symbol]>
+examples:
+  gograph doc fmt.Errorf
+  gograph doc net/http.HandleFunc
+  gograph doc github.com/jackc/pgx/v5.Conn.QueryRow`)
 	}
 
 	query := args[0]
@@ -3956,11 +3938,7 @@ func runDoc(args []string) int {
 		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
 			errMsg = strings.TrimSpace(string(exitErr.Stderr))
 		}
-		if jsonMode {
-			return PrintJSON(errEnvelope("doc", errMsg))
-		}
-		fmt.Fprintln(os.Stderr, errMsg)
-		return 1
+		return failCommand("doc", errMsg)
 	}
 
 	text := strings.TrimSpace(string(out))

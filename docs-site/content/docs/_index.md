@@ -23,7 +23,7 @@ An exhaustive command manual detailing all gograph capabilities.
 
 ### 🤖 [AI Agent Integration](/docs/agent-integration/)
 Connect gograph with AI coding assistants (like Claude Code, Cursor, and custom LLM workflows) to reduce broad file reads and unsupported structural guesses.
-- **Topics**: MCP stdio setup, in-memory refresh behavior, Claude Desktop/plugin configuration, and the Claude Code PreToolUse hook guard.
+- **Topics**: MCP stdio setup, default in-memory refreshes, opt-in artifact publication, CLI/MCP Mermaid output, Claude Desktop/plugin configuration, and the Claude Code PreToolUse hook guard.
 
 ### ⚙️ [Agent Workflows](/docs/workflows/)
 Discover safe development workflows and optimization protocols.

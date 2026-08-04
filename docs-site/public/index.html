@@ -197,7 +197,9 @@ Copilot, Antigravity, and OpenCode.</p>
 <li><strong>Focused structural evidence</strong>: AST-derived results avoid comments and raw
 string matches when the question is about Go symbols or relationships.</li>
 <li><strong>Explicit correctness modes</strong>: Build metadata distinguishes AST-only,
-successful precise analysis, and visible precise fallback.</li>
+successful precise analysis, and visible precise fallback. A failed precise
+retry does not replace an existing fresh precise artifact covering the same
+selected sources.</li>
 <li><strong>Composed workflows</strong>: <code>context</code>, <code>plan</code>, <code>review</code>, and <code>summary</code> combine
 related graph evidence. Savings depend on the repository and task.</li>
 </ul>
@@ -206,16 +208,22 @@ related graph evidence. Savings depend on the repository and task.</li>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>brew install ozgurcd/tap/gograph
 </span></span></code></pre></div><p><strong>Go install</strong></p>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>go install github.com/ozgurcd/gograph/cmd/gograph@latest
-</span></span></code></pre></div><p><strong>From source</strong></p>
+</span></span></code></pre></div><p><strong>Official MCP Registry / MCPB (preview)</strong></p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>io.github.ozgurcd/gograph
+</span></span></code></pre></div><p>This installs a platform-specific local MCP bundle in clients that support
+MCPB; it does not place the CLI on <code>PATH</code>. Select the Go project directory and
+the macOS/Linux/Windows amd64/arm64 asset matching the host. See the
+<a href="/docs/mcp-registry/">Registry guide</a> for the current CPU-selection limitation.</p>
+<p><strong>From source</strong></p>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>git clone https://github.com/ozgurcd/gograph
 </span></span><span style="display:flex;"><span>cd gograph
 </span></span><span style="display:flex;"><span>make build
 </span></span><span style="display:flex;"><span>sudo make install
 </span></span></code></pre></div><h2 id="how-it-works">How it works<a hidden class="anchor" aria-hidden="true" href="#how-it-works">#</a></h2>
 <ol>
-<li><strong><code>gograph build .</code></strong> — walks Go files selected by the shared scanner, extracts symbols, validated call edges, imports, HTTP routes, SQL queries, environment reads, struct fields, error declarations, and typed synchronization primitives. Writes everything under the target <code>.gograph/</code> directory, adds <code>.gograph/</code> to the enclosing Git repository root <code>.gitignore</code> when available, and falls back to the build target <code>.gitignore</code> outside Git. A zero-file or zero-successful-parse build does not replace existing artifacts; partial failures are recorded in atomically published graph metadata.</li>
-<li><strong>CLI query commands</strong> — read persisted <code>graph.json</code>; rebuild after source changes. MCP source-analysis tools check source freshness and newer persisted artifacts, adopt a newer precise graph, and rebuild after edits in the current requested mode. A failed precise refresh is returned visibly.</li>
-<li><strong><code>--precise</code> mode</strong> — attempts type-checked CHA/SSA enrichment. It needs compilable, build-selected packages for precise data; if type/load analysis fails or omits an indexed non-test file, gograph warns, retains the AST graph, and records <code>precise_fallback</code> (<code>precise</code> and <code>ast</code> identify the other modes).</li>
+<li><strong><code>gograph build .</code></strong> — walks Go files selected by the shared scanner, extracts symbols, validated call edges, imports, HTTP routes, SQL queries, environment reads, struct fields, error declarations, and typed synchronization primitives. Graph/report publishers coordinate with the persistent operational file <code>.gograph/.artifacts.lock</code>, stage <code>graph.json</code> plus nine reports, rename the reports first, and rename <code>graph.json</code> last as the commit marker. Same-directory replacement is atomic on Unix-like systems but is not guaranteed atomic by Go on non-Unix platforms; the ten-file bundle is not one atomic filesystem transaction, so a crash can leave reports ahead of the graph marker. The build adds <code>.gograph/</code> to the enclosing Git repository root <code>.gitignore</code> when available and falls back to the build target <code>.gitignore</code> outside Git. A zero-file or zero-successful-parse build does not replace existing artifacts; partial failures are recorded in graph metadata.</li>
+<li><strong>Queries and refreshes</strong> — graph-backed CLI analysis reads the last persisted <code>graph.json</code>; commands whose contract reads source, Git, or other local state do so directly. MCP source-analysis tools check source freshness and newer persisted artifacts, adopt a newer compatible precise graph, and rebuild after edits in the current requested mode. Those refreshes stay in memory by default. <code>gograph mcp [path] --persist-refresh</code> opts into publishing the latest successful refresh with the same graph-last protocol; a failed precise refresh is returned visibly.</li>
+<li><strong><code>--precise</code> mode</strong> — attempts type-checked CHA/SSA enrichment. It needs compilable, build-selected packages for precise data; if type/load analysis fails or omits an indexed non-test file, gograph warns and normally records <code>precise_fallback</code> on the retained AST graph. A failed retry keeps an existing fresh successful precise artifact covering the same selected sources instead of downgrading it (<code>ast</code> identifies an explicitly requested AST build).</li>
 </ol>
 <h2 id="what-it-captures">What it captures<a hidden class="anchor" aria-hidden="true" href="#what-it-captures">#</a></h2>
 <table>
@@ -320,16 +328,15 @@ them with persisted repository-level questions such as:</p>
     </h2>
   </header>
   <div class="entry-content">
-    <p>Prerequisites Go 1.26 or later A Go module repository (go.mod present) Install Homebrew (recommended)
+    <p>Prerequisites Go 1.26.5 or later A Go module repository (go.mod present) Install Homebrew (recommended)
 brew install ozgurcd/tap/gograph gograph version Go install
-go install github.com/ozgurcd/gograph/cmd/gograph@latest gograph version From source
-git clone https://github.com/ozgurcd/gograph cd gograph make build # produces bin/gograph sudo make install # copies to /usr/local/bin Step 1 — Build the graph Navigate to the root of any Go module and run:
-gograph build . This walks every .go file, extracts the AST, and writes:
+go install github.com/ozgurcd/gograph/cmd/gograph@latest gograph version Official MCP Registry / MCPB (preview)
+MCPB-capable clients can discover io.github.ozgurcd/gograph in the official Registry. This installs a self-contained local MCP server bundle rather than a CLI on PATH. Select the bundle matching macOS, Linux, or Windows and the host’s amd64/arm64 architecture, then choose the root directory of the Go project to analyze. Current Registry metadata cannot select CPU architecture portably, so verify the asset filename instead of assuming automatic client selection. See Official MCP Registry for details.
 ...</p>
   </div>
   <footer class="entry-footer">
 
-<span>4 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
+<span>7 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
   <a class="entry-link" aria-label="post link to Getting Started" href="https://gograph.identuum.ai/docs/getting-started/"></a>
 </article>
 
@@ -340,12 +347,13 @@ gograph build . This walks every .go file, extracts the AST, and writes:
   </header>
   <div class="entry-content">
     <p>This reference documents every command available in the gograph CLI, compiled directly from the production source code.
-Indexing &amp; Core Commands build gograph build [path] [--precise] Walks and parses a Go repository. Generates the structured graph at .gograph/graph.json and nine targeted Markdown reports in .gograph/. Adds .gograph/ to the Git repository root .gitignore when available; outside Git, falls back to the build target .gitignore. Git-ignored files and directories use the same exclusion policy in build, stale, and changes. If no Go files are found or none parse successfully, exits without replacing existing artifacts. Partial parse failures are recorded in graph.json, which is committed with an atomic rename.
+Global Flags Global flags may appear before or after the command:
+--json: Structured output for query and composed-analysis commands. --files-only: Deduplicated paths for the commands listed under Output Modes; an empty result writes zero lines. --mermaid: Mermaid output for callers, callees, impact, endpoint, dependents, deps, path, and coupling. Bare gograph --mermaid is shorthand for gograph diagram. -i &lt;message&gt; / --intention &lt;message&gt;: Technical rationale recorded with CLI command telemetry. It is mandatory for analytical commands while an audit session is active; session, MCP startup, build, installation, help, version, stale, stats, capabilities, wiki, and doc commands do not require it. Request only one of --json, --files-only, or --mermaid; unsupported or conflicting output flags fail instead of being silently ignored.
 ...</p>
   </div>
   <footer class="entry-footer">
 
-<span>13 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
+<span>18 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
   <a class="entry-link" aria-label="post link to Command Reference" href="https://gograph.identuum.ai/docs/command-reference/"></a>
 </article>
 
@@ -361,7 +369,7 @@ Text search, gopls, and gograph have different jobs rg, grep, and find are appro
   </div>
   <footer class="entry-footer">
 
-<span>7 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
+<span>10 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
   <a class="entry-link" aria-label="post link to AI Agent Integration" href="https://gograph.identuum.ai/docs/agent-integration/"></a>
 </article>
 
@@ -380,6 +388,23 @@ Verify Index Status: gograph stats gograph stale If stale or missing, run gograp
 
 <span>3 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
   <a class="entry-link" aria-label="post link to Agent Workflows" href="https://gograph.identuum.ai/docs/workflows/"></a>
+</article>
+
+<article class="post-entry">
+  <header class="entry-header">
+    <h2 class="entry-hint-parent">Official MCP Registry
+    </h2>
+  </header>
+  <div class="entry-content">
+    <p>gograph is published to the official Model Context Protocol Registry as:
+io.github.ozgurcd/gograph The official Registry is currently in preview. Its API, stored data, and client support may change before general availability.
+Registry installation is a separate path Homebrew and go install place the normal gograph CLI on PATH. You then configure an MCP client to run gograph mcp &lt;project-directory&gt;. The Claude Code marketplace entry supplies workflow guidance but still needs that binary and a project registration.
+...</p>
+  </div>
+  <footer class="entry-footer">
+
+<span>3 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
+  <a class="entry-link" aria-label="post link to Official MCP Registry" href="https://gograph.identuum.ai/docs/mcp-registry/"></a>
 </article>
     </main>
     

@@ -85,6 +85,173 @@ func TestContext_CaseInsensitive(t *testing.T) {
 	}
 }
 
+func TestContext_ExactQualifiedSymbols(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"left/run.go": `package left
+
+func Run() {
+	LeftOnly()
+}
+`,
+		"right/run.go": `package right
+
+func Run() {
+	RightOnly()
+}
+`,
+		"store/store.go": `package store
+
+type MemoryStore struct{}
+
+func (*MemoryStore) Load() {
+	MemoryOnly()
+}
+
+type SQLStore struct{}
+
+func (*SQLStore) Load() {
+	SQLOnly()
+}
+`,
+	}
+	for name, contents := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create source directory: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			t.Fatalf("write source file: %v", err)
+		}
+	}
+
+	const (
+		leftRunID    = "example.com/app/left::Run"
+		rightRunID   = "example.com/app/right::Run"
+		memoryLoadID = "example.com/app/store::(*MemoryStore).Load"
+		sqlLoadID    = "example.com/app/store::(*SQLStore).Load"
+	)
+	g := &graph.Graph{
+		Root: root,
+		Symbols: []graph.SymbolNode{
+			{ID: leftRunID, Name: "Run", Kind: graph.KindFunction, PackageName: "left", File: "left/run.go", Line: 3, EndLine: 5},
+			{ID: rightRunID, Name: "Run", Kind: graph.KindFunction, PackageName: "right", File: "right/run.go", Line: 3, EndLine: 5},
+			{ID: memoryLoadID, Name: "Load", Receiver: "*MemoryStore", Kind: graph.KindMethod, PackageName: "store", File: "store/store.go", Line: 5, EndLine: 7},
+			{ID: sqlLoadID, Name: "Load", Receiver: "*SQLStore", Kind: graph.KindMethod, PackageName: "store", File: "store/store.go", Line: 11, EndLine: 13},
+		},
+		Calls: []graph.CallEdge{
+			{CallerName: "Run", CallerSymbolID: leftRunID, CalleeRaw: "LeftOnly", File: "left/run.go", Line: 4},
+			{CallerName: "Run", CallerSymbolID: rightRunID, CalleeRaw: "RightOnly", File: "right/run.go", Line: 4},
+			{CallerName: "(*MemoryStore).Load", CallerSymbolID: memoryLoadID, CalleeRaw: "MemoryOnly", File: "store/store.go", Line: 6},
+			{CallerName: "(*SQLStore).Load", CallerSymbolID: sqlLoadID, CalleeRaw: "SQLOnly", File: "store/store.go", Line: 12},
+		},
+	}
+
+	tests := []struct {
+		name          string
+		query         string
+		wantFile      string
+		wantNode      string
+		wantSource    string
+		wantCallee    string
+		unwantedValue string
+	}{
+		{
+			name:          "fully qualified package ID",
+			query:         leftRunID,
+			wantFile:      "left/run.go",
+			wantNode:      "Run",
+			wantSource:    "LeftOnly",
+			wantCallee:    "LeftOnly",
+			unwantedValue: "RightOnly",
+		},
+		{
+			name:          "receiver qualified symbol",
+			query:         "MemoryStore.Load",
+			wantFile:      "store/store.go",
+			wantNode:      "(*MemoryStore).Load",
+			wantSource:    "MemoryOnly",
+			wantCallee:    "MemoryOnly",
+			unwantedValue: "SQLOnly",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := search.Context(g, root, tt.query, true)
+			if result == nil {
+				t.Fatalf("exact context for %q returned nil", tt.query)
+			}
+			if len(result.Node) != 1 {
+				t.Fatalf("exact context for %q returned %d nodes, want 1: %+v", tt.query, len(result.Node), result.Node)
+			}
+			if result.Node[0].File != tt.wantFile || result.Node[0].Name != tt.wantNode {
+				t.Fatalf("exact context node = %+v, want name %q in %q", result.Node[0], tt.wantNode, tt.wantFile)
+			}
+			if !strings.Contains(result.Source, tt.wantSource) || strings.Contains(result.Source, tt.unwantedValue) {
+				t.Fatalf("exact context source selected the wrong symbol:\n%s", result.Source)
+			}
+			if len(result.Callees) != 1 || result.Callees[0].Name != tt.wantCallee {
+				t.Fatalf("exact context callees = %+v, want only %q", result.Callees, tt.wantCallee)
+			}
+		})
+	}
+}
+
+func TestContextForPlanResult_DisambiguatesDuplicateNamesByLocation(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"alpha/process.go": "package alpha\n\nfunc Process() { AlphaOnly() }\n",
+		"beta/process.go":  "package beta\n\nfunc Process() { BetaOnly() }\n",
+	}
+	for name, contents := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create source directory: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			t.Fatalf("write source file: %v", err)
+		}
+	}
+
+	const (
+		alphaID = "example.com/app/alpha::Process"
+		betaID  = "example.com/app/beta::Process"
+	)
+	g := &graph.Graph{
+		Root: root,
+		Symbols: []graph.SymbolNode{
+			{ID: alphaID, Name: "Process", Kind: graph.KindFunction, PackageName: "alpha", File: "alpha/process.go", Line: 3, EndLine: 3},
+			{ID: betaID, Name: "Process", Kind: graph.KindFunction, PackageName: "beta", File: "beta/process.go", Line: 3, EndLine: 3},
+		},
+	}
+	plan := search.Plan(g, []string{"Process"}, "Process")
+	if len(plan.ReadFirst) != 2 {
+		t.Fatalf("plan read-first rows = %+v, want both duplicate-name symbols", plan.ReadFirst)
+	}
+
+	wantSource := map[string]string{
+		alphaID: "AlphaOnly",
+		betaID:  "BetaOnly",
+	}
+	for _, row := range plan.ReadFirst {
+		id, result := search.ContextForPlanResult(g, root, row)
+		if result == nil {
+			t.Fatalf("context for plan row %+v returned nil", row)
+		}
+		want, ok := wantSource[id]
+		if !ok {
+			t.Fatalf("plan row %+v resolved to unexpected identity %q", row, id)
+		}
+		if len(result.Node) != 1 || result.Node[0].File != row.File {
+			t.Fatalf("context for %q is ambiguous or from the wrong file: %+v", id, result.Node)
+		}
+		if !strings.Contains(result.Source, want) {
+			t.Fatalf("context for %q selected the wrong source:\n%s", id, result.Source)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Hotspot tests
 // ---------------------------------------------------------------------------

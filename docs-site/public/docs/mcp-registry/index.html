@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en" dir="auto" data-theme="auto">
+
+<head><meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<meta name="robots" content="index, follow">
+<title>Official MCP Registry | gograph – Go Codebase Analysis &amp; MCP Server</title>
+<meta name="keywords" content="">
+<meta name="description" content="Discover and install gograph as a local MCP Bundle, select the correct platform asset, and understand the preview limitations.">
+<meta name="author" content="Ozgur Demir">
+<link rel="canonical" href="https://gograph.identuum.ai/docs/mcp-registry/">
+<link crossorigin="anonymous" href="/assets/css/stylesheet.cd9298b33628769aa1bc1acebbbfd7aa11ce81dfe03484d479e1907760249a1d.css" integrity="sha256-zZKYszYodpqhvBrOu7/XqhHOgd/gNITUeeGQd2Akmh0=" rel="preload stylesheet" as="style">
+<link rel="icon" href="https://gograph.identuum.ai/favicon.ico">
+<link rel="icon" type="image/png" sizes="16x16" href="https://gograph.identuum.ai/favicon-16x16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="https://gograph.identuum.ai/favicon-32x32.png">
+<link rel="apple-touch-icon" href="https://gograph.identuum.ai/apple-touch-icon.png">
+<link rel="mask-icon" href="https://gograph.identuum.ai/safari-pinned-tab.svg">
+<meta name="theme-color" content="#2e2e33">
+<meta name="msapplication-TileColor" content="#2e2e33">
+<link rel="alternate" hreflang="en" href="https://gograph.identuum.ai/docs/mcp-registry/">
+<noscript>
+    <style>
+        #theme-toggle,
+        .top-link {
+            display: none;
+        }
+
+    </style>
+    <style>
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --theme: rgb(29, 30, 32);
+                --entry: rgb(46, 46, 51);
+                --primary: rgb(218, 218, 219);
+                --secondary: rgb(155, 156, 157);
+                --tertiary: rgb(65, 66, 68);
+                --content: rgb(196, 196, 197);
+                --code-block-bg: rgb(46, 46, 51);
+                --code-bg: rgb(55, 56, 62);
+                --border: rgb(51, 51, 51);
+                color-scheme: dark;
+            }
+
+            .list {
+                background: var(--theme);
+            }
+
+            .toc {
+                background: var(--entry);
+            }
+        }
+
+    </style>
+</noscript>
+<script>
+    if (localStorage.getItem("pref-theme") === "dark") {
+        document.querySelector("html").dataset.theme = 'dark';
+    } else if (localStorage.getItem("pref-theme") === "light") {
+       document.querySelector("html").dataset.theme = 'light';
+    } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        document.querySelector("html").dataset.theme = 'dark';
+    } else {
+        document.querySelector("html").dataset.theme = 'light';
+    }
+
+</script>
+<script data-goatcounter="https://gograph.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
+<meta property="og:url" content="https://gograph.identuum.ai/docs/mcp-registry/">
+  <meta property="og:site_name" content="gograph – Go Codebase Analysis & MCP Server">
+  <meta property="og:title" content="Official MCP Registry">
+  <meta property="og:description" content="Discover and install gograph as a local MCP Bundle, select the correct platform asset, and understand the preview limitations.">
+  <meta property="og:locale" content="en_us">
+  <meta property="og:type" content="article">
+    <meta property="article:section" content="docs">
+
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Official MCP Registry">
+  <meta name="twitter:description" content="Discover and install gograph as a local MCP Bundle, select the correct platform asset, and understand the preview limitations.">
+
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position":  1 ,
+      "name": "Documentation Portal",
+      "item": "https://gograph.identuum.ai/docs/"
+    },
+    {
+      "@type": "ListItem",
+      "position":  2 ,
+      "name": "Official MCP Registry",
+      "item": "https://gograph.identuum.ai/docs/mcp-registry/"
+    }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Official MCP Registry",
+  "name": "Official MCP Registry",
+  "description": "Discover and install gograph as a local MCP Bundle, select the correct platform asset, and understand the preview limitations.",
+  "keywords": [
+
+  ],
+  "articleBody": "gograph is published to the official Model Context Protocol Registry as:\nio.github.ozgurcd/gograph The official Registry is currently in preview. Its API, stored data, and client support may change before general availability.\nRegistry installation is a separate path Homebrew and go install place the normal gograph CLI on PATH. You then configure an MCP client to run gograph mcp . The Claude Code marketplace entry supplies workflow guidance but still needs that binary and a project registration.\nRegistry installation instead downloads a self-contained MCPB into a client that supports MCP Bundles. It does not install the Homebrew formula, run go install, or configure the Claude Code marketplace plugin.\nInstallation Result brew install ozgurcd/tap/gograph CLI binary plus manual local MCP registration go install github.com/ozgurcd/gograph/cmd/gograph@latest CLI binary plus manual local MCP registration Registry / MCPB Platform-specific local server bundle managed by an MCPB-capable client Clients without MCPB support should use either normal binary installation method.\nSelect the Go project directory The bundle asks for the root directory of the Go repository to analyze. The Registry identifies the package as local stdio MCPB metadata; the bundle manifest launches the executable with distinct arguments equivalent to:\ngograph mcp /absolute/path/to/go-project The manifest does not construct a shell command. It passes mcp and the selected directory as separate argument values. Configure a separate project directory for each repository-specific server instance.\nThe fixed bundle arguments omit --persist-refresh, so MCP refreshes stay in memory and do not overwrite project artifacts. To opt into latest-state publication, use a custom local registration with that flag. The opt-in mode does not update .gitignore and is not a per-branch cache. It publishes graph.json plus nine Markdown reports under .gograph/: graph/report publishers coordinate through .artifacts.lock, rename reports first, and rename graph.json last as the commit marker. Same-directory replacement is atomic on Unix-like systems but is not guaranteed atomic by Go on non-Unix platforms; the complete bundle is not one atomic transaction, and the lock file remains as separate operational state.\nSupported targets Every release supplies six genuine MCPB archives:\nHost Target Asset suffix macOS Intel darwin/amd64 darwin_amd64.mcpb macOS Apple silicon darwin/arm64 darwin_arm64.mcpb Linux x86-64 linux/amd64 linux_amd64.mcpb Linux ARM64 linux/arm64 linux_arm64.mcpb Windows x86-64 windows/amd64 windows_amd64.mcpb Windows ARM64 windows/arm64 windows_arm64.mcpb The complete asset pattern is gograph___.mcpb.\nPreview limitation: clients cannot reliably select by CPU The current Registry package schema has no standard OS or CPU selector. MCPB manifests declare darwin, linux, or win32, but do not have a standard architecture field. A Registry entry can therefore list all six bundles while still leaving package selection to the client or user.\nChoose the filename matching the host architecture. If the client does not offer that choice, use Homebrew or go install and configure the local stdio command manually. The filename is the architecture discriminator, not a portable automatic-selection mechanism.\nLocal operation and data handling Registry installation changes packaging, not gograph’s security model:\nThe MCP server runs locally over stdio and opens no listening port. Source, graphs, query results, and session telemetry are not sent to a gograph service. Optional session metadata stays under the selected project’s .gograph/sessions/; raw query results are not logged there. Default indexing parses source without executing the target repository’s binaries or tests. Precise analysis and doc use the installed Go toolchain and therefore follow its configured module cache, proxy, and network policy. Publication integrity Current releases pin Registry schema 2025-12-11, MCPB manifest schema 0.4, @anthropic-ai/mcpb 2.1.2, and mcp-publisher 1.7.9. Release automation builds and validates every bundle, records each SHA-256 in server.json, publishes the immutable GitHub assets first, and then authenticates to the Registry with GitHub Actions OIDC. No long-lived Registry token is stored.\nRegistry versions are immutable. Reruns succeed only when the existing GitHub and Registry metadata match exactly; mismatches fail rather than overwriting a publication. Maintainers can find the complete release checklist in the repository’s docs/mcp-registry.md.\n",
+  "wordCount" : "634",
+  "inLanguage": "en",
+  "datePublished": "0001-01-01T00:00:00Z",
+  "dateModified": "0001-01-01T00:00:00Z",
+  "author":{
+    "@type": "Person",
+    "name": "Ozgur Demir"
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://gograph.identuum.ai/docs/mcp-registry/"
+  },
+  "publisher": {
+    "@type": "Person",
+    "name": "gograph – Go Codebase Analysis \u0026 MCP Server",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://gograph.identuum.ai/favicon.ico"
+    }
+  }
+}
+</script>
+</head>
+<body id="top">
+    <header class="header">
+    <nav class="header-nav">
+        <div class="logo">
+            <a href="https://gograph.identuum.ai/" accesskey="h" title="gograph – Go Codebase Analysis &amp; MCP Server (Alt + H)">gograph – Go Codebase Analysis &amp; MCP Server</a>
+            <div class="logo-switches">
+                <button id="theme-toggle" class="theme-toggle" accesskey="t" title="(Alt + T)" aria-label="Toggle theme">
+                    <svg class="moon" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                    <svg class="sun" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <ul id="menu" class="menu">
+            <li>
+                <a href="https://gograph.identuum.ai/docs/getting-started/" title="Get Started">
+                    <span>Get Started</span>
+                </a>
+            </li>
+            <li>
+                <a href="https://gograph.identuum.ai/docs/command-reference/" title="Commands">
+                    <span>Commands</span>
+                </a>
+            </li>
+            <li>
+                <a href="https://gograph.identuum.ai/docs/agent-integration/" title="AI Integration">
+                    <span>AI Integration</span>
+                </a>
+            </li>
+            <li>
+                <a href="https://gograph.identuum.ai/docs/workflows/" title="Workflows">
+                    <span>Workflows</span>
+                </a>
+            </li>
+            <li>
+                <a href="https://gograph.identuum.ai/posts/" title="Blog">
+                    <span>Blog</span>
+                </a>
+            </li>
+            <li>
+                <a href="https://github.com/ozgurcd/gograph" title="GitHub">
+                    <span>GitHub</span>&nbsp;
+                    <svg fill="none" shape-rendering="geometricPrecision" stroke="currentColor" stroke-linecap="round"
+                        stroke-linejoin="round" stroke-width="2.5" viewBox="0 0 24 24" height="12" width="12">
+                        <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"></path>
+                        <path d="M15 3h6v6"></path>
+                        <path d="M10 14L21 3"></path>
+                    </svg>
+                </a>
+            </li>
+        </ul>
+    </nav>
+</header>
+<main class="main">
+
+<article class="post-single">
+  <header class="post-header">
+    <nav class="breadcrumbs" role="navigation" aria-label="Breadcrumb">
+            <a href="/">Home</a>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-right">
+                <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+            <a href="/docs/">Documentation Portal</a>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-right">
+        <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+</nav>
+    <h1 class="post-title entry-hint-parent">
+      Official MCP Registry
+    </h1>
+    <div class="post-description">
+      Discover and install gograph as a local MCP Bundle, select the correct platform asset, and understand the preview limitations.
+    </div>
+    <div class="post-meta">
+
+<span>3 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span>
+
+</div>
+  </header>
+  <div class="post-content md-content"><p>gograph is published to the official Model Context Protocol Registry as:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>io.github.ozgurcd/gograph
+</span></span></code></pre></div><p>The official Registry is currently in preview. Its API, stored data, and
+client support may change before general availability.</p>
+<h2 id="registry-installation-is-a-separate-path">Registry installation is a separate path<a hidden class="anchor" aria-hidden="true" href="#registry-installation-is-a-separate-path">#</a></h2>
+<p>Homebrew and <code>go install</code> place the normal <code>gograph</code> CLI on <code>PATH</code>. You then
+configure an MCP client to run <code>gograph mcp &lt;project-directory&gt;</code>. The Claude
+Code marketplace entry supplies workflow guidance but still needs that binary
+and a project registration.</p>
+<p>Registry installation instead downloads a self-contained MCPB into a client
+that supports MCP Bundles. It does not install the Homebrew formula, run
+<code>go install</code>, or configure the Claude Code marketplace plugin.</p>
+<table>
+	<thead>
+			<tr>
+					<th>Installation</th>
+					<th>Result</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>brew install ozgurcd/tap/gograph</code></td>
+					<td>CLI binary plus manual local MCP registration</td>
+			</tr>
+			<tr>
+					<td><code>go install github.com/ozgurcd/gograph/cmd/gograph@latest</code></td>
+					<td>CLI binary plus manual local MCP registration</td>
+			</tr>
+			<tr>
+					<td>Registry / MCPB</td>
+					<td>Platform-specific local server bundle managed by an MCPB-capable client</td>
+			</tr>
+	</tbody>
+</table>
+<p>Clients without MCPB support should use either normal binary installation
+method.</p>
+<h2 id="select-the-go-project-directory">Select the Go project directory<a hidden class="anchor" aria-hidden="true" href="#select-the-go-project-directory">#</a></h2>
+<p>The bundle asks for the root directory of the Go repository to analyze. The
+Registry identifies the package as local stdio MCPB metadata; the bundle
+manifest launches the executable with distinct arguments equivalent to:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>gograph mcp /absolute/path/to/go-project
+</span></span></code></pre></div><p>The manifest does not construct a shell command. It passes <code>mcp</code> and the
+selected directory as separate argument values. Configure a separate project
+directory for each repository-specific server instance.</p>
+<p>The fixed bundle arguments omit <code>--persist-refresh</code>, so MCP refreshes stay in
+memory and do not overwrite project artifacts. To opt into latest-state
+publication, use a custom local registration with that flag. The opt-in mode
+does not update <code>.gitignore</code> and is not a per-branch cache. It publishes
+<code>graph.json</code> plus nine Markdown reports under <code>.gograph/</code>: graph/report
+publishers coordinate through <code>.artifacts.lock</code>, rename reports first, and
+rename <code>graph.json</code> last as the commit marker. Same-directory replacement is
+atomic on Unix-like systems but is not guaranteed atomic by Go on non-Unix
+platforms; the complete bundle is not one atomic transaction, and the lock
+file remains as separate operational state.</p>
+<h2 id="supported-targets">Supported targets<a hidden class="anchor" aria-hidden="true" href="#supported-targets">#</a></h2>
+<p>Every release supplies six genuine MCPB archives:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Host</th>
+					<th>Target</th>
+					<th>Asset suffix</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>macOS Intel</td>
+					<td><code>darwin/amd64</code></td>
+					<td><code>darwin_amd64.mcpb</code></td>
+			</tr>
+			<tr>
+					<td>macOS Apple silicon</td>
+					<td><code>darwin/arm64</code></td>
+					<td><code>darwin_arm64.mcpb</code></td>
+			</tr>
+			<tr>
+					<td>Linux x86-64</td>
+					<td><code>linux/amd64</code></td>
+					<td><code>linux_amd64.mcpb</code></td>
+			</tr>
+			<tr>
+					<td>Linux ARM64</td>
+					<td><code>linux/arm64</code></td>
+					<td><code>linux_arm64.mcpb</code></td>
+			</tr>
+			<tr>
+					<td>Windows x86-64</td>
+					<td><code>windows/amd64</code></td>
+					<td><code>windows_amd64.mcpb</code></td>
+			</tr>
+			<tr>
+					<td>Windows ARM64</td>
+					<td><code>windows/arm64</code></td>
+					<td><code>windows_arm64.mcpb</code></td>
+			</tr>
+	</tbody>
+</table>
+<p>The complete asset pattern is
+<code>gograph_&lt;version&gt;_&lt;goos&gt;_&lt;goarch&gt;.mcpb</code>.</p>
+<h3 id="preview-limitation-clients-cannot-reliably-select-by-cpu">Preview limitation: clients cannot reliably select by CPU<a hidden class="anchor" aria-hidden="true" href="#preview-limitation-clients-cannot-reliably-select-by-cpu">#</a></h3>
+<p>The current Registry package schema has no standard OS or CPU selector. MCPB
+manifests declare <code>darwin</code>, <code>linux</code>, or <code>win32</code>, but do not have a standard
+architecture field. A Registry entry can therefore list all six bundles while
+still leaving package selection to the client or user.</p>
+<p>Choose the filename matching the host architecture. If the client does not
+offer that choice, use Homebrew or <code>go install</code> and configure the local stdio
+command manually. The filename is the architecture discriminator, not a
+portable automatic-selection mechanism.</p>
+<h2 id="local-operation-and-data-handling">Local operation and data handling<a hidden class="anchor" aria-hidden="true" href="#local-operation-and-data-handling">#</a></h2>
+<p>Registry installation changes packaging, not gograph&rsquo;s security model:</p>
+<ul>
+<li>The MCP server runs locally over stdio and opens no listening port.</li>
+<li>Source, graphs, query results, and session telemetry are not sent to a
+gograph service.</li>
+<li>Optional session metadata stays under the selected project&rsquo;s
+<code>.gograph/sessions/</code>; raw query results are not logged there.</li>
+<li>Default indexing parses source without executing the target repository&rsquo;s
+binaries or tests.</li>
+<li>Precise analysis and <code>doc</code> use the installed Go toolchain and therefore
+follow its configured module cache, proxy, and network policy.</li>
+</ul>
+<h2 id="publication-integrity">Publication integrity<a hidden class="anchor" aria-hidden="true" href="#publication-integrity">#</a></h2>
+<p>Current releases pin Registry schema <code>2025-12-11</code>, MCPB manifest schema <code>0.4</code>,
+<code>@anthropic-ai/mcpb</code> <code>2.1.2</code>, and <code>mcp-publisher</code> <code>1.7.9</code>. Release automation
+builds and validates every bundle, records each SHA-256 in <code>server.json</code>,
+publishes the immutable GitHub assets first, and then authenticates to the
+Registry with GitHub Actions OIDC. No long-lived Registry token is stored.</p>
+<p>Registry versions are immutable. Reruns succeed only when the existing GitHub
+and Registry metadata match exactly; mismatches fail rather than overwriting a
+publication. Maintainers can find the complete release checklist in the
+repository&rsquo;s <code>docs/mcp-registry.md</code>.</p>
+
+
+  </div>
+
+  <footer class="post-footer">
+    <ul class="post-tags">
+    </ul>
+  </footer>
+<script src="https://giscus.app/client.js"
+        data-repo="ozgurcd/gograph"
+        data-repo-id=""
+        data-category="Blog Comments"
+        data-category-id=""
+        data-mapping="pathname"
+        data-strict="0"
+        data-reactions-enabled="1"
+        data-emit-metadata="0"
+        data-input-position="top"
+        data-theme="preferred_color_scheme"
+        data-lang="en"
+        data-loading="lazy"
+        crossorigin="anonymous"
+        async>
+</script>
+
+</article>
+    </main>
+
+<footer class="footer">
+        <span>&copy; 2026 <a href="https://gograph.identuum.ai/">gograph – Go Codebase Analysis &amp; MCP Server</a></span> ·
+
+
+
+    <span>
+        Powered by
+        <a href="https://gohugo.io/?utm_source=papermod" rel="noopener" target="_blank">Hugo</a> &
+        <a href="https://github.com/adityatelange/hugo-PaperMod/" rel="noopener" target="_blank">PaperMod</a>
+    </span>
+</footer>
+<a href="#top" id="top-link" class="top-link hidden" aria-label="go to top" title="Go to Top (Alt + G)" accesskey="g">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevrons-up">
+        <polyline points="17 11 12 6 7 11"></polyline>
+        <polyline points="17 18 12 13 7 18"></polyline>
+    </svg>
+</a>
+
+<script>
+    let menu = document.getElementById('menu');
+    if (menu) {
+
+        const scrollPosition = localStorage.getItem("menu-scroll-position");
+        if (scrollPosition) {
+            menu.scrollLeft = parseInt(scrollPosition, 10);
+        }
+
+        menu.onscroll = function () {
+            localStorage.setItem("menu-scroll-position", menu.scrollLeft);
+        }
+    }
+
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+        anchor.addEventListener("click", function (e) {
+            e.preventDefault();
+            var id = this.getAttribute("href").substr(1);
+            if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                document.querySelector(`[id='${decodeURIComponent(id)}']`).scrollIntoView({
+                    behavior: "smooth"
+                });
+            } else {
+                document.querySelector(`[id='${decodeURIComponent(id)}']`).scrollIntoView();
+            }
+            if (id === "top") {
+                history.replaceState(null, null, " ");
+            } else {
+                history.pushState(null, null, `#${id}`);
+            }
+        });
+    });
+
+</script>
+<script>
+    var toplink = document.getElementById("top-link");
+    window.onscroll = function () {
+        const scrollThreshold = window.innerHeight;
+        if (document.body.scrollTop > scrollThreshold || document.documentElement.scrollTop > scrollThreshold) {
+            toplink.classList.remove("hidden");
+        } else {
+            toplink.classList.add("hidden");
+        }
+    };
+
+</script>
+<script>
+    document.getElementById("theme-toggle").addEventListener("click", () => {
+        const html = document.querySelector("html");
+        if (html.dataset.theme === "dark") {
+            html.dataset.theme = 'light';
+            localStorage.setItem("pref-theme", 'light');
+        } else {
+            html.dataset.theme = 'dark';
+            localStorage.setItem("pref-theme", 'dark');
+        }
+    })
+
+</script>
+<script>
+    document.querySelectorAll('pre > code').forEach((codeblock) => {
+        const container = codeblock.parentNode.parentNode;
+
+        const copybutton = document.createElement('button');
+        copybutton.classList.add('copy-code');
+        copybutton.innerHTML = 'copy';
+
+        function copyingDone() {
+            copybutton.innerHTML = 'copied!';
+            setTimeout(() => {
+                copybutton.innerHTML = 'copy';
+            }, 2000);
+        }
+
+        copybutton.addEventListener('click', (cb) => {
+            if ('clipboard' in navigator) {
+                navigator.clipboard.writeText(codeblock.textContent);
+                copyingDone();
+                return;
+            }
+
+            const range = document.createRange();
+            range.selectNodeContents(codeblock);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            try {
+                document.execCommand('copy');
+                copyingDone();
+            } catch (e) { };
+            selection.removeRange(range);
+        });
+
+        if (container.classList.contains("highlight")) {
+            container.appendChild(copybutton);
+        } else if (container.parentNode.firstChild == container) {
+
+        } else if (codeblock.parentNode.parentNode.parentNode.parentNode.parentNode.nodeName == "TABLE") {
+
+            codeblock.parentNode.parentNode.parentNode.parentNode.parentNode.appendChild(copybutton);
+        } else {
+
+            codeblock.parentNode.appendChild(copybutton);
+        }
+    });
+</script>
+</body>
+
+</html>

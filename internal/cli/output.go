@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 )
 
 // jsonMode is set to true when --json is present in the CLI args.
@@ -26,7 +27,7 @@ type Envelope struct {
 	// Status is "ok" (results found), "empty" (no results, symbol/query valid),
 	// or "error" (hard failure — graph missing, parse error, etc.).
 	Status  string      `json:"status"`
-	Count   int         `json:"count,omitempty"`
+	Count   int         `json:"count"`
 	Results interface{} `json:"results,omitempty"`
 	Error   string      `json:"error,omitempty"`
 }
@@ -52,6 +53,7 @@ func okEnvelope(cmd, query string, results interface{}, count int) Envelope {
 	status := "ok"
 	if count == 0 {
 		status = "empty"
+		results = normalizeEmptyResults(results)
 	}
 	return Envelope{
 		SchemaVersion: SchemaVersion,
@@ -61,6 +63,21 @@ func okEnvelope(cmd, query string, results interface{}, count int) Envelope {
 		Count:         count,
 		Results:       results,
 	}
+}
+
+// normalizeEmptyResults keeps successful empty collection responses
+// structurally useful to JSON consumers. An interface holding a nil slice is
+// not itself nil, so handle both forms explicitly while preserving the slice's
+// concrete type when possible.
+func normalizeEmptyResults(results interface{}) interface{} {
+	if results == nil {
+		return []any{}
+	}
+	value := reflect.ValueOf(results)
+	if value.Kind() == reflect.Slice && value.IsNil() {
+		return reflect.MakeSlice(value.Type(), 0, 0).Interface()
+	}
+	return results
 }
 
 // errEnvelope builds an error envelope (graph not found, parse failure, etc.).

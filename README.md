@@ -62,6 +62,28 @@ successfully. Go build constraints, cmd/go package-directory rules, generated
 sources, module-mode ignore directives, and Git ignores use the same scanner
 policy for building, freshness checks, and change detection.
 
+MCP refreshes stay in memory by default. To publish each successful refresh
+for CLI consumers and later server processes, start the server explicitly with:
+
+```bash
+gograph mcp . --persist-refresh
+```
+
+This opt-in mode writes or overwrites `.gograph/graph.json` and the nine
+Markdown reports after a confirmed-fresh refresh. It does not modify
+`.gitignore`, so ignore `.gograph/` yourself before enabling it when needed.
+The directory holds only the latest published state; it is not a per-branch
+cache. If no graph exists, the startup auto-build is published before serving;
+a failure there prevents startup. A later tool-triggered publication failure
+makes that tool return an error, and the server retries the pending publication
+on another refresh-capable call without rebuilding the already-fresh in-memory
+graph. Writers coordinate through a local `.gograph/.artifacts.lock` file.
+Reports are replaced first and `graph.json` is replaced last as the publication
+commit marker; the complete ten-file bundle is not a single atomic filesystem
+transaction. Same-directory replacement is atomic on Unix-like systems; Go
+does not guarantee atomic rename semantics on non-Unix platforms. The lock
+file remains as operational coordination state in addition to the ten outputs.
+
 ## Why gograph?
 
 *Illustrative point-in-time output comparison from an earlier gograph revision
@@ -76,27 +98,34 @@ of evidence):*
 
 ## Key Features
 
-**61 Query and Analysis Capabilities** — callers, callees, impact, context, plan, review, flow, errorflow, orphans, hotspot, coupling, and more. The MCP server registers 65 endpoints including four session lifecycle tools. Full [command reference →](https://gograph.identuum.ai/docs/command-reference/)
+**61 Query, Analysis, and Workflow Capabilities** — callers, callees, impact, context, plan, review, flow, errorflow, orphans, hotspot, coupling, and more. The MCP server registers 65 endpoints including four session lifecycle tools. Full [command reference →](https://gograph.identuum.ai/docs/command-reference/)
 
-**Native MCP Server** — every query and analysis capability has an MCP endpoint for Claude, Cursor, Copilot, and other MCP clients. Host integration and CI artifact commands (`build`, `gate`, `snapshot`, plugin/hook installation, server startup, help, and version) remain CLI-only.
+**Native MCP Server** — query, analysis, and workflow capabilities have MCP equivalents for Claude, Cursor, Copilot, and other MCP clients. Host/build operations (`build`, `gate`, `snapshot`, plugin/hook installation, server startup, help, and version) intentionally remain CLI-only, and transport-specific presentation differs where appropriate.
 
-**Explicit Freshness Model** — CLI analysis reads the last persisted graph. `gograph stale` is a tri-state predicate in text and JSON modes: exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error. MCP source-analysis tools check freshness per call, adopt a newer persisted precise graph, and rebuild in memory after edits using the latest requested analysis mode. MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot.
+**Explicit Freshness Model** — CLI graph-backed analysis reads the last persisted graph. `gograph stale` is a tri-state predicate in text and JSON modes: exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error. MCP source-analysis tools check freshness per call, adopt a newer persisted precise graph, and rebuild in memory after edits using the latest requested analysis mode. MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot, or the startup auto-build fallback when no artifact exists. With `--persist-refresh`, that snapshot advances after a successful refresh, so default `changes` compares against the newly published state and normally no longer reports that refresh's source edits.
 
 **Compact Composite Workflows** — `context`, `plan`, and `explain` combine source and graph evidence that would otherwise require several separate queries. Actual tool-call and token savings depend on the repository and task.
 
-**Narrow by Design** — never runs target repository binaries or tests and does not read `.env`, key, certificate, or credential files. AI worktree directories (`.claude/`, `.cursor/`, `.agents/`) are excluded. Precise analysis and external documentation use the installed Go toolchain.
+**Narrow by Design** — never runs target repository binaries or tests and does not intentionally scan `.env`, key, certificate, or credential files. Explicitly selected in-root policy/config inputs are read as requested. AI worktree directories (`.claude/`, `.cursor/`, `.agents/`) are excluded. Precise analysis and external documentation use the installed Go toolchain.
 
 **Architecture Enforcement** — boundary rules, API drift detection, complexity gates, dead code sweeps, god-object detection, coupling analysis. Run in CI with `gograph gate`.
 
 **Security Flow Analysis** — `flow` follows potential HTTP request, decoded JSON, and environment data across assignments and function calls to SQL query text, process execution, filesystem paths, and outbound HTTP targets. Findings include severity, confidence, and source-to-sink path steps; MCP exposes the same analysis as `gograph_flow`.
 
-**Integrity-Aware Indexing** — `graph.json` is atomically replaced only after a successful parse, records complete/partial build health and `ast`/`precise`/`precise_fallback` analysis status, and exposes both through `gograph stats`. `gate` refuses to evaluate a stale graph.
+**Integrity-Aware Indexing** — `graph.json` is staged and replaced last only after a successful parse (the same-directory rename is atomic on Unix-like systems), records complete/partial build health and `ast`/`precise`/`precise_fallback` analysis status, and exposes both through `gograph stats`. `gate` refuses to evaluate a stale graph.
 
 **Agent Compliance Auditing** — session telemetry tracks whether agents run `plan` before edits and `review` after. Grades agent behavior A–F with actionable recommendations.
 
 ## Command Reference
 
-Query and composed-analysis commands support `--json`; result-list queries also support `--files-only`. Operational commands such as `build`, `wiki`, `gate`, `snapshot`, sessions, installation, help, and version use text output.
+Query and composed-analysis commands support `--json`; the exact `--files-only`
+surface is listed in the command reference. Operational commands such as
+`build`, `wiki`, `gate`, `snapshot`, installation, help, and version use text
+output; `session audit` additionally supports raw JSON. CLI `--mermaid` renders
+`callers`, `callees`, `impact`, `endpoint`, `dependents`, `deps`, `path`, and
+`coupling` as fenced Mermaid. Their MCP equivalents accept `mermaid=true` and
+return the same Markdown-fenced Mermaid text; without it, each tool retains its
+normal response format.
 
 | Category | Commands | What it does |
 |---|---|---|
@@ -164,6 +193,10 @@ the host; do not assume a client will select it automatically. All analysis
 still runs locally over stdio, with no hosted gograph service or remote
 telemetry.
 
+The Registry bundle and installer-generated MCP registrations intentionally omit
+`--persist-refresh`, keeping disk publication off by default. Use a custom
+local MCP command if you explicitly want that behavior.
+
 **Desktop config, shared rules, and Claude Code hook setup:**
 ```bash
 gograph add-claude-plugin
@@ -175,13 +208,14 @@ This registers the Claude Desktop MCP server, injects shared `CLAUDE.md` steerin
 /plugin marketplace add ozgurcd/gograph
 /plugin install gograph@gograph
 ```
-Discovers gograph through Claude Code's plugin marketplace and ships a `SKILL.md` that auto-activates on Go work, teaching the agent the workflow (`capabilities` → `build` → `plan` → `context` → edit → `build --precise` → `review`), when to use structural queries, and when to verify with `gopls` or targeted text/source search.
+Discovers gograph through Claude Code's plugin marketplace and ships a `SKILL.md` that auto-activates on Go work, teaching the agent the workflow (`capabilities` → `stats` → `plan` → `context` → edit → `review`), when a durable precise CLI build is useful, when to use structural queries, and when to verify with `gopls` or targeted text/source search.
 
 You still need the `gograph` binary installed (`brew install ozgurcd/tap/gograph` or `go install github.com/ozgurcd/gograph/cmd/gograph@latest`). Use `gograph add-claude-plugin` for Claude Desktop MCP wiring plus shared rules and the Claude Code hook; register the Claude Code MCP server with the printed `claude mcp add` command. Use the plugin marketplace when you prefer discovery from Claude Code's plugin UI.
 
 **Other agents** (Cursor, Copilot, Antigravity, etc.):
 ```bash
-gograph mcp .   # Run as MCP server over stdio
+gograph mcp .                     # stdio server; refreshes stay in memory
+gograph mcp . --persist-refresh   # opt in to publishing refreshed artifacts
 ```
 Add to your `.cursorrules` or AI system prompt:
 > Before answering architecture or repository questions, inspect the available
@@ -201,9 +235,13 @@ For full integration guides, see [docs/coding-agent-usage.md](docs/coding-agent-
 ```bash
 gograph build . --precise
 gograph wiki                 # writes to ./llm-wiki/
-# then read: llm-wiki/README.md → project.md → rules.md → agent-contract.md → overview.md
+# generated orientation starts at: llm-wiki/overview.md
+# if maintained governance pages exist, read:
+# llm-wiki/index.md → project.md → agent-rules.md → agent-contract.md
 ```
-Add `llm-wiki/` to `.gitignore` — these files are regenerated each session.
+Add generated wiki output to `.gitignore` when it is disposable. Do not
+overwrite a repository's maintained or Scrinium-protected `agent-rules.md`;
+propose governed changes through that repository's documented workflow.
 
 ## Example Output
 
@@ -253,7 +291,7 @@ drop-in replacement for another.
 <summary><strong>Correctness model</strong></summary>
 
 - **Default mode** uses Go AST parsing and best-effort heuristics. Tolerates incomplete or non-compiling repositories.
-- **Precise mode** attempts type-checked enrichment and needs compilable, build-selected packages for CHA/SSA results. If enrichment fails or omits an indexed non-test source file, the command warns, publishes the AST graph, and records `precise_fallback`; successful and AST-only builds record `precise` and `ast` respectively.
+- **Precise mode** attempts type-checked enrichment and needs compilable, build-selected packages for CHA/SSA results. If enrichment fails or omits an indexed non-test source file, the command warns, publishes the AST graph, and records `precise_fallback`; if a fresh successful precise artifact already covers the same sources, a failed retry keeps that artifact instead. Successful and AST-only builds record `precise` and `ast` respectively.
 - Each precise interface invocation is represented by one call edge per valid named in-repository CHA target. `callers Interface.Method` (including methods inherited from embedded interfaces and concrete methods promoted from embedded fields) expands through the interface's implementers and reports a shared source expression once; concrete receiver notation and fully-qualified method IDs remain available for disambiguation. Compiler-generated promoted-method forwarding is stored as a traversal-only synthetic edge and is hidden from call-site output.
 - CHA is conservative rather than points-to precise: it may retain implementations that cannot occur in one runtime configuration. Reflection, `unsafe`, plugins, unresolved function values, test-only packages, unnamed concrete types, and module-external implementations can still be incomplete.
 - Callback references are retained only when they resolve to repository callables, and exact call edges are deduplicated before serialization.

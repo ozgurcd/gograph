@@ -5,6 +5,10 @@
 Adding `gograph` gives Claude Code a local AST-derived repository graph and
 composed change-analysis workflows. The benefit depends on the repository and
 task; treat results as static-analysis evidence rather than runtime proof.
+Indexing reads Go source and ordinary project metadata such as `go.mod`,
+`.gitignore`, Git state, persisted graph data, and explicitly selected gograph
+configuration. It does not intentionally scan secret-bearing `.env`, key,
+certificate, kubeconfig, tfstate, or credential files.
 
 ## 1. How Gograph Complements Gopls
 
@@ -46,7 +50,11 @@ Registry metadata cannot select CPU architecture portably. Choose the matching
 asset filename, or use Homebrew/`go install` plus manual registration. See
 [Official MCP Registry and MCPB Distribution](mcp-registry.md).
 
-## 2. Project Instructions Setup
+The Registry bundle and installer-generated MCP registrations leave refresh
+persistence off. A custom local registration can add `--persist-refresh` when
+you explicitly want successful refreshes to overwrite `.gograph` artifacts.
+
+## 3. Project Instructions Setup
 
 Claude Code looks for a `CLAUDE.md` file in the root of your repository to understand project-specific rules and tool preferences. 
 
@@ -56,14 +64,14 @@ Add the following block to your repository's `CLAUDE.md`:
 ## Repository Navigation (CRITICAL)
 This project is indexed using `gograph`. **DO NOT use `grep` or `cat` for structural Go code analysis.**
 
-1. Before answering architecture or repository questions, inspect the available `gograph_*` MCP tools for the current project and use them. Each project ships its own gograph MCP server; pick the matching one.
-2. If MCP tools are not available, run `gograph build .` in the terminal to ensure the index is fresh, then use the CLI commands (e.g., `gograph implementers <InterfaceName>`).
-3. If the codebase is in a compilable state, building with `gograph build . --precise` enables strict type-checked interface analysis and highly precise call edges.
+1. Before answering architecture or repository questions, inspect the available `gograph_*` MCP tools for the current project and use the server registered for that repository.
+2. The MCP server builds and refreshes an in-memory AST graph automatically. If MCP tools are unavailable, run `gograph build .` in the terminal, then use CLI commands such as `gograph implementers <InterfaceName>`.
+3. For compilable, build-selected packages, `gograph build . --precise` adds type-checked CHA/SSA enrichment. CHA is conservative, and a failed retry retains an already-fresh successful precise artifact for the same sources instead of replacing it with a fallback.
 4. To extract a function body or mock stub without reading the whole file, use the source tool.
-5. Use `grep` ONLY for string literals, configuration files (.env), or markdown documentation.
+5. Use targeted text search for string literals, ordinary non-sensitive configuration, generated or non-indexed files, and documentation. Do not inspect `.env`, key, certificate, kubeconfig, tfstate, or credential files unless the user explicitly places them in scope.
 ```
 
-## 3. Example Workflows
+## 4. Example Workflows
 
 Here is how Claude Code behaves before and after `gograph`:
 
@@ -97,9 +105,9 @@ Here is how Claude Code behaves before and after `gograph`:
 2. Claude receives structured HTTP/JSON/environment source paths to SQL query text, process execution, filesystem, and outbound HTTP sinks.
 3. Claude uses `gograph source <symbol>` to inspect each finding. Flow results are path-insensitive review leads with bounded call-site matching, not proof of exploitability.
 
-## 4. MCP Integration (Native Plugins)
+## 5. MCP Integration
 
-Instead of passing CLI instructions via `CLAUDE.md`, you can give Claude native superpowers by installing `gograph` as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) plugin. This exposes all of `gograph`'s capabilities as native LLM tools (e.g., `mcp_gograph_query`, `mcp_gograph_impact`), allowing the agent to invoke them automatically.
+Registering `gograph` as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server exposes its query, analysis, and workflow capabilities as tools such as `gograph_query` and `gograph_impact`. Host/build operations (`build`, `gate`, `snapshot`, plugin/hook installation, MCP startup, help, and version) intentionally remain CLI-only. Presentation is transport-specific: MCP uses typed parameters and content payloads instead of CLI output flags. For `callers`, `callees`, `impact`, `endpoint`, `dependents`, `deps`, `path`, and `coupling`, set `mermaid=true` to receive the same Markdown-fenced Mermaid diagram produced by CLI `--mermaid`.
 
 ### Claude Desktop Config + Shared Claude Rules/Hook
 
@@ -145,7 +153,19 @@ Because Claude Code isolates tools per-project, you must explicitly add `gograph
 claude mcp add gograph -- gograph mcp .
 ```
 
+The registration above uses the safe default: refreshed graphs remain in
+memory. To make successful refreshes available to later CLI/server processes,
+register `gograph mcp . --persist-refresh` instead. This overwrites the latest
+`.gograph/graph.json` and nine reports, does not update `.gitignore`, and is not
+a per-branch cache. Reports are replaced first and `graph.json` is replaced
+last as the publication marker. Same-directory replacement is atomic on
+Unix-like systems but is not guaranteed atomic by Go on non-Unix platforms;
+the whole ten-file bundle is not one atomic transaction, and `.artifacts.lock`
+remains as separate operational state. Publication failures during tool-triggered refreshes are
+returned to the MCP tool and retried on a later refresh-capable call; failure
+to publish a required startup auto-build prevents the server from starting.
+
 **How it works:**
-- Claude Code registers the plugin centrally in your home directory (`~/.claude.json`), but **maps it directly to your current project directory**.
+- Claude Code records the MCP server entry in your home configuration (`~/.claude.json`) and scopes it to the current project directory.
 - The `.` in `gograph mcp .` tells the server to index whatever specific folder Claude Code is currently operating in.
 - **You must run this command once for each Go project repository** you wish to use it in. This prevents your agent from accidentally querying index databases from other projects!
