@@ -5,12 +5,14 @@ INSTALL   = /usr/local/bin
 MCPB_VERSION ?= $(shell awk -F ' = ' '$$1 == "current_version" { print $$2 }' .bumpversion.cfg)
 MCPB_OUTPUT  ?= .release-mcpb
 MCPB_SERVER  ?= server.json
+BENCHMARK_VERSION ?= $(MCPB_VERSION)
+BENCHMARK_RESULT ?= benchmarks/results/gograph-v$(BENCHMARK_VERSION).json
 RELEASE_REMOTE ?= origin
 RELEASE_DIST ?= $(MCPB_OUTPUT)/goreleaser-dist
 GRYPE ?= grype
 override GORELEASER_VERSION := v2.17.0
 
-.PHONY: build test format-check vulnerability-check scan-release-artifacts release-artifact-vulnerability-check run-build clean bump-patch bump-minor bump-major install release release-dry-run release-verify release-go-check release-goreleaser-check mcpb-build mcpb-verify mcpb-smoke mcpb-check docs-check
+.PHONY: build test benchmark format-check vulnerability-check scan-release-artifacts release-artifact-vulnerability-check run-build clean bump-patch bump-minor bump-major install release release-dry-run release-verify release-go-check release-goreleaser-check mcpb-build mcpb-verify mcpb-smoke mcpb-check docs-check
 
 build:
 	$(eval VERSION := $(shell grep '^current_version' .bumpversion.cfg | awk '{print $$3}'))
@@ -19,6 +21,9 @@ build:
 	@mkdir -p $(BUILD_DIR)
 	go build -ldflags "-X main.version=$(VERSION)-$(GIT_COMMIT)$(DIRTY) -X main.releaseVersionMarker=gograph-release-version=/$(VERSION)-$(GIT_COMMIT)$(DIRTY)/" -o $(BUILD_DIR)/$(BINARY) $(CMD)
 	@echo "Built $(BUILD_DIR)/$(BINARY) v$(VERSION)-$(GIT_COMMIT)$(DIRTY)"
+
+benchmark: build
+	go run ./scripts/benchmark.go --suite benchmarks/suite.json --gograph-bin $(BUILD_DIR)/$(BINARY) --runs 3 --output $(BENCHMARK_RESULT) --demo-output docs-site/static/demo/data.json
 
 release:
 	go run ./cmd/mcpb-release auto-release --repository-root . --remote "$(RELEASE_REMOTE)"

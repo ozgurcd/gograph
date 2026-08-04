@@ -1,0 +1,312 @@
+{
+  "schema_version": "1",
+  "suite": "refactor-shop-structural-evidence",
+  "description": "A controlled Go refactor fixture with manually reviewable structural ground truth.",
+  "generated_at": "2026-08-04T19:17:41Z",
+  "source_revision": "11363b983906f63a208669f2b4915295b0d1e185",
+  "source_dirty": true,
+  "binary_version": "gograph version v1.5.5-11363b9",
+  "runner_sha256": "7e9086852dcfa062e33a4c373210585f40ad6d85c6ef4a47ba85239ce1dd6bd4",
+  "fixture_sha256": "d3c3e6a35b53ef2e5c571fd4b84a5be5a43875f79a02170397103b15fe6c04ad",
+  "suite_sha256": "cfe4fec5a2f3cc8e4b2218a038c89c277cebf117d35293dc770d5dc7fef129dc",
+  "analysis_mode": "precise",
+  "setup": {
+    "fixture_tests_passed": true,
+    "build_passed": true,
+    "precision": "precise",
+    "build_status": "complete"
+  },
+  "limitations": [
+    "This suite measures deterministic evidence retrieval, process output, and elapsed time; it is not an end-to-end coding-agent or token-cost benchmark.",
+    "The fixture is intentionally small and controlled. Results do not predict behavior on every repository.",
+    "Text-search workflows are representative baselines, not claims about the full capabilities of ripgrep or gopls."
+  ],
+  "scenarios": [
+    {
+      "id": "implicit-interface-implementers",
+      "title": "Find implicit interface implementations",
+      "question": "Which concrete types satisfy ProductRepository without declaring that relationship?",
+      "demo": {
+        "command": "gograph implementers ProductRepository --json",
+        "finding": "Both implicit implementations are returned from the type-checked graph."
+      },
+      "evidence": [
+        {
+          "id": "memory",
+          "description": "MemoryRepository implements ProductRepository",
+          "needle": "MemoryRepository"
+        },
+        {
+          "id": "sql",
+          "description": "SQLRepository implements ProductRepository",
+          "needle": "SQLRepository"
+        }
+      ],
+      "gograph": {
+        "label": "gograph precise graph",
+        "tool_calls": 1,
+        "median_millis": 8,
+        "output_bytes": 516,
+        "output_lines": 23,
+        "output_sha256": "ee1d5d94784066c9ed0cda67c16f2bff807eabd4434dbe7515eda6aec3d8164c",
+        "evidence_found": 2,
+        "evidence_total": 2,
+        "evidence_coverage": 1,
+        "evidence": [
+          {
+            "id": "memory",
+            "description": "MemoryRepository implements ProductRepository",
+            "found": true
+          },
+          {
+            "id": "sql",
+            "description": "SQLRepository implements ProductRepository",
+            "found": true
+          }
+        ],
+        "steps": [
+          {
+            "command": "gograph implementers ProductRepository --json",
+            "exit_code": 0,
+            "output": "{\n  \"schema_version\": \"1\",\n  \"command\": \"implementers\",\n  \"query\": \"ProductRepository\",\n  \"status\": \"ok\",\n  \"count\": 2,\n  \"results\": [\n    {\n      \"kind\": \"struct\",\n      \"name\": \"MemoryRepository\",\n      \"file\": \"memory/repository.go\",\n      \"line\": 11,\n      \"detail\": \"implements ProductRepository (type-checked)\"\n    },\n    {\n      \"kind\": \"struct\",\n      \"name\": \"SQLRepository\",\n      \"file\": \"sqlrepo/repository.go\",\n      \"line\": 10,\n      \"detail\": \"implements ProductRepository (type-checked)\"\n    }\n  ]\n}\n"
+          }
+        ]
+      },
+      "baseline": {
+        "label": "literal text search",
+        "tool_calls": 1,
+        "median_millis": 4,
+        "output_bytes": 228,
+        "output_lines": 3,
+        "output_sha256": "459de6f55956d6739598f98f6e0d05ee2233ebca64099fc2828306dff12573b2",
+        "evidence_found": 0,
+        "evidence_total": 2,
+        "evidence_coverage": 0,
+        "evidence": [
+          {
+            "id": "memory",
+            "description": "MemoryRepository implements ProductRepository",
+            "found": false
+          },
+          {
+            "id": "sql",
+            "description": "SQLRepository implements ProductRepository",
+            "found": false
+          }
+        ],
+        "steps": [
+          {
+            "command": "rg --sort path -n ProductRepository --glob *.go .",
+            "exit_code": 0,
+            "output": "./catalog/catalog.go:10:type ProductRepository interface {\n./service/checkout.go:11:\trepository catalog.ProductRepository\n./service/checkout.go:14:func NewCheckoutService(repository catalog.ProductRepository) *CheckoutService {\n"
+          }
+        ]
+      },
+      "passed": true
+    },
+    {
+      "id": "interface-dispatch-callers",
+      "title": "Trace an interface-dispatched call",
+      "question": "Which function calls ProductRepository.Save through an interface value?",
+      "demo": {
+        "command": "gograph callers ProductRepository.Save --exact --json",
+        "finding": "The interface-qualified query resolves the concrete dispatch target and preserves the source call site."
+      },
+      "evidence": [
+        {
+          "id": "checkout",
+          "description": "Checkout calls ProductRepository.Save",
+          "needle": "Checkout"
+        },
+        {
+          "id": "callsite",
+          "description": "The result retains the repository.Save call site",
+          "needle": "repository.Save"
+        }
+      ],
+      "gograph": {
+        "label": "gograph precise graph",
+        "tool_calls": 1,
+        "median_millis": 8,
+        "output_bytes": 492,
+        "output_lines": 19,
+        "output_sha256": "85e670c0cff182c6d461a0e8088475c4d851b9747c3b28d158e8afd27ea9deaa",
+        "evidence_found": 2,
+        "evidence_total": 2,
+        "evidence_coverage": 1,
+        "evidence": [
+          {
+            "id": "checkout",
+            "description": "Checkout calls ProductRepository.Save",
+            "found": true
+          },
+          {
+            "id": "callsite",
+            "description": "The result retains the repository.Save call site",
+            "found": true
+          }
+        ],
+        "steps": [
+          {
+            "command": "gograph callers ProductRepository.Save --exact --json",
+            "exit_code": 0,
+            "output": "{\n  \"schema_version\": \"1\",\n  \"command\": \"callers\",\n  \"query\": \"ProductRepository.Save\",\n  \"status\": \"ok\",\n  \"count\": 1,\n  \"results\": [\n    {\n      \"kind\": \"caller\",\n      \"name\": \"(*CheckoutService).Checkout\",\n      \"file\": \"service/checkout.go\",\n      \"line\": 26,\n      \"detail\": \"calls s.repository.Save  -\\u003e  `if err := s.repository.Save(ctx, product); err != nil {`\",\n      \"call_site_file\": \"service/checkout.go\",\n      \"call_site_line\": 35,\n      \"call_site_column\": 29\n    }\n  ]\n}\n"
+          }
+        ]
+      },
+      "baseline": {
+        "label": "selector text search",
+        "tool_calls": 1,
+        "median_millis": 4,
+        "output_bytes": 82,
+        "output_lines": 1,
+        "output_sha256": "3c3c9e29f6f946de8f875f76c07d203bc7228f9b4fa856516da95c173c80734c",
+        "evidence_found": 1,
+        "evidence_total": 2,
+        "evidence_coverage": 0.5,
+        "evidence": [
+          {
+            "id": "checkout",
+            "description": "Checkout calls ProductRepository.Save",
+            "found": false
+          },
+          {
+            "id": "callsite",
+            "description": "The result retains the repository.Save call site",
+            "found": true
+          }
+        ],
+        "steps": [
+          {
+            "command": "rg --sort path -n \\.Save\\( --glob *.go .",
+            "exit_code": 0,
+            "output": "./service/checkout.go:35:\tif err := s.repository.Save(ctx, product); err != nil {\n"
+          }
+        ]
+      },
+      "passed": true
+    },
+    {
+      "id": "composed-change-context",
+      "title": "Gather change context in one workflow",
+      "question": "What source, callers, dependencies, and tests should be inspected before changing ReserveStock?",
+      "demo": {
+        "command": "gograph context ReserveStock --json",
+        "finding": "One response bundles the implementation, caller, error dependency, and mapped test."
+      },
+      "evidence": [
+        {
+          "id": "source",
+          "description": "ReserveStock source is returned",
+          "needle": "product.Stock--"
+        },
+        {
+          "id": "caller",
+          "description": "CheckoutService.Checkout is a caller",
+          "needle": "Checkout"
+        },
+        {
+          "id": "error",
+          "description": "The fmt.Errorf dependency is returned",
+          "needle": "fmt.Errorf"
+        },
+        {
+          "id": "test",
+          "description": "TestReserveStockRejectsEmptyInventory is mapped",
+          "needle": "TestReserveStockRejectsEmptyInventory"
+        }
+      ],
+      "gograph": {
+        "label": "gograph composed context",
+        "tool_calls": 1,
+        "median_millis": 8,
+        "output_bytes": 3506,
+        "output_lines": 101,
+        "output_sha256": "dfdfbeae9ccaf0cd6733233032dd3e8e27f510fe604a96d8eb9c9f120b8737e1",
+        "evidence_found": 4,
+        "evidence_total": 4,
+        "evidence_coverage": 1,
+        "evidence": [
+          {
+            "id": "source",
+            "description": "ReserveStock source is returned",
+            "found": true
+          },
+          {
+            "id": "caller",
+            "description": "CheckoutService.Checkout is a caller",
+            "found": true
+          },
+          {
+            "id": "error",
+            "description": "The fmt.Errorf dependency is returned",
+            "found": true
+          },
+          {
+            "id": "test",
+            "description": "TestReserveStockRejectsEmptyInventory is mapped",
+            "found": true
+          }
+        ],
+        "steps": [
+          {
+            "command": "gograph context ReserveStock --json",
+            "exit_code": 0,
+            "output": "{\n  \"schema_version\": \"1\",\n  \"command\": \"context\",\n  \"query\": \"ReserveStock\",\n  \"status\": \"ok\",\n  \"count\": 1,\n  \"results\": {\n    \"symbol\": \"ReserveStock\",\n    \"role\": \"internal\",\n    \"node\": {\n      \"kind\": \"function\",\n      \"name\": \"ReserveStock\",\n      \"file\": \"service/checkout.go\",\n      \"line\": 18,\n      \"detail\": \"func ReserveStock(product catalog.Product) (catalog.Product, error)\"\n    },\n    \"nodes\": [\n      {\n        \"kind\": \"function\",\n        \"name\": \"ReserveStock\",\n        \"file\": \"service/checkout.go\",\n        \"line\": 18,\n        \"detail\": \"func ReserveStock(product catalog.Product) (catalog.Product, error)\"\n      },\n      {\n        \"kind\": \"function\",\n        \"name\": \"TestReserveStockRejectsEmptyInventory\",\n        \"file\": \"service/checkout_test.go\",\n        \"line\": 25,\n        \"detail\": \"func TestReserveStockRejectsEmptyInventory(t *testing.T)\"\n      }\n    ],\n    \"source\": \"// example.com/refactorshop/service::ReserveStock (service/checkout.go:18-24)\\nfunc ReserveStock(product catalog.Product) (catalog.Product, error) {\\n\\tif product.Stock == 0 {\\n\\t\\treturn catalog.Product{}, fmt.Errorf(\\\"product %q is out of stock\\\", product.ID)\\n\\t}\\n\\tproduct.Stock--\\n\\treturn product, nil\\n}\",\n    \"callers\": [\n      {\n        \"kind\": \"caller\",\n        \"name\": \"(*CheckoutService).Checkout\",\n        \"file\": \"service/checkout.go\",\n        \"line\": 26,\n        \"detail\": \"calls ReserveStock  -\\u003e  `product, err = ReserveStock(product)`\",\n        \"call_site_file\": \"service/checkout.go\",\n        \"call_site_line\": 31,\n        \"call_site_column\": 29\n      },\n      {\n        \"kind\": \"caller\",\n        \"name\": \"TestReserveStockRejectsEmptyInventory\",\n        \"file\": \"service/checkout_test.go\",\n        \"line\": 25,\n        \"detail\": \"calls service.ReserveStock  -\\u003e  `_, err := service.ReserveStock(catalog.Product{ID: \\\"gopher\\\"})`\",\n        \"call_site_file\": \"service/checkout_test.go\",\n        \"call_site_line\": 26,\n        \"call_site_column\": 32\n      }\n    ],\n    \"callees\": [\n      {\n        \"kind\": \"callee\",\n        \"name\": \"fmt.Errorf\",\n        \"file\": \"service/checkout.go\",\n        \"line\": 20,\n        \"detail\": \"called by ReserveStock  -\\u003e  `return catalog.Product{}, fmt.Errorf(\\\"product %q is out of stock\\\", product.ID)`\",\n        \"call_site_file\": \"service/checkout.go\",\n        \"call_site_line\": 20,\n        \"call_site_column\": 39\n      },\n      {\n        \"kind\": \"callee\",\n        \"name\": \"service.ReserveStock\",\n        \"file\": \"service/checkout_test.go\",\n        \"line\": 26,\n        \"detail\": \"called by TestReserveStockRejectsEmptyInventory  -\\u003e  `_, err := service.ReserveStock(catalog.Product{ID: \\\"gopher\\\"})`\",\n        \"call_site_file\": \"service/checkout_test.go\",\n        \"call_site_line\": 26,\n        \"call_site_column\": 32\n      },\n      {\n        \"kind\": \"callee\",\n        \"name\": \"t.Fatal\",\n        \"file\": \"service/checkout_test.go\",\n        \"line\": 28,\n        \"detail\": \"called by TestReserveStockRejectsEmptyInventory  -\\u003e  `t.Fatal(\\\"ReserveStock returned nil error for empty inventory\\\")`\",\n        \"call_site_file\": \"service/checkout_test.go\",\n        \"call_site_line\": 28,\n        \"call_site_column\": 10\n      }\n    ],\n    \"tests\": [\n      \"TestReserveStockRejectsEmptyInventory\"\n    ],\n    \"test_results\": [\n      {\n        \"kind\": \"test\",\n        \"name\": \"TestReserveStockRejectsEmptyInventory\",\n        \"file\": \"service/checkout_test.go\",\n        \"line\": 26,\n        \"detail\": \"exercises service.ReserveStock\"\n      }\n    ]\n  }\n}\n"
+          }
+        ]
+      },
+      "baseline": {
+        "label": "targeted text-search checklist",
+        "tool_calls": 3,
+        "median_millis": 13,
+        "output_bytes": 886,
+        "output_lines": 13,
+        "output_sha256": "da0a3a44b83386f7beb4e166c39bfab4f3f34a8cc8205e3f2eee9ed8d14985ca",
+        "evidence_found": 4,
+        "evidence_total": 4,
+        "evidence_coverage": 1,
+        "evidence": [
+          {
+            "id": "source",
+            "description": "ReserveStock source is returned",
+            "found": true
+          },
+          {
+            "id": "caller",
+            "description": "CheckoutService.Checkout is a caller",
+            "found": true
+          },
+          {
+            "id": "error",
+            "description": "The fmt.Errorf dependency is returned",
+            "found": true
+          },
+          {
+            "id": "test",
+            "description": "TestReserveStockRejectsEmptyInventory is mapped",
+            "found": true
+          }
+        ],
+        "steps": [
+          {
+            "command": "rg --sort path -n -A 8 func ReserveStock --glob *.go .",
+            "exit_code": 0,
+            "output": "./service/checkout.go:18:func ReserveStock(product catalog.Product) (catalog.Product, error) {\n./service/checkout.go-19-\tif product.Stock == 0 {\n./service/checkout.go-20-\t\treturn catalog.Product{}, fmt.Errorf(\"product %q is out of stock\", product.ID)\n./service/checkout.go-21-\t}\n./service/checkout.go-22-\tproduct.Stock--\n./service/checkout.go-23-\treturn product, nil\n./service/checkout.go-24-}\n./service/checkout.go-25-\n./service/checkout.go-26-func (s *CheckoutService) Checkout(ctx context.Context, productID string) (catalog.Product, error) {\n"
+          },
+          {
+            "command": "rg --sort path -n ReserveStock\\( --glob *.go .",
+            "exit_code": 0,
+            "output": "./service/checkout.go:18:func ReserveStock(product catalog.Product) (catalog.Product, error) {\n./service/checkout.go:31:\tproduct, err = ReserveStock(product)\n./service/checkout_test.go:26:\t_, err := service.ReserveStock(catalog.Product{ID: \"gopher\"})\n"
+          },
+          {
+            "command": "rg --sort path -n TestReserveStock --glob *_test.go .",
+            "exit_code": 0,
+            "output": "./service/checkout_test.go:25:func TestReserveStockRejectsEmptyInventory(t *testing.T) {\n"
+          }
+        ]
+      },
+      "passed": true
+    }
+  ]
+}

@@ -13,6 +13,9 @@ type-checked CHA/SSA enrichment. Its CLI and MCP workflows help coding agents
 trace callers and interface implementations, plan change impact, and enforce
 architecture without embeddings or a hosted code index.
 
+**[Try the verified no-install demo](https://gograph.identuum.ai/demo/)** ·
+**[Review the reproducible benchmark](docs/benchmarking.md)**
+
 ![Gograph Demo](gograph-demo.gif)
 
 > **Static analysis; no target-code execution.** Default indexing parses Go source locally and does not call application services. Descendant links and special files for extensions recognized by `go/build` are excluded, graph-directed source reads are confined to regular files beneath the analyzed repository, and linked/non-regular Go tool metadata (`go.mod`, `go.sum`, `go.work`, `go.work.sum`, and `vendor/modules.txt`) is rejected before toolchain invocation; an explicitly symlinked repository root remains supported. Applicable `go.work use` members must stay beneath the workspace directory, and each member directory, `go.mod`, and optional `go.sum` is validated before `cmd/go` starts. Gograph also reads project metadata such as `.gitignore`, graph/config JSON, and Git state. Indexing asks the installed Go toolchain for the effective build/module context; precise mode additionally performs package type loading, and `doc` runs `go doc`. Those operations follow your configured module/cache/network policy. Before repository package loading or `go doc`, applicable local module/workspace source trees are preflighted for links that `cmd/go` may inspect; `.git` and `.gograph` subtrees are excluded. Session telemetry is local under `.gograph/sessions/`; nothing is sent to gograph services.

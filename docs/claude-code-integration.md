@@ -36,7 +36,7 @@ assistants. **`gograph` adds compact, repository-level agent workflows**:
 - **Repository-Level Signals**: gograph adds routes, SQL, env reads, coupling, reachability, risk, policy, and change-oriented composites that are not ordinary LSP queries.
 - **Interface Navigation**: default mode uses structural method-set heuristics; precise mode adds package-qualified type information when packages compile.
 
-Benchmark results depend on repository size, cache state, query, and follow-up behavior. Use `scripts/benchmark.go` to measure the workflow on your own codebase.
+Benchmark results depend on repository size, cache state, query, and follow-up behavior. The controlled suite in `benchmarks/` publishes manually reviewable ground truth, exact commands, and raw output; use `scripts/benchmark.go` to reproduce it or adapt the methodology to your own codebase.
 
 ## 2. Installation
 

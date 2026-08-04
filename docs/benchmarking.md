@@ -1,77 +1,84 @@
-# Comparing Gograph and Gopls Workflows
+# Reproducible Structural Evidence Benchmark
 
-[`gopls`](https://go.dev/gopls/features/mcp) is the Go project's
-compiler-backed language server. It provides live diagnostics, navigation,
-references, implementations, refactoring, and experimental MCP support.
-gograph complements it with a persisted repository graph, composed
-change-analysis responses, and policy-oriented queries.
+The benchmark suite in [`benchmarks/`](../benchmarks/) tests claims that can be
+reviewed directly from a small Go fixture. It deliberately does **not** claim a
+fixed token saving, agent success rate, or universal performance advantage.
 
-The small harness in `scripts/benchmark.go` samples the wall-clock latency and
-raw output size of one gograph command and one `gopls` CLI command. It does not
-prove that either tool is faster, more accurate, or cheaper for a complete
-agent task. The commands return different evidence, and results depend on
-repository size, cache state, selected symbol, client behavior, and follow-up
-reads.
+The controlled `refactor-shop` fixture contains:
 
-## Prerequisites
+- a `ProductRepository` interface;
+- two implicit implementations in separate packages;
+- an interface-dispatched `Save` call;
+- an HTTP caller, a service workflow, and a directly mapped unit test.
 
-1. Build `gograph` with `make build` (the default binary path is
-   `bin/gograph`).
-2. Run `bin/gograph build .` in the repository being benchmarked. The harness
-   invokes the graph-backed `context` command, so rebuild the graph whenever
-   the checked-out source changes.
-3. You must have `gopls` installed and available in your `$PATH`.
+The expected evidence is declared in `benchmarks/suite.json`, beside the source
+that establishes the ground truth. The runner checks every declared item
+against raw command output and fails when a gograph workflow misses one.
 
-## Standard Execution
+## What is measured
 
-To sample `gograph context` and `gopls workspace_symbol`, pass a symbol name:
+For each scenario, the report records:
 
-```bash
-go run scripts/benchmark.go --sym "YourSymbolName"
-```
+- the exact gograph binary version;
+- the Git revision and dirty-worktree state of the harness;
+- SHA-256 digests of the runner, suite, and fixture;
+- fixture test, graph build, precision, and build-health status;
+- command arguments and complete raw output;
+- evidence found versus the manually reviewable ground truth;
+- process-level tool-call count, output bytes, output lines, and median elapsed
+  time across repeated runs.
 
-Example:
-```bash
-go run scripts/benchmark.go --sym "Run"
-```
+Elapsed time is retained for reproducibility, not advertised as a universal
+speed comparison. The fixture is intentionally small, operating-system caches
+vary, and the workflows return different types of evidence.
 
-Use `--gograph-bin` if the binary is elsewhere:
+## Reproduce the checked-in result
 
-```bash
-go run scripts/benchmark.go --gograph-bin /path/to/gograph --sym "Run"
-```
-
-## Sampling References
-
-By default, the script runs `gopls workspace_symbol`. To sample `gopls
-references` instead, provide its position-based target:
-
-Use the `--gopls-target` flag for this:
+Prerequisites are Go, `rg`, and the current repository checkout. Build the
+versioned binary first, then run:
 
 ```bash
-go run scripts/benchmark.go --sym "Run" --gopls-target "/absolute/path/to/repo/file.go:40:6"
+make build
+make benchmark
 ```
 
-Only compare successful commands against the same checked-out source state.
-`gograph context` and `gopls references` are still not semantically equivalent:
-the former is a composed repository-graph response, while the latter is a live,
-compiler-backed language operation.
+`make benchmark` runs the fixture tests, builds a precise graph, executes all
+workflows three times, verifies the declared evidence, and writes:
 
-## Reading the Output
+- `benchmarks/results/gograph-v1.5.5.json` — the complete checked-in report;
+- `docs-site/static/demo/data.json` — the identical data consumed by the
+  no-install public demo.
 
-The harness reports:
+To run the harness without replacing checked-in results:
 
-- command wall-clock time;
-- raw output bytes divided by four as a rough token estimate; and
-- command errors, if either invocation fails.
+```bash
+go run ./scripts/benchmark.go \
+  --suite benchmarks/suite.json \
+  --gograph-bin bin/gograph \
+  --runs 3
+```
 
-It deliberately applies no invented follow-up-read penalty. Real model tokens
-depend on the model tokenizer and MCP/client envelope. End-to-end agent cost
-also includes tool selection, subsequent reads, retries, and whether the task
-was completed correctly.
+## Current v1.5.5 result
 
-For a defensible product evaluation, define representative tasks and manually
-reviewed expected answers, then measure false positives, false negatives,
-tool-call count, actual client tokens, wall-clock time, and task success across
-multiple public repositories. Publish the fixtures and raw transcripts so the
-comparison can be reproduced.
+The checked-in report was produced by `gograph version v1.5.5-11363b9` with a
+complete precise graph. All three gograph workflows recovered every declared
+ground-truth item:
+
+| Scenario | gograph | Text-search baseline | Process calls |
+|---|---:|---:|---:|
+| Implicit interface implementations | 2/2 | 0/2 | 1 vs 1 |
+| Interface-dispatched caller | 2/2 | 1/2 | 1 vs 1 |
+| Composed change context | 4/4 | 4/4 | 1 vs 3 |
+
+This supports three narrow claims: precise gograph analysis can expose Go's
+implicit interface relationships, can qualify an interface-dispatched caller,
+and can compose source/caller/dependency/test evidence into one response on the
+published fixture. It does not establish end-to-end agent accuracy or token
+cost.
+
+## Extending the evidence
+
+New scenarios should add a fixture change that makes the expected relationship
+obvious under manual review, declare evidence strings in `suite.json`, and
+include a realistic comparison workflow. Do not add a marketing claim that the
+runner does not actually validate.

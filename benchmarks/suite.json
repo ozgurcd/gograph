@@ -1,0 +1,93 @@
+{
+  "schema_version": "1",
+  "name": "refactor-shop-structural-evidence",
+  "description": "A controlled Go refactor fixture with manually reviewable structural ground truth.",
+  "fixture": "benchmarks/testdata/refactor-shop",
+  "analysis_mode": "precise",
+  "limitations": [
+    "This suite measures deterministic evidence retrieval, process output, and elapsed time; it is not an end-to-end coding-agent or token-cost benchmark.",
+    "The fixture is intentionally small and controlled. Results do not predict behavior on every repository.",
+    "Text-search workflows are representative baselines, not claims about the full capabilities of ripgrep or gopls."
+  ],
+  "scenarios": [
+    {
+      "id": "implicit-interface-implementers",
+      "title": "Find implicit interface implementations",
+      "question": "Which concrete types satisfy ProductRepository without declaring that relationship?",
+      "evidence": [
+        {"id": "memory", "description": "MemoryRepository implements ProductRepository", "needle": "MemoryRepository"},
+        {"id": "sql", "description": "SQLRepository implements ProductRepository", "needle": "SQLRepository"}
+      ],
+      "gograph": {
+        "label": "gograph precise graph",
+        "steps": [
+          {"program": "{gograph}", "args": ["implementers", "ProductRepository", "--json"]}
+        ]
+      },
+      "baseline": {
+        "label": "literal text search",
+        "steps": [
+          {"program": "rg", "args": ["--sort", "path", "-n", "ProductRepository", "--glob", "*.go", "."]}
+        ]
+      },
+      "demo": {
+        "command": "gograph implementers ProductRepository --json",
+        "finding": "Both implicit implementations are returned from the type-checked graph."
+      }
+    },
+    {
+      "id": "interface-dispatch-callers",
+      "title": "Trace an interface-dispatched call",
+      "question": "Which function calls ProductRepository.Save through an interface value?",
+      "evidence": [
+        {"id": "checkout", "description": "Checkout calls ProductRepository.Save", "needle": "Checkout"},
+        {"id": "callsite", "description": "The result retains the repository.Save call site", "needle": "repository.Save"}
+      ],
+      "gograph": {
+        "label": "gograph precise graph",
+        "steps": [
+          {"program": "{gograph}", "args": ["callers", "ProductRepository.Save", "--exact", "--json"]}
+        ]
+      },
+      "baseline": {
+        "label": "selector text search",
+        "steps": [
+          {"program": "rg", "args": ["--sort", "path", "-n", "\\.Save\\(", "--glob", "*.go", "."]}
+        ]
+      },
+      "demo": {
+        "command": "gograph callers ProductRepository.Save --exact --json",
+        "finding": "The interface-qualified query resolves the concrete dispatch target and preserves the source call site."
+      }
+    },
+    {
+      "id": "composed-change-context",
+      "title": "Gather change context in one workflow",
+      "question": "What source, callers, dependencies, and tests should be inspected before changing ReserveStock?",
+      "evidence": [
+        {"id": "source", "description": "ReserveStock source is returned", "needle": "product.Stock--"},
+        {"id": "caller", "description": "CheckoutService.Checkout is a caller", "needle": "Checkout"},
+        {"id": "error", "description": "The fmt.Errorf dependency is returned", "needle": "fmt.Errorf"},
+        {"id": "test", "description": "TestReserveStockRejectsEmptyInventory is mapped", "needle": "TestReserveStockRejectsEmptyInventory"}
+      ],
+      "gograph": {
+        "label": "gograph composed context",
+        "steps": [
+          {"program": "{gograph}", "args": ["context", "ReserveStock", "--json"]}
+        ]
+      },
+      "baseline": {
+        "label": "targeted text-search checklist",
+        "steps": [
+          {"program": "rg", "args": ["--sort", "path", "-n", "-A", "8", "func ReserveStock", "--glob", "*.go", "."]},
+          {"program": "rg", "args": ["--sort", "path", "-n", "ReserveStock\\(", "--glob", "*.go", "."]},
+          {"program": "rg", "args": ["--sort", "path", "-n", "TestReserveStock", "--glob", "*_test.go", "."]}
+        ]
+      },
+      "demo": {
+        "command": "gograph context ReserveStock --json",
+        "finding": "One response bundles the implementation, caller, error dependency, and mapped test."
+      }
+    }
+  ]
+}

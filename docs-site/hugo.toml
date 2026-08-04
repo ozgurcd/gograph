@@ -10,6 +10,7 @@ enableRobotsTXT = true
 [params]
   description = "gograph is a local structural graph and MCP server for safer Go refactors, repository analysis, and coding-agent workflows."
   author = "Ozgur Demir"
+  images = ["/images/gograph-social-preview.png"]
   defaultTheme = "auto"
   ShowThemeToggle = true
   ShowReadingTime = true
@@ -30,29 +31,37 @@ enableRobotsTXT = true
 
 [menu]
   [[menu.main]]
+    name = "Try Demo"
+    url = "/demo/"
+    weight = 1
+  [[menu.main]]
     name = "Get Started"
     url = "/docs/getting-started/"
-    weight = 1
+    weight = 2
   [[menu.main]]
     name = "Commands"
     url = "/docs/command-reference/"
-    weight = 2
+    weight = 3
   [[menu.main]]
     name = "AI Integration"
     url = "/docs/agent-integration/"
-    weight = 3
+    weight = 4
   [[menu.main]]
     name = "Workflows"
     url = "/docs/workflows/"
-    weight = 4
+    weight = 5
+  [[menu.main]]
+    name = "Evidence"
+    url = "/benchmarks/"
+    weight = 6
   [[menu.main]]
     name = "Blog"
     url = "/posts/"
-    weight = 5
+    weight = 7
   [[menu.main]]
     name = "GitHub"
     url = "https://github.com/ozgurcd/gograph"
-    weight = 6
+    weight = 8
 
 [markup]
   [markup.goldmark]

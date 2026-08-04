@@ -10,6 +10,12 @@ type-checked CHA/SSA enrichment. Use it to trace callers and interface
 implementations, plan change impact, and enforce architecture through CLI or
 MCP without embeddings or a hosted code index.
 
+**[Try verified gograph output without installing →](/demo/)**
+
+Inspect the precise interface and change-context benchmark, its declared
+ground truth, exact commands, and complete raw output. Read the
+[methodology and limitations →](/benchmarks/)
+
 ```bash
 gograph build .           # fast AST graph; tolerates incomplete packages
 gograph stats             # verify build health and analysis precision

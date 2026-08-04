@@ -1063,8 +1063,11 @@ static result answers the task all affect cost.
 For a defensible comparison, choose representative tasks and manually reviewed
 expected answers. Record actual tool calls, model tokens, wall-clock time,
 false positives, false negatives, fallback searches, and task success. The
-local harness in `scripts/benchmark.go` reports only command latency and raw
-payload size; it deliberately does not invent follow-up-read penalties.
+controlled harness in `scripts/benchmark.go` verifies declared structural
+evidence and records exact commands, complete raw output, process calls, payload
+size, and repeated timing. It deliberately does not infer model-token cost or
+end-to-end agent success; see `docs/benchmarking.md` for its fixture,
+methodology, and limitations.
 
 ## Limitations the agent should know about
 
