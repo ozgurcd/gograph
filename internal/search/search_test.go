@@ -169,6 +169,78 @@ func TestCallees(t *testing.T) {
 	}
 }
 
+func TestCallQueriesPreserveWindowsSubdirectoryEdges(t *testing.T) {
+	const (
+		helperID    = "example.com/rootcase/sub::subHelper"
+		subCallerID = "example.com/rootcase/sub::SubCaller"
+		mainID      = "example.com/rootcase::main"
+		windowsPath = `sub\sub.go`
+	)
+	g := &graph.Graph{
+		Root: t.TempDir(),
+		Symbols: []graph.SymbolNode{
+			{ID: helperID, Kind: graph.KindFunction, Name: "subHelper", PackageName: "sub", File: windowsPath, Line: 3},
+			{ID: subCallerID, Kind: graph.KindFunction, Name: "SubCaller", PackageName: "sub", File: windowsPath, Line: 4},
+			{ID: mainID, Kind: graph.KindFunction, Name: "main", PackageName: "main", File: "main.go", Line: 5},
+		},
+		Calls: []graph.CallEdge{
+			{
+				CallerSymbolID: subCallerID,
+				CallerName:     "SubCaller",
+				CalleeSymbolID: helperID,
+				CalleeRaw:      "subHelper",
+				File:           windowsPath,
+				Line:           4,
+				Column:         31,
+			},
+			{
+				CallerSymbolID: mainID,
+				CallerName:     "main",
+				CalleeSymbolID: subCallerID,
+				CalleeRaw:      "sub.SubCaller",
+				File:           "main.go",
+				Line:           5,
+				Column:         28,
+			},
+		},
+	}
+
+	for _, query := range []struct {
+		name  string
+		exact bool
+	}{
+		{name: "subHelper"},
+		{name: "subHelper", exact: true},
+		{name: "sub.subHelper", exact: true},
+		{name: helperID, exact: true},
+	} {
+		callers := search.Callers(g, query.name, true, query.exact)
+		if len(callers) != 1 || callers[0].Name != "SubCaller" {
+			t.Errorf("Callers(%q, exact=%v) = %#v, want the subdirectory caller", query.name, query.exact, callers)
+			continue
+		}
+		if callers[0].CallSiteFile != windowsPath {
+			t.Errorf("Callers(%q) call-site path = %q, want %q", query.name, callers[0].CallSiteFile, windowsPath)
+		}
+	}
+
+	for _, query := range []string{"SubCaller", "sub.SubCaller", subCallerID} {
+		callees := search.Callees(g, query, true, true)
+		if len(callees) != 1 || callees[0].Name != "subHelper" {
+			t.Errorf("Callees(%q) = %#v, want the subdirectory callee", query, callees)
+			continue
+		}
+		if callees[0].CallSiteFile != windowsPath {
+			t.Errorf("Callees(%q) call-site path = %q, want %q", query, callees[0].CallSiteFile, windowsPath)
+		}
+	}
+
+	impact := search.Impact(g, "subHelper", true)
+	if len(impact) != 2 || impact[0].Name != "SubCaller" || impact[1].Name != "main" {
+		t.Fatalf("Impact(subHelper) = %#v, want only SubCaller and main", impact)
+	}
+}
+
 func TestNode_ExactMatch(t *testing.T) {
 	g := makeGraph()
 	results := search.Node(g, "IssueToken")

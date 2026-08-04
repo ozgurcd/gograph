@@ -153,6 +153,25 @@ func Node(g *graph.Graph, name string) []Result {
 	return results
 }
 
+// callSiteSnippet enriches a structural call edge with its source line when
+// the graph path can be read safely on the current host. Source text is
+// optional presentation data: an unreadable, unsafe, or foreign-separator path
+// must never suppress an otherwise valid caller/callee result.
+func callSiteSnippet(reader *sourcefs.Reader, file string, line int) string {
+	if reader == nil || line <= 0 {
+		return ""
+	}
+	data, err := reader.ReadFile(file)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(data), "\n")
+	if line > len(lines) {
+		return ""
+	}
+	return strings.TrimSpace(lines[line-1])
+}
+
 // Callers returns functions/methods that contain a call expression matching name.
 // Each result includes call-site provenance (CallSiteFile, CallSiteLine) pointing
 // to the exact line of the call expression, not just the enclosing function.
@@ -234,16 +253,7 @@ func Callers(g *graph.Graph, name string, includeTests bool, exactMatch bool) []
 				file, line = sym.File, sym.Line
 			}
 
-			snippet := ""
-			if sourceReader != nil {
-				data, err := sourceReader.ReadFile(c.File)
-				if err == nil {
-					lines := strings.Split(string(data), "\n")
-					if c.Line > 0 && c.Line <= len(lines) {
-						snippet = strings.TrimSpace(lines[c.Line-1])
-					}
-				}
-			}
+			snippet := callSiteSnippet(sourceReader, c.File, c.Line)
 
 			detail := fmt.Sprintf("calls %s", c.CalleeRaw)
 			if snippet != "" {
@@ -330,16 +340,7 @@ func Callees(g *graph.Graph, name string, includeTests bool, exactMatch bool) []
 				continue
 			}
 			seen[key] = true
-			snippet := ""
-			if sourceReader != nil {
-				data, err := sourceReader.ReadFile(c.File)
-				if err == nil {
-					lines := strings.Split(string(data), "\n")
-					if c.Line > 0 && c.Line <= len(lines) {
-						snippet = strings.TrimSpace(lines[c.Line-1])
-					}
-				}
-			}
+			snippet := callSiteSnippet(sourceReader, c.File, c.Line)
 
 			detail := fmt.Sprintf("called by %s", c.CallerName)
 			if snippet != "" {

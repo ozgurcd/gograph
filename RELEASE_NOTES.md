@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Windows Call-Graph Queries
+
+- Caller and callee results are now regression-protected for Windows-style
+  subdirectory paths. Safely reading a call-site source line is optional
+  presentation enrichment and can no longer determine whether a structurally
+  valid graph edge is returned. The same regression verifies that `impact`
+  stays limited to the target's actual transitive callers.
+
 ### Repository Source Confinement
 
 - Repository scanning now excludes and reports descendant symlinks and special
