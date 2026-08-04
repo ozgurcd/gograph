@@ -368,19 +368,12 @@ func executeWorkflow(dir, binary, scenarioID string, workflow benchmarkWorkflow)
 			args = append([]string{"--intention", "benchmark " + scenarioID}, args...)
 		}
 		out, err := runCommand(dir, program, args...)
-		exitCode := 0
 		if err != nil {
-			var exitErr *exec.ExitError
-			if errors.As(err, &exitErr) {
-				exitCode = exitErr.ExitCode()
-			} else {
-				exitCode = -1
-			}
 			return commandRun{}, fmt.Errorf("%s %s: %w\n%s", program, strings.Join(args, " "), err, out)
 		}
 		normalized := normalizeOutput(out, dir)
 		command := displayCommand(step.Program, step.Args)
-		result.steps = append(result.steps, stepResult{Command: command, ExitCode: exitCode, Output: normalized})
+		result.steps = append(result.steps, stepResult{Command: command, ExitCode: 0, Output: normalized})
 		combined.WriteString(normalized)
 		if !strings.HasSuffix(normalized, "\n") {
 			combined.WriteByte('\n')
