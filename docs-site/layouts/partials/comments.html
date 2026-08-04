@@ -1,10 +1,14 @@
-{{- /* giscus — GitHub Discussions-backed comments */ -}}
+{{- /* Never ship a broken comments widget: enabled comments require complete Giscus configuration. */ -}}
 {{- if (.Param "comments") }}
+{{- $giscus := site.Params.giscus }}
+{{- if not (and $giscus $giscus.repo $giscus.repoId $giscus.category $giscus.categoryId) }}
+{{- errorf "comments are enabled for %q, but params.giscus requires repo, repoId, category, and categoryId" .RelPermalink }}
+{{- end }}
 <script src="https://giscus.app/client.js"
-        data-repo="ozgurcd/gograph"
-        data-repo-id=""
-        data-category="Blog Comments"
-        data-category-id=""
+        data-repo="{{ $giscus.repo }}"
+        data-repo-id="{{ $giscus.repoId }}"
+        data-category="{{ $giscus.category }}"
+        data-category-id="{{ $giscus.categoryId }}"
         data-mapping="pathname"
         data-strict="0"
         data-reactions-enabled="1"

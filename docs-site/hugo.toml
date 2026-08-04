@@ -18,7 +18,7 @@ enableRobotsTXT = true
   ShowCodeCopyButtons = true
   ShowBreadCrumbs = true
   disableAnchoredHeadings = false
-  comments = true
+  comments = false
 
   homeInfoParams = { Title = "gograph", Content = "A local structural graph for safer Go refactors, repository-level analysis, and coding-agent workflows — from the terminal or any compatible MCP client." }
 
