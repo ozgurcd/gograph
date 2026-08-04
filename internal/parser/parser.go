@@ -40,7 +40,19 @@ type FileResult struct {
 // pkgImportPath is the module-rooted import path of the package (e.g. "github.com/org/repo/internal/auth").
 // It is used as the stable prefix for symbol IDs so that IDs survive file renames within a package.
 func ParseFile(fset *token.FileSet, path, relPath, pkgImportPath string) (*FileResult, error) {
-	f, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	return parseSource(fset, path, nil, relPath, pkgImportPath)
+}
+
+// ParseSource parses one Go source file from caller-supplied bytes. When src is
+// nil, it retains ParseFile's historical direct-path behavior for internal
+// callers and tests. Repository builds pass confined bytes so go/parser never
+// reopens a graph-derived filesystem path.
+func ParseSource(fset *token.FileSet, path string, src []byte, relPath, pkgImportPath string) (*FileResult, error) {
+	return parseSource(fset, path, src, relPath, pkgImportPath)
+}
+
+func parseSource(fset *token.FileSet, path string, src any, relPath, pkgImportPath string) (*FileResult, error) {
+	f, err := parser.ParseFile(fset, path, src, parser.ParseComments)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
@@ -852,7 +864,7 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 		}
 		isTestFunc := strings.HasPrefix(d.Name.Name, "Test") || strings.HasPrefix(d.Name.Name, "Benchmark")
 
-		// Concurrency: inspect go statements and channel sends/receives.
+		// Concurrency: inspect go statements and channel sends.
 		ast.Inspect(d.Body, func(n ast.Node) bool {
 			switch stmt := n.(type) {
 			case *ast.GoStmt:

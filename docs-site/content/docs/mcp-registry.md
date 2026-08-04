@@ -97,8 +97,39 @@ Registry installation changes packaging, not gograph's security model:
   `.gograph/sessions/`; raw query results are not logged there.
 - Default indexing parses source without executing the target repository's
   binaries or tests.
-- Precise analysis and `doc` use the installed Go toolchain and therefore
-  follow its configured module cache, proxy, and network policy.
+- Descendant symlinks and special files for recognized Go build inputs are
+  excluded, and graph-directed source reads are confined to regular files
+  beneath the selected project.
+  Linked/non-regular `go.mod`, `go.sum`, `go.work`, `go.work.sum`, and
+  `vendor/modules.txt` metadata is rejected before gograph or the Go toolchain
+  reads it. Applicable workspace members must remain beneath the workspace
+  directory; their directories, `go.mod`, and optional `go.sum` are validated
+  before `cmd/go`.
+- Persisted `graph.json` must be a regular repository-confined file, and
+  publication refuses a linked or non-directory `.gograph`. An unusable
+  artifact is replaced by a safe in-memory startup graph unless durable MCP
+  refresh publication is explicitly enabled.
+- Saved `.json` baselines must be regular, non-linked files inside the selected
+  project with the exact current source-policy marker. Persisted and baseline
+  graph roots are metadata; the selected project root remains authoritative.
+- Session state, boundary creation, relative wiki output, and other
+  repository-controlled mutations use rooted regular-file operations and
+  reject linked path components. Absolute wiki output is an explicit local
+  destination whose generated descendants remain confined beneath it.
+- Indexing uses the installed Go toolchain for effective build context;
+  precise repository package loading and `doc` add further toolchain access.
+  `doc` rejects filesystem-shaped queries. Repository package loading and
+  `go doc` reject source-tree links `cmd/go` may inspect across the selected
+  root plus its effective module root, or the workspace root and member trees
+  (`.git` and `.gograph`
+  are excluded from that walk) and are refused when build-input or
+  module/workspace metadata validation
+  fails, while dependency and
+  toolchain resolution follow the configured module cache, proxy, and network
+  policy and remain open-world.
+- Graphs with a missing or unsupported source-policy marker are rebuilt. Use
+  the current binary for untrusted repositories; older binaries do not enforce
+  this confinement.
 
 ## Publication integrity
 

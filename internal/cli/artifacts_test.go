@@ -368,6 +368,57 @@ func TestPublishGraphArtifactsRefusesKnownStaleCandidate(t *testing.T) {
 	}
 }
 
+func TestPublishGraphArtifactsRejectsLinkedArtifactDirectory(t *testing.T) {
+	root := writeTestModule(t)
+	outside := filepath.Join(t.TempDir(), "outside-artifacts")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinelPath := filepath.Join(outside, "sentinel")
+	if err := os.WriteFile(sentinelPath, []byte("unchanged"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, outputDir)); err != nil {
+		t.Skipf("create artifact directory symlink: %v", err)
+	}
+
+	candidate := buildTestGraph(t, root)
+	if _, err := publishGraphArtifacts(root, candidate, manualArtifactPublication); err == nil || !strings.Contains(err.Error(), "unsafe artifact directory") {
+		t.Fatalf("publication error = %v, want unsafe artifact directory refusal", err)
+	}
+	data, err := os.ReadFile(sentinelPath)
+	if err != nil || string(data) != "unchanged" {
+		t.Fatalf("outside sentinel = %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "graph.json")); !os.IsNotExist(err) {
+		t.Fatalf("publication wrote through linked artifact directory: %v", err)
+	}
+}
+
+func TestPublishGraphArtifactsRejectsLinkedArtifactLock(t *testing.T) {
+	root := writeTestModule(t)
+	artifactDir := filepath.Join(root, outputDir)
+	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside-lock")
+	if err := os.WriteFile(outside, []byte("unchanged"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(artifactDir, artifactLockFile)); err != nil {
+		t.Skipf("create artifact lock symlink: %v", err)
+	}
+
+	candidate := buildTestGraph(t, root)
+	if _, err := publishGraphArtifacts(root, candidate, manualArtifactPublication); err == nil || !strings.Contains(err.Error(), "unsafe artifact lock") {
+		t.Fatalf("publication error = %v, want unsafe artifact lock refusal", err)
+	}
+	data, err := os.ReadFile(outside)
+	if err != nil || string(data) != "unchanged" {
+		t.Fatalf("outside lock target = %q, %v", data, err)
+	}
+}
+
 func TestRenderGraphArtifactsKeepsGraphJSONLast(t *testing.T) {
 	payloads, err := renderGraphArtifacts(&graph.Graph{Version: graph.Version})
 	if err != nil {

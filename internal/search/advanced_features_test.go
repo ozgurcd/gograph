@@ -57,13 +57,14 @@ func buildGraphWithRealFiles(t *testing.T) *graph.Graph {
 	searchFile := filepath.Join(root, "internal", "search", "search.go")
 
 	return &graph.Graph{
+		Root: root,
 		Symbols: []graph.SymbolNode{
 			// Query is a relatively complex function (multiple loops, match func).
 			{
 				ID:   "search.Query",
 				Name: "Query",
 				Kind: graph.KindFunction,
-				File: searchFile,
+				File: filepath.Join("internal", "search", "search.go"),
 				Line: functionLine(t, searchFile, "Query"),
 			},
 		},

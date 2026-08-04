@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"go/build"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +18,25 @@ import (
 
 	"github.com/ozgurcd/gograph/internal/buildctx"
 )
+
+// UnsafeSourceFileError reports a Go build input or metadata entry that could
+// make source resolution escape the selected tree. Unsafe entries are never
+// opened or selected for indexing.
+type UnsafeSourceFileError struct {
+	Path string
+	Mode os.FileMode
+}
+
+func (e *UnsafeSourceFileError) Error() string {
+	return fmt.Sprintf("skip unsafe repository input %s: mode %s is not a regular file", e.Path, e.Mode)
+}
+
+// IsUnsafeSourceFileError reports whether err identifies an excluded unsafe
+// repository source entry.
+func IsUnsafeSourceFileError(err error) bool {
+	var unsafe *UnsafeSourceFileError
+	return errors.As(err, &unsafe)
+}
 
 // ignoredDirs are directory names skipped below the explicit scan root,
 // regardless of .gitignore. This is a fast O(1) check that requires no I/O.
@@ -71,7 +92,7 @@ func ShouldIgnoreFile(path string) (bool, error) {
 	}
 
 	// Content check: look for "Code generated" in the first 10 lines.
-	f, err := os.Open(path)
+	f, err := openRegularSource(path, nil)
 	if err != nil {
 		return false, err
 	}
@@ -86,6 +107,209 @@ func ShouldIgnoreFile(path string) (bool, error) {
 		lineNum++
 	}
 	return false, scanner.Err()
+}
+
+// ValidateNoSourceLinks fails when any descendant entry is a symlink, or when
+// a recognized Go build input or Go tool metadata entry is a special file.
+// Rejecting every link avoids following even an otherwise-unrecognized entry
+// merely to determine whether its target is a directory that cmd/go may inspect.
+// It intentionally scans directories such as testdata and underscore-prefixed
+// packages because go doc can address them explicitly. Only gograph and Git's
+// own metadata directories are excluded. An explicitly symlinked repository
+// root remains supported.
+func ValidateNoSourceLinks(root string) error {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve source validation root: %w", err)
+	}
+	walkRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return fmt.Errorf("resolve source validation root links: %w", err)
+	}
+	rootInfo, err := os.Stat(walkRoot)
+	if err != nil {
+		return fmt.Errorf("inspect source validation root: %w", err)
+	}
+	if !rootInfo.IsDir() {
+		return fmt.Errorf("source validation root %s is not a directory", root)
+	}
+
+	return filepath.Walk(walkRoot, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() {
+			if path != walkRoot && (info.Name() == ".git" || info.Name() == ".gograph") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return &UnsafeSourceFileError{Path: path, Mode: info.Mode()}
+		}
+		if (isGoBuildInput(info.Name()) || isGoToolMetadata(path)) && !info.Mode().IsRegular() {
+			return &UnsafeSourceFileError{Path: path, Mode: info.Mode()}
+		}
+		return nil
+	})
+}
+
+// ValidateToolchainSourceInputs validates metadata discovery and then rejects
+// links or unsafe recognized inputs in the confined source trees: the selected
+// root plus its effective module root, or the workspace root and all workspace
+// members. Dependency and external local-replacement roots remain governed by
+// the user's open-world Go environment.
+func ValidateToolchainSourceInputs(root string) error {
+	sourceRoots, err := buildctx.ToolchainSourceRoots(root)
+	if err != nil {
+		return fmt.Errorf("validate Go tool metadata: %w", err)
+	}
+	sourceRoots = append([]string{root}, sourceRoots...)
+	seen := make(map[string]struct{}, len(sourceRoots))
+	for _, sourceRoot := range sourceRoots {
+		absolute, err := filepath.Abs(sourceRoot)
+		if err != nil {
+			return fmt.Errorf("resolve Go tool source root %s: %w", sourceRoot, err)
+		}
+		key := filepath.Clean(absolute)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if err := ValidateNoSourceLinks(sourceRoot); err != nil {
+			return fmt.Errorf("validate Go tool source tree %s: %w", sourceRoot, err)
+		}
+	}
+	return nil
+}
+
+// SourceValidationRoot selects the working-tree preflight root for Go tool
+// commands. Workspace-auto mode uses the nearest enclosing workspace;
+// otherwise the nearest enabled module is used. An explicit GOWORK selection
+// is validated separately by ToolchainSourceRoots. A real .gograph directory
+// is retained only as a fallback when no applicable ancestor metadata exists,
+// so a nested artifact directory cannot narrow validation below the selected
+// tree.
+func SourceValidationRoot(start string) (string, error) {
+	absStart, err := filepath.Abs(start)
+	if err != nil {
+		return "", fmt.Errorf("resolve validation start: %w", err)
+	}
+	startInfo, err := os.Stat(absStart)
+	if err != nil {
+		return "", fmt.Errorf("inspect validation start: %w", err)
+	}
+	if !startInfo.IsDir() {
+		absStart = filepath.Dir(absStart)
+	}
+
+	dir := filepath.Clean(absStart)
+	fallback := ""
+	moduleRoot := ""
+	modulesEnabled := os.Getenv("GO111MODULE") != "off"
+	goWork := os.Getenv("GOWORK")
+	workspaceAuto := modulesEnabled && (goWork == "" || goWork == "auto")
+	for {
+		metadataNames := make([]string, 0, 2)
+		if workspaceAuto {
+			metadataNames = append(metadataNames, "go.work")
+		}
+		if modulesEnabled {
+			metadataNames = append(metadataNames, "go.mod")
+		}
+		for _, name := range metadataNames {
+			metadataFile := filepath.Join(dir, name)
+			metadataInfo, metadataErr := os.Lstat(metadataFile)
+			switch {
+			case metadataErr == nil:
+				if metadataInfo.Mode()&os.ModeSymlink != 0 || !metadataInfo.Mode().IsRegular() {
+					return "", fmt.Errorf("unsafe Go metadata file %s: mode %s is not a regular file", metadataFile, metadataInfo.Mode())
+				}
+				// Cmd/go in workspace-auto mode searches past an enclosing
+				// module for go.work. Validate the whole nearest workspace; only
+				// fall back to the nearest module when no workspace is present.
+				if name == "go.work" {
+					return dir, nil
+				}
+				if moduleRoot == "" {
+					moduleRoot = dir
+				}
+			case !os.IsNotExist(metadataErr):
+				return "", fmt.Errorf("inspect Go metadata file %s: %w", metadataFile, metadataErr)
+			}
+		}
+
+		if fallback == "" {
+			artifactDir := filepath.Join(dir, ".gograph")
+			artifactInfo, artifactErr := os.Lstat(artifactDir)
+			switch {
+			case artifactErr == nil && artifactInfo.Mode()&os.ModeSymlink == 0 && artifactInfo.IsDir():
+				fallback = dir
+			case artifactErr != nil && !os.IsNotExist(artifactErr):
+				return "", fmt.Errorf("inspect artifact directory %s: %w", artifactDir, artifactErr)
+			}
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	if moduleRoot != "" {
+		return moduleRoot, nil
+	}
+	if fallback != "" {
+		return fallback, nil
+	}
+	return filepath.Clean(absStart), nil
+}
+
+func isGoToolMetadata(path string) bool {
+	name := filepath.Base(path)
+	switch name {
+	case "go.mod", "go.sum", "go.work", "go.work.sum":
+		return true
+	case "modules.txt":
+		return filepath.Base(filepath.Dir(path)) == "vendor"
+	default:
+		return false
+	}
+}
+
+// isGoBuildInput mirrors the source extensions recognized by go/build. ImportDir
+// reads comment headers from every listed extension except .syso, so all of
+// them require the same regular-file and identity checks as Go source.
+func isGoBuildInput(name string) bool {
+	switch filepath.Ext(name) {
+	case ".go", ".c", ".cc", ".cpp", ".cxx", ".m", ".h", ".hh", ".hpp", ".hxx",
+		".f", ".F", ".for", ".f90", ".s", ".S", ".sx", ".swig", ".swigcxx", ".syso":
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidateGoDocQuery accepts Go import-path and symbol notation while refusing
+// flags and filesystem-shaped operands. The latter would let go doc read a
+// caller-selected file or directory instead of resolving a package query.
+func ValidateGoDocQuery(query string) error {
+	if query == "" {
+		return errors.New("go doc query is required")
+	}
+	if strings.TrimSpace(query) != query || strings.ContainsAny(query, " \t\r\n") {
+		return fmt.Errorf("unsafe go doc query %q: whitespace is not allowed", query)
+	}
+	if strings.HasPrefix(query, ".") || strings.HasPrefix(query, "-") || strings.HasPrefix(query, "~") ||
+		filepath.IsAbs(query) || filepath.VolumeName(query) != "" || strings.ContainsAny(query, "\\:\x00") {
+		return fmt.Errorf("unsafe go doc query %q: filesystem paths and flags are not allowed", query)
+	}
+	for _, segment := range strings.Split(query, "/") {
+		if segment == "" || strings.HasPrefix(segment, ".") {
+			return fmt.Errorf("unsafe go doc query %q: filesystem paths are not allowed", query)
+		}
+	}
+	return nil
 }
 
 // gitIgnoreChecker consults `git check-ignore` to determine whether a path is
@@ -142,8 +366,9 @@ func (g *gitIgnoreChecker) isIgnored(absPath string) bool {
 //     or any other tool-managed copy of the project) that are listed in .gitignore
 //     but live inside the project directory.
 //
-// Generated files are excluded. An error slice is also returned for files that
-// could not be inspected (non-fatal).
+// Generated files are excluded. A non-fatal error slice reports source entries
+// that could not be inspected or were excluded as unsafe, plus build-context
+// and source-selection warnings.
 func Walk(root string) (paths []string, errs []error) {
 	paths, _, errs = WalkWithFingerprint(root)
 	return paths, errs
@@ -183,7 +408,7 @@ func WalkWithConfigAndFingerprint(root string, config buildctx.Config) (paths []
 	if err != nil {
 		absRoot = root
 	}
-	buildContext := config.BuildContext()
+	buildContext := confinedBuildContext(config.BuildContext())
 	gitIgnore := newGitIgnoreChecker(absRoot)
 	moduleIgnores, moduleErr := newModuleIgnoreTracker(config.ModulesEnabled(), config.ModuleRoot(), absRoot)
 	if moduleErr != nil {
@@ -223,6 +448,10 @@ func WalkWithConfigAndFingerprint(root string, config buildctx.Config) (paths []
 			if skipModuleDir {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if isGoBuildInput(info.Name()) && !info.Mode().IsRegular() {
+			errs = append(errs, &UnsafeSourceFileError{Path: path, Mode: info.Mode()})
 			return nil
 		}
 		if filepath.Ext(path) != ".go" {
@@ -284,4 +513,100 @@ func WalkWithConfigAndFingerprint(root string, config buildctx.Config) (paths []
 		}
 	}
 	return paths, moduleIgnores.selectionFingerprint(config.Fingerprint()), errs
+}
+
+// confinedBuildContext prevents go/build.ImportDir from independently opening
+// a linked or special build input that the filepath walk excluded. ReadDir
+// hides non-regular recognized inputs, while OpenFile revalidates identity at
+// the point of opening.
+func confinedBuildContext(buildContext build.Context) build.Context {
+	readDir := buildContext.ReadDir
+	buildContext.ReadDir = func(dir string) ([]fs.FileInfo, error) {
+		var (
+			infos []fs.FileInfo
+			err   error
+		)
+		if readDir != nil {
+			infos, err = readDir(dir)
+		} else {
+			infos, err = readDirectoryInfos(dir)
+		}
+		if err != nil {
+			return nil, err
+		}
+		filtered := make([]fs.FileInfo, 0, len(infos))
+		for _, info := range infos {
+			if !isGoBuildInput(info.Name()) {
+				filtered = append(filtered, info)
+				continue
+			}
+			entry, lstatErr := os.Lstat(filepath.Join(dir, info.Name()))
+			if lstatErr != nil {
+				return nil, lstatErr
+			}
+			if entry.Mode().IsRegular() {
+				filtered = append(filtered, info)
+			}
+		}
+		return filtered, nil
+	}
+
+	openFile := buildContext.OpenFile
+	buildContext.OpenFile = func(path string) (io.ReadCloser, error) {
+		if isGoBuildInput(filepath.Base(path)) {
+			return openRegularSource(path, openFile)
+		}
+		if openFile != nil {
+			return openFile(path)
+		}
+		return os.Open(path)
+	}
+	return buildContext
+}
+
+func readDirectoryInfos(dir string) ([]fs.FileInfo, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	infos := make([]fs.FileInfo, 0, len(entries))
+	for _, entry := range entries {
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return nil, infoErr
+		}
+		infos = append(infos, info)
+	}
+	return infos, nil
+}
+
+func openRegularSource(path string, openFile func(string) (io.ReadCloser, error)) (io.ReadCloser, error) {
+	expected, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !expected.Mode().IsRegular() {
+		return nil, &UnsafeSourceFileError{Path: path, Mode: expected.Mode()}
+	}
+	var opened io.ReadCloser
+	if openFile != nil {
+		opened, err = openFile(path)
+	} else {
+		opened, err = os.Open(path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if statter, ok := opened.(interface{ Stat() (os.FileInfo, error) }); ok {
+		actual, statErr := statter.Stat()
+		if statErr != nil {
+			_ = opened.Close()
+			return nil, statErr
+		}
+		if !actual.Mode().IsRegular() || !os.SameFile(expected, actual) {
+			_ = opened.Close()
+			return nil, &UnsafeSourceFileError{Path: path, Mode: actual.Mode()}
+		}
+	}
+	return opened, nil
 }

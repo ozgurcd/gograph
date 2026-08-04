@@ -5,10 +5,24 @@
 Adding `gograph` gives Claude Code a local AST-derived repository graph and
 composed change-analysis workflows. The benefit depends on the repository and
 task; treat results as static-analysis evidence rather than runtime proof.
-Indexing reads Go source and ordinary project metadata such as `go.mod`,
-`.gitignore`, Git state, persisted graph data, and explicitly selected gograph
+Indexing reads Go source, recognized non-Go build inputs, and ordinary project
+metadata such as `go.mod`, `go.sum`, `go.work`, `go.work.sum`,
+`vendor/modules.txt`, `.gitignore`, Git state, persisted graph data, and explicitly selected gograph
 configuration. It does not intentionally scan secret-bearing `.env`, key,
-certificate, kubeconfig, tfstate, or credential files.
+certificate, kubeconfig, tfstate, or credential files. Descendant links and
+special files for recognized Go build inputs are excluded, linked
+module/workspace files, sums, and `vendor/modules.txt` are rejected before
+toolchain use, and applicable workspace members must stay beneath the workspace
+directory with their directories and module metadata validated first. Precise
+package loading and `doc` reject source-tree links `cmd/go` may inspect across
+the selected root plus its effective module root, or the workspace root and
+member trees, before toolchain use (`.git` and `.gograph` are excluded from that walk),
+and graph-directed source reads are
+confined to regular files beneath the analyzed repository. Persisted
+`graph.json` is subject to the same descendant-link boundary, `.gograph` must
+be a real directory for publication, and graphs with a missing or unsupported
+source-policy marker require rebuilding. Use the current binary for untrusted
+repositories; older binaries do not enforce this confinement.
 
 ## 1. How Gograph Complements Gopls
 

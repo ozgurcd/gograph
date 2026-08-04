@@ -116,7 +116,17 @@ To start the MCP JSON-RPC server over standard I/O:
 ```bash
 gograph mcp [path] [--persist-refresh]
 ```
-By default, if `.gograph/graph.json` does not exist, startup creates an in-memory AST graph without publishing CLI build artifacts. Source-analysis tools check source freshness and newer persisted artifacts per call, then rebuild after edits in the current requested mode. `gograph_stale`, default `gograph_changes`, and `gograph_stats` use the persisted graph when one exists and otherwise inspect the startup in-memory fallback. Precise and precise-fallback sessions re-run CHA/SSA, and a failed precise refresh is returned visibly. A failed precise publication retry cannot replace an existing fresh successful precise artifact covering the same selected sources.
+By default, if `.gograph/graph.json` is missing, unreadable, unsafe, or has a
+missing/unsupported source-policy marker, startup creates an in-memory AST
+graph without publishing CLI build artifacts. A loaded graph's serialized root
+is ignored in favor of the selected project. Source-analysis tools check
+source freshness and newer trusted persisted artifacts per call, then rebuild
+after edits in the current requested mode. `gograph_stale`, default
+`gograph_changes`, and `gograph_stats` use a trusted persisted graph when one
+exists and otherwise inspect the startup in-memory fallback. Precise and
+precise-fallback sessions re-run CHA/SSA, and a failed precise refresh is
+returned visibly. A failed precise publication retry cannot replace an
+existing fresh successful precise artifact covering the same selected sources.
 
 Refresh publication is opt-in. `--persist-refresh` writes or overwrites
 `.gograph/graph.json` and the nine reports after a successful refresh, without
@@ -125,7 +135,9 @@ cache. A failed initial auto-build publication prevents startup. A later
 tool-triggered failure is returned as a tool error and retried using the
 already-fresh in-memory graph. Graph/report publishers wait up to 30 seconds on
 `.gograph/.artifacts.lock`, stage all ten artifacts, rename reports first, and
-rename `graph.json` last as the commit marker. Same-directory replacement is
+rename `graph.json` last as the commit marker. Publication requires a real
+`.gograph` directory and a regular-or-absent lock entry; persisted graph reads
+require a regular repository-confined file. Same-directory replacement is
 atomic on Unix-like systems but is not guaranteed atomic by Go on non-Unix
 platforms, and the bundle is not one atomic transaction; a crash can leave
 reports ahead of the previous graph marker. The lock file remains as separate

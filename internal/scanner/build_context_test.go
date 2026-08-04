@@ -1,16 +1,384 @@
 package scanner_test
 
 import (
+	"errors"
 	"go/build"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"testing"
 
 	"github.com/ozgurcd/gograph/internal/buildctx"
 	"github.com/ozgurcd/gograph/internal/scanner"
 )
+
+func TestWalkWithContextExcludesGoSourceSymlinksBeforeImportDir(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repository")
+	mustWrite(t, filepath.Join(root, "main.go"), "package main\nfunc main() {}\n")
+	outside := filepath.Join(base, "outside.go")
+	mustWrite(t, outside, "package outside\nfunc OutsideOnly() {}\n")
+	linked := filepath.Join(root, "linked.go")
+	if err := os.Symlink(outside, linked); err != nil {
+		t.Skipf("create source symlink: %v", err)
+	}
+	dangling := filepath.Join(root, "dangling.go")
+	if err := os.Symlink(filepath.Join(base, "missing.go"), dangling); err != nil {
+		t.Skipf("create dangling source symlink: %v", err)
+	}
+
+	paths, errs := scanner.WalkWithContext(root, build.Default)
+	if got, want := relativePaths(t, root, paths), []string{"main.go"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("selected files = %v, want %v", got, want)
+	}
+	if len(errs) != 2 {
+		t.Fatalf("walk errors = %v, want two unsafe-source warnings", errs)
+	}
+	for _, err := range errs {
+		var unsafe *scanner.UnsafeSourceFileError
+		if !errors.As(err, &unsafe) {
+			t.Fatalf("walk error = %v, want UnsafeSourceFileError", err)
+		}
+	}
+	if err := scanner.ValidateNoSourceLinks(root); err == nil || !scanner.IsUnsafeSourceFileError(err) {
+		t.Fatalf("ValidateNoSourceLinks error = %v, want unsafe source", err)
+	}
+}
+
+func TestWalkWithContextConfinesNonGoBuildInputs(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repository")
+	mustWrite(t, filepath.Join(root, "main.go"), "package main\nfunc main() {}\n")
+	mustWrite(t, filepath.Join(root, "regular.s"), "// regular assembly input\n")
+	outside := filepath.Join(base, "outside.s")
+	mustWrite(t, outside, "//go:build (\n")
+	if err := os.Symlink(outside, filepath.Join(root, "linked.s")); err != nil {
+		t.Skipf("create assembly symlink: %v", err)
+	}
+
+	ctx := build.Default
+	var opened []string
+	ctx.OpenFile = func(path string) (io.ReadCloser, error) {
+		opened = append(opened, filepath.Base(path))
+		return os.Open(path)
+	}
+	paths, errs := scanner.WalkWithContext(root, ctx)
+	if got, want := relativePaths(t, root, paths), []string{"main.go"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("selected files = %v, want %v", got, want)
+	}
+	if len(errs) != 1 || !scanner.IsUnsafeSourceFileError(errs[0]) {
+		t.Fatalf("walk errors = %v, want one unsafe non-Go build input", errs)
+	}
+	if !containsString(opened, "regular.s") {
+		t.Fatalf("regular assembly input was not inspected: opened %v", opened)
+	}
+	if containsString(opened, "linked.s") {
+		t.Fatalf("linked assembly input was opened: %v", opened)
+	}
+	if err := scanner.ValidateNoSourceLinks(root); err == nil || !scanner.IsUnsafeSourceFileError(err) {
+		t.Fatalf("ValidateNoSourceLinks error = %v, want unsafe non-Go build input", err)
+	}
+}
+
+func TestWalkWithContextRejectsSpecialNonGoBuildInput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-domain socket fixture is unavailable on Windows")
+	}
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.go"), "package main\nfunc main() {}\n")
+	listener, err := net.Listen("unix", filepath.Join(root, "special.s"))
+	if err != nil {
+		t.Skipf("create Unix-domain socket build input: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	paths, errs := scanner.WalkWithContext(root, build.Default)
+	if got, want := relativePaths(t, root, paths), []string{"main.go"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("selected files = %v, want %v", got, want)
+	}
+	if len(errs) != 1 || !scanner.IsUnsafeSourceFileError(errs[0]) {
+		t.Fatalf("walk errors = %v, want one unsafe special build input", errs)
+	}
+	if err := scanner.ValidateNoSourceLinks(root); err == nil || !scanner.IsUnsafeSourceFileError(err) {
+		t.Fatalf("ValidateNoSourceLinks error = %v, want unsafe special build input", err)
+	}
+}
+
+func TestValidateNoSourceLinksScansExplicitDocDirectories(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repository")
+	mustWrite(t, filepath.Join(root, "main.go"), "package main\n")
+	mustWrite(t, filepath.Join(base, "outside.go"), "package outside\n")
+	if err := os.Symlink(filepath.Join(base, "outside.go"), filepath.Join(root, "testdata", "linked.go")); err != nil {
+		// Ensure the parent exists before deciding whether symlinks are supported.
+		if err := os.MkdirAll(filepath.Join(root, "testdata"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(base, "outside.go"), filepath.Join(root, "testdata", "linked.go")); err != nil {
+			t.Skipf("create testdata source symlink: %v", err)
+		}
+	}
+	if err := scanner.ValidateNoSourceLinks(root); err == nil || !scanner.IsUnsafeSourceFileError(err) {
+		t.Fatalf("ValidateNoSourceLinks testdata error = %v, want unsafe source", err)
+	}
+}
+
+func TestValidateNoSourceLinksRejectsLinkedToolchainMetadata(t *testing.T) {
+	for _, relative := range []string{"go.sum", "go.work.sum", filepath.Join("vendor", "modules.txt")} {
+		t.Run(filepath.ToSlash(relative), func(t *testing.T) {
+			base := t.TempDir()
+			root := filepath.Join(base, "repository")
+			mustWrite(t, filepath.Join(root, "main.go"), "package main\n")
+			outside := filepath.Join(base, "outside-metadata")
+			mustWrite(t, outside, "outside metadata\n")
+			linked := filepath.Join(root, relative)
+			if err := os.MkdirAll(filepath.Dir(linked), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, linked); err != nil {
+				t.Skipf("create metadata symlink: %v", err)
+			}
+			if err := scanner.ValidateNoSourceLinks(root); err == nil || !scanner.IsUnsafeSourceFileError(err) {
+				t.Fatalf("ValidateNoSourceLinks(%s) error = %v, want unsafe metadata", relative, err)
+			}
+		})
+	}
+}
+
+func TestValidateNoSourceLinksRejectsSpecialToolchainMetadata(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-domain socket fixture is unavailable on Windows")
+	}
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.go"), "package main\n")
+	listener, err := net.Listen("unix", filepath.Join(root, "go.sum"))
+	if err != nil {
+		t.Skipf("create Unix-domain socket metadata: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	if err := scanner.ValidateNoSourceLinks(root); err == nil || !scanner.IsUnsafeSourceFileError(err) {
+		t.Fatalf("ValidateNoSourceLinks special metadata error = %v, want unsafe metadata", err)
+	}
+}
+
+func TestValidateNoSourceLinksRejectsDescendantDirectorySymlink(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repository")
+	mustWrite(t, filepath.Join(root, "main.go"), "package main\n")
+	outside := filepath.Join(base, "outside")
+	mustWrite(t, filepath.Join(outside, "source.go"), "package outside\n")
+	if err := os.Symlink(outside, filepath.Join(root, "linked-package")); err != nil {
+		t.Skipf("create directory symlink: %v", err)
+	}
+	if err := scanner.ValidateNoSourceLinks(root); err == nil || !scanner.IsUnsafeSourceFileError(err) {
+		t.Fatalf("ValidateNoSourceLinks directory error = %v, want unsafe source", err)
+	}
+}
+
+func TestValidateNoSourceLinksRejectsUnrecognizedFileSymlinkWithoutFollowingIt(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repository")
+	mustWrite(t, filepath.Join(root, "main.go"), "package main\n")
+	// A dangling non-Go link proves validation relies only on the repository
+	// entry itself and does not need to stat or open its target.
+	if err := os.Symlink(filepath.Join(base, "missing-target"), filepath.Join(root, "notes.txt")); err != nil {
+		t.Skipf("create unrelated file symlink: %v", err)
+	}
+	if err := scanner.ValidateNoSourceLinks(root); err == nil || !scanner.IsUnsafeSourceFileError(err) {
+		t.Fatalf("ValidateNoSourceLinks unrelated link error = %v, want unsafe source", err)
+	}
+}
+
+func TestValidateToolchainSourceInputsRejectsLinkedSiblingWorkspaceSource(t *testing.T) {
+	base := t.TempDir()
+	workspace := filepath.Join(base, "workspace")
+	selected := filepath.Join(workspace, "selected")
+	sibling := filepath.Join(workspace, "sibling")
+	for _, directory := range []string{selected, sibling} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWrite(t, filepath.Join(workspace, "go.work"), "go 1.26\n\nuse (\n\t./selected\n\t./sibling\n)\n")
+	mustWrite(t, filepath.Join(selected, "go.mod"), "module example.com/selected\n\ngo 1.26\n")
+	mustWrite(t, filepath.Join(selected, "main.go"), "package selected\n")
+	mustWrite(t, filepath.Join(sibling, "go.mod"), "module example.com/sibling\n\ngo 1.26\n")
+	outside := filepath.Join(base, "outside.go")
+	mustWrite(t, outside, "package outside\n")
+	if err := os.Symlink(outside, filepath.Join(sibling, "linked.go")); err != nil {
+		t.Skipf("create sibling source symlink: %v", err)
+	}
+	t.Setenv("GOWORK", "auto")
+	t.Setenv("GO111MODULE", "")
+
+	if err := scanner.ValidateToolchainSourceInputs(selected); err == nil || !scanner.IsUnsafeSourceFileError(err) {
+		t.Fatalf("ValidateToolchainSourceInputs linked sibling error = %v, want unsafe source", err)
+	}
+}
+
+func TestValidateToolchainSourceInputsRejectsLinkedWorkspaceVendorSource(t *testing.T) {
+	base := t.TempDir()
+	workspace := filepath.Join(base, "workspace")
+	selected := filepath.Join(workspace, "selected")
+	vendorPackage := filepath.Join(workspace, "vendor", "example.com", "dependency")
+	for _, directory := range []string{selected, vendorPackage} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWrite(t, filepath.Join(workspace, "go.work"), "go 1.26\n\nuse ./selected\n")
+	mustWrite(t, filepath.Join(workspace, "vendor", "modules.txt"), "## workspace\n")
+	mustWrite(t, filepath.Join(selected, "go.mod"), "module example.com/selected\n\ngo 1.26\n")
+	mustWrite(t, filepath.Join(selected, "main.go"), "package selected\n")
+	outside := filepath.Join(base, "outside.go")
+	mustWrite(t, outside, "package dependency\n")
+	if err := os.Symlink(outside, filepath.Join(vendorPackage, "linked.go")); err != nil {
+		t.Skipf("create workspace vendor source symlink: %v", err)
+	}
+	t.Setenv("GOWORK", "auto")
+	t.Setenv("GO111MODULE", "")
+
+	if err := scanner.ValidateToolchainSourceInputs(selected); err == nil || !scanner.IsUnsafeSourceFileError(err) {
+		t.Fatalf("ValidateToolchainSourceInputs linked workspace vendor error = %v, want unsafe source", err)
+	}
+}
+
+func TestValidateNoSourceLinksAllowsExplicitRootSymlink(t *testing.T) {
+	realRoot := filepath.Join(t.TempDir(), "real")
+	mustWrite(t, filepath.Join(realRoot, "main.go"), "package main\n")
+	linkRoot := filepath.Join(t.TempDir(), "linked-root")
+	if err := os.Symlink(realRoot, linkRoot); err != nil {
+		t.Skipf("create root symlink: %v", err)
+	}
+	if err := scanner.ValidateNoSourceLinks(linkRoot); err != nil {
+		t.Fatalf("ValidateNoSourceLinks explicit root link = %v", err)
+	}
+}
+
+func TestSourceValidationRootPrefersEnclosingModule(t *testing.T) {
+	moduleRoot := filepath.Join(t.TempDir(), "module")
+	mustWrite(t, filepath.Join(moduleRoot, "go.mod"), "module example.com/module\n")
+	start := filepath.Join(moduleRoot, "nested", "package")
+	if err := os.MkdirAll(filepath.Join(moduleRoot, "nested", ".gograph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(start, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := scanner.SourceValidationRoot(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != moduleRoot {
+		t.Fatalf("SourceValidationRoot = %q, want module root %q", got, moduleRoot)
+	}
+}
+
+func TestSourceValidationRootUsesRealArtifactFallback(t *testing.T) {
+	repository := filepath.Join(t.TempDir(), "repository")
+	start := filepath.Join(repository, "nested")
+	if err := os.MkdirAll(filepath.Join(repository, ".gograph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(start, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := scanner.SourceValidationRoot(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != repository {
+		t.Fatalf("SourceValidationRoot = %q, want artifact root %q", got, repository)
+	}
+}
+
+func TestSourceValidationRootRejectsLinkedModuleFile(t *testing.T) {
+	base := t.TempDir()
+	repository := filepath.Join(base, "repository")
+	if err := os.MkdirAll(repository, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(base, "outside.mod"), "module example.com/outside\n")
+	if err := os.Symlink(filepath.Join(base, "outside.mod"), filepath.Join(repository, "go.mod")); err != nil {
+		t.Skipf("create go.mod symlink: %v", err)
+	}
+	if _, err := scanner.SourceValidationRoot(repository); err == nil {
+		t.Fatal("SourceValidationRoot accepted linked go.mod")
+	}
+}
+
+func TestSourceValidationRootPrefersEnclosingWorkspace(t *testing.T) {
+	workspaceRoot := filepath.Join(t.TempDir(), "workspace")
+	moduleRoot := filepath.Join(workspaceRoot, "module")
+	mustWrite(t, filepath.Join(workspaceRoot, "go.work"), "go 1.26\n\nuse ./module\n")
+	mustWrite(t, filepath.Join(moduleRoot, "go.mod"), "module example.com/module\n")
+	start := filepath.Join(moduleRoot, "nested")
+	if err := os.MkdirAll(start, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := scanner.SourceValidationRoot(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != workspaceRoot {
+		t.Fatalf("SourceValidationRoot = %q, want workspace root %q", got, workspaceRoot)
+	}
+}
+
+func TestSourceValidationRootHonorsDisabledWorkspace(t *testing.T) {
+	workspaceRoot := filepath.Join(t.TempDir(), "workspace")
+	moduleRoot := filepath.Join(workspaceRoot, "module")
+	start := filepath.Join(moduleRoot, "nested")
+	mustWrite(t, filepath.Join(workspaceRoot, "go.work"), "go 1.26\n\nuse ./module\n")
+	mustWrite(t, filepath.Join(moduleRoot, "go.mod"), "module example.com/module\n")
+	if err := os.MkdirAll(start, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOWORK", "off")
+	t.Setenv("GO111MODULE", "")
+
+	got, err := scanner.SourceValidationRoot(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != moduleRoot {
+		t.Fatalf("SourceValidationRoot with GOWORK=off = %q, want module root %q", got, moduleRoot)
+	}
+}
+
+func TestSourceValidationRootRejectsLinkedWorkspaceFile(t *testing.T) {
+	base := t.TempDir()
+	repository := filepath.Join(base, "repository")
+	if err := os.MkdirAll(repository, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(base, "outside.work"), "go 1.26\n")
+	if err := os.Symlink(filepath.Join(base, "outside.work"), filepath.Join(repository, "go.work")); err != nil {
+		t.Skipf("create go.work symlink: %v", err)
+	}
+	if _, err := scanner.SourceValidationRoot(repository); err == nil {
+		t.Fatal("SourceValidationRoot accepted linked go.work")
+	}
+}
+
+func TestValidateGoDocQuery(t *testing.T) {
+	for _, query := range []string{"fmt", "fmt.Errorf", "net/http.HandleFunc", "github.com/jackc/pgx/v5.Conn.QueryRow", "github.com/user/foo.go"} {
+		if err := scanner.ValidateGoDocQuery(query); err != nil {
+			t.Errorf("ValidateGoDocQuery(%q) = %v, want accepted", query, err)
+		}
+	}
+	for _, query := range []string{"", "./local", "../outside", "/tmp/secret.go", "C:\\secret.go", "-all", "~/.cache", "pkg/../outside", "module/.gograph/source", "net//http", "fmt Errorf"} {
+		if err := scanner.ValidateGoDocQuery(query); err == nil {
+			t.Errorf("ValidateGoDocQuery(%q) succeeded, want rejection", query)
+		}
+	}
+}
 
 func TestWalkWithContextHonorsGoBuildSelection(t *testing.T) {
 	root := t.TempDir()
@@ -131,17 +499,27 @@ func TestWalkWithContextMatchesGoWildcardDirectoryRules(t *testing.T) {
 func TestWalkWithContextFollowsExplicitRootSymlink(t *testing.T) {
 	realRoot := filepath.Join(t.TempDir(), "real")
 	mustWrite(t, filepath.Join(realRoot, "root.go"), "package fixture\n")
+	mustWrite(t, filepath.Join(realRoot, "root.s"), "// regular assembly input\n")
 	linkRoot := filepath.Join(t.TempDir(), "linked-root")
 	if err := os.Symlink(realRoot, linkRoot); err != nil {
 		t.Skipf("create root symlink: %v", err)
 	}
 
-	paths, errs := scanner.WalkWithContext(linkRoot, build.Default)
+	ctx := build.Default
+	var opened []string
+	ctx.OpenFile = func(path string) (io.ReadCloser, error) {
+		opened = append(opened, filepath.Base(path))
+		return os.Open(path)
+	}
+	paths, errs := scanner.WalkWithContext(linkRoot, ctx)
 	if len(errs) != 0 {
 		t.Fatalf("WalkWithContext errors: %v", errs)
 	}
 	if got, want := relativePaths(t, linkRoot, paths), []string{"root.go"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("selected files = %v, want %v", got, want)
+	}
+	if !containsString(opened, "root.s") {
+		t.Fatalf("regular assembly input beneath explicit root symlink was not inspected: %v", opened)
 	}
 }
 
@@ -302,4 +680,13 @@ func relativePaths(t *testing.T, root string, paths []string) []string {
 	}
 	sort.Strings(relative)
 	return relative
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

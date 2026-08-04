@@ -26,7 +26,7 @@ func TestRunStaleJSONContextOnlyUsesNonEmptyEnvelope(t *testing.T) {
 		Files:       []graph.FileNode{{Path: "active.go"}},
 		Build:       &graph.BuildMetadata{BuildContextFingerprint: "different-context"},
 	}
-	if err := writeJSON(filepath.Join(root, graphFile), g); err != nil {
+	if err := writeJSON(filepath.Join(root, graphFile), currentPolicyGraph(g)); err != nil {
 		t.Fatal(err)
 	}
 

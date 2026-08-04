@@ -23,7 +23,8 @@ func FindRoot() string {
 		return "."
 	}
 	for {
-		if _, err := os.Stat(filepath.Join(dir, gographDir)); err == nil {
+		info, statErr := os.Lstat(filepath.Join(dir, gographDir))
+		if statErr == nil && info.Mode()&os.ModeSymlink == 0 && info.IsDir() {
 			return dir
 		}
 		parent := filepath.Dir(dir)

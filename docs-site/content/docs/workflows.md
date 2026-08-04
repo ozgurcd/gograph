@@ -59,7 +59,7 @@ Before changing the signature or behavior of any function, method, or struct, fo
    ```bash
    gograph build . --precise
    ```
-   Attempts type/load analysis, computes type-checked interface implementers, and retains every valid named in-repository CHA target at interface call sites. Check both fields in `gograph stats`: `precision: precise` confirms enrichment succeeded, while `precise_fallback` means the published AST graph could not be enriched. A failed retry retains an existing fresh successful precise artifact for the same selected sources instead of downgrading it. `build_status` independently reports whether AST parsing was complete or partial.
+   Attempts type/load analysis, computes type-checked interface implementers, and retains every valid named in-repository CHA target at interface call sites. Check both fields in `gograph stats`: `precision: precise` confirms enrichment succeeded, while `precise_fallback` means the published AST graph could not be enriched. A failed retry retains an existing fresh successful precise artifact for the same selected sources instead of downgrading it. `build_status` independently reports whether AST parsing and selection were complete; parse failures or selection/security warnings make it partial.
 5. **Post-edit review**:
    ```bash
    gograph review --uncommitted
@@ -101,8 +101,9 @@ Treat findings as review leads. The analysis is interprocedural and path-insensi
 
 ## Workflow 5: CI Quality Gate
 
-Gate thresholds live in the project-root `.gograph.yml`; they are not command
-flags. Scaffold the file once, review its documented defaults, and commit it:
+Gate thresholds live in a regular, non-linked project-root `.gograph.yml`;
+they are not command flags. Scaffold the file once, review its documented
+defaults, and commit it:
 
 ```bash
 gograph gate init

@@ -162,7 +162,7 @@
         </ul>
     </nav>
 </header>
-<main class="main"> 
+<main class="main">
 <div class="post-content md-content"><h2 id="compiler-aware-repository-context-for-go-coding-agents">Compiler-aware repository context for Go coding agents<a hidden class="anchor" aria-hidden="true" href="#compiler-aware-repository-context-for-go-coding-agents">#</a></h2>
 <p>gograph builds a local structural graph of a Go repository, with optional
 type-checked CHA/SSA enrichment. Use it to trace callers and interface
@@ -221,8 +221,8 @@ the macOS/Linux/Windows amd64/arm64 asset matching the host. See the
 </span></span><span style="display:flex;"><span>sudo make install
 </span></span></code></pre></div><h2 id="how-it-works">How it works<a hidden class="anchor" aria-hidden="true" href="#how-it-works">#</a></h2>
 <ol>
-<li><strong><code>gograph build .</code></strong> — walks Go files selected by the shared scanner, extracts symbols, validated call edges, imports, HTTP routes, SQL queries, environment reads, struct fields, error declarations, and typed synchronization primitives. Graph/report publishers coordinate with the persistent operational file <code>.gograph/.artifacts.lock</code>, stage <code>graph.json</code> plus nine reports, rename the reports first, and rename <code>graph.json</code> last as the commit marker. Same-directory replacement is atomic on Unix-like systems but is not guaranteed atomic by Go on non-Unix platforms; the ten-file bundle is not one atomic filesystem transaction, so a crash can leave reports ahead of the graph marker. The build adds <code>.gograph/</code> to the enclosing Git repository root <code>.gitignore</code> when available and falls back to the build target <code>.gitignore</code> outside Git. A zero-file or zero-successful-parse build does not replace existing artifacts; partial failures are recorded in graph metadata.</li>
-<li><strong>Queries and refreshes</strong> — graph-backed CLI analysis reads the last persisted <code>graph.json</code>; commands whose contract reads source, Git, or other local state do so directly. MCP source-analysis tools check source freshness and newer persisted artifacts, adopt a newer compatible precise graph, and rebuild after edits in the current requested mode. Those refreshes stay in memory by default. <code>gograph mcp [path] --persist-refresh</code> opts into publishing the latest successful refresh with the same graph-last protocol; a failed precise refresh is returned visibly.</li>
+<li><strong><code>gograph build .</code></strong> — first rejects linked/non-regular <code>go.mod</code>, <code>go.sum</code>, <code>go.work</code>, <code>go.work.sum</code>, and <code>vendor/modules.txt</code> metadata before toolchain use. Applicable <code>go.work use</code> members must remain beneath the workspace directory, and their directories, <code>go.mod</code>, and optional <code>go.sum</code> are validated before <code>cmd/go</code>. The shared scanner then excludes linked/special recognized Go build inputs before build selection and AST reads. It extracts symbols, validated call edges, imports, HTTP routes, SQL queries, environment reads, struct fields, error declarations, and typed synchronization primitives. Graph/report publishers require a real <code>.gograph</code> directory and regular-or-absent lock entry, stage <code>graph.json</code> plus nine reports, rename the reports first, and rename <code>graph.json</code> last as the commit marker. Same-directory replacement is atomic on Unix-like systems but is not guaranteed atomic by Go on non-Unix platforms; the ten-file bundle is not one atomic filesystem transaction, so a crash can leave reports ahead of the graph marker. The build adds <code>.gograph/</code> to an absent or regular enclosing Git-root <code>.gitignore</code> when available and falls back to the build target outside Git; it refuses a link or special file. A zero-file or zero-successful-parse build does not replace existing artifacts; parse failures and selection/security warnings are recorded in graph metadata and make status partial.</li>
+<li><strong>Queries and refreshes</strong> — graph-backed CLI analysis reads the last trusted, regular repository-confined <code>graph.json</code> with the current source-policy marker and replaces its serialized root with the selected project; commands whose contract reads source, Git, or other local state do so through their documented boundaries. MCP source-analysis tools check source freshness and newer usable persisted artifacts, adopt a newer compatible precise graph, and rebuild after edits in the current requested mode. When no usable artifact exists, persisted-index MCP tools use the startup fallback. Refreshes stay in memory by default. <code>gograph mcp [path] --persist-refresh</code> opts into publishing the latest successful refresh with the same graph-last protocol; a failed precise refresh is returned visibly.</li>
 <li><strong><code>--precise</code> mode</strong> — attempts type-checked CHA/SSA enrichment. It needs compilable, build-selected packages for precise data; if type/load analysis fails or omits an indexed non-test file, gograph warns and normally records <code>precise_fallback</code> on the retained AST graph. A failed retry keeps an existing fresh successful precise artifact covering the same selected sources instead of downgrading it (<code>ast</code> identifies an explicitly requested AST build).</li>
 </ol>
 <h2 id="what-it-captures">What it captures<a hidden class="anchor" aria-hidden="true" href="#what-it-captures">#</a></h2>
@@ -235,8 +235,8 @@ the macOS/Linux/Windows amd64/arm64 asset matching the host. See the
 	</thead>
 	<tbody>
 			<tr>
-					<td>Functions, methods, structs, interfaces, types, consts</td>
-					<td>AST <code>FuncDecl</code>, <code>TypeSpec</code></td>
+					<td>Functions, methods, structs, interfaces, types, variables, constants</td>
+					<td>AST <code>FuncDecl</code>, <code>TypeSpec</code>, <code>ValueSpec</code></td>
 			</tr>
 			<tr>
 					<td>Call edges (caller → callee, with call-site file and line)</td>
@@ -252,19 +252,19 @@ the macOS/Linux/Windows amd64/arm64 asset matching the host. See the
 			</tr>
 			<tr>
 					<td>Environment reads</td>
-					<td><code>os.Getenv</code>, <code>viper.Get*</code></td>
+					<td><code>os.Getenv</code>, <code>os.LookupEnv</code>, supported Viper <code>Get*</code></td>
 			</tr>
 			<tr>
-					<td>Struct field mutations</td>
-					<td>AST <code>AssignStmt</code> on selector expressions</td>
+					<td>Struct-field and package-global mutations</td>
+					<td>Direct assignments plus precise alias, compound, atomic/sync/wrapper, and channel evidence</td>
 			</tr>
 			<tr>
-					<td>Error declarations and return sites</td>
-					<td><code>errors.New</code>, <code>fmt.Errorf</code>, <code>panic</code></td>
+					<td>Error and panic sites</td>
+					<td><code>errors.New</code>, <code>fmt.Errorf</code>, sentinel declarations, <code>panic</code></td>
 			</tr>
 			<tr>
 					<td>Concurrency primitives</td>
-					<td><code>go func</code>, <code>sync.Mutex</code>, channel ops, <code>WaitGroup</code></td>
+					<td><code>go</code> statements, channel sends, typed <code>Mutex</code>/<code>RWMutex</code>/<code>WaitGroup</code>/<code>Once</code> calls</td>
 			</tr>
 			<tr>
 					<td>Test edges (test → tested symbol)</td>
@@ -302,7 +302,7 @@ them with persisted repository-level questions such as:</p>
         <h1>gograph</h1>
     </header>
     <div class="entry-content md-content">
-        
+
         <p>A local structural graph for safer Go refactors, repository-level analysis, and coding-agent workflows — from the terminal or any compatible MCP client.</p>
 
     </div>
@@ -322,7 +322,7 @@ them with persisted repository-level questions such as:</p>
     </footer>
 </article>
 
-<article class="post-entry"> 
+<article class="post-entry">
   <header class="entry-header">
     <h2 class="entry-hint-parent">Getting Started
     </h2>
@@ -336,11 +336,11 @@ MCPB-capable clients can discover io.github.ozgurcd/gograph in the official Regi
   </div>
   <footer class="entry-footer">
 
-<span>7 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
+<span>8 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
   <a class="entry-link" aria-label="post link to Getting Started" href="https://gograph.identuum.ai/docs/getting-started/"></a>
 </article>
 
-<article class="post-entry"> 
+<article class="post-entry">
   <header class="entry-header">
     <h2 class="entry-hint-parent">Command Reference
     </h2>
@@ -353,11 +353,11 @@ Global Flags Global flags may appear before or after the command:
   </div>
   <footer class="entry-footer">
 
-<span>18 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
+<span>22 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
   <a class="entry-link" aria-label="post link to Command Reference" href="https://gograph.identuum.ai/docs/command-reference/"></a>
 </article>
 
-<article class="post-entry"> 
+<article class="post-entry">
   <header class="entry-header">
     <h2 class="entry-hint-parent">AI Agent Integration
     </h2>
@@ -373,7 +373,7 @@ Text search, gopls, and gograph have different jobs rg, grep, and find are appro
   <a class="entry-link" aria-label="post link to AI Agent Integration" href="https://gograph.identuum.ai/docs/agent-integration/"></a>
 </article>
 
-<article class="post-entry"> 
+<article class="post-entry">
   <header class="entry-header">
     <h2 class="entry-hint-parent">Agent Workflows
     </h2>
@@ -403,16 +403,16 @@ Registry installation is a separate path Homebrew and go install place the norma
   </div>
   <footer class="entry-footer">
 
-<span>3 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
+<span>5 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
   <a class="entry-link" aria-label="post link to Official MCP Registry" href="https://gograph.identuum.ai/docs/mcp-registry/"></a>
 </article>
     </main>
-    
-<footer class="footer">
-        <span>&copy; 2026 <a href="https://gograph.identuum.ai/">gograph – Go Codebase Analysis &amp; MCP Server</a></span> · 
 
-    
-    
+<footer class="footer">
+        <span>&copy; 2026 <a href="https://gograph.identuum.ai/">gograph – Go Codebase Analysis &amp; MCP Server</a></span> ·
+
+
+
     <span>
         Powered by
         <a href="https://gohugo.io/?utm_source=papermod" rel="noopener" target="_blank">Hugo</a> &
@@ -430,12 +430,12 @@ Registry installation is a separate path Homebrew and go install place the norma
 <script>
     let menu = document.getElementById('menu');
     if (menu) {
-        
+
         const scrollPosition = localStorage.getItem("menu-scroll-position");
         if (scrollPosition) {
             menu.scrollLeft = parseInt(scrollPosition, 10);
         }
-        
+
         menu.onscroll = function () {
             localStorage.setItem("menu-scroll-position", menu.scrollLeft);
         }

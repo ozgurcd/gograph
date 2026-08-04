@@ -323,3 +323,5 @@ Normalized the security-flow page link into the index's Schemas and Security sec
 - Index maintenance: added direct links for every generated package page after the final graph regeneration.
 
 - Scrinium maintenance completed with all session requirements satisfied and append-only log hygiene restored.
+- 2026-08-04: Replaced legacy traversal guards with source-policy v1 and os.Root-based confinement for scanner/parser/query reads, Go module/workspace metadata and local source-tree preflights, persisted graphs/baselines, project configs, artifacts, and repository mutations. Added workspace-member and symlink-root alias regressions; credited private disclosure by Dostxodjayev Abdullox (@squeeze440).
+- 2026-08-04: Extended the precise/doc workspace source preflight to the workspace root (including workspace-vendor source) plus every confined member, added the linked workspace-vendor regression, and aligned CLI/MCP/help/site contracts with the code's metadata, scanner, and toolchain-preflight sequencing.

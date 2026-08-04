@@ -15,7 +15,7 @@ architecture without embeddings or a hosted code index.
 
 ![Gograph Demo](gograph-demo.gif)
 
-> **Static analysis; no target-code execution.** Default indexing parses Go source locally and does not call application services. It also reads project metadata such as `go.mod`, `.gitignore`, graph/config JSON, and Git state. Precise mode and `doc` invoke the local Go toolchain, which follows your configured module/cache/network policy. Session telemetry is local under `.gograph/sessions/`; nothing is sent to gograph services.
+> **Static analysis; no target-code execution.** Default indexing parses Go source locally and does not call application services. Descendant links and special files for extensions recognized by `go/build` are excluded, graph-directed source reads are confined to regular files beneath the analyzed repository, and linked/non-regular Go tool metadata (`go.mod`, `go.sum`, `go.work`, `go.work.sum`, and `vendor/modules.txt`) is rejected before toolchain invocation; an explicitly symlinked repository root remains supported. Applicable `go.work use` members must stay beneath the workspace directory, and each member directory, `go.mod`, and optional `go.sum` is validated before `cmd/go` starts. Gograph also reads project metadata such as `.gitignore`, graph/config JSON, and Git state. Indexing asks the installed Go toolchain for the effective build/module context; precise mode additionally performs package type loading, and `doc` runs `go doc`. Those operations follow your configured module/cache/network policy. Before repository package loading or `go doc`, applicable local module/workspace source trees are preflighted for links that `cmd/go` may inspect; `.git` and `.gograph` subtrees are excluded. Session telemetry is local under `.gograph/sessions/`; nothing is sent to gograph services.
 
 ## Quick Start
 
@@ -58,9 +58,22 @@ Build artifacts are written under the target `.gograph/` directory. `gograph`
 adds `.gograph/` to the enclosing Git repository root `.gitignore` when
 available, falls back to the build target `.gitignore` outside Git, and exits
 without replacing artifacts if no Go files are found or no source file parses
-successfully. Go build constraints, cmd/go package-directory rules, generated
+successfully. The update accepts only an absent or regular `.gitignore`; a
+repository-provided link is refused and its target is not modified. Go build
+constraints, cmd/go package-directory rules, generated
 sources, module-mode ignore directives, and Git ignores use the same scanner
-policy for building, freshness checks, and change detection.
+policy for building, freshness checks, and change detection. Source-file
+symlinks and other non-regular `.go` entries are reported and excluded;
+linked/non-regular `go.mod`, `go.sum`, `go.work`, `go.work.sum`, and
+`vendor/modules.txt` entries are rejected before gograph or the Go toolchain
+reads them. Applicable `go.work use` members must remain beneath the workspace
+directory; their directories, `go.mod`, and optional `go.sum` are validated
+before `cmd/go` starts.
+`.gograph` itself must be a real directory, and `graph.json` must be a regular
+repository-confined file. Graphs with a missing or unsupported confinement
+policy marker must be rebuilt with the current binary before graph-backed
+commands use them. Older binaries do not enforce this boundary and should not
+be used to analyze untrusted repositories.
 
 MCP refreshes stay in memory by default. To publish each successful refresh
 for CLI consumers and later server processes, start the server explicitly with:
@@ -73,11 +86,13 @@ This opt-in mode writes or overwrites `.gograph/graph.json` and the nine
 Markdown reports after a confirmed-fresh refresh. It does not modify
 `.gitignore`, so ignore `.gograph/` yourself before enabling it when needed.
 The directory holds only the latest published state; it is not a per-branch
-cache. If no graph exists, the startup auto-build is published before serving;
+cache. If no usable graph exists (including an unsafe or unsupported artifact),
+the startup auto-build is published before serving;
 a failure there prevents startup. A later tool-triggered publication failure
 makes that tool return an error, and the server retries the pending publication
 on another refresh-capable call without rebuilding the already-fresh in-memory
-graph. Writers coordinate through a local `.gograph/.artifacts.lock` file.
+graph. Writers coordinate through a local `.gograph/.artifacts.lock` file; an
+existing lock entry must be regular rather than a link or special file.
 Reports are replaced first and `graph.json` is replaced last as the publication
 commit marker; the complete ten-file bundle is not a single atomic filesystem
 transaction. Same-directory replacement is atomic on Unix-like systems; Go
@@ -102,17 +117,17 @@ of evidence):*
 
 **Native MCP Server** — query, analysis, and workflow capabilities have MCP equivalents for Claude, Cursor, Copilot, and other MCP clients. Host/build operations (`build`, `gate`, `snapshot`, plugin/hook installation, server startup, help, and version) intentionally remain CLI-only, and transport-specific presentation differs where appropriate.
 
-**Explicit Freshness Model** — CLI graph-backed analysis reads the last persisted graph. `gograph stale` is a tri-state predicate in text and JSON modes: exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error. MCP source-analysis tools check freshness per call, adopt a newer persisted precise graph, and rebuild in memory after edits using the latest requested analysis mode. MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot, or the startup auto-build fallback when no artifact exists. With `--persist-refresh`, that snapshot advances after a successful refresh, so default `changes` compares against the newly published state and normally no longer reports that refresh's source edits.
+**Explicit Freshness Model** — CLI graph-backed analysis reads the last trusted persisted graph. `gograph stale` is a tri-state predicate in text and JSON modes: exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error; a missing or unsupported source-policy marker is an explicit status-1 rebuild requirement. MCP source-analysis tools check freshness per call, adopt a newer persisted precise graph, and rebuild in memory after edits using the latest requested analysis mode. MCP `stale`, default `changes`, and `stats` inspect the trusted persisted snapshot, or the startup auto-build fallback when no usable artifact exists. With `--persist-refresh`, that snapshot advances after a successful refresh, so default `changes` compares against the newly published state and normally no longer reports that refresh's source edits.
 
 **Compact Composite Workflows** — `context`, `plan`, and `explain` combine source and graph evidence that would otherwise require several separate queries. Actual tool-call and token savings depend on the repository and task.
 
-**Narrow by Design** — never runs target repository binaries or tests and does not intentionally scan `.env`, key, certificate, or credential files. Explicitly selected in-root policy/config inputs are read as requested. AI worktree directories (`.claude/`, `.cursor/`, `.agents/`) are excluded. Precise analysis and external documentation use the installed Go toolchain.
+**Narrow by Design** — never runs target repository binaries or tests and does not intentionally scan `.env`, key, certificate, or credential files. Descendant links and special files for recognized Go build inputs are excluded; on-demand source and snippet reads use a repository-rooted filesystem handle and accept only regular `.go` files without symlink components. Linked/non-regular Go module/workspace metadata, sums, and `vendor/modules.txt` are rejected before toolchain use. Applicable workspace members must stay beneath the workspace directory, and their directories plus module metadata are preflighted before `cmd/go`. Default/relative policy configs are project-confined; documented absolute config/output arguments are explicit operator-selected local locations. AI worktree directories (`.claude/`, `.cursor/`, `.agents/`) are excluded. The installed Go toolchain resolves effective build context during indexing; precise repository package loading and external `go doc` run only after a preflight that rejects source-tree links `cmd/go` may inspect across the selected root plus its effective module root, or the workspace root and member trees, excluding `.git` and `.gograph`. Dependency and toolchain resolution remain open-world under the user's Go environment.
 
 **Architecture Enforcement** — boundary rules, API drift detection, complexity gates, dead code sweeps, god-object detection, coupling analysis. Run in CI with `gograph gate`.
 
 **Security Flow Analysis** — `flow` follows potential HTTP request, decoded JSON, and environment data across assignments and function calls to SQL query text, process execution, filesystem paths, and outbound HTTP targets. Findings include severity, confidence, and source-to-sink path steps; MCP exposes the same analysis as `gograph_flow`.
 
-**Integrity-Aware Indexing** — `graph.json` is staged and replaced last only after a successful parse (the same-directory rename is atomic on Unix-like systems), records complete/partial build health and `ast`/`precise`/`precise_fallback` analysis status, and exposes both through `gograph stats`. `gate` refuses to evaluate a stale graph.
+**Integrity-Aware Indexing** — publication refuses a linked or non-directory `.gograph`; `graph.json` is staged and replaced last only after a successful parse (the same-directory rename is atomic on Unix-like systems), records complete/partial build health and `ast`/`precise`/`precise_fallback` analysis status, and exposes both through `gograph stats`. `gate` refuses to evaluate a stale graph.
 
 **Agent Compliance Auditing** — session telemetry tracks whether agents run `plan` before edits and `review` after. Grades agent behavior A–F with actionable recommendations.
 
@@ -291,6 +306,7 @@ drop-in replacement for another.
 <summary><strong>Correctness model</strong></summary>
 
 - **Default mode** uses Go AST parsing and best-effort heuristics. Tolerates incomplete or non-compiling repositories.
+- **Repository source boundary** excludes descendant links and special files for recognized Go build inputs before build selection, supplies confined bytes to the AST parser, and confines later `source`, caller/callee snippet, complexity, and changed-file reads to regular repository files. Linked/non-regular `go.mod`, `go.sum`, `go.work`, `go.work.sum`, and `vendor/modules.txt` metadata is rejected before gograph or the Go toolchain reads it. Applicable `go.work use` paths must stay beneath their workspace directory; member directories, `go.mod`, and optional `go.sum` are validated before `cmd/go`. Precise loading and `doc` preflight the selected root plus its effective module root, or the workspace root and every member tree; `.git` and `.gograph` are excluded from that source-tree walk. Persisted `graph.json` is also read through this boundary, `.gograph` must be a real directory, and an explicitly symlinked repository root is allowed. Missing or unsupported source-policy markers are rebuild-required, and serialized graph roots are never trusted. Saved baseline graphs must be regular non-linked files inside the selected project with the exact marker. Default/relative check and flow configs, boundaries, gate config, and repository-controlled session/snapshot/wiki mutations reject linked path components; documented absolute config/wiki locations are explicit operator selections. Use the current binary for untrusted repositories.
 - **Precise mode** attempts type-checked enrichment and needs compilable, build-selected packages for CHA/SSA results. If enrichment fails or omits an indexed non-test source file, the command warns, publishes the AST graph, and records `precise_fallback`; if a fresh successful precise artifact already covers the same sources, a failed retry keeps that artifact instead. Successful and AST-only builds record `precise` and `ast` respectively.
 - Each precise interface invocation is represented by one call edge per valid named in-repository CHA target. `callers Interface.Method` (including methods inherited from embedded interfaces and concrete methods promoted from embedded fields) expands through the interface's implementers and reports a shared source expression once; concrete receiver notation and fully-qualified method IDs remain available for disambiguation. Compiler-generated promoted-method forwarding is stored as a traversal-only synthetic edge and is hidden from call-site output.
 - CHA is conservative rather than points-to precise: it may retain implementations that cannot occur in one runtime configuration. Reflection, `unsafe`, plugins, unresolved function values, test-only packages, unnamed concrete types, and module-external implementations can still be incomplete.

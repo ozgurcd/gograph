@@ -70,3 +70,22 @@ func TestOptionalPrecisionAndCallProvenanceMetadataRemainAdditive(t *testing.T) 
 		t.Fatalf("ordinary calls should omit synthetic traversal metadata: %s", zeroColumn)
 	}
 }
+
+func TestUsesCurrentSourcePolicyRequiresExplicitMarker(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		g    *Graph
+		want bool
+	}{
+		{name: "nil graph"},
+		{name: "missing metadata", g: &Graph{}},
+		{name: "legacy metadata", g: &Graph{Build: &BuildMetadata{}}},
+		{name: "current", g: &Graph{Build: &BuildMetadata{SourcePolicyVersion: CurrentSourcePolicyVersion}}, want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.g.UsesCurrentSourcePolicy(); got != test.want {
+				t.Fatalf("UsesCurrentSourcePolicy() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}

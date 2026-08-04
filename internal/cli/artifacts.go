@@ -62,6 +62,9 @@ func publishGraphArtifacts(root string, candidate *graph.Graph, mode artifactPub
 	if candidate == nil {
 		return graphPublication{}, fmt.Errorf("cannot publish a nil graph")
 	}
+	if !candidate.UsesCurrentSourcePolicy() {
+		return graphPublication{}, fmt.Errorf("cannot publish graph without the current repository source policy")
+	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return graphPublication{}, fmt.Errorf("resolving publication root: %w", err)
@@ -69,11 +72,15 @@ func publishGraphArtifacts(root string, candidate *graph.Graph, mode artifactPub
 	candidate.Root = absRoot
 
 	outDir := filepath.Join(absRoot, outputDir)
-	if err := os.MkdirAll(outDir, 0o750); err != nil {
-		return graphPublication{}, fmt.Errorf("creating artifact directory: %w", err)
+	if err := ensureArtifactDirectory(outDir); err != nil {
+		return graphPublication{}, err
 	}
 
-	lock := flock.New(filepath.Join(outDir, artifactLockFile), flock.SetPermissions(0o640))
+	lockPath := filepath.Join(outDir, artifactLockFile)
+	if err := validateArtifactLock(lockPath); err != nil {
+		return graphPublication{}, err
+	}
+	lock := flock.New(lockPath, flock.SetPermissions(0o640))
 	ctx, cancel := context.WithTimeout(context.Background(), artifactLockTimeout)
 	defer cancel()
 	locked, lockErr := lock.TryLockContext(ctx, artifactLockRetry)
@@ -134,6 +141,46 @@ func publishGraphArtifacts(root string, candidate *graph.Graph, mode artifactPub
 		return graphPublication{}, fmt.Errorf("syncing artifact directory: %w", err)
 	}
 	return graphPublication{Graph: candidate, Published: true}, nil
+}
+
+// ensureArtifactDirectory refuses a repository-provided link or special file
+// at .gograph before any lock, temporary artifact, or final report is opened.
+// Publication supports an explicitly symlinked repository root, but the
+// artifact directory beneath it must be a real directory.
+func ensureArtifactDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		if err := os.Mkdir(path, 0o750); err != nil {
+			if !os.IsExist(err) {
+				return fmt.Errorf("creating artifact directory: %w", err)
+			}
+		}
+		info, err = os.Lstat(path)
+	}
+	if err != nil {
+		return fmt.Errorf("inspecting artifact directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("refusing unsafe artifact directory %s: mode %s is not a real directory", path, info.Mode())
+	}
+	return nil
+}
+
+// validateArtifactLock prevents flock's create/open from following a
+// repository-provided link. An absent lock is expected and will be created by
+// flock; an existing entry must be a regular file.
+func validateArtifactLock(path string) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspecting artifact lock: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("refusing unsafe artifact lock %s: mode %s is not a regular file", path, info.Mode())
+	}
+	return nil
 }
 
 func graphBaseline(previous *graph.Graph) *graph.GraphBaseline {

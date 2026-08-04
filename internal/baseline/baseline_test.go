@@ -63,6 +63,54 @@ func TestBuildRejectsUnsafeRef(t *testing.T) {
 	}
 }
 
+func TestBuildRejectsLegacySavedGraph(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "legacy.json"), `{"version":"2","build":{"complete":true}}`)
+	_, err := baseline.Build(context.Background(), root, "legacy.json", func(string) (*graph.Graph, error) {
+		t.Fatal("saved graph should not invoke source builder")
+		return nil, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported repository source policy") {
+		t.Fatalf("legacy saved graph error = %v", err)
+	}
+}
+
+func TestBuildRejectsSavedGraphOutsideProject(t *testing.T) {
+	base := t.TempDir()
+	project := filepath.Join(base, "project")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(base, "outside.json"), `{"version":"2","build":{"source_policy_version":1}}`)
+	_, err := baseline.Build(context.Background(), project, "../outside.json", func(string) (*graph.Graph, error) {
+		t.Fatal("saved graph should not invoke source builder")
+		return nil, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "inside project root") {
+		t.Fatalf("outside saved graph error = %v", err)
+	}
+}
+
+func TestBuildRejectsLinkedSavedGraph(t *testing.T) {
+	base := t.TempDir()
+	project := filepath.Join(base, "project")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(base, "outside.json")
+	writeFile(t, outside, `{"version":"2","build":{"source_policy_version":1}}`)
+	if err := os.Symlink(outside, filepath.Join(project, "baseline.json")); err != nil {
+		t.Skipf("create baseline symlink: %v", err)
+	}
+	_, err := baseline.Build(context.Background(), project, "baseline.json", func(string) (*graph.Graph, error) {
+		t.Fatal("saved graph should not invoke source builder")
+		return nil, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsafe repository source path") {
+		t.Fatalf("linked saved graph error = %v", err)
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

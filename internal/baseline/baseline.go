@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
 
 var safeGitRef = regexp.MustCompile(`^[A-Za-z0-9._/\-~^]+$`)
@@ -62,17 +63,36 @@ func Build(ctx context.Context, projectRoot, ref string, buildGraph BuildFunc) (
 }
 
 func loadGraphFile(projectRoot, path string) (*graph.Graph, error) {
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(projectRoot, path)
-	}
-	data, err := os.ReadFile(path)
+	absRoot, err := filepath.Abs(projectRoot)
 	if err != nil {
-		return nil, fmt.Errorf("load baseline graph %s: %w", path, err)
+		return nil, fmt.Errorf("resolve project root: %w", err)
+	}
+	candidate := path
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(absRoot, candidate)
+	}
+	rel, err := filepath.Rel(absRoot, candidate)
+	if err != nil || !filepath.IsLocal(rel) {
+		return nil, fmt.Errorf("saved baseline graph must be a regular file inside project root: %s", path)
+	}
+	reader, err := sourcefs.Open(absRoot)
+	if err != nil {
+		return nil, fmt.Errorf("open project root for baseline graph: %w", err)
+	}
+	defer func() { _ = reader.Close() }()
+	data, err := reader.ReadRegularFile(rel)
+	if err != nil {
+		return nil, fmt.Errorf("load baseline graph %s: %w", candidate, err)
 	}
 	var g graph.Graph
 	if err := json.Unmarshal(data, &g); err != nil {
-		return nil, fmt.Errorf("parse baseline graph %s: %w", path, err)
+		return nil, fmt.Errorf("parse baseline graph %s: %w", candidate, err)
 	}
+	if !g.UsesCurrentSourcePolicy() {
+		return nil, fmt.Errorf("baseline graph %s has a missing or unsupported repository source policy; rebuild or replace it", candidate)
+	}
+	// A serialized baseline root is metadata, not authority for later reads.
+	g.Root = absRoot
 	return &g, nil
 }
 

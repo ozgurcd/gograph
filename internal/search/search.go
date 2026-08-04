@@ -4,24 +4,13 @@ package search
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
-
-func isSafePathSegment(seg string) bool {
-	if seg == "" {
-		return false
-	}
-	if strings.Contains(seg, "..") {
-		return false
-	}
-	return true
-}
 
 // Result is a single match returned by any search function.
 type Result struct {
@@ -176,6 +165,10 @@ func Node(g *graph.Graph, name string) []Result {
 // expanded through Graph.Implements to every concrete method target retained by
 // precise CHA; parallel target edges are collapsed to one source call-site row.
 func Callers(g *graph.Graph, name string, includeTests bool, exactMatch bool) []Result {
+	sourceReader, _ := sourcefs.Open(g.Root)
+	if sourceReader != nil {
+		defer func() { _ = sourceReader.Close() }()
+	}
 	nl := strings.ToLower(name)
 	resolvedTargets, interfaceMethodQuery := resolvedCallTargetIDs(g, name)
 	callerSymbols := make(map[string]graph.SymbolNode)
@@ -235,9 +228,6 @@ func Callers(g *graph.Graph, name string, includeTests bool, exactMatch bool) []
 				continue
 			}
 			seen[k] = true
-			if !isSafePathSegment(c.File) || strings.Contains(c.File, "..") || strings.Contains(c.File, "\\") {
-				continue
-			}
 			sym, ok := callerSymbols[c.CallerSymbolID]
 			file, line := c.File, 0
 			if ok {
@@ -245,11 +235,13 @@ func Callers(g *graph.Graph, name string, includeTests bool, exactMatch bool) []
 			}
 
 			snippet := ""
-			absPath := filepath.Join(g.Root, c.File)
-			if data, err := os.ReadFile(absPath); err == nil {
-				lines := strings.Split(string(data), "\n")
-				if c.Line > 0 && c.Line <= len(lines) {
-					snippet = strings.TrimSpace(lines[c.Line-1])
+			if sourceReader != nil {
+				data, err := sourceReader.ReadFile(c.File)
+				if err == nil {
+					lines := strings.Split(string(data), "\n")
+					if c.Line > 0 && c.Line <= len(lines) {
+						snippet = strings.TrimSpace(lines[c.Line-1])
+					}
 				}
 			}
 
@@ -281,6 +273,10 @@ func Callers(g *graph.Graph, name string, includeTests bool, exactMatch bool) []
 // functions/methods across types or packages. Short names fall back to
 // fuzzy substring matching (preserves the casual-query UX).
 func Callees(g *graph.Graph, name string, includeTests bool, exactMatch bool) []Result {
+	sourceReader, _ := sourcefs.Open(g.Root)
+	if sourceReader != nil {
+		defer func() { _ = sourceReader.Close() }()
+	}
 	nl := strings.ToLower(name)
 	fqQuery := isFullyQualifiedID(name)
 	matchedIDs := make(map[string]bool)
@@ -334,15 +330,14 @@ func Callees(g *graph.Graph, name string, includeTests bool, exactMatch bool) []
 				continue
 			}
 			seen[key] = true
-			if !isSafePathSegment(c.File) || strings.Contains(c.File, "..") || strings.Contains(c.File, "\\") {
-				continue
-			}
 			snippet := ""
-			absPath := filepath.Join(g.Root, c.File)
-			if data, err := os.ReadFile(absPath); err == nil {
-				lines := strings.Split(string(data), "\n")
-				if c.Line > 0 && c.Line <= len(lines) {
-					snippet = strings.TrimSpace(lines[c.Line-1])
+			if sourceReader != nil {
+				data, err := sourceReader.ReadFile(c.File)
+				if err == nil {
+					lines := strings.Split(string(data), "\n")
+					if c.Line > 0 && c.Line <= len(lines) {
+						snippet = strings.TrimSpace(lines[c.Line-1])
+					}
 				}
 			}
 
@@ -985,7 +980,10 @@ func matchTestTarget(target, testFunc, term string) bool {
 	return false
 }
 
-// Source extracts the exact source code lines for a given symbol.
+// Source extracts exact source lines for a named function, method, struct,
+// interface, type, variable, or constant. When an ambiguous name includes both
+// safe and unreadable matches, the safe matches are returned; it fails only
+// when no matching source block can be read safely.
 func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
 	targets := FindSymbols(g, symbolName)
 
@@ -997,19 +995,20 @@ func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
 	var readErrs []error
 	extractedCount := 0
 	limit := 5
-	for i, target := range targets {
-		if i >= limit {
-			results = append(results, fmt.Sprintf("// WARNING: %d other implementations of '%s' were found but omitted to save tokens. Please be more specific (e.g., Receiver.Method).", len(targets)-limit, symbolName))
+	sourceReader, err := sourcefs.Open(rootDir)
+	if err != nil {
+		return "", fmt.Errorf("open repository source root: %w", err)
+	}
+	defer func() { _ = sourceReader.Close() }()
+	processed := 0
+	for _, target := range targets {
+		if extractedCount >= limit {
+			results = append(results, fmt.Sprintf("// WARNING: %d other implementations of '%s' were found but omitted to save tokens. Please be more specific (e.g., Receiver.Method).", len(targets)-processed, symbolName))
 			break
 		}
+		processed++
 
-		if !isSafePathSegment(target.File) || strings.Contains(target.File, "..") || strings.Contains(target.File, "\\") {
-			readErrs = append(readErrs, fmt.Errorf("unsafe source path %q", target.File))
-			continue
-		}
-
-		absPath := filepath.Join(rootDir, target.File)
-		data, err := os.ReadFile(absPath)
+		data, err := sourceReader.ReadFile(target.File)
 		if err != nil {
 			readErrs = append(readErrs, fmt.Errorf("read source file %s: %w", target.File, err))
 			continue

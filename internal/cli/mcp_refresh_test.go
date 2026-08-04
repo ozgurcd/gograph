@@ -442,7 +442,7 @@ func TestGraphRefresherAdoptsNewerPersistedPreciseGraph(t *testing.T) {
 		Build:       &graph.BuildMetadata{Precision: graph.PrecisionPrecise},
 		Implements:  []graph.ImplementsEdge{{Interface: "Runner", Concrete: "Service"}},
 	}
-	if err := writeJSON(filepath.Join(root, graphFile), persisted); err != nil {
+	if err := writeJSON(filepath.Join(root, graphFile), currentPolicyGraph(persisted)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -475,7 +475,7 @@ func TestGraphRefresherAdoptsLaterPublishedPreciseGraphWithEarlierGeneratedAt(t 
 			Warnings:  []string{"precise enrichment failed: overlapping in-memory build"},
 		},
 	}
-	if err := writeJSON(artifactPath, initial); err != nil {
+	if err := writeJSON(artifactPath, currentPolicyGraph(initial)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -496,7 +496,7 @@ func TestGraphRefresherAdoptsLaterPublishedPreciseGraphWithEarlierGeneratedAt(t 
 		Build:       &graph.BuildMetadata{Complete: true, Precision: graph.PrecisionPrecise},
 		Implements:  []graph.ImplementsEdge{{Interface: "Runner", Concrete: "Service"}},
 	}
-	if err := writeJSON(artifactPath, persisted); err != nil {
+	if err := writeJSON(artifactPath, currentPolicyGraph(persisted)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -565,7 +565,7 @@ func TestRunningMCPHandlerAdoptsNewerPersistedPreciseGraph(t *testing.T) {
 			{CallerSymbolID: callerID, CallerName: "Purge", CalleeRaw: "states.Delete", CalleeSymbolID: sqlID, File: "service/purge.go", Line: 12, Column: 20},
 		},
 	}
-	if err := writeJSON(filepath.Join(root, graphFile), persisted); err != nil {
+	if err := writeJSON(filepath.Join(root, graphFile), currentPolicyGraph(persisted)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -708,7 +708,7 @@ func TestGraphRefresherRetriesArtifactAfterLoadFailure(t *testing.T) {
 		GeneratedAt: generated.Add(time.Hour),
 		Build:       &graph.BuildMetadata{Precision: graph.PrecisionPrecise},
 	}
-	if err := writeJSON(artifactPath, persisted); err != nil {
+	if err := writeJSON(artifactPath, currentPolicyGraph(persisted)); err != nil {
 		t.Fatal(err)
 	}
 	got, err = refresh()
@@ -745,7 +745,7 @@ func TestGraphRefresherDoesNotAdoptNewerASTOverPreciseGraph(t *testing.T) {
 		GeneratedAt: generated.Add(time.Hour),
 		Build:       &graph.BuildMetadata{Precision: graph.PrecisionAST},
 	}
-	if err := writeJSON(filepath.Join(root, graphFile), persisted); err != nil {
+	if err := writeJSON(filepath.Join(root, graphFile), currentPolicyGraph(persisted)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -783,6 +783,41 @@ func TestGraphArtifactChangedDetectsEqualSizeAtomicReplacement(t *testing.T) {
 	current := graphArtifactInfo(path)
 	if !graphArtifactChanged(previous, current) {
 		t.Fatal("equal-size, equal-modtime atomic replacement was not detected")
+	}
+}
+
+func TestGraphArtifactInfoRejectsLinkedArtifactEntries(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repository")
+	outsideDirectory := filepath.Join(base, "outside-artifacts")
+	if err := os.MkdirAll(filepath.Join(root, outputDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outsideDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outsideGraph := filepath.Join(outsideDirectory, "graph.json")
+	if err := os.WriteFile(outsideGraph, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	artifactPath := filepath.Join(root, graphFile)
+	if err := os.Symlink(outsideGraph, artifactPath); err != nil {
+		t.Skipf("create linked graph artifact: %v", err)
+	}
+	if info := graphArtifactInfo(artifactPath); info != nil {
+		t.Fatalf("linked graph artifact returned info: %+v", info)
+	}
+	if err := os.Remove(artifactPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, outputDir)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideDirectory, filepath.Join(root, outputDir)); err != nil {
+		t.Skipf("create linked artifact directory: %v", err)
+	}
+	if info := graphArtifactInfo(artifactPath); info != nil {
+		t.Fatalf("graph below linked artifact directory returned info: %+v", info)
 	}
 }
 

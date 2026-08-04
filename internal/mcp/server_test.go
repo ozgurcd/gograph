@@ -67,6 +67,295 @@ func TestNewServer(t *testing.T) {
 	}
 }
 
+func TestDocRefusesRepositorySourceSymlink(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repository")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(base, "outside.go")
+	const sentinel = "BENIGN-EXTERNAL-SENTINEL"
+	if err := os.WriteFile(outside, []byte("package outside\n// "+sentinel+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "linked.go")); err != nil {
+		t.Skipf("create source symlink: %v", err)
+	}
+
+	handlers := setupHandlers(t, &graph.Graph{Root: root})
+	request := mcp.CallToolRequest{}
+	request.Params.Arguments = map[string]any{"query": "fmt.Errorf"}
+	result, err := handlers["gograph_doc"](context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Fatalf("gograph_doc accepted repository source symlink: %+v", result)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "unsafe repository source") || strings.Contains(text, sentinel) {
+		t.Fatalf("gograph_doc refusal = %q", text)
+	}
+}
+
+func TestDocRefusesLinkedToolchainMetadata(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repository")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/docmetadata\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package docmetadata\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(base, "outside-sum")
+	const sentinel = "BENIGN-LINKED-SUM-SENTINEL"
+	if err := os.WriteFile(outside, []byte(sentinel+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "go.sum")); err != nil {
+		t.Skipf("create go.sum symlink: %v", err)
+	}
+
+	handlers := setupHandlers(t, &graph.Graph{Root: root})
+	request := mcp.CallToolRequest{}
+	request.Params.Arguments = map[string]any{"query": "fmt.Errorf"}
+	result, err := handlers["gograph_doc"](context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Fatalf("gograph_doc accepted linked go.sum: %+v", result)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "unsafe repository source") || strings.Contains(text, sentinel) {
+		t.Fatalf("gograph_doc metadata refusal = %q", text)
+	}
+}
+
+func TestDocRefusesLinkedWorkspaceMember(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repository")
+	outsideMember := filepath.Join(base, "outside-member")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outsideMember, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.work"), []byte("go 1.26\n\nuse ./member\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package workspace\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const sentinel = "BENIGN-OUTSIDE-WORKSPACE-MEMBER"
+	if err := os.WriteFile(filepath.Join(outsideMember, "go.mod"), []byte("module example.com/"+sentinel+"\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideMember, filepath.Join(root, "member")); err != nil {
+		t.Skipf("create workspace member symlink: %v", err)
+	}
+	t.Setenv("GOENV", "off")
+	t.Setenv("GOWORK", "auto")
+	t.Setenv("GOTOOLCHAIN", "local")
+
+	handlers := setupHandlers(t, &graph.Graph{Root: root})
+	request := mcp.CallToolRequest{}
+	request.Params.Arguments = map[string]any{"query": "fmt.Errorf"}
+	result, err := handlers["gograph_doc"](context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Fatalf("gograph_doc accepted linked workspace member: %+v", result)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "unsafe repository source") || strings.Contains(text, sentinel) {
+		t.Fatalf("gograph_doc workspace refusal = %q", text)
+	}
+}
+
+func TestDocRefusesLinkedSourceInSiblingWorkspaceMember(t *testing.T) {
+	base := t.TempDir()
+	workspace := filepath.Join(base, "workspace")
+	selected := filepath.Join(workspace, "selected")
+	sibling := filepath.Join(workspace, "sibling")
+	for _, directory := range []string{selected, sibling} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "go.work"), []byte("go 1.26\n\nuse (\n\t./selected\n\t./sibling\n)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(selected, "go.mod"), []byte("module example.com/selected\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(selected, "main.go"), []byte("package selected\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sibling, "go.mod"), []byte("module example.com/sibling\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const sentinel = "BENIGN-SIBLING-WORKSPACE-SOURCE"
+	outside := filepath.Join(base, "outside.go")
+	if err := os.WriteFile(outside, []byte("package outside\n// "+sentinel+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(sibling, "linked.go")); err != nil {
+		t.Skipf("create sibling source symlink: %v", err)
+	}
+	t.Setenv("GOENV", "off")
+	t.Setenv("GOWORK", "auto")
+	t.Setenv("GOTOOLCHAIN", "local")
+
+	handlers := setupHandlers(t, &graph.Graph{Root: selected})
+	request := mcp.CallToolRequest{}
+	request.Params.Arguments = map[string]any{"query": "fmt.Errorf"}
+	result, err := handlers["gograph_doc"](context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Fatalf("gograph_doc accepted linked sibling workspace source: %+v", result)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "unsafe repository source") || strings.Contains(text, sentinel) {
+		t.Fatalf("gograph_doc sibling-source refusal = %q", text)
+	}
+}
+
+func TestDocRejectsFilesystemQuery(t *testing.T) {
+	root := t.TempDir()
+	handlers := setupHandlers(t, &graph.Graph{Root: root})
+	request := mcp.CallToolRequest{}
+	request.Params.Arguments = map[string]any{"query": "../outside.go"}
+	result, err := handlers["gograph_doc"](context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Fatalf("gograph_doc accepted filesystem query: %+v", result)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "filesystem paths") {
+		t.Fatalf("gograph_doc filesystem refusal = %q", text)
+	}
+}
+
+func TestStatsRejectsLinkedPersistedGraph(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repository")
+	if err := os.MkdirAll(filepath.Join(root, ".gograph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outsideGraph := filepath.Join(base, "outside-graph.json")
+	loaded := &graph.Graph{
+		Version: graph.Version,
+		Root:    root,
+		Build: &graph.BuildMetadata{
+			SourcePolicyVersion: graph.CurrentSourcePolicyVersion,
+			Precision:           graph.PrecisionAST,
+		},
+		Symbols: []graph.SymbolNode{{Name: "OutsideOne"}, {Name: "OutsideTwo"}},
+	}
+	data, err := json.Marshal(loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outsideGraph, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideGraph, filepath.Join(root, ".gograph", "graph.json")); err != nil {
+		t.Skipf("create persisted graph symlink: %v", err)
+	}
+	fallback := &graph.Graph{
+		Version: graph.Version,
+		Root:    root,
+		Build:   &graph.BuildMetadata{Precision: graph.PrecisionAST},
+		Symbols: []graph.SymbolNode{{Name: "FallbackOnly"}},
+	}
+	handlers := setupHandlers(t, fallback)
+	text := callTool(t, handlers["gograph_stats"], nil)
+	var stats search.StatsResult
+	if err := json.Unmarshal([]byte(text), &stats); err != nil {
+		t.Fatal(err)
+	}
+	if stats.Symbols != 1 {
+		t.Fatalf("stats symbols = %d, want fallback graph count 1", stats.Symbols)
+	}
+}
+
+func TestSourceRejectsPoisonedGraphSymlink(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repository")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(base, "outside.go")
+	const sentinel = "BENIGN-EXTERNAL-SENTINEL"
+	if err := os.WriteFile(outside, []byte("package outside\nfunc OutsideOnly() string { return \""+sentinel+"\" }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "linked.go")); err != nil {
+		t.Skipf("create source symlink: %v", err)
+	}
+	g := &graph.Graph{
+		Root: root,
+		Symbols: []graph.SymbolNode{{
+			ID: "example.com/security::OutsideOnly", Name: "OutsideOnly", Kind: graph.KindFunction,
+			File: "linked.go", Line: 2, EndLine: 2,
+		}},
+	}
+	handlers := setupHandlers(t, g)
+	request := mcp.CallToolRequest{}
+	request.Params.Arguments = map[string]any{"symbol": "OutsideOnly"}
+	result, err := handlers["gograph_source"](context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Fatalf("gograph_source accepted poisoned graph: %+v", result)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if strings.Contains(text, sentinel) {
+		t.Fatalf("gograph_source disclosed external sentinel: %q", text)
+	}
+}
+
+func TestWikiConfinesRelativeOutputToGraphRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/wiki\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "linked-output")); err != nil {
+		t.Skipf("create output ancestor symlink: %v", err)
+	}
+	handlers := setupHandlers(t, &graph.Graph{Root: root})
+
+	for _, output := range []string{filepath.Join("linked-output", "wiki"), filepath.Join("..", "outside-wiki")} {
+		request := mcp.CallToolRequest{}
+		request.Params.Arguments = map[string]any{"output": output}
+		result, err := handlers["gograph_wiki"](context.Background(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !result.IsError {
+			t.Fatalf("gograph_wiki accepted unsafe relative output %q", output)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(outside, "wiki", "overview.md")); !os.IsNotExist(err) {
+		t.Fatalf("linked ancestor received MCP wiki page: %v", err)
+	}
+}
+
 func callTool(t *testing.T, handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error), args map[string]any) string {
 	t.Helper()
 	req := mcp.CallToolRequest{}
@@ -559,6 +848,29 @@ func TestGographAPI_Validation(t *testing.T) {
 	}
 }
 
+func TestGographAPIPassesSavedGraphPathToBaselineBuilder(t *testing.T) {
+	var baselineRef string
+	buildBaseline := func(_ context.Context, ref string) (*graph.Graph, error) {
+		baselineRef = ref
+		return &graph.Graph{}, nil
+	}
+	root := t.TempDir()
+	handlers := setupHandlersWithBuilders(t, &graph.Graph{Root: root}, mockBuildGraph(), buildBaseline)
+	handler := handlers["gograph_api"]
+	request := mcp.CallToolRequest{}
+	request.Params.Arguments = map[string]any{"since": "baselines/release candidate.json"}
+	result, err := handler(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("gograph_api rejected saved graph path: %+v", result.Content)
+	}
+	if baselineRef != "baselines/release candidate.json" {
+		t.Fatalf("baseline builder received %q", baselineRef)
+	}
+}
+
 func TestGographCheckUsesBaselineBuilderForGitRefs(t *testing.T) {
 	graphBuildCalls := 0
 	buildGraph := func(string) (*graph.Graph, error) {
@@ -590,6 +902,37 @@ func TestGographCheckUsesBaselineBuilderForGitRefs(t *testing.T) {
 	}
 	if graphBuildCalls != 0 {
 		t.Fatalf("directory graph builder was called %d time(s) for a Git ref", graphBuildCalls)
+	}
+}
+
+func TestGographCheckRejectsLinkedDefaultConfig(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repository")
+	if err := os.MkdirAll(filepath.Join(root, ".gograph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const sentinel = "BENIGN-LINKED-MCP-CHECK-SENTINEL"
+	outside := filepath.Join(base, "outside.json")
+	if err := os.WriteFile(outside, []byte(`{"checks":{"`+sentinel+`":"error"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, ".gograph", "checks.json")); err != nil {
+		t.Skipf("create check config symlink: %v", err)
+	}
+
+	handler := setupHandlers(t, &graph.Graph{Root: root})["gograph_check"]
+	request := mcp.CallToolRequest{}
+	request.Params.Arguments = map[string]any{}
+	result, err := handler(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Fatalf("gograph_check accepted linked config: %+v", result)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if strings.Contains(text, sentinel) || !strings.Contains(text, "unsafe repository source path") {
+		t.Fatalf("linked config refusal = %q", text)
 	}
 }
 
@@ -709,6 +1052,22 @@ func TestGographBoundaries_Structured(t *testing.T) {
 	}
 	if pass, _ := risk["pass"].(bool); !pass {
 		t.Errorf("expected pass = true")
+	}
+}
+
+func TestGographBoundariesAcceptsLocalFilenameContainingDotDot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".gograph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Join(".gograph", "boundaries..json")
+	if err := os.WriteFile(filepath.Join(root, name), []byte(`{"layers":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handlers := setupHandlers(t, &graph.Graph{Root: root})
+	result := callTool(t, handlers["gograph_boundaries"], map[string]any{"config": name})
+	if !strings.Contains(result, `"pass": true`) {
+		t.Fatalf("gograph_boundaries rejected harmless local filename: %s", result)
 	}
 }
 

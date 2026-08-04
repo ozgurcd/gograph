@@ -33,10 +33,14 @@ This will automatically:
 2. Record selected non-standard-library imports between those layers. External
    imports are deduplicated to host/owner patterns such as
    `github.com/gin-gonic/**`.
-3. Generate `.gograph/boundaries.json`. Creation refuses to overwrite an
-   existing file.
+3. Generate `.gograph/boundaries.json`. The output must stay inside the graph
+   root; only real parent directories are created, and creation rejects linked
+   or special entries and refuses to overwrite an existing file.
 
-Because this file maps your *exact current state*, running `gograph boundaries` immediately afterward will yield **0 violations**.
+Boundary reads apply the same graph-root containment and require a regular,
+non-linked file (including no linked ancestor). Because this file maps your
+*exact current state*, running `gograph boundaries` immediately afterward will
+yield **0 violations**.
 
 ## 2. Enforcing Tech Debt Reduction
 

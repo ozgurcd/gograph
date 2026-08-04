@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/rootfind"
 	"github.com/ozgurcd/gograph/internal/search"
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
 
 type Snapshot struct {
@@ -26,8 +28,21 @@ type Snapshot struct {
 	CouplingEdges  int      `json:"coupling_edges"`
 }
 
-func getSnapshotDir() string {
-	return filepath.Join(rootfind.FindRoot(), ".gograph", "snapshots")
+const snapshotDirectory = ".gograph/snapshots"
+
+func snapshotPath(name string) string {
+	return filepath.Join(snapshotDirectory, name+".json")
+}
+
+func openSnapshotStore(root string) (*sourcefs.Reader, error) {
+	if root == "" {
+		root = rootfind.FindRoot()
+	}
+	store, err := sourcefs.Open(root)
+	if err != nil {
+		return nil, fmt.Errorf("open snapshot repository: %w", err)
+	}
+	return store, nil
 }
 
 func runSnapshot(args []string) int {
@@ -110,20 +125,24 @@ func runSnapshotSave(name string) int {
 
 	s := calculateSnapshot(g, name)
 
-	dir := getSnapshotDir()
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	store, err := openSnapshotStore(g.Root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error opening snapshot store: %v\n", err)
+		return 1
+	}
+	defer func() { _ = store.Close() }()
+	if err := store.EnsureRealDirectory(snapshotDirectory, 0o750); err != nil {
 		fmt.Fprintf(os.Stderr, "error creating snapshot dir: %v\n", err)
 		return 1
 	}
 
-	path := filepath.Join(dir, name+".json")
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error marshaling snapshot: %v\n", err)
 		return 1
 	}
 
-	if err := os.WriteFile(path, data, 0o640); err != nil {
+	if err := store.WriteRegularFile(snapshotPath(name), data, 0o640, false); err != nil {
 		fmt.Fprintf(os.Stderr, "error writing snapshot: %v\n", err)
 		return 1
 	}
@@ -133,8 +152,13 @@ func runSnapshotSave(name string) int {
 }
 
 func runSnapshotDiff(name string) int {
-	path := filepath.Join(getSnapshotDir(), name+".json")
-	data, err := os.ReadFile(path)
+	store, err := openSnapshotStore("")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error opening snapshot store: %v\n", err)
+		return 1
+	}
+	defer func() { _ = store.Close() }()
+	data, err := store.ReadRegularFile(snapshotPath(name))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading snapshot %q: %v\n", name, err)
 		return 1
@@ -188,10 +212,15 @@ func runSnapshotDiff(name string) int {
 }
 
 func runSnapshotList() int {
-	dir := getSnapshotDir()
-	entries, err := os.ReadDir(dir)
+	store, err := openSnapshotStore("")
 	if err != nil {
-		if os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "error opening snapshot store: %v\n", err)
+		return 1
+	}
+	defer func() { _ = store.Close() }()
+	entries, err := store.ReadDirectory(snapshotDirectory)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
 			fmt.Println("No snapshots found.")
 			return 0
 		}
@@ -201,10 +230,11 @@ func runSnapshotList() int {
 
 	var snaps []Snapshot
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+		info, infoErr := e.Info()
+		if infoErr != nil || !info.Mode().IsRegular() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		data, err := store.ReadRegularFile(filepath.Join(snapshotDirectory, e.Name()))
 		if err != nil {
 			continue
 		}
@@ -233,13 +263,17 @@ func runSnapshotList() int {
 }
 
 func runSnapshotDrop(name string) int {
-	path := filepath.Join(getSnapshotDir(), name+".json")
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "error: snapshot %q does not exist\n", name)
+	store, err := openSnapshotStore("")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error opening snapshot store: %v\n", err)
 		return 1
 	}
-
-	if err := os.Remove(path); err != nil {
+	defer func() { _ = store.Close() }()
+	if err := store.RemoveRegularFile(snapshotPath(name)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "error: snapshot %q does not exist\n", name)
+			return 1
+		}
 		fmt.Fprintf(os.Stderr, "error deleting snapshot: %v\n", err)
 		return 1
 	}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/projectfile"
 	"github.com/ozgurcd/gograph/internal/rootfind"
 	"github.com/ozgurcd/gograph/internal/search"
 )
@@ -53,16 +54,6 @@ func runCheck(args []string) int {
 	}
 
 	root := rootfind.FindRoot()
-	// load config
-	if configPath == "" {
-		defaultPath := filepath.Join(root, ".gograph", "checks.json")
-		if _, err := os.Stat(defaultPath); err == nil {
-			configPath = defaultPath
-		}
-	} else if !filepath.IsAbs(configPath) {
-		configPath = filepath.Join(root, configPath)
-	}
-
 	config := &search.CheckConfig{
 		Checks: map[string]any{
 			"boundaries":     "warn",
@@ -72,11 +63,11 @@ func runCheck(args []string) int {
 		BoundariesConfig: filepath.Join(root, ".gograph", "boundaries.json"),
 	}
 
-	if configPath != "" {
-		data, err := os.ReadFile(configPath)
-		if err != nil {
-			return checkError(fmt.Sprintf("failed to read config: %v", err))
-		}
+	data, _, foundConfig, err := projectfile.ReadConfig(root, configPath, ".gograph/checks.json")
+	if err != nil {
+		return checkError(fmt.Sprintf("failed to read config: %v", err))
+	}
+	if foundConfig {
 		if err := json.Unmarshal(data, config); err != nil {
 			return checkError(fmt.Sprintf("failed to parse config: %v", err))
 		}

@@ -2,6 +2,8 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,7 +36,7 @@ func TestGatePass(t *testing.T) {
 	if err := os.MkdirAll(".gograph", 0750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := writeJSON(".gograph/graph.json", g); err != nil {
+	if err := writeJSON(".gograph/graph.json", currentPolicyGraph(g)); err != nil {
 		t.Fatalf("writeJSON: %v", err)
 	}
 
@@ -76,7 +78,7 @@ func TestGateFailOneViolation(t *testing.T) {
 	if err := os.MkdirAll(".gograph", 0750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := writeJSON(".gograph/graph.json", g); err != nil {
+	if err := writeJSON(".gograph/graph.json", currentPolicyGraph(g)); err != nil {
 		t.Fatalf("writeJSON: %v", err)
 	}
 
@@ -120,7 +122,7 @@ func TestGateFailMultipleViolations(t *testing.T) {
 	if err := os.MkdirAll(".gograph", 0750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := writeJSON(".gograph/graph.json", g); err != nil {
+	if err := writeJSON(".gograph/graph.json", currentPolicyGraph(g)); err != nil {
 		t.Fatalf("writeJSON: %v", err)
 	}
 
@@ -149,7 +151,7 @@ func TestGateRefusesStaleGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := &graph.Graph{Version: graph.Version, GeneratedAt: time.Now().Add(-time.Hour), Root: tmpDir}
-	if err := writeJSON(".gograph/graph.json", g); err != nil {
+	if err := writeJSON(".gograph/graph.json", currentPolicyGraph(g)); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(".gograph.yml", []byte("max_complexity: 100\n"), 0o644); err != nil {
@@ -161,5 +163,52 @@ func TestGateRefusesStaleGraph(t *testing.T) {
 
 	if code := runGate(nil); code != 1 {
 		t.Fatalf("stale gate exit code = %d, want 1", code)
+	}
+}
+
+func TestGateInitRejectsLinkedConfig(t *testing.T) {
+	root := t.TempDir()
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Mkdir(filepath.Join(root, ".gograph"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.yml")
+	if err := os.Symlink(outside, filepath.Join(root, ".gograph.yml")); err != nil {
+		t.Skipf("create gate config symlink: %v", err)
+	}
+	if code := runGateInit(); code != 1 {
+		t.Fatalf("gate init linked config exit = %d, want 1", code)
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("outside gate config was created: %v", err)
+	}
+}
+
+func TestGateRejectsLinkedConfig(t *testing.T) {
+	root := t.TempDir()
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Mkdir(filepath.Join(root, ".gograph"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	const sentinel = "BENIGN-LINKED-GATE-CONFIG-SENTINEL"
+	outside := filepath.Join(t.TempDir(), "outside.yml")
+	if err := os.WriteFile(outside, []byte("# "+sentinel+"\nmax_complexity: 100\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, ".gograph.yml")); err != nil {
+		t.Skipf("create gate config symlink: %v", err)
+	}
+
+	stdout, stderr, code := captureCLIParityOutput(t, func() int { return runGate(nil) })
+	if code != 1 || strings.Contains(stdout+stderr, sentinel) || !strings.Contains(stderr, "unsafe repository source path") {
+		t.Fatalf("linked gate config result code=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
 }

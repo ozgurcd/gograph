@@ -285,6 +285,11 @@ func TestMCPCapabilityPrerequisiteReflectsPersistenceMode(t *testing.T) {
 		"gograph_callers",
 		"gograph_coupling",
 		"one-element JSON array with query and raw-text output",
+		"regular, repository-confined .gograph/graph.json",
+		"older binaries do not enforce this contract",
+		"function, method, struct, interface, type, variable, or constant",
+		"UNKNOWN with score -1",
+		"Filesystem-shaped queries are rejected",
 	} {
 		if !strings.Contains(defaultText, phrase) {
 			t.Fatalf("capabilities omitted %q: %s", phrase, defaultText)

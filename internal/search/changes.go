@@ -10,6 +10,7 @@ import (
 
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/scanner"
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
 
 // ChangeStatus classifies a symbol relative to the current graph.
@@ -22,8 +23,9 @@ const (
 	// ChangeNew means the declaration was found in a changed file but is not
 	// recorded in graph.json — it was likely added since the graph was persisted.
 	ChangeNew ChangeStatus = "new"
-	// ChangeDeleted means a symbol from graph.json lives in a file that no
-	// longer exists on disk — it was likely removed.
+	// ChangeDeleted means a symbol from graph.json lives in a file that is no
+	// longer in the current safely selected source inventory. It may be absent,
+	// ignored, inactive under the build context, or unsafe to read.
 	ChangeDeleted ChangeStatus = "deleted"
 )
 
@@ -33,7 +35,8 @@ type ChangedSymbol struct {
 	Name string `json:"name"`
 	// File is the source file path.
 	File string `json:"file"`
-	// Line is the line number (0 for deleted symbols where the file is gone).
+	// Line is the line number (0 for deleted symbols whose file is absent from
+	// the current safely selected inventory).
 	Line int `json:"line,omitempty"`
 	// Status classifies how this symbol was affected.
 	Status ChangeStatus `json:"status"`
@@ -53,7 +56,8 @@ type ChangesResult struct {
 // has likely changed since the graph was persisted. It identifies:
 //   - Symbols in files newer than the graph (ChangeModified)
 //   - Top-level declarations in changed files not found in the graph (ChangeNew)
-//   - Graph symbols whose source files no longer exist (ChangeDeleted)
+//   - Graph symbols whose files are absent from the current safely selected
+//     source inventory (ChangeDeleted)
 //
 // root is the absolute path to the repository root.
 func Changes(g *graph.Graph, root string) *ChangesResult {
@@ -66,7 +70,7 @@ func Changes(g *graph.Graph, root string) *ChangesResult {
 	existingFiles := make(map[string]bool)
 	files, _ := scanner.Walk(root)
 	for _, path := range files {
-		info, err := os.Stat(path)
+		info, err := os.Lstat(path)
 		if err != nil {
 			continue
 		}
@@ -115,9 +119,19 @@ func Changes(g *graph.Graph, root string) *ChangesResult {
 
 	// Parse changed files for NEW top-level declarations.
 	fset := token.NewFileSet()
+	sourceReader, sourceRootErr := sourcefs.Open(root)
+	if sourceReader != nil {
+		defer func() { _ = sourceReader.Close() }()
+	}
 	for relPath := range changedFiles {
-		absPath := filepath.Join(root, relPath)
-		f, err := parser.ParseFile(fset, absPath, nil, 0)
+		if sourceRootErr != nil {
+			continue
+		}
+		data, err := sourceReader.ReadFile(relPath)
+		if err != nil {
+			continue
+		}
+		f, err := parser.ParseFile(fset, relPath, data, 0)
 		if err != nil {
 			continue
 		}
@@ -154,16 +168,10 @@ func Changes(g *graph.Graph, root string) *ChangesResult {
 		}
 	}
 
-	// Step 4: Detect deleted symbols — graph symbols whose files are gone.
+	// Step 4: Detect deleted symbols — graph symbols whose files are no longer
+	// part of the current safely selected inventory.
 	for _, s := range g.Symbols {
 		rel := graphFileRelative(root, s.File)
-		path := s.File
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(root, path)
-		}
-		if _, statErr := os.Stat(path); statErr == nil {
-			continue // file exists
-		}
 		if existingFiles[rel] {
 			continue
 		}

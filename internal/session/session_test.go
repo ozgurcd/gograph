@@ -623,3 +623,234 @@ func TestSessionAttribution_SubdirectoryRootDiscovery(t *testing.T) {
 		t.Error("review command not visible in session log when logged from subdir")
 	}
 }
+
+// --- Repository confinement regressions ---
+
+func TestStartSessionAtRejectsLinkedGographDirectory(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	sentinel := filepath.Join(outside, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("unchanged"), 0o644); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, gographDir)); err != nil {
+		t.Fatalf("link .gograph: %v", err)
+	}
+
+	if _, err := StartSessionAt(root, "unsafe"); err == nil {
+		t.Fatal("StartSessionAt accepted a symlinked .gograph directory")
+	}
+	data, err := os.ReadFile(sentinel)
+	if err != nil {
+		t.Fatalf("read sentinel: %v", err)
+	}
+	if string(data) != "unchanged" {
+		t.Fatalf("outside sentinel changed to %q", data)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "sessions")); !os.IsNotExist(err) {
+		t.Fatalf("outside sessions directory was created: %v", err)
+	}
+}
+
+func TestStartSessionAtRejectsDanglingSessionsDirectoryLink(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, gographDir), 0o755); err != nil {
+		t.Fatalf("mkdir .gograph: %v", err)
+	}
+	outsideTarget := filepath.Join(t.TempDir(), "missing-sessions")
+	if err := os.Symlink(outsideTarget, filepath.Join(root, relSessionsDir)); err != nil {
+		t.Fatalf("link sessions directory: %v", err)
+	}
+
+	if _, err := StartSessionAt(root, "unsafe"); err == nil {
+		t.Fatal("StartSessionAt accepted a dangling sessions directory link")
+	}
+	if _, err := os.Stat(outsideTarget); !os.IsNotExist(err) {
+		t.Fatalf("outside sessions target was created: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, relActivePointerPath)); !os.IsNotExist(err) {
+		t.Fatalf("active pointer was created after rejecting sessions link: %v", err)
+	}
+}
+
+func TestStartSessionAtRejectsDanglingActivePointerLink(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, gographDir), 0o755); err != nil {
+		t.Fatalf("mkdir .gograph: %v", err)
+	}
+	outsideTarget := filepath.Join(t.TempDir(), "missing-pointer.json")
+	if err := os.Symlink(outsideTarget, filepath.Join(root, relActivePointerPath)); err != nil {
+		t.Fatalf("link active pointer: %v", err)
+	}
+
+	if _, err := StartSessionAt(root, "unsafe"); err == nil {
+		t.Fatal("StartSessionAt accepted a dangling active pointer link")
+	}
+	if _, err := os.Stat(outsideTarget); !os.IsNotExist(err) {
+		t.Fatalf("outside pointer target was created: %v", err)
+	}
+}
+
+func TestSessionLogOperationsRejectLinkedLog(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, relSessionsDir), 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	id := "linked_log"
+	pointer, err := json.Marshal(ActiveSessionPointer{ActiveSessionID: id})
+	if err != nil {
+		t.Fatalf("marshal pointer: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, relActivePointerPath), pointer, 0o644); err != nil {
+		t.Fatalf("write pointer: %v", err)
+	}
+	outsideLog := filepath.Join(t.TempDir(), "outside.jsonl")
+	want := []byte(`{"type":"session_start","session_id":"outside"}` + "\n")
+	if err := os.WriteFile(outsideLog, want, 0o644); err != nil {
+		t.Fatalf("write outside log: %v", err)
+	}
+	linkedLog := filepath.Join(root, relSessionsDir, "session_"+id+".jsonl")
+	if err := os.Symlink(outsideLog, linkedLog); err != nil {
+		t.Fatalf("link session log: %v", err)
+	}
+
+	if err := LogCommandAt(root, "source", []string{"Secret"}, "test confinement", time.Millisecond, "success"); err == nil {
+		t.Fatal("LogCommandAt accepted a symlinked session log")
+	}
+	var stdout, stderr strings.Builder
+	if code := RunAuditToAt(root, id, true, &stdout, &stderr); code != 1 {
+		t.Fatalf("RunAuditToAt exit code = %d, want 1", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("audit emitted outside log contents: %q", stdout.String())
+	}
+	got, err := os.ReadFile(outsideLog)
+	if err != nil {
+		t.Fatalf("read outside log: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("outside log changed:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestSessionLogOperationsRejectDanglingLogLink(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, relSessionsDir), 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	id := "dangling_log"
+	pointer, err := json.Marshal(ActiveSessionPointer{ActiveSessionID: id})
+	if err != nil {
+		t.Fatalf("marshal pointer: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, relActivePointerPath), pointer, 0o644); err != nil {
+		t.Fatalf("write pointer: %v", err)
+	}
+	outsideTarget := filepath.Join(t.TempDir(), "missing-log.jsonl")
+	if err := os.Symlink(outsideTarget, filepath.Join(root, relSessionsDir, "session_"+id+".jsonl")); err != nil {
+		t.Fatalf("link session log: %v", err)
+	}
+
+	if err := LogCommandAt(root, "source", nil, "test confinement", time.Millisecond, "success"); err == nil {
+		t.Fatal("LogCommandAt accepted a dangling session log link")
+	}
+	if _, err := EndSessionAt(root); err == nil {
+		t.Fatal("EndSessionAt accepted a dangling session log link")
+	}
+	if _, err := os.Stat(outsideTarget); !os.IsNotExist(err) {
+		t.Fatalf("outside log target was created: %v", err)
+	}
+}
+
+func TestActivePointerRejectsTraversalSessionID(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, relSessionsDir), 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	pointer, err := json.Marshal(ActiveSessionPointer{ActiveSessionID: "../../../../outside"})
+	if err != nil {
+		t.Fatalf("marshal pointer: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, relActivePointerPath), pointer, 0o644); err != nil {
+		t.Fatalf("write pointer: %v", err)
+	}
+	keepLog := filepath.Join(root, relSessionsDir, "session_keep.jsonl")
+	if err := os.WriteFile(keepLog, []byte(`{"type":"session_start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	if _, err := GetActiveSessionIDAt(root); err == nil || !strings.Contains(err.Error(), "invalid session ID") {
+		t.Fatalf("GetActiveSessionIDAt traversal error = %v", err)
+	}
+	if _, err := EndSessionAt(root); err == nil {
+		t.Fatal("EndSessionAt accepted a traversal session ID")
+	}
+	if count, err := CleanupSessionsAt(root); err == nil || count != 0 {
+		t.Fatalf("CleanupSessionsAt = (%d, %v), want (0, error)", count, err)
+	}
+	if _, err := os.Stat(keepLog); err != nil {
+		t.Fatalf("cleanup removed a log after rejecting pointer: %v", err)
+	}
+}
+
+func TestRunAuditToAtRejectsTraversalSessionID(t *testing.T) {
+	root := t.TempDir()
+	var stdout, stderr strings.Builder
+	if code := RunAuditToAt(root, "../../../../outside", true, &stdout, &stderr); code != 1 {
+		t.Fatalf("RunAuditToAt exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "invalid session ID") {
+		t.Fatalf("audit error = %q, want invalid session ID", stderr.String())
+	}
+}
+
+func TestCleanupSessionsAtRejectsLinkedLogWithoutRemovingTarget(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, relSessionsDir), 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	outsideLog := filepath.Join(t.TempDir(), "outside.jsonl")
+	if err := os.WriteFile(outsideLog, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write outside log: %v", err)
+	}
+	if err := os.Symlink(outsideLog, filepath.Join(root, relSessionsDir, "session_linked.jsonl")); err != nil {
+		t.Fatalf("link session log: %v", err)
+	}
+
+	if count, err := CleanupSessionsAt(root); err == nil || count != 0 {
+		t.Fatalf("CleanupSessionsAt = (%d, %v), want (0, error)", count, err)
+	}
+	data, err := os.ReadFile(outsideLog)
+	if err != nil {
+		t.Fatalf("outside log was removed: %v", err)
+	}
+	if string(data) != "keep" {
+		t.Fatalf("outside log changed to %q", data)
+	}
+}
+
+func TestSessionOperationsAllowExplicitSymlinkedProjectRoot(t *testing.T) {
+	realRoot := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "project-link")
+	if err := os.Symlink(realRoot, alias); err != nil {
+		t.Fatalf("link project root: %v", err)
+	}
+
+	id, err := StartSessionAt(alias, "linkedroot")
+	if err != nil {
+		t.Fatalf("StartSessionAt linked root: %v", err)
+	}
+	if err := LogCommandAt(alias, "plan", []string{"Symbol"}, "linked root", time.Millisecond, "success"); err != nil {
+		t.Fatalf("LogCommandAt linked root: %v", err)
+	}
+	if _, err := EndSessionAt(alias); err != nil {
+		t.Fatalf("EndSessionAt linked root: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(realRoot, relSessionsDir, "session_"+id+".jsonl"))
+	if err != nil {
+		t.Fatalf("read real session log: %v", err)
+	}
+	if !strings.Contains(string(data), `"command":"plan"`) {
+		t.Fatalf("session log missing command: %s", data)
+	}
+}

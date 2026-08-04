@@ -7,7 +7,7 @@ import (
 	"github.com/ozgurcd/gograph/internal/graph"
 )
 
-// buildErrorsPage produces errors.md — all error creation sites.
+// buildErrorsPage produces errors.md — all indexed error and panic sites.
 // Returns an empty page if no error edges are in the graph.
 func buildErrorsPage(g *graph.Graph) WikiPage {
 	if len(g.Errors) == 0 {
@@ -15,8 +15,8 @@ func buildErrorsPage(g *graph.Graph) WikiPage {
 	}
 
 	var b strings.Builder
-	b.WriteString("# Error Definitions\n\n")
-	b.WriteString("All `errors.New`, `fmt.Errorf`, and sentinel `var` declarations.\n\n")
+	b.WriteString("# Error and Panic Sites\n\n")
+	b.WriteString("All indexed `errors.New`, `fmt.Errorf`, sentinel `var` declarations, and `panic` calls.\n\n")
 	fmt.Fprintf(&b, "Total: %d error sites.\n\n", len(g.Errors))
 	b.WriteString("| Message | Function | File |\n")
 	b.WriteString("|---------|----------|------|\n")

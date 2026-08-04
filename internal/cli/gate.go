@@ -1,14 +1,17 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/ozgurcd/gograph/internal/projectfile"
 	"github.com/ozgurcd/gograph/internal/rootfind"
 	"github.com/ozgurcd/gograph/internal/search"
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
 
 type GateConfig struct {
@@ -67,8 +70,7 @@ func runGate(args []string) int {
 	}
 
 	root := rootfind.FindRoot()
-	configPath := filepath.Join(root, ".gograph.yml")
-	data, err := os.ReadFile(configPath)
+	data, _, _, err := projectfile.ReadConfig(root, ".gograph.yml", "")
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Fprintln(os.Stderr, "error: .gograph.yml not found in current directory.")
@@ -217,19 +219,23 @@ func runGate(args []string) int {
 // edit by hand. Conservative defaults; the template documents each
 // threshold so users can tune without consulting external docs.
 func runGateInit() int {
-	configPath := filepath.Join(rootfind.FindRoot(), ".gograph.yml")
-	if _, err := os.Stat(configPath); err == nil {
-		fmt.Fprintf(os.Stderr, "error: %s already exists in the current directory.\n", configPath)
-		fmt.Fprintln(os.Stderr, "Refusing to overwrite. Edit the existing file or remove it first.")
-		return 1
-	} else if !os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "error checking for %s: %v\n", configPath, err)
+	root := rootfind.FindRoot()
+	configPath := filepath.Join(root, ".gograph.yml")
+	repository, err := sourcefs.Open(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error opening project root for %s: %v\n", configPath, err)
 		return 1
 	}
+	defer func() { _ = repository.Close() }()
 	// Permissions 0644: readable by user/group/other, writable only by owner.
 	// This is a project-level config file checked into git; world-readable
 	// is appropriate.
-	if err := os.WriteFile(configPath, []byte(gateConfigTemplate), 0o644); err != nil {
+	if err := repository.WriteRegularFile(".gograph.yml", []byte(gateConfigTemplate), 0o644, true); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			fmt.Fprintf(os.Stderr, "error: %s already exists in the current directory.\n", configPath)
+			fmt.Fprintln(os.Stderr, "Refusing to overwrite. Edit the existing file or remove it first.")
+			return 1
+		}
 		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", configPath, err)
 		return 1
 	}

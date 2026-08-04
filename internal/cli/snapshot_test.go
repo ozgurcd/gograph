@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ func chdir(t *testing.T, dir string) {
 
 func setupGraphDir(t *testing.T, g *graph.Graph) {
 	t.Helper()
+	currentPolicyGraph(g)
 	if err := os.MkdirAll(".gograph", 0750); err != nil {
 		t.Fatalf("mkdir .gograph: %v", err)
 	}
@@ -172,5 +174,35 @@ func TestSnapshotValidation(t *testing.T) {
 		if code := runSnapshot([]string{"save", name}); code != 0 {
 			t.Errorf("expected save with valid name %q to succeed, got %d", name, code)
 		}
+	}
+}
+
+func TestSnapshotCommandsRejectLinkedDirectory(t *testing.T) {
+	root := t.TempDir()
+	origWd, _ := os.Getwd()
+	chdir(t, root)
+	defer func() { chdir(t, origWd) }()
+	setupGraphDir(t, &graph.Graph{Version: graph.Version, GeneratedAt: time.Now()})
+
+	outside := t.TempDir()
+	outsideSnapshot := filepath.Join(outside, "guarded.json")
+	if err := os.WriteFile(outsideSnapshot, []byte("KEEP"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, ".gograph", "snapshots")); err != nil {
+		t.Skipf("create snapshots symlink: %v", err)
+	}
+	if code := runSnapshot([]string{"save", "created"}); code != 1 {
+		t.Fatalf("snapshot save through linked directory exit = %d, want 1", code)
+	}
+	if code := runSnapshot([]string{"drop", "guarded"}); code != 1 {
+		t.Fatalf("snapshot drop through linked directory exit = %d, want 1", code)
+	}
+	data, err := os.ReadFile(outsideSnapshot)
+	if err != nil || string(data) != "KEEP" {
+		t.Fatalf("outside snapshot = %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "created.json")); !os.IsNotExist(err) {
+		t.Fatalf("outside snapshot was created: %v", err)
 	}
 }

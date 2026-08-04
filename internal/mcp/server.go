@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -18,8 +17,11 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/projectfile"
+	"github.com/ozgurcd/gograph/internal/scanner"
 	"github.com/ozgurcd/gograph/internal/search"
 	"github.com/ozgurcd/gograph/internal/session"
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 	"github.com/ozgurcd/gograph/internal/wiki"
 )
 
@@ -34,7 +36,12 @@ func graphRoot(g *graph.Graph) string {
 
 func persistedGraph(fallback *graph.Graph) *graph.Graph {
 	root := graphRoot(fallback)
-	data, err := os.ReadFile(filepath.Join(root, ".gograph", "graph.json"))
+	reader, err := sourcefs.Open(root)
+	if err != nil {
+		return fallback
+	}
+	defer func() { _ = reader.Close() }()
+	data, err := reader.ReadRegularFile(filepath.Join(".gograph", "graph.json"))
 	if err != nil {
 		return fallback
 	}
@@ -42,9 +49,12 @@ func persistedGraph(fallback *graph.Graph) *graph.Graph {
 	if err := json.Unmarshal(data, &loaded); err != nil {
 		return fallback
 	}
-	if loaded.Root == "" {
-		loaded.Root = root
+	if !loaded.UsesCurrentSourcePolicy() {
+		return fallback
 	}
+	// The startup graph determines the trusted repository. Never allow a
+	// persisted JSON Root value to redirect later source reads.
+	loaded.Root = root
 	return &loaded
 }
 
@@ -274,16 +284,16 @@ func NewServer(
 
 	// Tool: gograph_capabilities
 	capabilitiesTool := mcp.NewTool("gograph_capabilities",
-		mcp.WithDescription("List all available gograph MCP tools, their purposes, and recommended agent workflows. No prerequisites — this tool always works regardless of graph state. Read-only; no side effects. WHEN TO USE: Call once per session to orient before issuing analytical queries. NOT TO USE: Do not repeat after capabilities are cached in context. RETURNS: Structured JSON with every registered tool name, one-line purposes, recommended workflow sequences, and known static-analysis limitations."),
+		mcp.WithDescription("List all available gograph MCP tools, their purposes, and recommended agent workflows. Once the project-scoped MCP server has started, this tool has no additional graph-state prerequisite. Read-only; no side effects. WHEN TO USE: Call once per session to orient before issuing analytical queries. NOT TO USE: Do not repeat after capabilities are cached in context. RETURNS: Structured JSON with every registered tool name, one-line purposes, recommended workflow sequences, and known static-analysis limitations."),
 	)
 	addTool(capabilitiesTool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		startupGraph := "auto-builds an in-memory graph when it is missing"
+		startupGraph := "auto-builds an in-memory graph when it is missing, unreadable, unsafe, or uses an unsupported source policy"
 		if selectedOptions.PersistRefresh {
-			startupGraph = "auto-builds and publishes graph.json plus nine reports when the artifact is missing"
+			startupGraph = "auto-builds and publishes graph.json plus nine reports when the artifact is missing, unreadable, unsafe, or uses an unsupported source policy"
 		}
 		resp := map[string]any{
 			"summary":      "gograph MCP capabilities",
-			"prerequisite": "The MCP server loads .gograph/graph.json when present and " + startupGraph + ". Source-analysis tools check source freshness and newer persisted graphs per call, then rebuild after edits using the latest requested analysis mode; gograph_stale, gograph_changes without git_ref, and gograph_stats inspect the persisted index, or the startup auto-build fallback when no artifact exists. Run `gograph build . --precise` for type-checked CHA/SSA enrichment; MCP adopts a newer precise graph and re-runs precision after source changes instead of silently downgrading to AST-only analysis. Session lifecycle tools write local telemetry, gograph_session_cleanup deletes stale logs, gograph_boundaries_create writes configuration, and gograph_wiki writes documentation. When an audit session is active, non-session MCP calls append observational command telemetry even when their analysis contract is read-only. gograph_doc invokes the local Go toolchain and is annotated open-world because module resolution follows the user's Go environment.",
+			"prerequisite": "The MCP server loads only a regular, repository-confined .gograph/graph.json with the current source-policy marker and " + startupGraph + ". Its serialized root is ignored. Source-analysis tools check source freshness and newer persisted graphs per call, then rebuild after edits using the latest requested analysis mode; gograph_stale, gograph_changes without git_ref, and gograph_stats inspect that trusted persisted index, or the startup auto-build fallback when no usable artifact exists. Descendant symlinks and special files recognized as Go build inputs are excluded, and linked/non-regular Go tool metadata (go.mod, go.sum, go.work, go.work.sum, and vendor/modules.txt) is rejected before toolchain use. Applicable workspace members must remain beneath the workspace directory, with each directory, go.mod, and optional go.sum validated before cmd/go. Use the current binary for untrusted repositories because older binaries do not enforce this contract. Run `gograph build . --precise` for type-checked CHA/SSA enrichment; MCP adopts a newer precise graph and re-runs precision after source changes instead of silently downgrading to AST-only analysis. Session lifecycle tools write local telemetry, gograph_session_cleanup deletes stale logs, gograph_boundaries_create writes configuration, and gograph_wiki writes documentation; their repository-controlled paths use rooted regular-file operations that reject descendant links. When an audit session is active, non-session MCP calls append observational command telemetry even when their analysis contract is read-only. Saved graph baselines must be regular files inside the project root, have no linked path component, and carry the exact current source-policy marker; their serialized root is ignored. gograph_doc rejects filesystem-shaped queries and source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees; .git and .gograph are excluded from that preflight. It invokes the local Go toolchain after repository source/metadata validation and is annotated open-world because dependency resolution follows the user's Go environment.",
 			"refresh_persistence": map[string]any{
 				"enabled":            selectedOptions.PersistRefresh,
 				"artifact_directory": ".gograph",
@@ -298,12 +308,12 @@ func NewServer(
 				"tools":     []string{"gograph_callers", "gograph_callees", "gograph_impact", "gograph_endpoint", "gograph_dependents", "gograph_deps", "gograph_path", "gograph_coupling"},
 			},
 			"tools": []map[string]string{
-				{"name": "gograph_capabilities", "purpose": "List all available tools and recommended workflows. No prerequisites."},
-				{"name": "gograph_stale", "purpose": "Check whether persisted graph.json, or the startup fallback when no artifact exists, is outdated versus selected source files or the effective Go build context."},
+				{"name": "gograph_capabilities", "purpose": "List all available tools and recommended workflows once the MCP server has started; no additional graph-state prerequisite."},
+				{"name": "gograph_stale", "purpose": "Check whether trusted persisted graph.json, or the startup fallback when no usable artifact exists, is outdated versus selected source files or the effective Go build context."},
 				{"name": "gograph_session_create", "purpose": "Start a telemetry audit session for tracking agent compliance and tool success metrics."},
 				{"name": "gograph_session_end", "purpose": "End the active telemetry session cleanly and write end-of-session logs."},
 				{"name": "gograph_session_audit", "purpose": "Review and grade agent compliance (Plan rule, Review rule, Composability/Efficiency) and tool success rates."},
-				{"name": "gograph_session_cleanup", "purpose": "Delete all stale inactive session telemetry logs to keep the repository clean."},
+				{"name": "gograph_session_cleanup", "purpose": "Delete stale inactive regular session logs without following linked repository paths; preserves the active log."},
 				{"name": "gograph_query", "purpose": "Search symbols, packages, files, and imports by one term or an OR-combined terms array."},
 				{"name": "gograph_focus", "purpose": "Full structural summary of one package: files, symbols, internal call edges, and imports. Use before editing an unfamiliar package."},
 				{"name": "gograph_context", "purpose": "Pre-flight bundle: first node plus all ambiguous nodes, source/source_error, callers, callees, structured tests, and top-level role. Use uncommitted=true for all modified symbols."},
@@ -316,38 +326,38 @@ func NewServer(
 				{"name": "gograph_implementers", "purpose": "Structs that implement a named interface (duck-typing). Set test_only=true for mocks/stubs only."},
 				{"name": "gograph_interfaces", "purpose": "Interfaces satisfied by a named struct — inverse of gograph_implementers. Use before refactoring a method to know which contracts break."},
 				{"name": "gograph_fields", "purpose": "All fields, types, and struct tags of a named struct."},
-				{"name": "gograph_source", "purpose": "Verbatim source code for a named function, method, struct, or interface."},
+				{"name": "gograph_source", "purpose": "Repository-confined source for a named function, method, struct, interface, type, variable, or constant."},
 				{"name": "gograph_node", "purpose": "AST metadata for a symbol: kind, file, line, signature, doc. Lighter than gograph_source."},
 				{"name": "gograph_orphans", "purpose": "Dead code: functions unreachable from any entry point via full BFS reachability."},
-				{"name": "gograph_boundaries", "purpose": "Verify imports against architecture constraints in .gograph/boundaries.json. Returns pass/fail and violation list."},
-				{"name": "gograph_boundaries_create", "purpose": "Create a baseline .gograph/boundaries.json from current package imports; refuses to overwrite."},
+				{"name": "gograph_boundaries", "purpose": "Verify imports against a regular, non-linked in-project boundaries.json. Returns pass/fail and violation list."},
+				{"name": "gograph_boundaries_create", "purpose": "Create a regular, repository-rooted boundaries.json; refuses linked paths and overwrite."},
 				{"name": "gograph_endpoint", "purpose": "Full vertical slice for one HTTP route: handler, 1-20-depth BFS call chain, SQL, and env reads. include_tests adds routes registered in *_test.go; mermaid selects flowchart output."},
-				{"name": "gograph_api", "purpose": "API drift detection: compares exported symbols with a Git ref or saved graph path ending in .json. Returns added/removed/changed."},
+				{"name": "gograph_api", "purpose": "API drift against a Git ref or regular non-linked in-project .json graph with the exact current source-policy marker; serialized roots are ignored."},
 				{"name": "gograph_routes", "purpose": "All HTTP routes in the codebase: method, path, handler. Use before gograph_endpoint."},
 				{"name": "gograph_flow", "purpose": "Find potential paths from HTTP requests, decoded JSON, or environment values to SQL query text, process execution, filesystem access, or outbound HTTP."},
 				{"name": "gograph_errorflow", "purpose": "Trace error sentinel propagation: definition sites, return sites, and upstream call chains to entry points."},
 				{"name": "gograph_imports", "purpose": "All files and packages that import a specific package by exact import path."},
 				{"name": "gograph_dependents", "purpose": "All packages that import the named package (inverse of gograph_deps). Essential before package-level refactors."},
 				{"name": "gograph_deps", "purpose": "Import dependency tree of a package. transitive=true for full BFS closure."},
-				{"name": "gograph_envs", "purpose": "All os.Getenv/os.LookupEnv reads in the codebase. Filter by key name substring."},
+				{"name": "gograph_envs", "purpose": "All os.Getenv/os.LookupEnv and supported Viper Get* reads in the codebase. Filter by key name substring."},
 				{"name": "gograph_tests", "purpose": "Test functions that exercise a named symbol. Omit symbol to list all test edges."},
 				{"name": "gograph_hotspot", "purpose": "Functions ranked by fan-in (incoming call count). High fan-in = highest-risk change target."},
 				{"name": "gograph_httpcalls", "purpose": "All outbound HTTP client calls via net/http (Get, Post, PostForm, Head). Filter by method or URL."},
-				{"name": "gograph_changes", "purpose": "Symbols modified/added/deleted. Without git_ref: changes since the persisted graph. With git_ref: static diff vs that ref."},
+				{"name": "gograph_changes", "purpose": "Symbols modified/added/deleted. Deleted includes files absent from the current safely selected inventory. Without git_ref: changes since trusted persisted graph or startup fallback. With git_ref: static diff vs that ref."},
 				{"name": "gograph_path", "purpose": "Shortest BFS call chain between two symbols. Confirms whether a handler reaches a given function."},
-				{"name": "gograph_complexity", "purpose": "Cyclomatic complexity per function, sorted highest first. Labels: LOW/MEDIUM/HIGH/VERY HIGH."},
+				{"name": "gograph_complexity", "purpose": "Cyclomatic complexity per function, sorted highest first. Labels: LOW/MEDIUM/HIGH/VERY HIGH; source that cannot be read or parsed safely is retained as UNKNOWN with score -1."},
 				{"name": "gograph_coupling", "purpose": "Fan-in (Ca), fan-out (Ce), and instability I=Ce/(Ca+Ce) per package. 0=stable, 1=unstable."},
 				{"name": "gograph_returnusage", "purpose": "How each caller uses a function's return value: discarded/assigned/partially_ignored/returned/passed. Run before changing a return signature."},
 				{"name": "gograph_arity", "purpose": "Functions meeting an inclusive parameter-count threshold. Default minimum: 5; min=0 includes zero-arity functions."},
-				{"name": "gograph_concurrency", "purpose": "All concurrency primitives: goroutines, channels, mutex, WaitGroup, Once, select. Filter by kind."},
+				{"name": "gograph_concurrency", "purpose": "Indexed concurrency sites: goroutine spawns, channel sends, mutex/RWMutex, WaitGroup, and Once calls. Filter by kind."},
 				{"name": "gograph_fixtures", "purpose": "Test helper structs and factory functions in *_test.go files for a package. Not external data files."},
 				{"name": "gograph_godobj", "purpose": "God Object candidates scored by method count, field count, and outgoing calls. Exceeding any enabled threshold qualifies a candidate."},
 				{"name": "gograph_skeleton", "purpose": "Full repo API signatures with bodies stripped. WARNING: can be very large on big repos."},
-				{"name": "gograph_mutate", "purpose": "All assignment sites for a named struct field. Use before adding field validation."},
+				{"name": "gograph_mutate", "purpose": "Struct-field and package-global mutations; precise mode adds ++/+=, aliases, atomic/sync/wrapper calls, and channel evidence."},
 				{"name": "gograph_sql", "purpose": "SQL literals embedded in Go source with enclosing function context. Filter by keyword or table name."},
-				{"name": "gograph_errors", "purpose": "All error creation sites: errors.New, fmt.Errorf, sentinel var declarations. Filter by message substring."},
+				{"name": "gograph_errors", "purpose": "All error and panic sites: errors.New, fmt.Errorf, sentinel declarations, and panic calls. Filter by message substring."},
 				{"name": "gograph_embeds", "purpose": "All structs that embed the named struct via anonymous field composition."},
-				{"name": "gograph_public", "purpose": "Exported symbols of a specific package: functions, types, interfaces, variables."},
+				{"name": "gograph_public", "purpose": "Exported symbols of a specific package: functions, methods, types/interfaces, variables, and constants."},
 				{"name": "gograph_usages", "purpose": "Every place a named type appears in function signatures (param/return) and struct field types. Run before changing an interface."},
 				{"name": "gograph_literals", "purpose": "All composite-literal initialization sites Foo{...} for a named struct. Run before adding a required field — every site returned breaks at compile time."},
 				{"name": "gograph_constructors", "purpose": "Factory functions that return the named struct."},
@@ -355,14 +365,14 @@ func NewServer(
 				{"name": "gograph_globals", "purpose": "Package-level variable declarations and the functions that mutate them in a specific package."},
 				{"name": "gograph_mocks", "purpose": "Alias for gograph_implementers with test_only=true. Kept for compatibility."},
 				{"name": "gograph_explain", "purpose": "LLM-ready narrative for a symbol: role, callers, callees, complexity, SQL, env, routes, concurrency, tests, interfaces — all synthesized."},
-				{"name": "gograph_stats", "purpose": "Repository-level statistics plus complete/partial build status, ast/precise/precise_fallback analysis status, parsed/scanned file counts, and parse failures."},
+				{"name": "gograph_stats", "purpose": "Trusted persisted-index statistics, or startup-fallback statistics when no usable artifact exists: complete/partial build and precision status, file counts, failures, and graph totals."},
 				{"name": "gograph_trace", "purpose": "Compatibility alias for gograph_errorflow."},
 				{"name": "gograph_diagram", "purpose": "Generate Mermaid architecture diagrams grouped by package, module, service, or file."},
-				{"name": "gograph_check", "purpose": "Run static policy checks and return structured pass/warn/fail findings."},
+				{"name": "gograph_check", "purpose": "Run static policy checks; relative/default config is project-confined, and saved graph baselines use the same trust policy as gograph_api."},
 				{"name": "gograph_summary", "purpose": "Single-call codebase briefing: top 3 hotspots, worst instability package, highest complexity function, orphan count, and god-object count. Replaces 5 separate tool calls."},
 				{"name": "gograph_untested", "purpose": "Sweep the full graph and return production functions that have callers but zero test edges — the coverage gap not visible from orphans or per-symbol tests lookups."},
-				{"name": "gograph_doc", "purpose": "Fetch Go doc for a stdlib or third-party symbol. No graph required; returns a one-element JSON array with query and raw-text output."},
-				{"name": "gograph_wiki", "purpose": "Generate the llm-wiki/ directory: machine-first markdown pages covering overview, architecture, hotspots, routes, env, errors, concurrency, per-package docs, and API surface."},
+				{"name": "gograph_doc", "purpose": "Fetch Go doc after rejecting source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees (.git/.gograph excluded), and validating Go tool metadata plus confined workspace members. Filesystem-shaped queries are rejected; dependency resolution is open-world. Returns a one-element JSON array with query and raw-text output."},
+				{"name": "gograph_wiki", "purpose": "Generate machine-first Markdown; relative output is project-rooted, while absolute output is an explicit real local destination."},
 			},
 			"recommended_workflows": map[string][]string{
 				"session_start":  {"READ llm-wiki/index.md", "READ llm-wiki/project.md", "READ llm-wiki/agent-rules.md", "READ llm-wiki/agent-contract.md", "gograph_summary", "gograph_stale"},
@@ -375,7 +385,8 @@ func NewServer(
 			"limitations": []string{
 				"gograph is static analysis.",
 				"MCP tools do not execute target repository code.",
-				"The MCP transport is local stdio. Default AST analysis does not call application services; precise analysis and gograph_doc invoke the local Go toolchain, which follows the user's configured module/cache/network policy.",
+				"The MCP transport is local stdio. Default AST analysis does not call application services, but indexing asks the installed Go toolchain for effective build/module context. Precise analysis additionally type-loads packages and gograph_doc runs go doc; dependency/toolchain resolution follows the user's configured module/cache/network policy and remains open-world.",
+				"Repository-directed source, Go build inputs, module/workspace metadata, configs, and persisted-index reads reject relevant linked or special entries. Applicable workspace members are confined beneath their workspace directory and validated before cmd/go; precise package loading and gograph_doc reject source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees (.git/.gograph excluded). Graphs missing the current source-policy marker are rebuilt, and serialized roots are ignored. Older binaries do not enforce this contract and should not be used for untrusted repositories.",
 				"Errorflow uses heuristic static call-graph and AST reference analysis. It does not perform SSA or full data-flow tracking.",
 				"Security flow analysis is interprocedural and path-insensitive, with call/return matching across at most 16 nested repository calls. Findings are review leads, not proof; unresolved external calls lower confidence.",
 				"Ambiguous short names can be disambiguated in MCP tools whose symbol argument advertises standard Go dot-separated package qualification or fully-qualified IDs. gograph_callers additionally supports Interface.Method and expands every recorded precise implementation.",
@@ -582,7 +593,7 @@ func NewServer(
 
 	// Tool: gograph_source
 	sourceTool := mcp.NewTool("gograph_source",
-		mcp.WithDescription("Retrieve the verbatim Go source code for a named function, method, struct, or interface, including its complete body. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: When you need to read a specific implementation in full without loading a large file — a targeted alternative to reading the whole file. NOT TO USE: For call hierarchy information (use gograph_callers/gograph_callees); for AST metadata without the full body (use gograph_node). RETURNS: Raw Go source block with file path and line numbers; returns an error when the symbol is not found or the source file cannot be read."),
+		mcp.WithDescription("Retrieve verbatim Go source for a named function, method, struct, interface, type, variable, or constant, including complete bodies or declarations. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Source reads are confined to regular .go files beneath the analyzed repository and reject symlink path components. Read-only; no side effects. WHEN TO USE: When you need a specific implementation or declaration in full without loading a large file — a targeted alternative to reading the whole file. NOT TO USE: For call hierarchy information (use gograph_callers/gograph_callees); for AST metadata without the full source (use gograph_node). RETURNS: Raw Go source blocks with file paths and line numbers. It errors when the symbol is absent or no matching block can be read safely; an ambiguous query may still return its safely readable matches."),
 		mcp.WithString("symbol", mcp.Required(), mcp.Description("The name of the symbol to retrieve source for (supports short name 'ValidateToken', dot-notation 'graph.Graph', or fully-qualified ID)")),
 	)
 	addTool(sourceTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -693,8 +704,8 @@ func NewServer(
 
 	// Tool: gograph_boundaries
 	boundariesTool := mcp.NewTool("gograph_boundaries",
-		mcp.WithDescription("Refresh source analysis and check package imports against a boundaries.json configuration. The config defaults to .gograph/boundaries.json under the analyzed graph root and is required; create it with gograph_boundaries_create. Read-only; no side effects. WHEN TO USE: In CI gates or post-edit reviews to enforce layer separation. NOT TO USE: For unconstrained dependency exploration (use gograph_deps or gograph_coupling). RETURNS: Structured pass state and boundary violations."),
-		mcp.WithString("config", mcp.Description("Optional file path to boundary constraints configuration (defaults to .gograph/boundaries.json)")),
+		mcp.WithDescription("Refresh source analysis and check package imports against a boundaries.json configuration. The required config defaults to .gograph/boundaries.json; explicit paths must remain inside the analyzed project, and every path component plus the final regular file is read through the rooted repository boundary. Create it with gograph_boundaries_create. Read-only; no side effects. WHEN TO USE: In CI gates or post-edit reviews to enforce layer separation. NOT TO USE: For unconstrained dependency exploration (use gograph_deps or gograph_coupling). RETURNS: Structured pass state and boundary violations."),
+		mcp.WithString("config", mcp.Description("Optional in-project path to a regular, non-linked boundary config (default .gograph/boundaries.json)")),
 	)
 	addTool(boundariesTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -706,9 +717,6 @@ func NewServer(
 		configPath := ".gograph/boundaries.json"
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if cp, ok := args["config"].(string); ok && cp != "" {
-				if cp == "" || strings.Contains(cp, "..") {
-					return mcp.NewToolResultError("invalid config path: path traversal detected"), nil
-				}
 				configPath = cp
 			}
 		}
@@ -740,8 +748,8 @@ func NewServer(
 
 	// Tool: gograph_boundaries_create
 	boundariesCreateTool := mcp.NewTool("gograph_boundaries_create",
-		mcp.WithDescription("Create a baseline architecture boundary configuration from the repository's current package imports. Defaults to .gograph/boundaries.json under the graph root and refuses to overwrite an existing file. Mutating and non-idempotent; no network access. WHEN TO USE: Once when adopting boundary checks in an existing repository, then review and tighten the generated rules. NOT TO USE: To verify an existing configuration (use gograph_boundaries). RETURNS: The written config path or an error when it already exists."),
-		mcp.WithString("config", mcp.Description("Optional repository-relative output path (default .gograph/boundaries.json)")),
+		mcp.WithDescription("Create a baseline architecture boundary configuration from the repository's current package imports. Defaults to .gograph/boundaries.json under the graph root, uses repository-rooted regular-file creation, and refuses linked paths or overwrite. Mutating and non-idempotent; no network access. WHEN TO USE: Once when adopting boundary checks in an existing repository, then review and tighten the generated rules. NOT TO USE: To verify an existing configuration (use gograph_boundaries). RETURNS: The written config path or an error when the path is unsafe or already exists."),
+		mcp.WithString("config", mcp.Description("Optional in-project output path, absolute or repository-relative; linked components and existing entries are refused (default .gograph/boundaries.json)")),
 	)
 	addTool(boundariesCreateTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -816,8 +824,8 @@ func NewServer(
 	// Tool: gograph_api
 
 	apiTool := mcp.NewTool("gograph_api",
-		mcp.WithDescription("Detect public API surface drift by comparing exported Go symbols (functions, types, interfaces) between the current working tree and a baseline. A `since` value ending in `.json` loads a saved graph; otherwise gograph validates the value as a Git ref and uses `git archive` to build a temporary baseline. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only apart from reading the selected graph or extracting a temporary archive that is removed after the call. WHEN TO USE: Before releasing or merging a PR to catch breaking-change regressions — exported symbols added, removed, or renamed since the baseline. NOT TO USE: For listing current exports without a diff baseline (use gograph_public or gograph_skeleton instead). RETURNS: JSON with added[], removed[], and changed[] arrays of exported symbol names since the baseline; empty arrays indicate no API drift."),
-		mcp.WithString("since", mcp.Required(), mcp.Description("A baseline Git ref (for example 'main' or 'HEAD~1') or saved graph path ending in .json")),
+		mcp.WithDescription("Detect public API surface drift by comparing exported Go symbols between the current working tree and a baseline. A `since` value ending in `.json` loads a regular saved graph inside the project root with no linked path component and the exact current repository source-policy marker; its serialized root is ignored. Otherwise gograph validates the value as a Git ref and uses `git archive` to build a temporary baseline. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only apart from reading the selected graph or extracting a temporary archive that is removed after the call. WHEN TO USE: Before releasing or merging a PR to catch breaking-change regressions — exported symbols added, removed, or renamed since the baseline. NOT TO USE: For listing current exports without a diff baseline (use gograph_public or gograph_skeleton instead). RETURNS: JSON with baseline and breaking flags; nested exported_symbols, interfaces, structs, and routes groups containing added/removed arrays plus changed detail objects; affected_tests, affected_mocks, and findings arrays. Empty groups indicate no drift."),
+		mcp.WithString("since", mcp.Required(), mcp.Description("A baseline Git ref (for example 'main' or 'HEAD~1') or regular in-project saved graph path ending in .json, with no linked component and the exact current source-policy marker")),
 	)
 	addTool(apiTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -834,8 +842,10 @@ func NewServer(
 			return mcp.NewToolResultError("since must be a string"), nil
 		}
 
-		if err := sanitizeGitRef(sinceRef); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+		if !strings.HasSuffix(sinceRef, ".json") {
+			if err := sanitizeGitRef(sinceRef); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 		}
 
 		baselineGraph, err := buildBaseline(ctx, sinceRef)
@@ -1107,11 +1117,11 @@ func NewServer(
 			report.Results = []search.RiskDetail{}
 		}
 
-		data, err := json.MarshalIndent(report, "", "  ")
+		reportData, err := json.MarshalIndent(report, "", "  ")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return mcp.NewToolResultText(string(data)), nil
+		return mcp.NewToolResultText(string(reportData)), nil
 	})
 
 	// Tool: gograph_errorflow
@@ -1296,7 +1306,7 @@ func NewServer(
 
 	// Tool: gograph_errors
 	errorsTool := mcp.NewTool("gograph_errors",
-		mcp.WithDescription("Find all error creation sites in the codebase: errors.New, fmt.Errorf, and sentinel var declarations. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. Optional `term` filters by error message substring (e.g., \"ErrInvalid\", \"unauthorized\"). WHEN TO USE: When cataloging error codes, standardizing error messages, or checking whether a specific error string is already defined before adding a new one. NOT TO USE: For tracing how an error propagates up the call stack (use gograph_errorflow instead). RETURNS: List of error creation sites with message text, file path, and line number; empty when no matches found."),
+		mcp.WithDescription("Find all error and panic sites in the codebase: errors.New, fmt.Errorf, sentinel var declarations, and panic calls. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. Optional `term` filters by message substring (e.g., \"ErrInvalid\", \"unauthorized\"). WHEN TO USE: When cataloging error codes and panic paths, standardizing error messages, or checking whether a specific error string is already defined before adding a new one. NOT TO USE: For tracing how an error propagates up the call stack (use gograph_errorflow instead). RETURNS: List of error or panic sites with message text, file path, and line number; empty when no matches found."),
 		mcp.WithString("term", mcp.Description("Optional keyword to filter the returned error structures (e.g., 'ErrInvalid', 'unauthorized')")),
 		mcp.WithBoolean("no_tests", mcp.Description("Exclude error sites in *_test.go files")),
 	)
@@ -1345,7 +1355,7 @@ func NewServer(
 
 	// Tool: gograph_public
 	publicTool := mcp.NewTool("gograph_public",
-		mcp.WithDescription("List all exported (public) symbols of a specific package: functions, types, interfaces, and variables. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: When reviewing a package's public contract before changing it, building integration documentation, or checking what a package exposes to callers. NOT TO USE: For unexported/private symbols (use gograph_node or gograph_focus); for API drift detection against a baseline (use gograph_api). RETURNS: List of exported symbol names with kinds and file locations; empty when the package has no exports or is not found."),
+		mcp.WithDescription("List all exported (public) symbols of a specific package, including functions, methods, types/interfaces, variables, and constants. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: When reviewing a package's public contract before changing it, building integration documentation, or checking what a package exposes to callers. NOT TO USE: For unexported/private symbols (use gograph_node or gograph_focus); for API drift detection against a baseline (use gograph_api). RETURNS: List of exported symbol names with kinds and file locations; empty when the package has no exports or is not found."),
 		mcp.WithString("package", mcp.Required(), mcp.Description("The package name or path to inspect (e.g., 'internal/auth')")),
 	)
 	addTool(publicTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1735,7 +1745,7 @@ func initNewTools(
 
 	// Tool: gograph_changes
 	changesTool := mcp.NewTool("gograph_changes",
-		mcp.WithDescription("List Go symbols that have been structurally modified, added, or deleted. Without git_ref, compares the working tree against persisted graph.json without refreshing it. With git_ref, refreshes source analysis and performs a static symbol diff against the named Git reference. Read-only; no side effects. WHEN TO USE: After editing to confirm which symbols changed before gograph_impact or gograph_review. NOT TO USE: For line-level text diffs (use git diff); for blast radius (use gograph_impact). RETURNS: Changed symbols grouped by added/modified/deleted; empty arrays when no structural changes are detected."),
+		mcp.WithDescription("List Go symbols that have been structurally modified, added, or deleted. In working-tree mode, deleted also covers a prior graph file that is no longer in the current safely selected inventory because it is absent, ignored, build-inactive, or unsafe. Without git_ref, compares against trusted persisted graph.json without refreshing it, or against the startup fallback when no usable artifact exists. With git_ref, refreshes source analysis and performs a static symbol diff against the named Git reference. Read-only; no side effects. WHEN TO USE: After editing to confirm which symbols changed before gograph_impact or gograph_review. NOT TO USE: For line-level text diffs (use git diff); for blast radius (use gograph_impact). RETURNS: Changed symbols grouped by added/modified/deleted; empty arrays when no structural changes are detected."),
 		mcp.WithString("git_ref", mcp.Description("Optional git reference to compare against (e.g., 'main', 'HEAD~5', 'v1.4.50')")),
 	)
 	addTool(changesTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1817,7 +1827,7 @@ func initNewTools(
 
 	// Tool: gograph_stale
 	staleTool := mcp.NewTool("gograph_stale",
-		mcp.WithDescription("Check whether the persisted graph index loaded from .gograph/graph.json differs from the current selected-file inventory, effective Go build context, or source modification times. This tool intentionally does not refresh first; when no artifact existed at server startup it compares against the startup auto-build fallback. Read-only; no side effects. WHEN TO USE: To decide whether CLI snapshot analysis or precise enrichment needs rebuilding. NOT TO USE: For module dependency freshness; for changed symbols (use gograph_changes). RETURNS: is_stale, graph_age, newest source metadata, changed_files, and build_context_changed."),
+		mcp.WithDescription("Check whether the trusted persisted graph index loaded from a regular, repository-confined .gograph/graph.json differs from the current selected-file inventory, effective Go build context, or source modification times. This tool intentionally does not refresh first; when the artifact is missing, unreadable, unsafe, or uses an unsupported source policy it compares against the startup auto-build fallback. Read-only; no side effects. WHEN TO USE: To decide whether CLI snapshot analysis or precise enrichment needs rebuilding. NOT TO USE: For module dependency freshness; for changed symbols (use gograph_changes). RETURNS: is_stale, graph_age, newest source metadata, changed_files, and build_context_changed."),
 	)
 	addTool(staleTool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		base := persistedGraph(indexedGraph)
@@ -1831,7 +1841,7 @@ func initNewTools(
 
 	// Tool: gograph_complexity
 	complexityTool := mcp.NewTool("gograph_complexity",
-		mcp.WithDescription("Report estimated cyclomatic complexity for Go functions, sorted highest-to-lowest with severity labels (LOW/MEDIUM/HIGH/VERY HIGH). The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. Optional `symbol` substring filters to a specific function or set of functions. WHEN TO USE: During code quality audits, identifying functions that need decomposition, or setting complexity budgets in CI. NOT TO USE: For import dependency metrics (use gograph_coupling or gograph_deps); for God Object detection (use gograph_godobj). RETURNS: Structured list of functions with complexity score and severity label; empty when no functions match the filter."),
+		mcp.WithDescription("Report estimated cyclomatic complexity for Go functions, sorted highest-to-lowest with severity labels (LOW/MEDIUM/HIGH/VERY HIGH). A function whose repository source cannot be read or parsed safely is retained as UNKNOWN with score -1. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. Optional `symbol` substring filters to a specific function or set of functions. WHEN TO USE: During code quality audits, identifying functions that need decomposition, or setting complexity budgets in CI. NOT TO USE: For import dependency metrics (use gograph_coupling or gograph_deps); for God Object detection (use gograph_godobj). RETURNS: Structured list of functions with complexity score and severity label; empty when no functions match the filter."),
 		mcp.WithString("symbol", mcp.Description("Optional Go function or method symbol name substring to filter the complexity report (e.g., 'Build')")),
 	)
 	addTool(complexityTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1921,7 +1931,7 @@ func initNewTools(
 
 	// Tool: gograph_concurrency
 	concurrencyTool := mcp.NewTool("gograph_concurrency",
-		mcp.WithDescription("Find all concurrency primitives in the codebase: goroutine spawns (`go` statements), channel operations, sync.Mutex/RWMutex, sync.WaitGroup, sync.Once, and select statements. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. Optional `term` filter (e.g., \"mutex\", \"goroutine\", \"channel\"). WHEN TO USE: When auditing race safety, understanding async flow, or locating all synchronization points before a concurrency refactor. NOT TO USE: For standard sequential call flow analysis (use gograph_callers/gograph_callees). RETURNS: File locations, line numbers, and primitive kind for each concurrency site; empty when no concurrency primitives are found."),
+		mcp.WithDescription("Find indexed concurrency sites in the codebase: goroutine spawns (`go` statements), channel sends, and calls on sync.Mutex/RWMutex, sync.WaitGroup, and sync.Once. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. Optional `term` filter (e.g., \"mutex\", \"goroutine\", \"channel\"). WHEN TO USE: When auditing race safety, understanding async flow, or locating synchronization points before a concurrency refactor. NOT TO USE: For standard sequential call flow analysis (use gograph_callers/gograph_callees). RETURNS: File locations, line numbers, and primitive kind for each indexed concurrency site; empty when no sites are found. Channel receives and select statements are not indexed."),
 		mcp.WithString("term", mcp.Description("Optional filter term (e.g., 'goroutine', 'mutex', 'channel')")),
 	)
 	addTool(concurrencyTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -2098,7 +2108,7 @@ func initNewTools(
 
 	// Tool: gograph_stats
 	statsTool := mcp.NewTool("gograph_stats",
-		mcp.WithDescription("Report persisted index health and counts without refreshing source analysis: schema/build timestamps, complete/partial status, ast/precise/precise_fallback analysis status, scanned/parsed/failure counts, and graph entity totals. Read-only; no side effects. WHEN TO USE: To validate the last published graph before relying on CLI snapshot or precise data. NOT TO USE: For a live symbol profile (use gograph_node or gograph_complexity). RETURNS: Structured build health and repository counts."),
+		mcp.WithDescription("Report trusted persisted-index health and counts without refreshing source analysis, or startup-fallback health when graph.json is missing, unreadable, unsafe, or uses an unsupported source policy: schema/build timestamps, complete/partial status, ast/precise/precise_fallback analysis status, scanned/parsed/failure counts, and graph entity totals. Read-only; no side effects. WHEN TO USE: To validate the snapshot/fallback before relying on its data. NOT TO USE: For a live symbol profile (use gograph_node or gograph_complexity). RETURNS: Structured build health and repository counts."),
 	)
 	addTool(statsTool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		st := search.Stats(persistedGraph(indexedGraph))
@@ -2179,10 +2189,10 @@ func initNewTools(
 
 	// Tool: gograph_check
 	checkTool := mcp.NewTool("gograph_check",
-		mcp.WithDescription("Refresh source analysis and run static policy checks: boundaries, API drift, changed-route/export tests, test coverage, orphans, globals, arity, and complexity. Baselines use the same validated builder as CLI: a value ending in `.json` loads a saved graph, otherwise it is treated as a Git ref and extracted temporarily. WHEN TO USE: During PR review or pre-commit analysis. NOT TO USE: For CI process exit enforcement (use CLI gograph gate). RETURNS: Structured pass/warn/fail status, findings, and summary counts."),
-		mcp.WithString("since", mcp.Description("Git ref or saved graph path ending in .json for the api_drift baseline")),
+		mcp.WithDescription("Refresh source analysis and run static policy checks: boundaries, API drift, changed-route/export tests, test coverage, orphans, globals, arity, and complexity. The default or a relative checks config is confined to a regular non-linked file beneath the project; an absolute config is an explicit operator-selected regular file. Baselines use the same validated builder as CLI: a value ending in `.json` loads a regular saved graph inside the project root with no linked component and the exact current source-policy marker, ignoring its serialized root; otherwise it is treated as a Git ref and extracted temporarily. WHEN TO USE: During PR review or pre-commit analysis. NOT TO USE: For CI process exit enforcement (use CLI gograph gate). RETURNS: Structured pass/warn/fail status, findings, and summary counts."),
+		mcp.WithString("since", mcp.Description("Git ref or regular in-project saved graph path ending in .json, with no linked component and the exact current source-policy marker, for api_drift")),
 		mcp.WithBoolean("uncommitted", mcp.Description("If true, include uncommitted changes in the analysis scope")),
-		mcp.WithString("config", mcp.Description("Optional path to a checks.json config file (defaults to .gograph/checks.json if present)")),
+		mcp.WithString("config", mcp.Description("Optional checks.json path; relative/default paths are project-confined, while an absolute path explicitly selects a regular local file")),
 	)
 	addTool(checkTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -2217,19 +2227,11 @@ func initNewTools(
 			},
 			BoundariesConfig: filepath.Join(root, ".gograph", "boundaries.json"),
 		}
-		if configPath == "" {
-			defaultPath := filepath.Join(root, ".gograph", "checks.json")
-			if _, err := os.Stat(defaultPath); err == nil {
-				configPath = defaultPath
-			}
-		} else if !filepath.IsAbs(configPath) {
-			configPath = filepath.Join(root, configPath)
+		data, _, foundConfig, err := projectfile.ReadConfig(root, configPath, ".gograph/checks.json")
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to read config: %v", err)), nil
 		}
-		if configPath != "" {
-			data, err := os.ReadFile(configPath)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("failed to read config: %v", err)), nil
-			}
+		if foundConfig {
 			if err := json.Unmarshal(data, cfg); err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("failed to parse config: %v", err)), nil
 			}
@@ -2260,16 +2262,16 @@ func initNewTools(
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("check failed: %v", err)), nil
 		}
-		data, err := json.MarshalIndent(report, "", "  ")
+		checkData, err := json.MarshalIndent(report, "", "  ")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return mcp.NewToolResultText(string(data)), nil
+		return mcp.NewToolResultText(string(checkData)), nil
 	})
 
 	// Tool: gograph_session_create
 	sessionCreateTool := mcp.NewTool("gograph_session_create",
-		mcp.WithDescription("Start a telemetry audit session for tracking agent compliance and tool success metrics. Writes session state under .gograph/sessions; MCP annotations mark it mutating and non-idempotent. No prerequisites. WHEN TO USE: Call once at the start of a multi-step coding task to track your work. NOT TO USE: When a session is already active. RETURNS: Structured message with the newly generated session ID."),
+		mcp.WithDescription("Start a telemetry audit session for tracking agent compliance and tool success metrics. Writes only regular, repository-confined session state under .gograph/sessions and refuses linked storage; MCP annotations mark it mutating and non-idempotent. No prerequisites once the MCP server is running. WHEN TO USE: Call once at the start of a multi-step coding task to track your work. NOT TO USE: When a session is already active. RETURNS: Structured message with the newly generated session ID."),
 		mcp.WithString("custom_word", mcp.Description("Optional custom word prefix to incorporate in the timestamped session ID (e.g. 'implement_feature')")),
 	)
 	addTool(sessionCreateTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -2289,7 +2291,7 @@ func initNewTools(
 
 	// Tool: gograph_session_end
 	sessionEndTool := mcp.NewTool("gograph_session_end",
-		mcp.WithDescription("End the active telemetry session cleanly, append its end record, and remove the active-session pointer. MCP annotations mark it mutating and non-idempotent. No prerequisites. WHEN TO USE: Call once after you have completed all edits and post-edit reviews. NOT TO USE: When no session is active. RETURNS: Message confirming ending of the session."),
+		mcp.WithDescription("End the active telemetry session cleanly, append its end record, and remove the active-session pointer through repository-confined regular-file operations. MCP annotations mark it mutating and non-idempotent. No additional prerequisite once the MCP server is running. WHEN TO USE: Call once after you have completed all edits and post-edit reviews. NOT TO USE: When no session is active. RETURNS: Message confirming ending of the session."),
 	)
 	addTool(sessionEndTool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		sessionID, err := session.EndSessionAt(serverRoot)
@@ -2301,7 +2303,7 @@ func initNewTools(
 
 	// Tool: gograph_session_audit
 	sessionAuditTool := mcp.NewTool("gograph_session_audit",
-		mcp.WithDescription("Review and grade agent compliance (Plan rule, Review rule, Composability/Efficiency) and tool success rates. No prerequisites. WHEN TO USE: After ending a session to obtain compliance metrics and recommendations. RETURNS: Audited session details and grade."),
+		mcp.WithDescription("Review and grade agent compliance (Plan rule, Review rule, Composability/Efficiency) and tool success rates. Session IDs are strictly validated and only regular repository-confined logs are read. No additional prerequisite once the MCP server is running. WHEN TO USE: After ending a session to obtain compliance metrics and recommendations. RETURNS: Audited session details and grade."),
 		mcp.WithString("session_id", mcp.Description("Optional session ID to audit. If not supplied, audits the most recent session in the repository.")),
 		mcp.WithBoolean("json", mcp.Description("Set to true to return structured JSON format instead of human-readable ASCII layout.")),
 	)
@@ -2330,7 +2332,7 @@ func initNewTools(
 
 	// Tool: gograph_session_cleanup
 	sessionCleanupTool := mcp.NewTool("gograph_session_cleanup",
-		mcp.WithDescription("Delete all stale inactive session telemetry JSONL logs. If no session is active, it deletes all logs. MCP annotations mark this operation mutating and destructive. No prerequisites. WHEN TO USE: Call after auditing to keep the repository clean. RETURNS: Number of deleted session files."),
+		mcp.WithDescription("Delete stale inactive regular session telemetry JSONL logs without following linked repository paths. If no session is active, it deletes all eligible logs; an active log is preserved. MCP annotations mark this operation mutating and destructive. No prerequisites. WHEN TO USE: Call after auditing to keep the repository clean. RETURNS: Number of deleted session files."),
 	)
 	addTool(sessionCleanupTool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		count, err := session.CleanupSessionsAt(serverRoot)
@@ -2341,8 +2343,8 @@ func initNewTools(
 	})
 	// Tool: gograph_wiki
 	wikiTool := mcp.NewTool("gograph_wiki",
-		mcp.WithDescription("Generate the llm-wiki/ directory of machine-first markdown pages from the static graph. Pages produced: overview.md, architecture.md, hotspots.md, routes.md, env.md, errors.md, concurrency.md, api-surface.md, and one packages/<name>.md per internal package. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Writes and may overwrite files at the requested output path; MCP annotations mark it mutating and destructive. WHEN TO USE: At the start of an agent session on an unfamiliar codebase — run once to get a token-efficient orientation without issuing dozens of individual tool calls. NOT TO USE: For targeted symbol lookups (use gograph_context or gograph_source). RETURNS: JSON manifest of written page filenames and a count; error when the graph cannot be loaded or the output directory cannot be created."),
-		mcp.WithString("output", mcp.Description("Output directory for wiki pages (default: 'llm-wiki')")),
+		mcp.WithDescription("Generate the llm-wiki/ directory of machine-first markdown pages from the static graph. Pages produced: overview.md, architecture.md, hotspots.md, routes.md, env.md, errors.md, concurrency.md, api-surface.md, and one packages/<name>.md per internal package. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. A relative output is anchored beneath the graph root and rejects linked components; an absolute output explicitly selects a local destination whose final directory must be real. Generated page paths and regular-file writes remain confined beneath the selected output root. Writes may overwrite existing regular files; MCP annotations mark it mutating and destructive. WHEN TO USE: At the start of an agent session on an unfamiliar codebase — run once to get a token-efficient orientation without issuing dozens of individual tool calls. NOT TO USE: For targeted symbol lookups (use gograph_context or gograph_source). RETURNS: JSON manifest of written page filenames and a count; error when the graph cannot be loaded or the output directory is unsafe or cannot be created."),
+		mcp.WithString("output", mcp.Description("Wiki directory: relative paths are graph-rooted; an absolute path explicitly selects a real local output root (default 'llm-wiki')")),
 	)
 	addTool(wikiTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -2356,9 +2358,6 @@ func initNewTools(
 				outputDir = v
 			}
 		}
-		if !filepath.IsAbs(outputDir) {
-			outputDir = filepath.Join(graphRoot(g), outputDir)
-		}
 		gen := wiki.New(g)
 		pages, err := gen.Generate(outputDir)
 		if err != nil {
@@ -2370,8 +2369,12 @@ func initNewTools(
 				written = append(written, p.Filename)
 			}
 		}
+		resolvedOutput := outputDir
+		if !filepath.IsAbs(resolvedOutput) {
+			resolvedOutput = filepath.Join(graphRoot(g), filepath.Clean(resolvedOutput))
+		}
 		data, err := json.MarshalIndent(map[string]any{
-			"output": outputDir,
+			"output": resolvedOutput,
 			"count":  len(written),
 			"pages":  written,
 		}, "", "  ")
@@ -2479,7 +2482,7 @@ func initNewTools(
 
 	// Tool: gograph_doc
 	docTool := mcp.NewTool("gograph_doc",
-		mcp.WithDescription("Fetch Go documentation for a package, stdlib symbol, or third-party symbol by running `go doc <query>`. No graph is required. WHEN TO USE: When a call chain reaches code outside the project. NOT TO USE: For project-internal symbols (use gograph_source or gograph_context). RETURNS: A one-element JSON array containing {query, output}, where output is the raw go doc text; an error when the symbol is not found or go is unavailable."),
+		mcp.WithDescription("Fetch Go documentation for a package, stdlib symbol, or third-party symbol by running `go doc <query>`. The handler does not query the graph, though the project-scoped MCP server must already have started with a usable artifact or buildable Go source. Filesystem-shaped queries are rejected, and the command is refused for source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees; .git and .gograph are excluded from that preflight. It also refuses a special recognized Go build input, linked/non-regular Go tool metadata (go.mod, go.sum, go.work, go.work.sum, or vendor/modules.txt), or a workspace member outside the workspace directory. Each applicable member directory, go.mod, and optional go.sum is validated first. Dependency and toolchain resolution remain open-world under the user's Go environment. WHEN TO USE: When a call chain reaches code outside the project. NOT TO USE: For project-internal symbols (use gograph_source or gograph_context). RETURNS: A one-element JSON array containing {query, output}, where output is the raw go doc text; an error when the query or repository input is unsafe, the symbol is not found, or go is unavailable."),
 		mcp.WithString("query", mcp.Required(), mcp.Description("The go doc query string. Examples: 'fmt.Errorf', 'net/http.HandleFunc', 'io.Reader', 'github.com/jackc/pgx/v5.Conn.QueryRow'")),
 	)
 	addTool(docTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -2491,9 +2494,19 @@ func initNewTools(
 		if q == "" {
 			return mcp.NewToolResultError("query is required"), nil
 		}
+		if err := scanner.ValidateGoDocQuery(q); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		docRoot, err := scanner.SourceValidationRoot(graphRoot(g))
+		if err != nil {
+			return mcp.NewToolResultError("cannot determine repository validation root: " + err.Error()), nil
+		}
+		if err := scanner.ValidateToolchainSourceInputs(docRoot); err != nil {
+			return mcp.NewToolResultError("refusing to run the Go toolchain with unsafe repository source or metadata: " + err.Error()), nil
+		}
 
 		cmd := exec.Command("go", "doc", q)
-		cmd.Dir = graphRoot(g)
+		cmd.Dir = docRoot
 		out, err := cmd.Output()
 		if err != nil {
 			var exitErr *exec.ExitError

@@ -1,12 +1,11 @@
 package search
 
 import (
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
 
 // ReadModulePath returns the module path declared in <root>/go.mod, or "" if
@@ -15,7 +14,12 @@ import (
 // packages). Tolerant of comments and stray whitespace per Go's module-file
 // grammar.
 func ReadModulePath(root string) string {
-	data, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	moduleFiles, err := sourcefs.Open(root)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = moduleFiles.Close() }()
+	data, err := moduleFiles.ReadRegularFile("go.mod")
 	if err != nil {
 		return ""
 	}

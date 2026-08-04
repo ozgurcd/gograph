@@ -91,22 +91,22 @@ sudo make install
 
 ## How it works
 
-1. **`gograph build .`** — walks Go files selected by the shared scanner, extracts symbols, validated call edges, imports, HTTP routes, SQL queries, environment reads, struct fields, error declarations, and typed synchronization primitives. Graph/report publishers coordinate with the persistent operational file `.gograph/.artifacts.lock`, stage `graph.json` plus nine reports, rename the reports first, and rename `graph.json` last as the commit marker. Same-directory replacement is atomic on Unix-like systems but is not guaranteed atomic by Go on non-Unix platforms; the ten-file bundle is not one atomic filesystem transaction, so a crash can leave reports ahead of the graph marker. The build adds `.gograph/` to the enclosing Git repository root `.gitignore` when available and falls back to the build target `.gitignore` outside Git. A zero-file or zero-successful-parse build does not replace existing artifacts; partial failures are recorded in graph metadata.
-2. **Queries and refreshes** — graph-backed CLI analysis reads the last persisted `graph.json`; commands whose contract reads source, Git, or other local state do so directly. MCP source-analysis tools check source freshness and newer persisted artifacts, adopt a newer compatible precise graph, and rebuild after edits in the current requested mode. Those refreshes stay in memory by default. `gograph mcp [path] --persist-refresh` opts into publishing the latest successful refresh with the same graph-last protocol; a failed precise refresh is returned visibly.
+1. **`gograph build .`** — first rejects linked/non-regular `go.mod`, `go.sum`, `go.work`, `go.work.sum`, and `vendor/modules.txt` metadata before toolchain use. Applicable `go.work use` members must remain beneath the workspace directory, and their directories, `go.mod`, and optional `go.sum` are validated before `cmd/go`. The shared scanner then excludes linked/special recognized Go build inputs before build selection and AST reads. It extracts symbols, validated call edges, imports, HTTP routes, SQL queries, environment reads, struct fields, error declarations, and typed synchronization primitives. Graph/report publishers require a real `.gograph` directory and regular-or-absent lock entry, stage `graph.json` plus nine reports, rename the reports first, and rename `graph.json` last as the commit marker. Same-directory replacement is atomic on Unix-like systems but is not guaranteed atomic by Go on non-Unix platforms; the ten-file bundle is not one atomic filesystem transaction, so a crash can leave reports ahead of the graph marker. The build adds `.gograph/` to an absent or regular enclosing Git-root `.gitignore` when available and falls back to the build target outside Git; it refuses a link or special file. A zero-file or zero-successful-parse build does not replace existing artifacts; parse failures and selection/security warnings are recorded in graph metadata and make status partial.
+2. **Queries and refreshes** — graph-backed CLI analysis reads the last trusted, regular repository-confined `graph.json` with the current source-policy marker and replaces its serialized root with the selected project; commands whose contract reads source, Git, or other local state do so through their documented boundaries. MCP source-analysis tools check source freshness and newer usable persisted artifacts, adopt a newer compatible precise graph, and rebuild after edits in the current requested mode. When no usable artifact exists, persisted-index MCP tools use the startup fallback. Refreshes stay in memory by default. `gograph mcp [path] --persist-refresh` opts into publishing the latest successful refresh with the same graph-last protocol; a failed precise refresh is returned visibly.
 3. **`--precise` mode** — attempts type-checked CHA/SSA enrichment. It needs compilable, build-selected packages for precise data; if type/load analysis fails or omits an indexed non-test file, gograph warns and normally records `precise_fallback` on the retained AST graph. A failed retry keeps an existing fresh successful precise artifact covering the same selected sources instead of downgrading it (`ast` identifies an explicitly requested AST build).
 
 ## What it captures
 
 | Signal | How extracted |
 |---|---|
-| Functions, methods, structs, interfaces, types, consts | AST `FuncDecl`, `TypeSpec` |
+| Functions, methods, structs, interfaces, types, variables, constants | AST `FuncDecl`, `TypeSpec`, `ValueSpec` |
 | Call edges (caller → callee, with call-site file and line) | AST `CallExpr` |
 | HTTP routes (method + path + handler) | `gin`, `echo`, `chi`, `http.Handle*` literal patterns |
 | SQL queries | String literal heuristics on `db.Query`, `db.Exec`, etc. |
-| Environment reads | `os.Getenv`, `viper.Get*` |
-| Struct field mutations | AST `AssignStmt` on selector expressions |
-| Error declarations and return sites | `errors.New`, `fmt.Errorf`, `panic` |
-| Concurrency primitives | `go func`, `sync.Mutex`, channel ops, `WaitGroup` |
+| Environment reads | `os.Getenv`, `os.LookupEnv`, supported Viper `Get*` |
+| Struct-field and package-global mutations | Direct assignments plus precise alias, compound, atomic/sync/wrapper, and channel evidence |
+| Error and panic sites | `errors.New`, `fmt.Errorf`, sentinel declarations, `panic` |
+| Concurrency primitives | `go` statements, channel sends, typed `Mutex`/`RWMutex`/`WaitGroup`/`Once` calls |
 | Test edges (test → tested symbol) | `_test.go` call analysis |
 | Composite literal sites | `StructName{...}` |
 | Security flow facts | Sources, assignments, calls, returns, and sensitive sinks for query-time analysis |

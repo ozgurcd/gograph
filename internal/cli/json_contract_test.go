@@ -87,6 +87,7 @@ func runJSONContractInDir(t *testing.T, root string, run func() int) (stdout, st
 func writeJSONContractGraph(t *testing.T, root string, g *graph.Graph) {
 	t.Helper()
 
+	currentPolicyGraph(g)
 	g.Version = graph.Version
 	g.Root = root
 	if err := os.MkdirAll(filepath.Join(root, ".gograph"), 0o750); err != nil {
@@ -351,6 +352,7 @@ func TestRunAPIJSONCountReflectsDriftItems(t *testing.T) {
 		Name: "Old",
 		Kind: graph.KindFunction,
 	}}}
+	currentPolicyGraph(baseline)
 	baselineData, err := json.Marshal(baseline)
 	if err != nil {
 		t.Fatal(err)
@@ -369,4 +371,25 @@ func TestRunAPIJSONCountReflectsDriftItems(t *testing.T) {
 		t.Fatalf("count = %d, want 3 (one added, one removed, one route added)", envelope.Count)
 	}
 	requireJSONContractFields(t, fields, "schema_version", "command", "query", "status", "count", "results")
+}
+
+func TestRunCheckRejectsLinkedDefaultConfig(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repository")
+	if err := os.MkdirAll(filepath.Join(root, ".gograph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const sentinel = "BENIGN-LINKED-CHECK-CONFIG-SENTINEL"
+	out := filepath.Join(base, "outside.json")
+	if err := os.WriteFile(out, []byte(`{"checks":{"`+sentinel+`":"error"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(out, filepath.Join(root, ".gograph", "checks.json")); err != nil {
+		t.Skipf("create check config symlink: %v", err)
+	}
+
+	stdout, stderr, code := runJSONContractInDir(t, root, func() int { return runCheck(nil) })
+	if code != 1 || strings.Contains(stdout+stderr, sentinel) || !strings.Contains(stdout, "unsafe repository source path") {
+		t.Fatalf("linked config result code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
 }

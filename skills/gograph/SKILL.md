@@ -50,7 +50,8 @@ Packaged and generated registrations keep refresh persistence off by default.
 
 1. **At the start of any Go coding session**, invoke `gograph_capabilities` to confirm what the connected server exposes.
 2. **Confirm graph health** before symbol queries. MCP creates an in-memory AST
-   graph when no artifact exists and refreshes source analysis per call. Invoke
+   graph when the artifact is missing, unreadable, unsafe, or has an unsupported
+   source-policy marker, and refreshes source analysis per call. Invoke
    `gograph_stats` with no parameters and require `build_status=complete`; a
    build with zero successful parses never replaces the previous graph, while
    partial failures are reported explicitly. When durable precise enrichment
@@ -91,7 +92,7 @@ Packaged and generated registrations keep refresh persistence off by default.
 | `gograph_errors` with optional `term=<term>` | Error inventory |
 | `gograph_errorflow` with `query=<term>` | Error propagation paths |
 | `gograph_flow` | Potential HTTP/JSON/env paths to SQL, process, filesystem, and outbound HTTP sinks |
-| `gograph_changes` | Diff source against the last persisted graph |
+| `gograph_changes` | Diff source against the trusted persisted graph, or MCP startup fallback when no usable artifact exists |
 | `gograph_tests` with optional `symbol=<symbol>` | Tests connected to a symbol |
 | `gograph_check` | Policy checks, including changed-route tests, coverage, orphans, API drift, arity, and complexity |
 
@@ -103,15 +104,44 @@ instead of the tool's normal response.
 
 ## Privacy
 
-Graph artifacts and MCP transport are local. Default parsing makes no network
-calls; precise mode and `doc` invoke the installed Go toolchain and therefore
-follow its configured module-cache and network policy. Indexing reads Go
+Graph artifacts and MCP transport are local. Indexing asks the installed Go
+toolchain for effective build/module context; precise mode additionally
+type-loads packages, and `doc` runs `go doc`. These operations follow the
+configured module-cache and network policy and remain open-world. Indexing reads Go
 source and ordinary project/gograph metadata; it does not intentionally scan
 `.env`, key, certificate, kubeconfig, tfstate, or credential files. It respects
 `.gitignore` and skips AI-agent worktree directories automatically. See
 `PRIVACY.md` in the gograph repo for details.
 
-Most MCP tools are read-only. Boundary creation writes configuration, session create/end mutate telemetry, session cleanup deletes stale logs, and `gograph_wiki` writes documentation; their MCP annotations declare those effects.
+Descendant symlinks and special files for recognized Go build inputs are
+excluded. AST and graph-directed source reads are confined to regular files beneath the analyzed repository;
+an explicitly symlinked repository root remains supported. Persisted
+`graph.json` must also be a regular repository-confined file, and publication
+refuses a linked or non-directory `.gograph` and linked/non-regular lock files.
+The automatic `.gitignore` update rejects links rather than modifying their
+targets. Linked/non-regular `go.mod`, `go.sum`, `go.work`, `go.work.sum`, and
+`vendor/modules.txt` metadata is rejected before gograph or the Go toolchain
+reads it. Applicable `go.work use` members must remain beneath the workspace
+directory, and each member directory, `go.mod`, and optional `go.sum` is
+validated before `cmd/go`. A persisted graph with a missing
+or unsupported source-policy marker must be rebuilt before graph-backed tools
+use it, and its serialized root is ignored. Saved `.json` baselines for
+`gograph_api` and `gograph_check` must be regular, non-linked files inside the
+selected project with the exact current marker; their serialized roots are
+also ignored. Use the current binary for untrusted repositories. Precise
+repository package loading and `go doc` are refused when source/metadata-link
+validation fails; their preflight rejects source-tree links without following
+targets that `cmd/go` may inspect across the selected root plus its effective
+module root, or the workspace root and member trees; `.git` and
+`.gograph` are excluded from that walk. `doc` also rejects filesystem-shaped queries.
+
+Most MCP tools are read-only. Boundary creation writes configuration, session
+create/end mutate telemetry, session cleanup deletes stale logs, and
+`gograph_wiki` writes documentation; their MCP annotations declare those
+effects. Repository-controlled session, snapshot, boundary, gate-init, and
+relative wiki paths use rooted regular-file operations and reject linked path
+components. Absolute wiki output is an explicit local destination whose
+generated descendants remain confined beneath its real directory.
 
 An operator can opt into durable MCP refreshes with
 `gograph mcp [path] --persist-refresh`. After a successful refresh this writes

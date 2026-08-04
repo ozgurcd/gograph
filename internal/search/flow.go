@@ -2,6 +2,7 @@ package search
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
 
 var validFlowSources = map[string]bool{
@@ -135,17 +137,35 @@ func loadFlowConfig(g *graph.Graph, requestedPath string) (FlowConfig, error) {
 	if err != nil {
 		return FlowConfig{}, err
 	}
-	if _, err := os.Lstat(resolvedPath); err != nil {
-		if optional && os.IsNotExist(err) {
+	var data []byte
+	if g != nil && g.Root != "" {
+		absRoot, rootErr := filepath.Abs(g.Root)
+		if rootErr != nil {
+			return FlowConfig{}, fmt.Errorf("resolve graph root: %w", rootErr)
+		}
+		rel, relErr := relativeWithinRoot(absRoot, resolvedPath)
+		if relErr != nil {
+			return FlowConfig{}, fmt.Errorf("invalid config path: must be inside graph root")
+		}
+		repository, openErr := sourcefs.Open(absRoot)
+		if openErr != nil {
+			return FlowConfig{}, fmt.Errorf("open graph root for flow config: %w", openErr)
+		}
+		data, err = repository.ReadRegularFile(rel)
+		_ = repository.Close()
+	} else {
+		configRoot, name := filepath.Dir(resolvedPath), filepath.Base(resolvedPath)
+		reader, openErr := sourcefs.Open(configRoot)
+		if openErr != nil {
+			return FlowConfig{}, fmt.Errorf("open flow config root: %w", openErr)
+		}
+		data, err = reader.ReadRegularFile(name)
+		_ = reader.Close()
+	}
+	if err != nil {
+		if optional && errors.Is(err, os.ErrNotExist) {
 			return FlowConfig{}, nil
 		}
-		return FlowConfig{}, fmt.Errorf("could not read flow config file: %w", err)
-	}
-	if err := validateFlowConfigTarget(g, resolvedPath); err != nil {
-		return FlowConfig{}, err
-	}
-	data, err := os.ReadFile(resolvedPath)
-	if err != nil {
 		return FlowConfig{}, fmt.Errorf("could not read flow config file: %w", err)
 	}
 	var config FlowConfig
@@ -163,29 +183,6 @@ func loadFlowConfig(g *graph.Graph, requestedPath string) (FlowConfig, error) {
 		}
 	}
 	return config, nil
-}
-
-func validateFlowConfigTarget(g *graph.Graph, configPath string) error {
-	if g == nil || g.Root == "" {
-		return nil
-	}
-	absRoot, err := filepath.Abs(g.Root)
-	if err != nil {
-		return fmt.Errorf("resolve graph root: %w", err)
-	}
-	realRoot, err := filepath.EvalSymlinks(absRoot)
-	if err != nil {
-		return fmt.Errorf("resolve graph root symlinks: %w", err)
-	}
-	realConfig, err := filepath.EvalSymlinks(configPath)
-	if err != nil {
-		return fmt.Errorf("resolve flow config symlinks: %w", err)
-	}
-	relative, err := filepath.Rel(realRoot, realConfig)
-	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("invalid config path: symlink target must be inside graph root")
-	}
-	return nil
 }
 
 func newFlowAnalyzer(g *graph.Graph, options FlowOptions, config FlowConfig) *flowAnalyzer {

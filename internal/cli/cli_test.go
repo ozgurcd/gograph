@@ -614,7 +614,12 @@ func TestCapabilitiesDocumentsImplementedModes(t *testing.T) {
 		"--persist-refresh",
 		"not a branch cache",
 		"does not edit .gitignore",
-		"last persisted graph",
+		"last trusted persisted graph",
+		"missing or unsupported source-policy marker",
+		"source-confinement contract",
+		"type/variable/constant",
+		"UNKNOWN/-1",
+		"Filesystem-shaped queries are rejected",
 	} {
 		if !strings.Contains(capabilities, want) {
 			t.Errorf("gograph capabilities does not document implemented mode %q", want)

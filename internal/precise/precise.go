@@ -2,6 +2,7 @@ package precise
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"go/token"
 	"go/types"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/ozgurcd/gograph/internal/buildctx"
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/scanner"
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 	"golang.org/x/tools/go/callgraph/cha"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
@@ -31,6 +34,28 @@ func Enrich(absRoot string, g *graph.Graph) error {
 // EnrichWithConfig applies type-checked precision using the same effective Go
 // build configuration that selected files for the AST graph.
 func EnrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) error {
+	if g == nil {
+		return fmt.Errorf("cannot enrich a nil graph")
+	}
+	payload, err := json.Marshal(g)
+	if err != nil {
+		return fmt.Errorf("copy AST graph for precise analysis: %w", err)
+	}
+	var enriched graph.Graph
+	if err := json.Unmarshal(payload, &enriched); err != nil {
+		return fmt.Errorf("copy AST graph for precise analysis: %w", err)
+	}
+	if err := enrichWithConfig(absRoot, &enriched, config); err != nil {
+		return err
+	}
+	*g = enriched
+	return nil
+}
+
+func enrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) error {
+	if err := scanner.ValidateToolchainSourceInputs(absRoot); err != nil {
+		return fmt.Errorf("refusing precise analysis of unsafe repository or Go tool input: %w", err)
+	}
 	analysisRoot := absRoot
 	if config.ModuleRoot() != "" {
 		if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
@@ -51,6 +76,9 @@ func EnrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 		return fmt.Errorf("packages.Load failed: %w", err)
 	}
 	if err := packageLoadError(initial); err != nil {
+		return err
+	}
+	if err := validateLoadedSourcePaths(analysisRoot, initial); err != nil {
 		return err
 	}
 	if err := validatePackageCoverage(analysisRoot, initial, g); err != nil {
@@ -389,7 +417,62 @@ func EnrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 	// 3b. Indirect mutations through mutating-method calls.
 	indirect := collectIndirectMutations(prog, analysisRoot, userMutators)
 	g.Mutations = append(g.Mutations, indirect...)
+	if err := scanner.ValidateNoSourceLinks(absRoot); err != nil {
+		return fmt.Errorf("repository source became unsafe during precise analysis: %w", err)
+	}
+	if err := validateLoadedSourcePaths(analysisRoot, initial); err != nil {
+		return fmt.Errorf("repository source became unsafe during precise analysis: %w", err)
+	}
 
+	return nil
+}
+
+func validateLoadedSourcePaths(root string, initial []*packages.Package) error {
+	reader, err := sourcefs.Open(root)
+	if err != nil {
+		return fmt.Errorf("open precise source root: %w", err)
+	}
+	defer func() { _ = reader.Close() }()
+	// Initial packages are the repository packages selected by ./.... Their Go
+	// source must not resolve outside the analysis root. Dependencies reached
+	// through imports are intentionally open-world, but any dependency source
+	// that is itself beneath the root is validated through the same reader.
+	for _, pkg := range initial {
+		for _, path := range pkg.GoFiles {
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil || !filepath.IsLocal(rel) {
+				return fmt.Errorf("precise package loader selected source outside repository: %s", path)
+			}
+		}
+	}
+
+	seen := make(map[string]struct{})
+	var validationErr error
+	packages.Visit(initial, nil, func(pkg *packages.Package) {
+		if validationErr != nil {
+			return
+		}
+		files := make([]string, 0, len(pkg.GoFiles)+len(pkg.CompiledGoFiles))
+		files = append(files, pkg.GoFiles...)
+		files = append(files, pkg.CompiledGoFiles...)
+		for _, path := range files {
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil || !filepath.IsLocal(rel) {
+				continue
+			}
+			if _, ok := seen[rel]; ok {
+				continue
+			}
+			seen[rel] = struct{}{}
+			if _, readErr := reader.ReadFile(rel); readErr != nil {
+				validationErr = fmt.Errorf("validate precise source %s: %w", rel, readErr)
+				return
+			}
+		}
+	})
+	if validationErr != nil {
+		return validationErr
+	}
 	return nil
 }
 

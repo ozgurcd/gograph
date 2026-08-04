@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/build"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 	"golang.org/x/mod/modfile"
 )
 
@@ -39,12 +41,254 @@ func Resolve(ctx context.Context, root string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("resolve Go build root: %w", err)
 	}
+	// Cmd/go discovers module/workspace files, their sums, and vendoring
+	// metadata before evaluating even otherwise repository-independent queries.
+	// Reject linked or special entries before starting it so attacker-controlled
+	// link targets cannot enter diagnostics or receive toolchain writes.
+	if _, err := ToolchainSourceRoots(root); err != nil {
+		return Config{}, fmt.Errorf("validate Go build metadata: %w", err)
+	}
 	// os.Getwd accepts PWD as its lexical spelling when it names the current
 	// directory. Pin both cmd.Dir and PWD to the canonical root so cmd/go does
 	// not discover a different GOMOD merely because gograph was invoked from
 	// inside rather than outside a symlinked scan root.
 	environment := setEnvironmentValue(os.Environ(), "PWD", canonicalRoot)
 	return resolve(ctx, canonicalRoot, environment, runGoCommand)
+}
+
+// ValidateToolchainMetadata verifies every local metadata path that cmd/go
+// discovers before it starts resolving ordinary dependencies. Repository-
+// discovered workspace members must remain beneath the workspace directory.
+func ValidateToolchainMetadata(root string) error {
+	_, err := ToolchainSourceRoots(root)
+	return err
+}
+
+// ToolchainSourceRoots validates local metadata and returns the module root,
+// or the workspace root plus member roots, whose source cmd/go may inspect as
+// local packages.
+// Callers that expose toolchain-derived content must preflight every returned
+// tree before invoking cmd/go.
+func ToolchainSourceRoots(root string) ([]string, error) {
+	absoluteRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve Go metadata root spelling: %w", err)
+	}
+	canonicalRoot, err := canonicalDirectory(root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve Go metadata root: %w", err)
+	}
+	return validateToolchainMetadataAndRoots(canonicalRoot, filepath.Clean(absoluteRoot))
+}
+
+func validateToolchainMetadata(root string) error {
+	_, err := ToolchainSourceRoots(root)
+	return err
+}
+
+func validateToolchainMetadataAndRoots(root, rootAlias string) ([]string, error) {
+	modulesEnabled := os.Getenv("GO111MODULE") != "off"
+	modulePending := modulesEnabled
+	moduleRoot := ""
+	goWork := os.Getenv("GOWORK")
+	workspacePending := modulesEnabled && (goWork == "" || goWork == "auto")
+
+	// An explicit GOWORK path is operator-selected rather than discovered from
+	// the repository. Its contents still select module paths, so apply the same
+	// workspace-root confinement before cmd/go opens any member metadata.
+	if modulesEnabled && goWork != "" && goWork != "auto" && goWork != "off" {
+		if !filepath.IsAbs(goWork) {
+			return nil, fmt.Errorf("GOWORK must be an absolute path, auto, or off: %q", goWork)
+		}
+		workspaceAlias := filepath.Clean(filepath.Dir(goWork))
+		workspaceRoot, err := canonicalDirectory(workspaceAlias)
+		if err != nil {
+			return nil, fmt.Errorf("resolve explicit workspace root: %w", err)
+		}
+		files, err := sourcefs.Open(workspaceRoot)
+		if err != nil {
+			return nil, fmt.Errorf("open explicit workspace root: %w", err)
+		}
+		primary := filepath.Base(goWork)
+		found, sourceRoots, validateErr := validateWorkspaceSet(files, workspaceRoot, workspaceAlias, primary)
+		_ = files.Close()
+		if validateErr != nil {
+			return nil, validateErr
+		}
+		if !found {
+			return nil, fmt.Errorf("inspect %s: %w", goWork, os.ErrNotExist)
+		}
+		return sourceRoots, nil
+	}
+	if !workspacePending && !modulePending {
+		return nil, nil
+	}
+
+	aliasDir := filepath.Clean(rootAlias)
+	for dir := filepath.Clean(root); ; dir = filepath.Dir(dir) {
+		files, err := sourcefs.Open(dir)
+		if err != nil {
+			return nil, fmt.Errorf("open Go metadata directory %s: %w", dir, err)
+		}
+		if workspacePending {
+			found, sourceRoots, validateErr := validateWorkspaceSet(files, dir, aliasDir, "go.work")
+			if validateErr != nil {
+				_ = files.Close()
+				return nil, validateErr
+			}
+			if found {
+				_ = files.Close()
+				return sourceRoots, nil
+			}
+		}
+		if modulePending {
+			found, validateErr := validateMetadataSet(files, dir, "go.mod", "go.sum", filepath.Join("vendor", "modules.txt"))
+			if validateErr != nil {
+				_ = files.Close()
+				return nil, validateErr
+			}
+			modulePending = !found
+			if found {
+				moduleRoot = dir
+			}
+		}
+		_ = files.Close()
+		if !workspacePending && !modulePending {
+			return optionalRoot(moduleRoot), nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return optionalRoot(moduleRoot), nil
+		}
+		aliasDir = filepath.Dir(aliasDir)
+	}
+}
+
+// validateWorkspaceSet reads and parses the applicable go.work through the
+// rooted filesystem boundary. Cmd/go unconditionally expands every use entry,
+// reads each member's go.mod and optional go.sum, and may inspect workspace
+// vendor/modules.txt before handling the requested package. Those local paths
+// must therefore be validated before the first cmd/go invocation.
+func validateWorkspaceSet(files *sourcefs.Reader, directory, directoryAlias, primary string) (bool, []string, error) {
+	data, err := files.ReadRegularFile(primary)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil, nil
+		}
+		return false, nil, fmt.Errorf("inspect %s: %w", filepath.Join(directory, primary), err)
+	}
+	for _, companion := range []string{primary + ".sum", filepath.Join("vendor", "modules.txt")} {
+		if err := files.ValidateRegularFile(companion); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return true, nil, fmt.Errorf("inspect %s: %w", filepath.Join(directory, companion), err)
+		}
+	}
+
+	workFilePath := filepath.Join(directory, primary)
+	workFile, err := modfile.ParseWork(workFilePath, data, nil)
+	if err != nil {
+		return true, nil, fmt.Errorf("parse %s: %w", workFilePath, err)
+	}
+	memberRoots := make([]string, 0, len(workFile.Use))
+	for _, use := range workFile.Use {
+		member, err := workspaceMemberName(directory, directoryAlias, use.Path)
+		if err != nil {
+			return true, nil, err
+		}
+		if err := files.ValidateDirectory(member); err != nil {
+			return true, nil, fmt.Errorf("inspect workspace member %s: %w", filepath.Join(directory, member), err)
+		}
+		moduleFile := filepath.Join(member, "go.mod")
+		if err := files.ValidateRegularFile(moduleFile); err != nil {
+			return true, nil, fmt.Errorf("inspect workspace member metadata %s: %w", filepath.Join(directory, moduleFile), err)
+		}
+		sumFile := filepath.Join(member, "go.sum")
+		if err := files.ValidateRegularFile(sumFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return true, nil, fmt.Errorf("inspect workspace member metadata %s: %w", filepath.Join(directory, sumFile), err)
+		}
+		memberRoots = append(memberRoots, filepath.Clean(filepath.Join(directory, member)))
+	}
+	// Workspace vendoring is rooted beside go.work, so cmd/go may inspect
+	// source below directory/vendor even when analysis starts in one member.
+	// Include the workspace root as well as its already-confined members.
+	sourceRoots := append([]string{directory}, memberRoots...)
+	return true, uniquePaths(sourceRoots), nil
+}
+
+func workspaceMemberName(directory, directoryAlias, usePath string) (string, error) {
+	member := filepath.Clean(filepath.FromSlash(usePath))
+	if filepath.IsAbs(member) {
+		bases := []string{directory}
+		if sameDirectory(directory, directoryAlias) {
+			bases = append(bases, directoryAlias)
+		}
+		for _, base := range uniquePaths(bases) {
+			relative, err := filepath.Rel(base, member)
+			if err != nil {
+				continue
+			}
+			relative = filepath.Clean(relative)
+			if filepath.IsLocal(relative) {
+				return relative, nil
+			}
+		}
+		return "", fmt.Errorf("%w %q: workspace use path must stay beneath %s", sourcefs.ErrUnsafeSourcePath, usePath, directory)
+	}
+	if !filepath.IsLocal(member) {
+		return "", fmt.Errorf("%w %q: workspace use path must stay beneath %s", sourcefs.ErrUnsafeSourcePath, usePath, directory)
+	}
+	return member, nil
+}
+
+func sameDirectory(left, right string) bool {
+	if left == "" || right == "" {
+		return false
+	}
+	leftInfo, err := os.Stat(left)
+	if err != nil || !leftInfo.IsDir() {
+		return false
+	}
+	rightInfo, err := os.Stat(right)
+	return err == nil && rightInfo.IsDir() && os.SameFile(leftInfo, rightInfo)
+}
+
+func optionalRoot(root string) []string {
+	if root == "" {
+		return nil
+	}
+	return []string{filepath.Clean(root)}
+}
+
+func uniquePaths(paths []string) []string {
+	seen := make(map[string]struct{}, len(paths))
+	result := make([]string, 0, len(paths))
+	for _, path := range paths {
+		clean := filepath.Clean(path)
+		if _, ok := seen[clean]; ok {
+			continue
+		}
+		seen[clean] = struct{}{}
+		result = append(result, clean)
+	}
+	return result
+}
+
+// validateMetadataSet validates the primary file and, only when that primary
+// exists, each companion file that cmd/go may read or update. Missing
+// companions are valid. sourcefs checks every component, so a linked vendor
+// directory is rejected before vendor/modules.txt can be opened.
+func validateMetadataSet(files *sourcefs.Reader, directory, primary string, companions ...string) (bool, error) {
+	if err := files.ValidateRegularFile(primary); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspect %s: %w", filepath.Join(directory, primary), err)
+	}
+	for _, companion := range companions {
+		if err := files.ValidateRegularFile(companion); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return true, fmt.Errorf("inspect %s: %w", filepath.Join(directory, companion), err)
+		}
+	}
+	return true, nil
 }
 
 // ResolveOrDefault returns the effective Go context when cmd/go is available,
@@ -105,7 +349,12 @@ func resolve(ctx context.Context, root string, environment []string, run goComma
 			return Config{}, fmt.Errorf("resolve main module identity: %w", canonicalErr)
 		}
 		moduleRoot = canonicalModuleRoot
-		data, readErr := os.ReadFile(moduleContext.GOMOD)
+		moduleFiles, openErr := sourcefs.Open(canonicalModuleRoot)
+		if openErr != nil {
+			return Config{}, fmt.Errorf("open main module root: %w", openErr)
+		}
+		data, readErr := moduleFiles.ReadRegularFile(filepath.Base(moduleContext.GOMOD))
+		_ = moduleFiles.Close()
 		if readErr != nil {
 			return Config{}, fmt.Errorf("read main module identity: %w", readErr)
 		}
@@ -153,8 +402,13 @@ func FromBuildContext(buildContext build.Context, environment []string) Config {
 // module-mode state. It is intended for deterministic scanner tests.
 func FromBuildContextWithModule(buildContext build.Context, environment []string, modulesEnabled bool, moduleRoot string) Config {
 	modulePath := ""
-	if data, err := os.ReadFile(filepath.Join(moduleRoot, "go.mod")); err == nil {
-		modulePath = modfile.ModulePath(data)
+	if moduleRoot != "" {
+		if moduleFiles, err := sourcefs.Open(moduleRoot); err == nil {
+			if data, readErr := moduleFiles.ReadRegularFile("go.mod"); readErr == nil {
+				modulePath = modfile.ModulePath(data)
+			}
+			_ = moduleFiles.Close()
+		}
 	}
 	return fromBuildContext(buildContext, environment, modulesEnabled, moduleRoot, modulePath)
 }

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 	"golang.org/x/mod/modfile"
 )
 
@@ -89,15 +90,15 @@ func (t *moduleIgnoreTracker) enterDir(dir string) (bool, error) {
 	}
 
 	modPath := filepath.Join(absDir, "go.mod")
-	info, err := os.Stat(modPath)
+	info, err := os.Lstat(modPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
 		return false, fmt.Errorf("stat %s: %w", modPath, err)
 	}
-	if info.IsDir() {
-		return false, nil
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return false, fmt.Errorf("unsafe module file %s: mode %s is not a regular file", modPath, info.Mode())
 	}
 	return false, t.addScope(absDir)
 }
@@ -116,7 +117,13 @@ func (t *moduleIgnoreTracker) addScope(root string) error {
 		return nil
 	}
 	modPath := filepath.Join(absRoot, "go.mod")
-	data, err := os.ReadFile(modPath)
+	moduleFiles, err := sourcefs.Open(absRoot)
+	if err != nil {
+		t.scopes = append(t.scopes, moduleIgnoreScope{root: absRoot, canonicalRoot: canonicalRoot, state: "unreadable"})
+		return fmt.Errorf("open module root %s: %w", absRoot, err)
+	}
+	data, err := moduleFiles.ReadRegularFile("go.mod")
+	_ = moduleFiles.Close()
 	if err != nil {
 		t.scopes = append(t.scopes, moduleIgnoreScope{root: absRoot, canonicalRoot: canonicalRoot, state: "unreadable"})
 		return fmt.Errorf("read %s: %w", modPath, err)
@@ -177,7 +184,7 @@ func (t *moduleIgnoreTracker) selectionFingerprint(buildContextFingerprint strin
 		BuildContext string             `json:"build_context"`
 		Scopes       []scopeFingerprint `json:"module_scopes"`
 	}{
-		Version:      1,
+		Version:      2,
 		BuildContext: buildContextFingerprint,
 		Scopes:       scopes,
 	})

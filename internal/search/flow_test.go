@@ -300,8 +300,8 @@ func TestFlowDoesNotReturnTaintToUnrelatedCaller(t *testing.T) {
 
 func TestFlowRejectsInvalidConfigurationAndFilters(t *testing.T) {
 	g := securityFlowGraph(t.TempDir())
-	if _, err := search.Flow(g, search.FlowOptions{ConfigPath: "../flow.json"}); err == nil || !strings.Contains(err.Error(), "path traversal") {
-		t.Fatalf("expected path traversal error, got %v", err)
+	if _, err := search.Flow(g, search.FlowOptions{ConfigPath: "../flow.json"}); err == nil || !strings.Contains(err.Error(), "inside graph root") {
+		t.Fatalf("expected graph-root containment error, got %v", err)
 	}
 	if _, err := search.Flow(g, search.FlowOptions{Source: "cookies"}); err == nil {
 		t.Fatal("expected invalid source error")
@@ -325,8 +325,8 @@ func TestFlowRejectsConfigSymlinkOutsideGraphRoot(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	g := securityFlowGraph(root)
-	if _, err := search.Flow(g, search.FlowOptions{ConfigPath: ".gograph/linked-flow.json"}); err == nil || !strings.Contains(err.Error(), "symlink target") {
-		t.Fatalf("expected symlink containment error, got %v", err)
+	if _, err := search.Flow(g, search.FlowOptions{ConfigPath: ".gograph/linked-flow.json"}); err == nil || !strings.Contains(err.Error(), "symlink component") {
+		t.Fatalf("expected rooted symlink refusal, got %v", err)
 	}
 }
 

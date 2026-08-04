@@ -96,7 +96,7 @@ func TestCLISessionAuditJSONFailureUsesEnvelope(t *testing.T) {
 
 func TestCLIJSONMissingSessionIntentionUsesCommandEnvelope(t *testing.T) {
 	root := writeCLIParityGraph(t, &graph.Graph{})
-	pointer := []byte(`{"active_session_id":"json-errors-test"}`)
+	pointer := []byte(`{"active_session_id":"json_errors_test"}`)
 	if err := os.WriteFile(filepath.Join(root, ".gograph", "active_session.json"), pointer, 0o600); err != nil {
 		t.Fatal(err)
 	}

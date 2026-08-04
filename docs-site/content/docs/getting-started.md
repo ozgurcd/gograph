@@ -49,7 +49,8 @@ Navigate to the root of any Go module and run:
 gograph build .
 ```
 
-This walks every `.go` file, extracts the AST, and writes:
+This walks the `.go` files selected by the documented scanner/build-context
+policy, extracts their ASTs, and writes:
 
 - `.gograph/graph.json` — the machine-readable graph used by graph-backed CLI queries
 - `.gograph/GRAPH_REPORT.md` — master index report
@@ -66,7 +67,9 @@ This walks every `.go` file, extracts the AST, and writes:
 
 Graph/report publishers coordinate through `.gograph/.artifacts.lock`. They
 stage the graph and all nine reports, rename reports first, and rename
-`graph.json` last as the publication commit marker. Same-directory replacement
+`graph.json` last as the publication commit marker. Publication refuses a
+linked or non-directory `.gograph`, and readers require a regular
+repository-confined `graph.json`. Same-directory replacement
 is atomic on Unix-like systems but is not guaranteed atomic by Go on non-Unix
 platforms. The complete ten-file bundle is not a single transaction; a crash
 can leave newer reports beside the previous `graph.json`. The lock file remains
@@ -75,10 +78,26 @@ authoritative marker.
 
 `.gograph/` is automatically added to the Git repository root `.gitignore`.
 Outside a Git worktree, `gograph` falls back to the build target `.gitignore`.
+The update accepts only an absent or regular `.gitignore`; it refuses a link or
+special file without modifying its target.
 Files and directories ignored by Git are excluded consistently from builds,
 freshness checks, and change detection. If no Go files are found, or every Go
 file fails to parse, the build exits without replacing an existing graph.
-Partial parse failures are retained in `graph.json` build metadata.
+Partial status retains parse failures and selection/security warnings in
+`graph.json` build metadata. Descendant symlinks and special files for
+extensions recognized by `go/build` are reported and excluded;
+linked/non-regular `go.mod`, `go.sum`, `go.work`, `go.work.sum`, and
+`vendor/modules.txt` metadata is rejected before toolchain use. Applicable
+`go.work use` members must remain beneath the workspace directory; their
+directories, `go.mod`, and optional `go.sum` are validated before `cmd/go`. An explicitly
+symlinked repository root remains supported. AST and
+query-time source reads are confined to regular files beneath that root.
+
+Graphs with a missing or unsupported repository source-policy marker are not
+trusted. The current CLI and MCP startup reject those artifacts and rebuild (or
+ask you to run `gograph build`) rather than trusting source-derived or
+unknown-policy data already stored in them. Older binaries do not enforce this
+boundary and should not be used for untrusted repositories.
 
 ### Precise mode
 
@@ -86,7 +105,7 @@ Partial parse failures are retained in `graph.json` build metadata.
 gograph build . --precise
 ```
 
-Attempts Go type loading plus CHA/SSA enrichment on top of the AST pass. Compilable, build-selected packages are required for precise data; if enrichment fails or omits an indexed non-test source file, gograph warns and retains the AST graph. Successful, fallback, and AST-only status is persisted as `precise`, `precise_fallback`, or `ast`, except that a failed retry keeps an existing fresh successful precise artifact covering the same sources. A precise interface invocation retains every valid named in-repository CHA target, so `callers Repository.Delete` can resolve direct, embedded-interface, and promoted concrete methods without dropping alternative implementations. Promoted wrappers forward through traversal-only synthetic edges that do not appear as source call sites. CHA can still over-approximate runtime targets, while reflection, plugins, `unsafe`, test-only packages, unnamed concrete types, and module-external implementations remain incomplete. Use before major refactors or blast-radius analysis.
+Attempts Go type loading plus CHA/SSA enrichment on top of the AST pass. Before its first `cmd/go` invocation, normal indexing validates Go tool metadata (`go.mod`, `go.sum`, `go.work`, `go.work.sum`, and `vendor/modules.txt`) and confines applicable workspace members to their workspace directory. The scanner then excludes linked or special recognized Go build inputs before build selection and AST reads. Before repository package type loading, the stronger preflight rejects source-tree links `cmd/go` may inspect across the selected root plus its effective module root, or the workspace root and member trees; `.git` and `.gograph` are excluded from that walk. Unsafe repository input makes enrichment fail closed while the safe AST graph remains available as `precise_fallback`. Compilable, build-selected packages are required for precise data; if enrichment fails or omits an indexed non-test source file, gograph warns and retains the AST graph. Successful, fallback, and AST-only status is persisted as `precise`, `precise_fallback`, or `ast`, except that a failed retry keeps an existing fresh successful precise artifact covering the same sources. A precise interface invocation retains every valid named in-repository CHA target, so `callers Repository.Delete` can resolve direct, embedded-interface, and promoted concrete methods without dropping alternative implementations. Promoted wrappers forward through traversal-only synthetic edges that do not appear as source call sites. CHA can still over-approximate runtime targets, while reflection, plugins, `unsafe`, test-only packages, unnamed concrete types, and module-external implementations remain incomplete. Go dependency/toolchain resolution follows the user's environment and remains open-world. Use before major refactors or blast-radius analysis.
 
 **When to use which:**
 
@@ -126,7 +145,7 @@ parse_failures : 0
 gograph stale
 ```
 
-Compares the current selected-file inventory, effective Go build context, and source modification times with `graph.json`. It uses the same build-constraint and ignore policy as `build`, and all filesystem-backed commands resolve the repository root recorded in the graph, so it works identically from subdirectories. Exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error; text and `--json` modes use the same contract. Rebuild only for status `2`.
+Compares the current selected-file inventory, effective Go build context, and source modification times with `graph.json`. It uses the same build-constraint and ignore policy as `build`; `stale` and graph-backed query commands use the trusted directory from which `graph.json` was loaded, not its serialized `root` metadata, so they work identically from subdirectories. Exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error; text and `--json` modes use the same contract. Normally rebuild for status `2`. A status-`1` message that explicitly reports a missing or unsupported source-policy marker is a one-time rebuild migration; resolve other status-`1` errors instead of hiding them with an automatic rebuild.
 
 ## Step 3 — Run repository-wide queries
 
@@ -235,7 +254,7 @@ You can check whether a rebuild is needed:
 gograph stale
 ```
 
-The MCP server checks source freshness and newer persisted graphs per analysis call. After an edit it rebuilds in memory using the current requested mode, so a precise session re-runs CHA/SSA rather than silently becoming AST-only; if that refresh cannot complete precisely, the analysis call returns an error. MCP `stale`, default `changes`, and `stats` inspect the persisted graph when present, or the startup in-memory fallback when no artifact exists.
+The MCP server checks source freshness and newer persisted graphs per analysis call. After an edit it rebuilds in memory using the current requested mode, so a precise session re-runs CHA/SSA rather than silently becoming AST-only; if that refresh cannot complete precisely, the analysis call returns an error. MCP `stale`, default `changes`, and `stats` inspect a trusted persisted graph when present, or the startup in-memory fallback when the artifact is missing, unreadable, unsafe, or uses an unsupported source policy.
 
 MCP refreshes are in-memory by default. Start with
 `gograph mcp [path] --persist-refresh` to publish successful refreshes to the

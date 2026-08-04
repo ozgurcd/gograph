@@ -2,6 +2,59 @@
 
 ## Unreleased
 
+### Repository Source Confinement
+
+- Repository scanning now excludes and reports descendant symlinks and special
+  files for every input extension recognized by `go/build`, before
+  build-constraint inspection. The AST parser receives bytes opened through a
+  repository-rooted filesystem handle, while an explicitly symlinked
+  repository root remains supported.
+- `source`, caller/callee snippets, complexity, and changed-file parsing now
+  accept only regular Go files without symlink path components and use rooted
+  opens that cannot escape the analyzed repository. CLI and MCP share these
+  query implementations.
+- Persisted `graph.json` is accepted only as a regular repository-confined file,
+  and publication refuses a linked or non-directory `.gograph` plus linked or
+  non-regular lock entries. The build's `.gitignore` update also rejects a
+  repository-provided link. These checks prevent static malicious-checkout
+  links from redirecting graph reads or those publication-time writes.
+- Session create/end/audit/cleanup, snapshot save/diff/list/drop, boundary
+  reads/creation, check/flow config reads, and gate read/init now use
+  repository-rooted operations that
+  require real directories and regular, non-linked entries. Session IDs are
+  restricted to letters, digits, and underscores, and cleanup removes only
+  validated inactive regular logs.
+- Relative CLI/MCP wiki outputs are rooted at the analyzed project, reject
+  traversal and linked ancestors, and confine every generated page write;
+  explicit absolute output still selects another local output root. Existing
+  regular wiki pages and named snapshots may be overwritten, while boundary
+  and gate initialization remain exclusive.
+- Build-context resolution rejects linked/non-regular `go.mod`, `go.sum`,
+  `go.work`, `go.work.sum`, and `vendor/modules.txt` before its first toolchain
+  invocation. The scanner excludes linked/special recognized build inputs
+  before build selection and AST reads. Applicable workspace `use` paths must stay beneath the workspace
+  directory; every member directory, `go.mod`, and optional `go.sum`, plus the
+  workspace-root `vendor/modules.txt`, is validated before `cmd/go`. Precise
+  package loading and `doc` reject source-tree links `cmd/go` may inspect across
+  the selected root plus its effective module root, or the workspace root and
+  member trees;
+  `.git` and `.gograph` are excluded from that walk. `doc` also rejects filesystem-shaped queries;
+  dependency/toolchain resolution remains
+  open-world. Failed precise enrichment leaves the original AST graph unchanged
+  and records the existing `precise_fallback` outcome.
+- Newly built graphs carry a source-policy trust marker. Persisted graphs with
+  a missing or unsupported policy require a rebuild, and a non-current precise
+  artifact cannot win publication retention over a safely rebuilt graph. The
+  serialized graph root is ignored in favor of the trusted load location.
+  Saved `.json` baselines additionally must be regular, non-linked files inside
+  the selected project; their serialized roots are also ignored. Older binaries
+  do not enforce the new confinement and should not be used for untrusted
+  repositories.
+- Reported by Dostxodjayev Abdullox (GitHub: `@squeeze440`).
+- Updated `golang.org/x/text` to v0.39.0, together with its compatible
+  `golang.org/x/mod`, `x/sync`, `x/sys`, and `x/tools` set, so dependency scans
+  no longer retain the high-severity `GO-2026-5970` advisory.
+
 ### Build-Context-Aware Repository Indexing
 
 - The AST scanner and precise package loader now share cmd/go's effective
@@ -73,20 +126,20 @@
 - Precise CHA interface invocations now retain every valid named in-repository implementation as a deterministic parallel call edge instead of assigning the call site to whichever implementation was visited first. Caller output deduplicates the shared source site, while reachability and orphan analysis traverse every target.
 - Promoted concrete methods are retained through their nil-package SSA wrappers. A traversal-only synthetic forwarding edge connects each wrapper to the declared embedded method, preserving exact paths and orphan reachability without inventing a source call site.
 - `callers Interface.Method` now resolves direct and embedded interface methods through their recorded implementers. Interface-qualified, promoted/concrete receiver, fully-qualified ID, bare-name, exact, CLI, and MCP query forms share the same resolver.
-- Graph v2's wire format now adds optional precision, call-column, and synthetic-forwarding fields with `ast`, `precise`, and `precise_fallback` states. Current readers load legacy graphs as AST-only with line-only ordinary calls. Older v2 binaries can decode new graphs, but do not understand traversal-only forwarding semantics and may count or display synthetic records as ordinary edges; use the current binary for new precise graphs. Text and JSON call-site output includes the source column when known.
+- Graph v2's wire format added optional precision, call-column, and synthetic-forwarding fields with `ast`, `precise`, and `precise_fallback` states. The decoder still normalizes absent precision/column/synthetic fields to AST-only, line-only ordinary calls, but persisted graphs without the exact current repository-source policy are rebuild-required. Older v2 binaries can decode new graphs but neither enforce repository source confinement nor understand traversal-only forwarding semantics; use the current binary for untrusted repositories and new precise graphs. Text and JSON call-site output includes the source column when known.
 - Precise enrichment now rejects empty or partial non-test package loads before mutating the AST graph, so build constraints or nested module boundaries cannot be mislabeled as fully precise.
 - Call extraction now separates real calls from inferred callback references, rejects identifiers known to be ordinary variables, retains inferred references only when they resolve to repository callables, and deterministically deduplicates serialized edges.
 - Precise CHA enrichment no longer expands unconstrained function values to every signature-compatible function. New dynamic targets are limited to repository implementations, and direct calls inside closures merge with their AST call site.
 - Precise interface-satisfaction edges now carry package-qualified interface and concrete type IDs, preventing same-name collisions across packages.
 - Synchronization extraction requires receivers tied to `sync.Mutex`, `sync.RWMutex`, `sync.WaitGroup`, or `sync.Once`. Error-message extraction is restricted to `panic`, `errors.New`, and `fmt.Errorf`, with import-alias support.
-- Builds with zero successful parses fail without replacing an existing index. Partial builds record scanned/parsed counts and per-file failures in `graph.json`; `stats` reports complete/partial status.
+- Builds with zero successful parses fail without replacing an existing index. Partial builds record scanned/parsed counts, per-file failures, and selection/security warnings in `graph.json`; `stats` reports complete/partial status.
 - `graph.json` is written to a synced temporary file and renamed into place; same-directory replacement is atomic on Unix-like systems.
 - Mutation extraction no longer classifies ordinary local-variable assignments as struct/global mutations. Mutation edges retain their owning type when statically known, and `mutate Type.Field` now filters same-named fields on unrelated types.
 - Summary, gate baselines, gate evaluation, and architectural snapshots now use the same reachability-based orphan definition as the `orphans` CLI/MCP feature.
 
 ### Repository and Policy Behavior
 
-- Filesystem-backed CLI commands use the root stored in `graph.json`, so `stale`, `changes`, `source`, `context`, snapshots, and Git impact checks behave consistently from subdirectories.
+- Filesystem-backed CLI commands use the trusted location from which `graph.json` was loaded, so `stale`, `changes`, `source`, `context`, snapshots, and Git impact checks behave consistently from subdirectories. The serialized `root` field is metadata and is replaced at load time rather than used as filesystem authority.
 - Build, stale, and change detection now share scanner rules, including generated files, agent worktrees, and individually Git-ignored Go files.
 - CLI and MCP API/check tools share one validated, cancellable Git baseline builder implemented with the standard-library tar reader. Nested project roots are archived at the correct subtree; Git refs are never treated as directory paths.
 - `gate` fails closed when the graph is stale and computes complexity in one pass. Snapshot complexity calculation now uses the same single-pass approach.
@@ -284,7 +337,7 @@ Added the `gograph httpcalls` command and corresponding `gograph_httpcalls` MCP 
 ### Security
 
 #### Path Traversal Prevention in `gograph_boundaries` / `Boundaries` / `CreateBoundaries`
-Added explicit input validation to `Boundaries` and `CreateBoundaries` in `internal/search/boundaries.go` to reject config paths that are empty, contain `..` (path traversal), or contain backslashes. The same guard is applied at the MCP layer in `gograph_boundaries` before the path reaches the search layer, providing defence-in-depth.
+Added explicit input validation to `Boundaries` and `CreateBoundaries` in `internal/search/boundaries.go`. The current implementation resolves platform-native paths against the graph root, rejects paths outside that root, and performs reads and creation through the rooted filesystem boundary so linked components cannot escape it. The CLI and MCP handlers share this validation.
 
 #### Poisoned Graph File Guard in `Callers`, `Callees`, and `Source`
 Added `isSafePathSegment` checks in `internal/search/search.go` before resolving any `File` field from the graph into an absolute path via `filepath.Join`. This prevents a crafted `graph.json` with malicious file paths (e.g. `../../etc/passwd`) from causing arbitrary file reads.

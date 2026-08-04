@@ -17,6 +17,7 @@ func writeCLIParityGraph(t *testing.T, g *graph.Graph) string {
 	t.Helper()
 
 	root := t.TempDir()
+	currentPolicyGraph(g)
 	g.Version = graph.Version
 	g.Root = root
 	if err := os.MkdirAll(filepath.Join(root, ".gograph"), 0o755); err != nil {

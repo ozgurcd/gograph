@@ -28,6 +28,7 @@ import (
 	"github.com/ozgurcd/gograph/internal/scanner"
 	"github.com/ozgurcd/gograph/internal/search"
 	"github.com/ozgurcd/gograph/internal/session"
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 	"github.com/ozgurcd/gograph/internal/wiki"
 )
 
@@ -138,7 +139,10 @@ func Run(args []string) int {
 
 	if !nonAnalytical[args[0]] {
 		activeID, err := session.GetActiveSessionID()
-		if err == nil && activeID != "" {
+		if err != nil {
+			return failCommandf(args[0], "Error reading active session metadata: %v", err)
+		}
+		if activeID != "" {
 			if intention == "" {
 				return failCommandf(args[0], "Error: Active session %q requires an intention. Please supply the --intention (-i) flag stating your technical rationale.", activeID)
 			}
@@ -349,15 +353,32 @@ After build: graph.json + Markdown reports are written to .gograph/.
 The .gograph/ ignore entry is appended to the Git repository root .gitignore
 when available; outside Git, the build target .gitignore is used.
 If no Go files are found, or none can be parsed, build exits before replacing artifacts.
-Partial builds record failed files in graph.json for machine-readable health checks.
+Partial builds record parse failures and selection/security warnings in graph.json.
   gograph stats   → counts plus complete/partial build and ast/precise/fallback status
   gograph stale   → checks source selection, build context, and modification times;
                     exits 0 (up to date), 1 (error), or 2 (stale)
 
-CLI graph-backed analysis uses the last persisted graph, written by a manual build or an
+CLI graph-backed analysis uses the last trusted persisted graph, written by a manual build or an
 opt-in MCP publication. The MCP server checks source freshness and newer
 persisted graphs per call. After edits it rebuilds in the current requested
 mode, so precise analysis is recomputed.
+
+Repository source and persisted-index reads are confined beneath the selected
+root: linked or special recognized Go build inputs are excluded, linked or
+non-regular go.mod/go.sum/go.work/go.work.sum/vendor/modules.txt metadata is
+rejected before toolchain use, and applicable workspace members must stay
+beneath the workspace directory with their directory and metadata validated.
+Precise analysis and doc reject source-tree links the Go toolchain may inspect
+across the selected root plus its effective module root, or the workspace root
+and member trees; .git and .gograph are excluded from that preflight;
+graph.json must be a regular file beneath a real .gograph directory, and
+graphs with a missing or unsupported source-policy marker are rebuild-required.
+Serialized graph roots are ignored. Use the current binary when analyzing
+untrusted repositories; older binaries do not enforce this source-confinement contract.
+
+Repository-controlled session, snapshot, boundary, gate-init, and generated
+wiki destinations use rooted regular-file operations and refuse descendant
+links that could redirect reads, writes, or cleanup outside their selected root.
 
 MCP refreshes stay in memory by default. Starting
   gograph mcp [path] --persist-refresh
@@ -479,16 +500,16 @@ Know these before trusting results:
                         symbol name, not route string.
   impact / skeleton     can produce very large output on hotspot symbols or large repos.
                         Use callers --depth N for bounded traversal instead of impact.
-  CLI snapshot results  reflect the last persisted graph. Run 'gograph stale' first;
+  CLI snapshot results  reflect the last trusted persisted graph. Run 'gograph stale' first;
                         exit status encodes result (0 = up to date, 1 = error, 2 = stale).
   MCP analysis          checks source freshness and newer graph.json artifacts per call;
                         edits preserve/retry the requested precision. stale/default
-                        changes/stats inspect persisted graph.json, or the startup
-                        auto-build fallback when no artifact exists. --persist-refresh
+                        changes/stats inspect trusted persisted graph.json, or the startup
+                        auto-build fallback when no usable artifact exists. --persist-refresh
                         can publish successful refreshes for later CLI/server processes.
-  Subdirectory safe     all query commands auto-discover the project root (walks up to
-                        the nearest .gograph/ directory). No need to cd back to the repo
-                        root before running plan, review, or any other query.
+  Subdirectory safe     graph-backed query commands auto-discover the project root
+                        (walks up to the nearest .gograph/ directory). No need to cd
+                        back to the repo root before running plan or review.
 
 ━━━ COMMANDS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 AGENT WORKFLOW RULES (CRITICAL):
@@ -508,14 +529,15 @@ boundaries [--config] : verify package architecture constraints using boundaries
 boundaries --create   : auto-generate a baseline boundaries.json from the current repo
 callees <fn> [--no-tests] [--depth N]: what fn calls (depth=1 direct; --depth 2+ expands N hops, max 10)
 callers <fn> [--no-tests] [--depth N] [--exact]: who calls fn (depth=1 direct; max 10)
-complexity [sym]     : cyclomatic complexity estimate per function (highest first)
-concurrency [str]    : goroutines/channels/mutexes
+  complexity [sym]     : cyclomatic complexity estimate per function (highest first;
+                         source unreadable/unparseable is retained as UNKNOWN/-1)
+concurrency [str]    : goroutine spawns, channel sends, and typed sync calls
 coupling [pkg] [--include-stdlib] [--internal-only]
                      : fan-in, fan-out, and instability per package
 diagram [--group-by package|module|service|file] [--max-depth N] [--include-stdlib]
                      : Mermaid architecture diagram of package dependency graph
 embeds <struct>      : structs embedding this struct
-envs [str]           : os.Getenv/viper reads
+envs [str]           : os.Getenv/os.LookupEnv/supported Viper Get* reads
 errors [term] [--no-tests] : error constructors, sentinels, and panic sites
 fields <struct>      : fields/types of struct
 focus <pkg>          : all files, symbols, calls, imports for one package
@@ -532,15 +554,20 @@ path <from> <to>     : shortest call chain between two symbols (BFS)
 public <pkg>         : exported symbols only
 query <term...>      : broad OR search — symbols, files, packages, imports, call sites
 routes               : all HTTP REST routes. Annotates unresolvable handlers.
-source <sym>         : exact source code — USE THIS instead of reading files
+source <sym>         : confined exact source for function/method/struct/interface/
+                       type/variable/constant — USE THIS instead of reading files
 sql [term]           : raw SQL queries mapped to their functions; optional keyword/table filter
 tests <sym>          : test functions exercising this symbol
 
 TOKEN SAVERS (COMPOSED COMMANDS — each replaces 3-8 separate calls):
 api --since <ref|graph.json>
-                     : breaking API/contract changes since a Git ref or saved graph
+                     : breaking API/contract changes since a Git ref or saved graph;
+                       saved graphs must be regular files inside the project root,
+                       have no linked path component, and carry the exact current
+                       source-policy marker; their serialized root is ignored
 arity [--min 5]      : functions with too many arguments
-changes              : symbols modified/new/deleted since the persisted graph
+changes              : symbols modified/new/deleted since the trusted persisted graph;
+                       deleted includes files absent from the safe selected inventory
 changes --git <ref>  : symbols in files changed since a git ref (e.g. main, HEAD~5, v1.4.50)
 constructors <struct>: factory functions returning this struct
 literals <struct>    : composite literal sites Foo{...} — run before adding/removing a required field
@@ -586,6 +613,11 @@ trace <err_str>      : alias for errorflow (kept for compatibility)
 doc <pkg[.Symbol]>  : "go doc <query>" — signature + doc comment for any stdlib or third-party symbol.
                        No graph required. Examples: doc fmt.Errorf  doc net/http.HandleFunc  doc io.Reader
                        doc github.com/jackc/pgx/v5.Conn.QueryRow
+                       Filesystem-shaped queries are rejected. Runs the local Go toolchain after
+                       rejecting source-tree links across the selected root plus its effective
+                       module root, or the workspace root and member trees (.git/.gograph excluded),
+                       and validating Go tool metadata plus confined workspace members;
+                       dependency resolution remains open-world.
 httpcalls [term]     : all outbound HTTP client calls via net/http (Get, Post, PostForm, Head).
                        Filter by method or URL substring.
 summary              : hotspots + worst instability + top complexity + reachability-orphan/god-object counts
@@ -593,13 +625,19 @@ untested [--pkg <n>] [--top N] : production functions with callers but zero test
                        sorted by caller count (highest risk first). Replaces N 'tests <sym>' calls.
 check [--config p] [--uncommitted] [--since ref|graph.json]
                      : static policy checks (boundaries, API drift, changed-route/export tests,
-                       test coverage, orphans, globals, arity, and complexity)
-gate                 : CI/CD enforcement against .gograph.yml; delta gates use the previous persisted graph
-gate init            : write a commented .gograph.yml template; refuses overwrite
-snapshot <subcmd>    : architectural metric snapshots (save, diff, list, drop)
+                       test coverage, orphans, globals, arity, and complexity);
+                       relative/default config paths are project-confined; absolute
+                       config is an explicit regular local file; saved baselines
+                       must be regular non-linked in-project files with the exact
+                       current source-policy marker and cannot supply the trusted root
+gate                 : CI/CD enforcement against regular, non-linked project-root
+                       .gograph.yml; delta gates use the previous persisted graph
+gate init            : exclusively create a regular .gograph.yml; refuses links/overwrite
+snapshot <subcmd>    : confined architectural metric snapshots (save, diff, list, drop)
 mcp [path] [--persist-refresh] : start MCP server over stdio; refreshes stay in memory by default
                                  opt-in publishes one latest graph/report set without editing .gitignore
 gograph session <action>     : start/end audit sessions (create [word], end, audit, cleanup)
+                               storage is confined to regular .gograph session entries
                                NOTE: MCP tool calls (gograph_plan, gograph_review) are
                                now correctly recorded in session audit counters.
 add-claude-plugin    : install Claude Desktop MCP config + shared rules + Claude Code hook;
@@ -681,6 +719,7 @@ func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr
 	buildMetadata := &graph.BuildMetadata{
 		ScannedFiles:            len(files),
 		Precision:               graph.PrecisionAST,
+		SourcePolicyVersion:     graph.CurrentSourcePolicyVersion,
 		BuildContextFingerprint: selectionFingerprint,
 	}
 	for _, e := range walkErrs {
@@ -720,6 +759,11 @@ func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr
 
 	fset := token.NewFileSet()
 	pkgMap := make(map[string]*graph.PackageNode)
+	sourceReader, err := sourcefs.Open(absRoot)
+	if err != nil {
+		return nil, fmt.Errorf("opening repository source root: %w", err)
+	}
+	defer func() { _ = sourceReader.Close() }()
 
 	for _, path := range files {
 		rel, err := filepath.Rel(absRoot, path)
@@ -728,7 +772,13 @@ func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr
 		}
 		dir := filepath.Dir(rel)
 		pkgImportPath := dirToImportPath[dir]
-		result, err := parser.ParseFile(fset, path, rel, pkgImportPath)
+		source, err := sourceReader.ReadFile(rel)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: read %s: %v\n", rel, err)
+			buildMetadata.Failures = append(buildMetadata.Failures, graph.BuildFailure{File: rel, Error: err.Error()})
+			continue
+		}
+		result, err := parser.ParseSource(fset, path, source, rel, pkgImportPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
 			buildMetadata.Failures = append(buildMetadata.Failures, graph.BuildFailure{File: rel, Error: err.Error()})
@@ -1138,7 +1188,9 @@ func runTests(args []string) int {
 
 // graphRefresher keeps MCP analysis fresh without losing the analysis mode the
 // user selected. Precise and precise_fallback graphs both carry a durable
-// precise request, while explicit AST and legacy graphs refresh as AST-only.
+// precise request, while explicit current-policy AST graphs refresh as
+// AST-only. Missing/unsupported-policy persisted graphs are rejected before a
+// refresher is constructed.
 //
 // A manual `gograph build --precise` may publish a newer graph while an MCP
 // server is already running. The artifact is checked by file metadata before
@@ -1241,8 +1293,14 @@ func graphRefresher(
 }
 
 func graphArtifactInfo(path string) os.FileInfo {
-	info, err := os.Stat(path)
-	if err != nil {
+	// The repository root itself may have been explicitly supplied through a
+	// symlink, but .gograph and graph.json must be real descendant entries.
+	parent, err := os.Lstat(filepath.Dir(path))
+	if err != nil || parent.Mode()&os.ModeSymlink != 0 || !parent.IsDir() {
+		return nil
+	}
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return nil
 	}
 	return info
@@ -1318,16 +1376,20 @@ func parseMCPArgs(args []string) (mcpOptions, error) {
 }
 
 func prepareMCPGraph(options mcpOptions) (*graph.Graph, string, error) {
-	absRoot, err := filepath.Abs(options.Root)
+	root := options.Root
+	if root == "." {
+		root = rootfind.FindRoot()
+	}
+	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, "", fmt.Errorf("resolving path: %w", err)
 	}
 
-	g, err := loadGraph(options.Root)
+	g, err := loadGraph(absRoot)
 	if err != nil {
 		// Graph does not exist yet — build it automatically so Claude Desktop
 		// works without requiring a manual "gograph build ." step first.
-		fmt.Fprintf(os.Stderr, "graph not found, building automatically for %s...\n", absRoot)
+		fmt.Fprintf(os.Stderr, "graph unavailable or rebuild required, building automatically for %s...\n", absRoot)
 		g, err = BuildGraph(absRoot)
 		if err != nil {
 			return nil, "", fmt.Errorf("auto-building graph: %w", err)
@@ -1375,9 +1437,9 @@ func runMCP(args []string) int {
 }
 
 func loadGraph(root string) (*graph.Graph, error) {
-	// When root is "." (the default for all query commands), discover the
-	// actual gograph project root by walking upward.  This lets plan/review
-	// and every other query command work from subdirectories.
+	// When root is "." (the default for graph-backed query commands), discover
+	// the actual gograph project root by walking upward. This lets commands such
+	// as plan and review work from subdirectories.
 	if root == "." {
 		root = rootfind.FindRoot()
 	}
@@ -1386,7 +1448,12 @@ func loadGraph(root string) (*graph.Graph, error) {
 		return nil, fmt.Errorf("resolving path: %w", err)
 	}
 	jsonPath := filepath.Join(absRoot, graphFile)
-	data, err := os.ReadFile(jsonPath)
+	reader, err := sourcefs.Open(absRoot)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open repository root %s: %w", absRoot, err)
+	}
+	defer func() { _ = reader.Close() }()
+	data, err := reader.ReadRegularFile(graphFile)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read %s — run `gograph build` first: %w", jsonPath, err)
 	}
@@ -1394,9 +1461,14 @@ func loadGraph(root string) (*graph.Graph, error) {
 	if err := json.Unmarshal(data, &g); err != nil {
 		return nil, fmt.Errorf("parsing graph.json: %w", err)
 	}
-	if g.Root == "" || !sameDirectory(g.Root, absRoot) {
-		g.Root = absRoot
+	if !g.UsesCurrentSourcePolicy() {
+		return nil, fmt.Errorf("graph.json has a missing or unsupported repository source policy — run `gograph build` to rebuild it safely")
 	}
+	// The caller-selected load location is the trust boundary. Even a persisted
+	// Root value that names the same directory (for example ".") must not remain
+	// relative, because later MCP operations may run from another working
+	// directory and would otherwise re-anchor graph-derived source reads there.
+	g.Root = absRoot
 	return &g, nil
 }
 
@@ -1412,9 +1484,11 @@ func sameDirectory(recordedRoot, loadedRoot string) bool {
 	return err == nil && loadedInfo.IsDir() && os.SameFile(recordedInfo, loadedInfo)
 }
 
-// graphRoot returns the repository root recorded when the graph was built.
-// Query commands can be invoked from any descendant directory, so filesystem
-// and Git operations must never be anchored to the process working directory.
+// graphRoot returns the trusted repository root assigned when graph.json was
+// loaded or the graph was built. A serialized Root field is never filesystem
+// authority. Query commands can be invoked from any descendant directory, so
+// filesystem and Git operations must not re-anchor to the process working
+// directory.
 func graphRoot(g *graph.Graph) string {
 	if g != nil && g.Root != "" {
 		if root, err := filepath.Abs(g.Root); err == nil {
@@ -1430,22 +1504,51 @@ func graphRoot(g *graph.Graph) string {
 }
 
 func writeGitignore(root string) error {
-	giPath := filepath.Join(gitWorktreeRoot(root), ".gitignore")
+	worktreeRoot := gitWorktreeRoot(root)
+	giPath := filepath.Join(worktreeRoot, ".gitignore")
 	const entry = ".gograph/"
-	existing, err := os.ReadFile(giPath)
-	if err != nil && !os.IsNotExist(err) {
-		return err
+	reader, err := sourcefs.Open(worktreeRoot)
+	if err != nil {
+		return fmt.Errorf("open Git worktree root: %w", err)
+	}
+	existing, err := reader.ReadRegularFile(".gitignore")
+	_ = reader.Close()
+	exists := true
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read .gitignore safely: %w", err)
+		}
+		exists = false
+		existing = nil
 	}
 	for _, line := range strings.Split(string(existing), "\n") {
 		if strings.TrimSpace(line) == entry {
 			return nil
 		}
 	}
-	f, err := os.OpenFile(giPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o640)
+	flags := os.O_APPEND | os.O_WRONLY
+	if !exists {
+		flags |= os.O_CREATE | os.O_EXCL
+	}
+	expected, lstatErr := os.Lstat(giPath)
+	if lstatErr != nil && !os.IsNotExist(lstatErr) {
+		return fmt.Errorf("inspect .gitignore before append: %w", lstatErr)
+	}
+	if lstatErr == nil && !expected.Mode().IsRegular() {
+		return fmt.Errorf("refusing unsafe .gitignore %s: mode %s is not a regular file", giPath, expected.Mode())
+	}
+	f, err := os.OpenFile(giPath, flags, 0o640)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = f.Close() }()
+	actual, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !actual.Mode().IsRegular() || expected != nil && !os.SameFile(expected, actual) {
+		return fmt.Errorf("refusing .gitignore that changed during open: %s", giPath)
+	}
 	prefix := "\n"
 	if len(existing) == 0 {
 		prefix = ""
@@ -1468,8 +1571,12 @@ func gitWorktreeRoot(root string) string {
 }
 
 func parseDependencies(absRoot string) ([]graph.Dependency, error) {
-	modPath := filepath.Join(absRoot, "go.mod")
-	data, err := os.ReadFile(modPath)
+	moduleFiles, err := sourcefs.Open(absRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = moduleFiles.Close() }()
+	data, err := moduleFiles.ReadRegularFile("go.mod")
 	if err != nil {
 		return nil, err
 	}
@@ -1791,7 +1898,8 @@ INDEXING
                              Adds .gograph/ to the Git repository root .gitignore
                              when available; outside Git, uses the target .gitignore.
                              If no files parse successfully, exits without replacing artifacts.
-                             Partial parse failures are recorded in graph.json build metadata.
+                             Parse failures and selection/security warnings are recorded
+                             in graph.json build metadata and make status partial.
                              Run after any major code change. Default path: .
                              Supports --precise to perform type-checked Class
                              Hierarchy/SSA enrichment. If enrichment fails, warns,
@@ -1823,7 +1931,8 @@ SEARCH & NAVIGATION
   focus <package>            Show all symbols, imports, and call edges for one
                              package. Token-efficient alternative to reading files.
   node <name>                Show indexed AST metadata for a symbol, package, or file.
-  source <name>              Extract raw source code (functions, interfaces, consts).
+  source <name>              Extract confined raw source for functions, methods,
+                             structs, interfaces, types, variables, and constants.
   public <package>           List only the exported (public) API of a package.
   fields <struct>            List all fields and types of a struct.
   embeds <struct>            Find which structs embed the given struct.
@@ -1888,16 +1997,23 @@ CODE QUALITY
   check --uncommitted        Run checks, including uncommitted code.
   check --since <ref|graph.json>
                              Run checks against a Git ref or saved graph baseline.
-  gate                       Run CI/CD enforcement checks against .gograph.yml thresholds.
+                             Saved graphs must be regular files inside the project
+                             root, have no linked component, and carry the exact
+                             current source-policy marker; serialized roots are ignored.
+  gate                       Run CI/CD enforcement checks against a regular,
+                             non-linked project-root .gograph.yml.
                              Fails before evaluation when graph.json is stale, then fails
                              if any configured threshold is violated.
                              Orphan/coupling deltas use the immediately preceding persisted
                              graph embedded automatically by publication; first build skips them.
-  gate init                  Write a commented .gograph.yml template; refuses overwrite.
+  gate init                  Exclusively create a regular .gograph.yml template;
+                             refuses links and existing entries.
   snapshot <subcmd>          Capture and diff architectural metrics (save, diff, list, drop).
                              Subcommands: save <name>, diff <name>, list, drop <name>.
+                             Snapshot files/directories must be real repository entries.
   boundaries [--config]      Verify package architecture constraints using boundaries.json.
-  boundaries --create        Auto-generate a baseline boundaries.json from the current repo.
+  boundaries --create        Auto-generate a baseline boundaries.json from the current repo;
+                             refuses linked output paths and overwrite.
   flow [term] [--source kind] [--sink kind] [--config path] [--no-tests]
                              Find potential untrusted-data paths to SQL query text,
                              process execution, filesystem access, or outbound HTTP.
@@ -1910,7 +2026,8 @@ CODE QUALITY
                                "for":["filesystem"]}]}; omit "for" for all sinks.
   complexity [symbol]        Cyclomatic complexity per function, highest first.
                              Filter by symbol name substring. Labels: LOW / MEDIUM /
-                             HIGH / VERY HIGH (McCabe thresholds: 5 / 10 / 20).
+                             HIGH / VERY HIGH (McCabe thresholds: 5 / 10 / 20), or
+                             UNKNOWN with score -1 when source cannot be read or parsed safely.
   diagram [--group-by package|module|service|file] [--max-depth N] [--include-stdlib]
                              Architecture overview diagram in Mermaid format.
                              --group-by package (default): one node per import path.
@@ -1966,9 +2083,9 @@ CODE QUALITY
                              Add --transitive for the full closure (BFS).
   dependents <pkg>           Packages that import the named package (inverse of deps).
                              Essential before any package-level refactor.
-  changes                    Symbols modified/added/deleted since the persisted graph.
-                             Surfaces new functions, deleted files, and modified
-                             symbols without dumping changed files into agent context.
+  changes                    Symbols modified/added/deleted since the trusted persisted graph.
+                             Deleted includes files absent from the current safely selected
+                             inventory (gone, ignored, build-inactive, or unsafe).
   changes --git <ref>        Symbols in files changed since a git ref (MODIFIED
                              only). Useful for PR review and release scoping.
                              NEW and DELETED detection requires a full baseline
@@ -1989,6 +2106,9 @@ CODE QUALITY
   risk --uncommitted         Evaluate risk profile for all uncommitted changes.
   api --since <ref|graph.json>
                              Identify API/contract changes since a Git ref or saved graph baseline.
+                             Saved graphs must be regular files inside the project
+                             root, have no linked component, and carry the exact
+                             current source-policy marker; serialized roots are ignored.
                              Run 'gograph build . --precise' before this for best results.
 
 EXTRACTION
@@ -2002,8 +2122,9 @@ EXTRACTION
                              --no-tests excludes test-file references from related-test collection.
   trace <term> [--no-tests]  Alias for errorflow. Kept for compatibility.
   errors [term] [--no-tests] errors.New/fmt.Errorf/sentinel/panic sites mapped to source.
-  envs [term]                Every os.Getenv / viper.Get* read with file and line.
-  concurrency [term]         Goroutine spawns, channel ops, mutex locks, WaitGroups.
+  envs [term]                Every os.Getenv / os.LookupEnv / supported Viper Get* read.
+  concurrency [term]         Goroutine spawns, channel sends, and typed Mutex/RWMutex/
+                             WaitGroup/Once calls (not receives or select statements).
   tests [symbol]             Test functions that exercise a named symbol.
 
 AGENT INTEGRATION
@@ -2014,9 +2135,17 @@ AGENT INTEGRATION
                              hotspots, routes, env, errors, concurrency, api-surface,
                              and one file per internal package. Run once per session
                              for zero-cost orientation. Default: ./llm-wiki/.
+                             Relative output is anchored to the graph root and rejects
+                             linked components. Absolute output explicitly selects a
+                             real local directory; generated paths stay beneath it.
                              Add llm-wiki/ to .gitignore.
   doc <pkg[.Symbol]>         Run 'go doc' for a stdlib or third-party package/symbol.
-                             No graph required; executes in the current Go module.
+                             No graph required. Rejects filesystem-shaped queries and
+                             source-tree links across the selected root plus its effective module
+                             root, or the workspace root and member trees (.git/.gograph excluded);
+                             validates regular Go tool metadata and workspace members confined
+                             beneath the workspace; dependency
+                             resolution follows the user's Go environment.
   mcp [path] [--persist-refresh]
                              Start a Model Context Protocol server over stdio.
                              Exposes graph queries as native tools for AI clients;
@@ -2028,6 +2157,8 @@ AGENT INTEGRATION
                              - end: Ends the active session.
                              - audit [session_id]: Audits and scores agent compliance & success.
                              - cleanup: Deletes stale inactive session log files.
+                             Session IDs and regular files are confined beneath the
+                             project's real .gograph/sessions directory.
                              NOTE: MCP gograph_plan/gograph_review calls are now
                              counted correctly in audit totals.
   add-claude-plugin          Install gograph as a Claude MCP plugin. Also injects
@@ -3922,8 +4053,19 @@ examples:
 	}
 
 	query := args[0]
+	if err := scanner.ValidateGoDocQuery(query); err != nil {
+		return failCommandf("doc", "%v", err)
+	}
+	docRoot, err := scanner.SourceValidationRoot(".")
+	if err != nil {
+		return failCommandf("doc", "cannot determine repository validation root: %v", err)
+	}
+	if err := scanner.ValidateToolchainSourceInputs(docRoot); err != nil {
+		return failCommandf("doc", "refusing to run the Go toolchain with unsafe repository source or metadata: %v", err)
+	}
 
 	cmd := exec.Command("go", "doc", query)
+	cmd.Dir = docRoot
 	out, err := cmd.Output()
 
 	type docResult struct {

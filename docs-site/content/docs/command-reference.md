@@ -36,12 +36,17 @@ gograph build [path] [--precise]
 ```
 Walks and parses a Go repository. Generates the structured graph at `.gograph/graph.json` and nine targeted Markdown reports in `.gograph/`.
 Adds `.gograph/` to the Git repository root `.gitignore` when available; outside Git, falls back to the build target `.gitignore`.
-The scanner honors the effective Go build context, including build tags, platform filenames, cgo, test-file constraints, cmd/go package-directory rules, and module ignore directives. Git-ignored files and directories use the same exclusion policy in `build`, `stale`, and `changes`. If no Go files are found or none parse successfully, exits without replacing existing artifacts. Partial parse failures are recorded in `graph.json`.
+The update accepts only an absent or regular `.gitignore`; a symlink or special
+file is refused without modifying its target.
+The scanner honors the effective Go build context, including build tags, platform filenames, cgo, test-file constraints, cmd/go package-directory rules, and module ignore directives. Git-ignored files and directories use the same exclusion policy in `build`, `stale`, and `changes`. Descendant symlinks and special files for extensions recognized by `go/build` are reported and excluded, while an explicitly symlinked repository root remains supported. Linked/non-regular `go.mod`, `go.sum`, `go.work`, `go.work.sum`, and `vendor/modules.txt` metadata is rejected before toolchain use. Applicable `go.work use` members must remain beneath the workspace directory; their directories, `go.mod`, and optional `go.sum` are validated before `cmd/go`. AST parsing uses repository-confined source bytes. If no Go files are found or none parse successfully, exits without replacing existing artifacts. Partial status includes parse failures and selection/security warnings recorded in `graph.json`.
 
 Graph/report publication waits up to 30 seconds for
 `.gograph/.artifacts.lock`, then stages and syncs all ten files. The nine
 reports are renamed first and `graph.json` is renamed last as the commit
-marker. Same-directory replacement is atomic on Unix-like systems but is not
+marker. Publication refuses a linked or non-directory `.gograph`, and readers
+accept only a regular repository-confined `graph.json`. An existing
+`.artifacts.lock` must also be a regular file. Same-directory
+replacement is atomic on Unix-like systems but is not
 guaranteed atomic by Go on non-Unix platforms, and the bundle is not one atomic
 filesystem transaction; a crash can leave reports ahead of the previous
 `graph.json`. The lock file remains as separate operational state. A failed
@@ -49,8 +54,8 @@ filesystem transaction; a crash can leave reports ahead of the previous
 selected sources instead of publishing a downgrade.
 - **Arguments**: `path` (optional, defaults to `.`)
 - **Flags**: 
-  - `--precise`: Attempts type-checked CHA/SSA enrichment. Enrichment needs compilable, build-selected packages; on failure or an incomplete non-test package load gograph warns and publishes the AST graph unless a fresh successful precise artifact already covers the same sources. Graph metadata records `precise`, `precise_fallback`, or `ast`. Precise interface calls retain one parallel call edge per valid named in-repository target; promoted methods add an explicitly marked traversal-only forwarding edge.
-  - **Graph v2 compatibility**: Current readers accept legacy graphs with missing precision/column/synthetic fields. Older v2 binaries can decode newly written graphs but may count or display synthetic forwarding records as ordinary calls; use the current binary for new precise graphs.
+  - `--precise`: Attempts type-checked CHA/SSA enrichment after a repository preflight that rejects source-tree links `cmd/go` may inspect across the selected root plus its effective module root, or the workspace root and member trees; `.git` and `.gograph` are excluded from that walk. It also rejects special recognized build inputs, unsafe workspace members, and linked/non-regular module/workspace metadata entries. Enrichment needs compilable, build-selected packages; on unsafe input, failure, or an incomplete non-test package load gograph warns and publishes the unchanged AST graph unless a fresh successful precise artifact already covers the same safely selected sources. Graph metadata records `precise`, `precise_fallback`, or `ast`. Precise interface calls retain one parallel call edge per valid named in-repository target; promoted methods add an explicitly marked traversal-only forwarding edge.
+  - **Graph v2 compatibility**: Precision/column/synthetic fields remain additive, but persisted graphs without the exact current source-policy marker are deliberately rebuild-required because their source-derived data cannot be trusted. Older v2 binaries can decode newly written graphs but do not enforce repository source confinement and may count or display synthetic forwarding records as ordinary calls; use the current binary for untrusted repositories and new graphs.
 
 ### stale
 ```bash
@@ -62,7 +67,8 @@ Text and JSON modes use the same exit contract:
 
 - `0`: the graph is current
 - `2`: the graph is stale and should be rebuilt
-- `1`: an operational or JSON serialization error occurred
+- `1`: an operational/serialization error occurred, including a missing or
+  unsupported source-policy marker that requires rebuilding
 
 When using `set -e`, put the command in an `if` condition and branch explicitly
 on status `2`. Do not use `gograph stale || gograph build .`, because that also
@@ -77,7 +83,7 @@ Provides a source-parse-free index health summary derived from the persisted
 - **Output fields**:
   - `schema_version`
   - `generated_at`
-  - `precision` (`ast`, `precise`, or `precise_fallback`; missing legacy metadata is treated as `ast`)
+  - `precision` (`ast`, `precise`, or `precise_fallback`)
   - `packages`
   - `files`
   - `symbols`
@@ -89,7 +95,7 @@ Provides a source-parse-free index health summary derived from the persisted
   - `env_reads`
   - `test_edges`
   - `flow_functions`
-  - `build_status` (`complete`, `partial`, or `unknown` for older graphs)
+  - `build_status` (`complete` or `partial`)
   - `scanned_files` and `parsed_files` in JSON; text renders
     `parsed_files` as `parsed/scanned`
   - `parse_failures`
@@ -124,7 +130,11 @@ Displays detailed AST metadata for a single named symbol, package, or file.
 ```bash
 gograph source <name>
 ```
-Extracts the exact raw source code block for a symbol (function, method, struct, or interface) from the filesystem using the graph's location data.
+Extracts exact raw source blocks for a function, method, struct, interface,
+type, variable, or constant using the graph's location data. Reads are rooted
+at the analyzed repository and accept only regular `.go` files without symlink
+path components. An ambiguous name may return its safely readable matches; the
+command errors when no matching block can be read safely.
 - **Note**: This is the preferred way for AI agents to view symbol declarations and bodies, avoiding reading entire files.
 
 ---
@@ -136,7 +146,7 @@ Extracts the exact raw source code block for a symbol (function, method, struct,
 gograph callers <function> [--no-tests] [--depth N] [--exact] [--mermaid]
 ```
 Finds all callers of a target function or method.
-- Interface-qualified names such as `Repository.Delete`, including methods inherited from embedded interfaces, resolve through every recorded precise implementer. If several targets correspond to one invocation, the source expression is returned once. New graphs report its column as well as its line; legacy graphs remain line-only.
+- Interface-qualified names such as `Repository.Delete`, including methods inherited from embedded interfaces, resolve through every recorded precise implementer. If several targets correspond to one invocation, the source expression is returned once. Records with a known column report it as well as the line; records without a column remain line-only.
 - **Flags**:
   - `--no-tests`: Filters out test files from caller results.
   - `--depth N`: Traverses the call graph upwards up to `N` hops (from 1 to 10). Useful for scoped neighborhood analysis. Defaults to `1` (direct callers).
@@ -253,7 +263,9 @@ Alias for `implementers <interface> --test-only`. Kept for compatibility.
 ```bash
 gograph fixtures <pkg>
 ```
-Finds test helper structs and test functions within test files in a specific package.
+Finds helper types, factory functions, and other non-test symbols within
+`*_test.go` files in a specific package. Functions named `Test*`, `Benchmark*`,
+or `Example*` are excluded.
 
 ---
 
@@ -278,7 +290,12 @@ Finds all packages in the repository that import the specified package (the inve
 gograph changes
 gograph changes --git <ref>
 ```
-Without `--git`, compares current source against the last persisted graph and reports new, modified, and deleted symbols. Git-ref mode reports symbols in changed files relative to the ref; full NEW/DELETED classification requires a baseline graph comparison.
+Without `--git`, compares current source against the last trusted persisted
+graph and reports new, modified, and deleted symbols. `DELETED` means the
+recorded file is absent from the current safely selected inventory: it may be
+gone, ignored, inactive under the effective build context, or unsafe to read.
+Git-ref mode reports symbols in changed files relative to the ref; full
+NEW/DELETED classification requires a baseline graph comparison.
 
 ### imports
 ```bash
@@ -290,7 +307,8 @@ Finds all source files in the repository that import a specific external or inte
 ```bash
 gograph public <pkg>
 ```
-Lists only the exported (public) API symbols (types, functions, variables, constants) of a package.
+Lists the exported (public) functions, methods, types/interfaces, variables, and
+constants of a package.
 
 ---
 
@@ -312,19 +330,23 @@ Extracts and maps raw SQL string queries to the functions that execute them. The
 ```bash
 gograph errors [term] [--no-tests]
 ```
-Lists custom error variables (declared using `errors.New`, `fmt.Errorf`, etc.) and panic statements mapped to their source locations.
+Lists indexed `errors.New`/`fmt.Errorf` calls, sentinel declarations, and `panic`
+calls mapped to their source locations.
 
 ### envs
 ```bash
 gograph envs [term]
 ```
-Lists every `os.Getenv` or `viper.Get*` read in the codebase, with file and line. Optional substring filter by key name.
+Lists every `os.Getenv`, `os.LookupEnv`, or supported Viper `Get*` read in the
+codebase, with file and line. Optional substring filter by key name.
 
 ### concurrency
 ```bash
 gograph concurrency [term]
 ```
-Maps goroutine spawns (`go func`), channel operations, mutex locks, `WaitGroups`, and `sync.Once` usage.
+Maps goroutine spawns (`go func`), channel sends, and calls on mutex/RWMutex,
+`WaitGroup`, and `sync.Once`. Channel receives and `select` statements are not
+indexed.
 
 ### httpcalls
 ```bash
@@ -472,8 +494,13 @@ gograph check --uncommitted
 gograph check --since <ref|graph.json>
 ```
 Executes static policy checks against package boundaries, API drift, changed-route and changed-export test requirements, exported-symbol test coverage, unreachable symbols, new globals, arity, and complexity. Git baselines are extracted to a temporary directory; a path ending in `.json` instead loads a saved graph baseline. Route checks use handler identity and detect body-only changes from Git changed files.
+
+Saved graph baselines must be regular, non-linked files (including no linked
+ancestor) inside the selected project and carry the exact current repository
+source-policy marker. Their serialized root is ignored in favor of the trusted
+project load location. Rebuild or replace an unsupported baseline before use.
 - **Options**:
-  - `--config path`: Use a custom checks JSON file instead of `.gograph/checks.json`.
+  - `--config path`: Use a custom checks JSON file instead of `.gograph/checks.json`. A default or relative path is confined to a regular non-linked file beneath the selected project; an absolute path explicitly selects a regular local file.
   - `--uncommitted`: Includes uncommitted changed-symbol/file context in checks that use change scope.
   - `--since <ref|graph.json>`: Validates changes against a Git reference or a
     saved graph baseline.
@@ -483,7 +510,7 @@ Executes static policy checks against package boundaries, API drift, changed-rou
 gograph gate
 gograph gate init
 ```
-Enforces CI/CD quality gates. Reads the project-root `.gograph.yml` configuration and fails closed if `graph.json` is stale. A current graph then exits non-zero when configured complexity, instability, god-object, reachability-orphan, or coupling thresholds are violated. `gate init` writes a commented template and refuses to overwrite an existing file.
+Enforces CI/CD quality gates. Reads only a regular, non-linked project-root `.gograph.yml` and fails closed if `graph.json` is stale. A current graph then exits non-zero when configured complexity, instability, god-object, reachability-orphan, or coupling thresholds are violated. `gate init` exclusively creates the same regular project-root path and rejects links, special files, and existing entries.
 
 Thresholds are configured only in `.gograph.yml`; `gate` does not accept
 per-threshold CLI flags. Run `gograph gate init`, review and commit the generated
@@ -498,7 +525,9 @@ gograph api --since <ref|graph.json>
 ```
 Builds a validated temporary graph from a Git reference, or loads a saved graph
 whose path ends in `.json`, and reports exported API/contract additions,
-removals, and changes. `contract` is a compatibility alias.
+removals, and changes. Saved graph files must be regular, non-linked entries
+inside the selected project with the exact current repository source-policy
+marker; their serialized root is ignored. `contract` is a compatibility alias.
 
 ### snapshot
 ```bash
@@ -507,24 +536,34 @@ gograph snapshot diff <name>
 gograph snapshot list
 gograph snapshot drop <name>
 ```
-Architectural metric snapshots. Captures the current codebase metrics (symbol count, coupling, orphans) to allow comparison before/after a refactoring.
+Architectural metric snapshots stored under `.gograph/snapshots/`. Each entry
+captures symbol count, reachability-orphan count, god objects, maximum
+complexity, average instability, and coupling edges for before/after comparison.
+The directory must be real and snapshot entries regular and non-linked. `save`
+may overwrite an existing regular snapshot of the same name; `drop` removes
+only the validated named regular file.
 
 ### boundaries
 ```bash
-gograph boundaries [--config]
-gograph boundaries --create
+gograph boundaries [--config path]
+gograph boundaries --create [--config path]
 ```
 Enforces package modularity boundaries.
 - **Options**:
-  - `--config`: Evaluates package import relationships against `boundaries.json`.
-  - `--create`: Autogenerates a starting `boundaries.json` mapping based on the current package architecture imports.
+  - `--config path`: Evaluates package import relationships against an
+    in-project, regular, non-linked `boundaries.json` (default:
+    `.gograph/boundaries.json`). Absolute and repository-relative in-project
+    paths are accepted.
+  - `--create`: Exclusively creates a starting boundary map at that path from
+    current package imports. Only real parent directories are created; links,
+    special files, traversal outside the graph root, and overwrite are refused.
 
 ### complexity
 ```bash
 gograph complexity [symbol]
 ```
 Displays McCabe cyclomatic complexity for all functions, sorted highest first. Optional substring filter by symbol name.
-- **Labels**: `LOW` (1-5), `MEDIUM` (6-10), `HIGH` (11-20), `VERY HIGH` (21+).
+- **Labels**: `LOW` (1-5), `MEDIUM` (6-10), `HIGH` (11-20), `VERY HIGH` (21+), or `UNKNOWN` with score `-1` when repository source cannot be read or parsed safely.
 
 ### coupling
 ```bash
@@ -583,8 +622,10 @@ Prints the token-optimized AI agent cheat sheet detailing common workflows and c
 ```bash
 gograph mcp [path] [--persist-refresh]
 ```
-Starts a Model Context Protocol (MCP) server over `stdio`, exposing all gograph capabilities as native tools for integration with AI clients (e.g., Claude Code, Cursor).
-- **Freshness**: If `graph.json` is missing, startup builds an in-memory AST graph. Source-analysis tools check source freshness and newer persisted artifacts per call, then rebuild after edits in the current requested mode. MCP `stale`, default `changes`, and `stats` inspect the persisted snapshot, or the startup in-memory fallback when no artifact exists. Precise and precise-fallback sessions re-run CHA/SSA, and a failed precise refresh is returned visibly.
+Starts a Model Context Protocol (MCP) server over `stdio`, exposing gograph's
+query, analysis, and workflow capabilities as native tools for integration with
+AI clients (e.g., Claude Code, Cursor).
+- **Freshness**: If `graph.json` is missing, unreadable, linked through a descendant path, or has a missing/unsupported source-policy marker, startup builds a safe in-memory AST graph. Source-analysis tools check source freshness and newer persisted artifacts per call, then rebuild after edits in the current requested mode. MCP `stale`, default `changes`, and `stats` inspect the trusted persisted snapshot, or the startup in-memory fallback when no usable artifact exists. Precise and precise-fallback sessions re-run CHA/SSA, and a failed precise refresh is returned visibly.
 - **Persistence**: Refreshes remain in memory by default. `--persist-refresh`
   writes or overwrites `.gograph/graph.json` and the nine Markdown reports only
   after a successful, confirmed-fresh refresh. It does not update `.gitignore`
@@ -618,15 +659,37 @@ Starts a Model Context Protocol (MCP) server over `stdio`, exposing all gograph 
 ```bash
 gograph wiki [--output dir]
 ```
-Generates machine-first `llm-wiki/` pages from the graph. This writes or overwrites files in the selected directory.
+Generates machine-first `llm-wiki/` pages from the graph. A relative output is
+rooted at the analyzed project and may not traverse or follow a linked
+descendant; an absolute output explicitly selects another local root. The
+selected output must be a real directory. Generated directories and regular
+page writes are confined beneath it, links/special entries are refused, and
+existing regular pages may be overwritten.
 
 ### doc
 ```bash
 gograph doc <pkg[.Symbol]>
 ```
-Runs `go doc` in the current module. No graph is required. The local Go toolchain follows the user's module/cache/network policy.
+Runs `go doc` with the user's Go environment. In workspace-auto mode the
+working-tree preflight starts at the nearest enclosing workspace; otherwise it
+starts at the nearest enabled module (or project/start fallback), while an
+explicit `GOWORK` selection is validated separately. No graph is required. Gograph
+rejects absolute/relative filesystem-shaped queries and flags, then refuses
+`go doc` when source-tree links `cmd/go` may inspect exist across the selected
+root plus its effective module root, or the workspace root and member trees;
+`.git` and `.gograph` are excluded from that walk. It also refuses when
+`go.mod`, `go.sum`, `go.work`, `go.work.sum`, `vendor/modules.txt`, or a
+recognized Go build input is non-regular. Applicable workspace members must
+remain beneath the workspace directory, with each directory, `go.mod`, and
+optional `go.sum` validated first.
+Package/symbol queries such as `fmt.Errorf`,
+`net/http.HandleFunc`, and `github.com/jackc/pgx/v5.Conn.QueryRow` remain valid.
+The local Go toolchain and dependency resolution follow the user's
+module/cache/network policy and are therefore open-world.
 The MCP `gograph_doc` response is a one-element JSON array containing
 `{"query": "...", "output": "..."}`; `output` holds the raw `go doc` text.
+The handler itself does not query the graph, but the project-scoped MCP server
+must already have started with a usable artifact or buildable Go source.
 
 ### session
 ```bash
@@ -635,7 +698,12 @@ gograph session end
 gograph session audit [session_id]
 gograph session cleanup
 ```
-Manages local workflow metadata under `.gograph/sessions/`. Raw query results are not logged.
+Manages local workflow metadata under `.gograph/sessions/`. Session IDs contain
+only letters, digits, and underscores. The `.gograph`/sessions directories must
+be real, and pointers/logs must be regular non-linked entries. Audit reads and
+cleanup are confined to the project; cleanup removes only validated inactive
+regular logs. CLI analytical commands fail closed when active-pointer metadata
+is unsafe or corrupt. Raw query results are not logged.
 
 ### add-claude-plugin
 ```bash

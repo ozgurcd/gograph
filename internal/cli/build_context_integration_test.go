@@ -333,7 +333,7 @@ func Invoke(r Runner) { r.Run() }
 	}
 }
 
-func TestPreciseBuildKeepsSymlinkedGoModIdentityAligned(t *testing.T) {
+func TestPreciseBuildRejectsSymlinkedGoModIdentity(t *testing.T) {
 	setDeterministicBuildEnvironment(t, "")
 	base := t.TempDir()
 	repository := filepath.Join(base, "repository")
@@ -353,30 +353,19 @@ func Invoke(service Service) { service.Run() }
 `)
 
 	g, err := buildPreciseGraph(repository)
-	if err != nil {
-		skipCoverageCacheFallback(t, g)
-		t.Fatalf("buildPreciseGraph with symlinked go.mod: %v", err)
+	if err == nil || g == nil {
+		t.Fatalf("buildPreciseGraph with symlinked go.mod = graph %+v, error %v; want visible fallback error", g, err)
 	}
-	if got := g.Build.EffectivePrecision(); got != graph.PrecisionPrecise {
-		t.Fatalf("symlinked-go.mod precision = %s, want precise", got)
+	if got := g.Build.EffectivePrecision(); got != graph.PrecisionFallback {
+		t.Fatalf("symlinked-go.mod precision = %s, want fallback", got)
 	}
-	symbolIDs := make(map[string]struct{}, len(g.Symbols))
 	for _, symbol := range g.Symbols {
-		symbolIDs[symbol.ID] = struct{}{}
-		if !strings.HasPrefix(symbol.ID, "example.com/modlink::") {
-			t.Fatalf("symbol ID %q does not use module identity", symbol.ID)
+		if strings.Contains(symbol.ID, "example.com/modlink") {
+			t.Fatalf("symbol ID %q leaked linked module identity", symbol.ID)
 		}
 	}
-	if len(g.Implements) == 0 {
-		t.Fatal("symlinked-go.mod fixture produced no precise implements edge")
-	}
-	for _, edge := range g.Implements {
-		if _, ok := symbolIDs[edge.InterfaceID]; !ok {
-			t.Fatalf("interface ID %q has no AST symbol", edge.InterfaceID)
-		}
-		if _, ok := symbolIDs[edge.ConcreteID]; !ok {
-			t.Fatalf("concrete ID %q has no AST symbol", edge.ConcreteID)
-		}
+	if len(g.Dependencies) != 0 {
+		t.Fatalf("linked go.mod dependencies leaked into graph: %+v", g.Dependencies)
 	}
 }
 

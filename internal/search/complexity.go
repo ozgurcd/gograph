@@ -4,10 +4,10 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"path/filepath"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
 
 // ComplexityResult holds the cyclomatic complexity score for a single function.
@@ -18,11 +18,13 @@ type ComplexityResult struct {
 	File string `json:"file"`
 	// Line is the line number of the function declaration.
 	Line int `json:"line"`
-	// Score is the cyclomatic complexity estimate.
+	// Score is the cyclomatic complexity estimate, or -1 when repository source
+	// could not be read and parsed safely.
 	// A score of 1 means a single straight-line path (no branches).
 	// Each branch-inducing construct adds 1.
 	Score int `json:"score"`
-	// Label is a human-readable severity: "LOW", "MEDIUM", "HIGH", "VERY HIGH".
+	// Label is a human-readable severity: "LOW", "MEDIUM", "HIGH", "VERY HIGH",
+	// or "UNKNOWN" when Score is -1.
 	Label string `json:"label"`
 }
 
@@ -87,10 +89,16 @@ func countComplexity(body *ast.BlockStmt) int {
 // Complexity estimates the cyclomatic complexity of all functions/methods in
 // the graph that match the given name (case-insensitive substring). It parses
 // the source files on demand to inspect the AST. Pass an empty term to score
-// all functions; the results are sorted highest-score first.
+// all functions; the results are sorted highest-score first. A function whose
+// source cannot be read or parsed safely is retained with Score -1 and Label
+// UNKNOWN.
 func Complexity(g *graph.Graph, term string) []ComplexityResult {
 	tl := strings.ToLower(term)
 	fset := token.NewFileSet()
+	sourceReader, sourceRootErr := sourcefs.Open(g.Root)
+	if sourceReader != nil {
+		defer func() { _ = sourceReader.Close() }()
+	}
 
 	// Cache parsed files to avoid re-parsing the same file multiple times.
 	type astFile struct {
@@ -103,7 +111,16 @@ func Complexity(g *graph.Graph, term string) []ComplexityResult {
 		if cached, ok := parsed[path]; ok {
 			return cached.f, cached.err
 		}
-		f, err := parser.ParseFile(fset, path, nil, 0)
+		if sourceRootErr != nil {
+			parsed[path] = &astFile{err: sourceRootErr}
+			return nil, sourceRootErr
+		}
+		data, err := sourceReader.ReadFile(path)
+		if err != nil {
+			parsed[path] = &astFile{err: err}
+			return nil, err
+		}
+		f, err := parser.ParseFile(fset, path, data, 0)
 		parsed[path] = &astFile{f: f, err: err}
 		return f, err
 	}
@@ -127,8 +144,7 @@ func Complexity(g *graph.Graph, term string) []ComplexityResult {
 		}
 
 		// Parse the source file.
-		absPath := filepath.Join(g.Root, sym.File)
-		astf, err := parseFile(absPath)
+		astf, err := parseFile(sym.File)
 		if err != nil {
 			// If we can't parse the file, report complexity as -1.
 			results = append(results, ComplexityResult{

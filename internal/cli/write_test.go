@@ -59,7 +59,7 @@ func TestLoadGraphReanchorsMovedRepository(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".gograph"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSON(filepath.Join(root, ".gograph", "graph.json"), &graph.Graph{Version: graph.Version, Root: oldRoot}); err != nil {
+	if err := writeJSON(filepath.Join(root, ".gograph", "graph.json"), currentPolicyGraph(&graph.Graph{Version: graph.Version, Root: oldRoot})); err != nil {
 		t.Fatal(err)
 	}
 	originalWD, err := os.Getwd()

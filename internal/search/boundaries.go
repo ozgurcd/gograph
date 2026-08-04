@@ -2,6 +2,7 @@ package search
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
 
 // BoundaryLayer defines an architectural layer and its allowed dependencies.
@@ -55,12 +57,6 @@ func boundaryConfigPath(g *graph.Graph, configPath string) (string, error) {
 	if configPath == "" {
 		return "", fmt.Errorf("invalid config path: empty")
 	}
-	if strings.Contains(configPath, "\\") {
-		return "", fmt.Errorf("invalid config path: backslash not allowed")
-	}
-	if strings.Contains(configPath, "..") {
-		return "", fmt.Errorf("invalid config path: path traversal detected")
-	}
 
 	if g == nil || g.Root == "" {
 		resolved, err := filepath.Abs(configPath)
@@ -82,11 +78,61 @@ func boundaryConfigPath(g *graph.Graph, configPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve config path: %w", err)
 	}
-	rel, err := filepath.Rel(absRoot, absConfig)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if !pathWithinRoot(absRoot, absConfig) {
 		return "", fmt.Errorf("invalid config path: must be inside graph root")
 	}
 	return absConfig, nil
+}
+
+func pathWithinRoot(root, target string) bool {
+	_, err := relativeWithinRoot(root, target)
+	return err == nil
+}
+
+// relativeWithinRoot returns a path suitable for an os.Root operation. It
+// first preserves ordinary lexical paths, then aligns physical aliases such as
+// macOS /var and /private/var. Missing final components are retained so the
+// same helper can validate an exclusive create target.
+func relativeWithinRoot(root, target string) (string, error) {
+	if rel, err := filepath.Rel(root, target); err == nil && filepath.IsLocal(rel) {
+		return filepath.Clean(rel), nil
+	}
+	realRoot, err := canonicalPathWithMissing(root)
+	if err != nil {
+		return "", err
+	}
+	realTarget, err := canonicalPathWithMissing(target)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(realRoot, realTarget)
+	if err != nil || !filepath.IsLocal(rel) {
+		return "", fmt.Errorf("path is outside graph root")
+	}
+	return filepath.Clean(rel), nil
+}
+
+func canonicalPathWithMissing(name string) (string, error) {
+	name = filepath.Clean(name)
+	var suffix []string
+	for {
+		resolved, err := filepath.EvalSymlinks(name)
+		if err == nil {
+			for index := len(suffix) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, suffix[index])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(name)
+		if parent == name {
+			return "", err
+		}
+		suffix = append(suffix, filepath.Base(name))
+		name = parent
+	}
 }
 
 // Boundaries checks the package import graph against constraints defined in a JSON file.
@@ -96,7 +142,25 @@ func Boundaries(g *graph.Graph, configPath string) ([]Result, error) {
 		return nil, err
 	}
 
-	data, err := os.ReadFile(resolvedPath)
+	var data []byte
+	if g != nil && g.Root != "" {
+		absRoot, rootErr := filepath.Abs(g.Root)
+		if rootErr != nil {
+			return nil, fmt.Errorf("resolve graph root: %w", rootErr)
+		}
+		rel, relErr := relativeWithinRoot(absRoot, resolvedPath)
+		if relErr != nil {
+			return nil, fmt.Errorf("invalid config path: must be inside graph root")
+		}
+		repository, openErr := sourcefs.Open(absRoot)
+		if openErr != nil {
+			return nil, fmt.Errorf("open graph root for boundaries: %w", openErr)
+		}
+		data, err = repository.ReadRegularFile(rel)
+		_ = repository.Close()
+	} else {
+		data, err = os.ReadFile(resolvedPath)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("could not read boundaries config file: %w", err)
 	}
@@ -199,9 +263,6 @@ func CreateBoundaries(g *graph.Graph, configPath string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(resolvedPath); err == nil {
-		return fmt.Errorf("file already exists, refusing to overwrite. Delete it first if you want to regenerate")
-	}
 
 	importPathToDir := make(map[string]string)
 	for _, pkg := range g.Packages {
@@ -293,12 +354,34 @@ func CreateBoundaries(g *graph.Graph, configPath string) error {
 		return config.Layers[i].Name < config.Layers[j].Name
 	})
 
-	if err := os.MkdirAll(filepath.Dir(resolvedPath), 0755); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(resolvedPath, data, 0644)
+	if g == nil || g.Root == "" {
+		return fmt.Errorf("cannot create boundaries without a graph root")
+	}
+	absRoot, err := filepath.Abs(g.Root)
+	if err != nil {
+		return fmt.Errorf("resolve graph root: %w", err)
+	}
+	rel, err := relativeWithinRoot(absRoot, resolvedPath)
+	if err != nil {
+		return fmt.Errorf("invalid config path: must be inside graph root")
+	}
+	repository, err := sourcefs.Open(absRoot)
+	if err != nil {
+		return fmt.Errorf("open graph root for boundary creation: %w", err)
+	}
+	defer func() { _ = repository.Close() }()
+	if err := repository.EnsureRealDirectory(filepath.Dir(rel), 0o755); err != nil {
+		return err
+	}
+	if err := repository.WriteRegularFile(rel, data, 0o644, true); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("file already exists, refusing to overwrite. Delete it first if you want to regenerate")
+		}
+		return err
+	}
+	return nil
 }

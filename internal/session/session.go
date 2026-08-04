@@ -2,9 +2,11 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ozgurcd/gograph/internal/rootfind"
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
 
 const (
@@ -21,6 +24,8 @@ const (
 	relSessionsDir       = ".gograph/sessions"
 	relActivePointerPath = ".gograph/active_session.json"
 )
+
+var sessionIDPattern = regexp.MustCompile(`\A[a-zA-Z0-9_]+\z`)
 
 // FindGographRoot walks up from the current working directory until it finds a
 // directory that already contains a ".gograph" subdirectory (i.e. the project
@@ -55,6 +60,81 @@ func activePointerPathAt(root string) string {
 
 func activePointerPathAbs() string {
 	return activePointerPathAt("")
+}
+
+// sessionStore keeps every session operation anchored to the project root.
+// sourcefs.Open uses os.OpenRoot, which follows an explicitly supplied root
+// symlink while rejecting symlinks in descendant paths.
+type sessionStore struct {
+	rootPath string
+	files    *sourcefs.Reader
+}
+
+func openSessionStore(root string) (*sessionStore, error) {
+	rootPath := sessionRoot(root)
+	files, err := sourcefs.Open(rootPath)
+	if err != nil {
+		return nil, fmt.Errorf("open session project root: %w", err)
+	}
+	return &sessionStore{rootPath: rootPath, files: files}, nil
+}
+
+func (s *sessionStore) close() {
+	if s != nil && s.files != nil {
+		_ = s.files.Close()
+	}
+}
+
+func validateSessionID(sessionID string) error {
+	if !sessionIDPattern.MatchString(sessionID) {
+		return fmt.Errorf("invalid session ID %q: only letters, digits, and underscores are allowed", sessionID)
+	}
+	return nil
+}
+
+func sessionLogPath(sessionID string) (string, error) {
+	if err := validateSessionID(sessionID); err != nil {
+		return "", err
+	}
+	return filepath.Join(relSessionsDir, fmt.Sprintf("session_%s.jsonl", sessionID)), nil
+}
+
+func (s *sessionStore) activeSessionID() (string, error) {
+	data, err := s.files.ReadRegularFile(relActivePointerPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read active pointer: %w", err)
+	}
+
+	var ptr ActiveSessionPointer
+	if err := json.Unmarshal(data, &ptr); err != nil {
+		return "", fmt.Errorf("unmarshal active pointer: %w", err)
+	}
+	if err := validateSessionID(ptr.ActiveSessionID); err != nil {
+		return "", fmt.Errorf("read active pointer: %w", err)
+	}
+	return ptr.ActiveSessionID, nil
+}
+
+func sessionIDFromEntry(entry os.DirEntry) (string, bool, error) {
+	name := entry.Name()
+	if !strings.HasPrefix(name, "session_") || !strings.HasSuffix(name, ".jsonl") {
+		return "", false, nil
+	}
+	info, err := entry.Info()
+	if err != nil {
+		return "", true, fmt.Errorf("inspect session log %q: %w", name, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", true, fmt.Errorf("unsafe session log %q: entry is not a regular file", name)
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(name, "session_"), ".jsonl")
+	if err := validateSessionID(id); err != nil {
+		return "", true, err
+	}
+	return id, true, nil
 }
 
 // ActiveSessionPointer tracks the currently active session ID.
@@ -94,22 +174,12 @@ func GetActiveSessionID() (string, error) {
 
 // GetActiveSessionIDAt retrieves the active session rooted at a specific project.
 func GetActiveSessionIDAt(root string) (string, error) {
-	pointerPath := activePointerPathAt(root)
-	if _, err := os.Stat(pointerPath); os.IsNotExist(err) {
-		return "", nil
-	}
-
-	data, err := os.ReadFile(pointerPath)
+	store, err := openSessionStore(root)
 	if err != nil {
-		return "", fmt.Errorf("read active pointer: %w", err)
+		return "", err
 	}
-
-	var ptr ActiveSessionPointer
-	if err := json.Unmarshal(data, &ptr); err != nil {
-		return "", fmt.Errorf("unmarshal active pointer: %w", err)
-	}
-
-	return ptr.ActiveSessionID, nil
+	defer store.close()
+	return store.activeSessionID()
 }
 
 // StartSession initializes a new session and writes the active session pointer.
@@ -119,8 +189,14 @@ func StartSession(customWord string) (string, error) {
 
 // StartSessionAt starts a session under the specified project root.
 func StartSessionAt(root, customWord string) (string, error) {
+	store, err := openSessionStore(root)
+	if err != nil {
+		return "", err
+	}
+	defer store.close()
+
 	// 1. Check if a session is already active
-	activeID, err := GetActiveSessionIDAt(root)
+	activeID, err := store.activeSessionID()
 	if err != nil {
 		return "", err
 	}
@@ -148,17 +224,15 @@ func StartSessionAt(root, customWord string) (string, error) {
 	}
 
 	// 3. Ensure directories exist
-	if err := os.MkdirAll(sessionsDirAt(root), 0755); err != nil {
+	if err := store.files.EnsureRealDirectory(relSessionsDir, 0755); err != nil {
 		return "", fmt.Errorf("create sessions directory: %w", err)
 	}
 
 	// 4. Create and write the session start log
-	logFilePath := filepath.Join(sessionsDirAt(root), fmt.Sprintf("session_%s.jsonl", sessionID))
-	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	logFilePath, err := sessionLogPath(sessionID)
 	if err != nil {
-		return "", fmt.Errorf("create session log file: %w", err)
+		return "", err
 	}
-	defer func() { _ = logFile.Close() }()
 
 	startEntry := SessionStartEntry{
 		Type:      "session_start",
@@ -166,14 +240,14 @@ func StartSessionAt(root, customWord string) (string, error) {
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
 	startBytes, _ := json.Marshal(startEntry)
-	if _, err := logFile.Write(append(startBytes, '\n')); err != nil {
-		return "", fmt.Errorf("write session start entry: %w", err)
+	if err := store.files.WriteRegularFile(logFilePath, append(startBytes, '\n'), 0644, true); err != nil {
+		return "", fmt.Errorf("create session log file: %w", err)
 	}
 
 	// 5. Write the active session pointer
 	ptr := ActiveSessionPointer{ActiveSessionID: sessionID}
 	ptrBytes, _ := json.MarshalIndent(ptr, "", "  ")
-	if err := os.WriteFile(activePointerPathAt(root), ptrBytes, 0644); err != nil {
+	if err := store.files.WriteRegularFile(relActivePointerPath, ptrBytes, 0644, true); err != nil {
 		return "", fmt.Errorf("write active session pointer: %w", err)
 	}
 
@@ -187,8 +261,14 @@ func EndSession() (string, error) {
 
 // EndSessionAt ends the active session under the specified project root.
 func EndSessionAt(root string) (string, error) {
+	store, err := openSessionStore(root)
+	if err != nil {
+		return "", err
+	}
+	defer store.close()
+
 	// 1. Get active session ID
-	activeID, err := GetActiveSessionIDAt(root)
+	activeID, err := store.activeSessionID()
 	if err != nil {
 		return "", err
 	}
@@ -197,25 +277,24 @@ func EndSessionAt(root string) (string, error) {
 	}
 
 	// 2. Append end entry to log file
-	logFilePath := filepath.Join(sessionsDirAt(root), fmt.Sprintf("session_%s.jsonl", activeID))
-	logFile, err := os.OpenFile(logFilePath, os.O_WRONLY|os.O_APPEND, 0644)
+	logFilePath, err := sessionLogPath(activeID)
 	if err != nil {
-		// If log file was manually deleted, still allow clean teardown of the active pointer
-		_ = os.Remove(activePointerPathAt(root))
-		return activeID, fmt.Errorf("open session log for append: %w (pointer cleaned up)", err)
+		return activeID, err
 	}
-	defer func() { _ = logFile.Close() }()
-
 	endEntry := SessionEndEntry{
 		Type:    "session_end",
 		EndedAt: time.Now().Format(time.RFC3339),
 		Status:  "completed",
 	}
 	endBytes, _ := json.Marshal(endEntry)
-	_, _ = logFile.Write(append(endBytes, '\n'))
+	if err := store.files.AppendRegularFile(logFilePath, append(endBytes, '\n')); err != nil {
+		// If log file was manually deleted, still allow clean teardown of the active pointer
+		_ = store.files.RemoveRegularFile(relActivePointerPath)
+		return activeID, fmt.Errorf("open session log for append: %w (pointer cleaned up)", err)
+	}
 
 	// 3. Remove the active pointer file
-	if err := os.Remove(activePointerPathAt(root)); err != nil {
+	if err := store.files.RemoveRegularFile(relActivePointerPath); err != nil {
 		return activeID, fmt.Errorf("remove active pointer: %w", err)
 	}
 
@@ -233,17 +312,21 @@ func LogCommandAt(root, command string, args []string, intention string, elapsed
 		return nil // Skip logging successful meta hook checks to keep the log clean
 	}
 
-	activeID, err := GetActiveSessionIDAt(root)
+	store, err := openSessionStore(root)
+	if err != nil {
+		return nil // Preserve telemetry's best-effort contract.
+	}
+	defer store.close()
+
+	activeID, err := store.activeSessionID()
 	if err != nil || activeID == "" {
 		return nil // No active session to log to
 	}
 
-	logFilePath := filepath.Join(sessionsDirAt(root), fmt.Sprintf("session_%s.jsonl", activeID))
-	logFile, err := os.OpenFile(logFilePath, os.O_WRONLY|os.O_APPEND, 0644)
+	logFilePath, err := sessionLogPath(activeID)
 	if err != nil {
-		return fmt.Errorf("open session log for append: %w", err)
+		return err
 	}
-	defer func() { _ = logFile.Close() }()
 
 	safeArgs := redactArgs(args)
 
@@ -258,7 +341,7 @@ func LogCommandAt(root, command string, args []string, intention string, elapsed
 	}
 
 	entryBytes, _ := json.Marshal(entry)
-	if _, err := logFile.Write(append(entryBytes, '\n')); err != nil {
+	if err := store.files.AppendRegularFile(logFilePath, append(entryBytes, '\n')); err != nil {
 		return fmt.Errorf("write command log entry: %w", err)
 	}
 
@@ -323,12 +406,19 @@ func FindMostRecentSessionID() (string, error) {
 
 // FindMostRecentSessionIDAt finds the newest session under a project root.
 func FindMostRecentSessionIDAt(root string) (string, error) {
-	dir := sessionsDirAt(root)
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
+	store, err := openSessionStore(root)
+	if err != nil {
+		return "", err
+	}
+	defer store.close()
+	return store.findMostRecentSessionID()
+}
+
+func (s *sessionStore) findMostRecentSessionID() (string, error) {
+	files, err := s.files.ReadDirectory(relSessionsDir)
+	if errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("no sessions directory exists yet")
 	}
-
-	files, err := os.ReadDir(dir)
 	if err != nil {
 		return "", fmt.Errorf("read sessions directory: %w", err)
 	}
@@ -337,22 +427,25 @@ func FindMostRecentSessionIDAt(root string) (string, error) {
 	var newestTime time.Time
 
 	for _, f := range files {
-		if !f.IsDir() && strings.HasPrefix(f.Name(), "session_") && strings.HasSuffix(f.Name(), ".jsonl") {
-			info, err := f.Info()
-			if err == nil {
-				if newestID == "" || info.ModTime().After(newestTime) {
-					name := strings.TrimPrefix(f.Name(), "session_")
-					name = strings.TrimSuffix(name, ".jsonl")
-					newestID = name
-
-					newestTime = info.ModTime()
-				}
-			}
+		id, matches, err := sessionIDFromEntry(f)
+		if err != nil {
+			return "", err
+		}
+		if !matches {
+			continue
+		}
+		info, err := f.Info()
+		if err != nil {
+			return "", fmt.Errorf("inspect session log %q: %w", f.Name(), err)
+		}
+		if newestID == "" || info.ModTime().After(newestTime) {
+			newestID = id
+			newestTime = info.ModTime()
 		}
 	}
 
 	if newestID == "" {
-		return "", fmt.Errorf("no session logs found in %s", dir)
+		return "", fmt.Errorf("no session logs found in %s", filepath.Join(s.rootPath, relSessionsDir))
 	}
 
 	return newestID, nil
@@ -371,25 +464,36 @@ func RunAuditTo(sessionID string, jsonMode bool, stdout, stderr io.Writer) int {
 
 // RunAuditToAt audits a session under a specific project root.
 func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Writer) int {
+	store, openErr := openSessionStore(root)
+	if openErr != nil {
+		_, _ = fmt.Fprintf(stderr, "Error opening session project: %v\n", openErr)
+		return 1
+	}
+	defer store.close()
+
 	var err error
 	if sessionID == "" {
-		sessionID, err = FindMostRecentSessionIDAt(root)
+		sessionID, err = store.findMostRecentSessionID()
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "Error locating session: %v\n", err)
 			return 1
 		}
 	}
 
-	logFilePath := filepath.Join(sessionsDirAt(root), fmt.Sprintf("session_%s.jsonl", sessionID))
-	file, err := os.Open(logFilePath)
+	relLogFilePath, err := sessionLogPath(sessionID)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "Error opening session log: %v\n", err)
+		return 1
+	}
+	logFilePath := filepath.Join(store.rootPath, relLogFilePath)
+	data, err := store.files.ReadRegularFile(relLogFilePath)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "Error opening session log %q: %v\n", logFilePath, err)
 		return 1
 	}
-	defer func() { _ = file.Close() }()
 
 	var lines []GenericLogLine
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
 		text := scanner.Text()
 		if strings.TrimSpace(text) == "" {
@@ -586,32 +690,50 @@ func CleanupSessions() (int, error) {
 
 // CleanupSessionsAt removes inactive sessions under a specific project root.
 func CleanupSessionsAt(root string) (int, error) {
-	dir := sessionsDirAt(root)
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
+	store, err := openSessionStore(root)
+	if err != nil {
+		return 0, err
+	}
+	defer store.close()
+
+	files, err := store.files.ReadDirectory(relSessionsDir)
+	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil
 	}
-
-	files, err := os.ReadDir(dir)
 	if err != nil {
 		return 0, fmt.Errorf("read sessions directory: %w", err)
 	}
 
-	activeID, _ := GetActiveSessionIDAt(root)
+	activeID, err := store.activeSessionID()
+	if err != nil {
+		return 0, err
+	}
 	activeFileName := ""
 	if activeID != "" {
 		activeFileName = fmt.Sprintf("session_%s.jsonl", activeID)
 	}
 
-	deletedCount := 0
+	type removableLog struct {
+		path string
+	}
+	var removable []removableLog
 	for _, f := range files {
-		if !f.IsDir() && strings.HasPrefix(f.Name(), "session_") && strings.HasSuffix(f.Name(), ".jsonl") {
-			if activeFileName != "" && f.Name() == activeFileName {
-				continue // Skip active session log to prevent runtime telemetry corruption
-			}
-			filePath := filepath.Join(dir, f.Name())
-			if err := os.Remove(filePath); err == nil {
-				deletedCount++
-			}
+		_, matches, err := sessionIDFromEntry(f)
+		if err != nil {
+			return 0, err
+		}
+		if !matches || activeFileName != "" && f.Name() == activeFileName {
+			continue
+		}
+		removable = append(removable, removableLog{
+			path: filepath.Join(relSessionsDir, f.Name()),
+		})
+	}
+
+	deletedCount := 0
+	for _, log := range removable {
+		if err := store.files.RemoveRegularFile(log.path); err == nil {
+			deletedCount++
 		}
 	}
 

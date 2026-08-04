@@ -17,6 +17,13 @@ import "time"
 // them as ordinary edges.
 const Version = "2"
 
+// CurrentSourcePolicyVersion identifies graphs built after repository source
+// reads became confined and descendant source symlinks were excluded. Graphs
+// without the exact current marker may contain data derived from files outside
+// the indexed repository or use an unknown future policy and must be rebuilt
+// before they are queried.
+const CurrentSourcePolicyVersion = 1
+
 // Graph is the top-level data structure written to .gograph/graph.json.
 type Graph struct {
 	Version       string            `json:"version"`
@@ -43,21 +50,31 @@ type Graph struct {
 	Build         *BuildMetadata    `json:"build,omitempty"`
 }
 
-// BuildMetadata records whether every scanned source file contributed to the
-// graph and the requested precision outcome. Parse completeness and precision
-// are independent: a complete AST graph may have PrecisionFallback when the
-// optional type-checked enrichment could not run.
+// BuildMetadata records whether source selection completed without warnings,
+// every selected source file contributed to the graph, and the requested
+// precision outcome. AST completeness and precision are independent: a
+// complete AST graph may have PrecisionFallback when optional type-checked
+// enrichment could not run.
 type BuildMetadata struct {
 	ScannedFiles int           `json:"scanned_files"`
 	ParsedFiles  int           `json:"parsed_files"`
 	Complete     bool          `json:"complete"`
 	Precision    PrecisionMode `json:"precision,omitempty"`
+	// SourcePolicyVersion is a security trust marker, independent of the graph
+	// schema version. Missing and non-current values are intentionally not trusted.
+	SourcePolicyVersion int `json:"source_policy_version,omitempty"`
 	// BuildContextFingerprint hashes effective build and module-selection
 	// inputs, including nested module boundaries. The historical JSON field
 	// name is retained for schema-v2 compatibility.
 	BuildContextFingerprint string         `json:"build_context_fingerprint,omitempty"`
 	Failures                []BuildFailure `json:"failures,omitempty"`
 	Warnings                []string       `json:"warnings,omitempty"`
+}
+
+// UsesCurrentSourcePolicy reports whether a graph was built with the current
+// repository-source confinement policy.
+func (g *Graph) UsesCurrentSourcePolicy() bool {
+	return g != nil && g.Build != nil && g.Build.SourcePolicyVersion == CurrentSourcePolicyVersion
 }
 
 // PrecisionMode records both the requested analysis strength and its outcome.
@@ -218,7 +235,7 @@ type ErrorEdge struct {
 }
 
 // ConcurrencyNode represents a concurrency primitive found in code.
-// Kind is one of: "goroutine", "channel_send", "channel_recv", "mutex_lock",
+// Kind is one of: "goroutine", "channel_send", "mutex_lock",
 // "mutex_unlock", "rwmutex_lock", "rwmutex_unlock", "waitgroup_add",
 // "waitgroup_wait", "once_do".
 type ConcurrencyNode struct {
@@ -300,7 +317,8 @@ const (
 	KindType SymbolKind = "type"
 )
 
-// SymbolNode represents a named symbol (function, method, struct, interface).
+// SymbolNode represents a named function, method, struct, interface, type,
+// variable, or constant.
 type SymbolNode struct {
 	ID               string            `json:"id"`
 	Kind             SymbolKind        `json:"kind"`
