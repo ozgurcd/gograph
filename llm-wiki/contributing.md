@@ -37,7 +37,7 @@ Query, analysis, and workflow features belong on both CLI and MCP. Intentional C
 
 ## Build and verification
 
-Use `make build` so version metadata is injected; do not substitute a raw repository binary build. Before finishing a change, run the repository-required formatting, unit, race, vet, staticcheck, golangci-lint, module verify/tidy, coverage, fuzz, vulnerability, documentation, and cross-platform build checks. Rebuild the repository graph precisely when compilable, inspect `stats`, and run a post-edit `review --uncommitted`. Static graph evidence does not replace compiler and test results.
+Use `make build` so version metadata is injected; do not substitute a raw repository binary build. `make test` is the canonical local suite: normal and race tests run with `-count=1`, and CLI subprocess tests compile the current checkout once into a cleaned OS temp directory with isolated fixtures. They never reuse `bin/gograph`, `bin/gograph-test`, or ambient `.gograph` state. `govulncheck` evaluates source reachability; Grype scans only explicit current inputs (`go.mod` and the freshly rebuilt native binary), so stale ignored output trees cannot contaminate the result. `make release-verify` additionally requires and scans the exact six fresh GoReleaser archives. Before finishing a change, run the repository-required formatting, unit, race, vet, staticcheck, golangci-lint, module verify/tidy, coverage, fuzz, vulnerability, documentation, and cross-platform build checks. Rebuild the repository graph precisely when compilable, inspect `stats`, and run a post-edit `review --uncommitted`. Static graph evidence does not replace compiler and test results.
 
 ## Scrinium governance
 

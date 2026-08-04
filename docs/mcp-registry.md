@@ -152,6 +152,7 @@ The release implementation is pinned to these official formats and tools:
 | MCPB schema provenance/tooling reference | `@anthropic-ai/mcpb` `2.1.2` |
 | Registry publisher | `mcp-publisher` `1.7.9` |
 | GoReleaser local/CI gate | `v2.17.0` |
+| Grype GitHub Actions gate | `v0.116.1` |
 
 Treat changes to any pin as a compatibility change: review the official schema
 and release notes, update the vendored validation input and tests, and verify
@@ -182,9 +183,14 @@ It then:
 3. Runs the complete repository verification suite, validates the schemas,
    manifests, archive layouts, executable paths, version agreement, URLs, and
    hashes, and smoke-tests MCP initialization and `tools/list` from the native
-   bundle. It also verifies/tidies modules, runs `go vet`, and builds all
-   ordinary release archives with a pinned, non-publishing GoReleaser snapshot
-   whose MCPB and output paths remain inside the temporary release transaction.
+   bundle. It also verifies/tidies modules, runs `go vet`, disables the Go test
+   cache for the normal and race suites, and builds all ordinary release
+   archives with a pinned, non-publishing GoReleaser snapshot whose MCPB and
+   output paths remain inside the temporary release transaction. Grype scans
+   the declared module graph in `go.mod`, the freshly rebuilt native binary,
+   and each of the exact six fresh `.tar.gz`/`.zip` GoReleaser archives; a
+   missing or extra archive fails closed. MCPBs retain their separate
+   schema/layout/hash/build-metadata and native smoke verification.
 4. Commits only the generated version/release metadata and creates an
    annotated `v<version>` tag at that exact verified commit.
 5. Atomically pushes the exact verified commit to the official remote's `main`
@@ -201,10 +207,15 @@ A rerun at the same already-tagged release commit recognizes the release and
 does not increment the patch version again. For CI or advanced diagnosis of a
 prepared release state, run `make release-verify`; it performs the complete
 local release gate against the currently declared version without committing,
-tagging, or pushing. `make release-dry-run` instead exercises automatic patch
-preparation plus the same gates and immutable-state checks, then restores the
-metadata without creating any ref or remote change. If an atomic push fails,
-the verified local release commit and tag are retained. Rerunning
+tagging, or pushing. The gate never treats a repository-wide `grype dir:.`
+result as release evidence: ignored historical artifacts can be stale, so
+only the explicit current inputs above are scanned. CLI subprocess tests also
+compile a current ephemeral executable and use isolated fixtures instead of
+trusting `bin/` or an ambient `.gograph/graph.json`. `make release-dry-run`
+instead exercises automatic patch preparation plus the same gates and
+immutable-state checks, then restores the metadata without creating any ref
+or remote change. If an atomic push fails, the verified local release commit
+and tag are retained. Rerunning
 `make release` retries that same version if remote `main` still allows the
 fast-forward. If the unchanged release commit later lands on remote `main`, a
 rerun verifies it and atomically publishes only the missing tag while leaving

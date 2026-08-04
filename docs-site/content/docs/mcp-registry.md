@@ -134,10 +134,19 @@ Registry installation changes packaging, not gograph's security model:
 ## Publication integrity
 
 Current releases pin Registry schema `2025-12-11`, MCPB manifest schema `0.4`,
-`@anthropic-ai/mcpb` `2.1.2`, and `mcp-publisher` `1.7.9`. Release automation
-builds and validates every bundle, records each SHA-256 in `server.json`,
-publishes the immutable GitHub assets first, and then authenticates to the
-Registry with GitHub Actions OIDC. No long-lived Registry token is stored.
+`@anthropic-ai/mcpb` `2.1.2`, `mcp-publisher` `1.7.9`, and CI Grype `v0.116.1`.
+Release automation builds and validates every bundle, records each SHA-256 in
+`server.json`, publishes the immutable GitHub assets first, and then
+authenticates to the Registry with GitHub Actions OIDC. No long-lived Registry
+token is stored.
+
+The pre-publication gate disables the Go test cache and builds CLI test
+executables from the current checkout in ephemeral directories. Vulnerability
+evidence is limited to explicit fresh inputs: `go.mod`, the just-built native
+binary, and each of the exact six newly generated ordinary GoReleaser
+`.tar.gz`/`.zip` archives. Missing or extra archives fail closed; stale ignored
+working-tree outputs are not scanned as release candidates. MCPBs separately
+undergo schema, layout, hash, build-metadata, and native initialization checks.
 
 Registry versions are immutable. Reruns succeed only when the existing GitHub
 and Registry metadata match exactly; mismatches fail rather than overwriting a

@@ -165,17 +165,7 @@ func run(h *handler, err error, g any, root string) {
 }
 
 func TestBuildCommandRejectsDirectoryWithoutGoFiles(t *testing.T) {
-	repoRoot, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatalf("resolve repo root: %v", err)
-	}
-
-	binPath := filepath.Join(t.TempDir(), "gograph")
-	build := exec.Command("go", "build", "-o", binPath, filepath.Join(repoRoot, "cmd", "gograph", "main.go"))
-	build.Dir = repoRoot
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build test binary: %v\n%s", err, out)
-	}
+	binPath := buildTestBinary(t)
 
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/empty\n\ngo 1.26\n"), 0o644); err != nil {
@@ -192,7 +182,7 @@ func TestBuildCommandRejectsDirectoryWithoutGoFiles(t *testing.T) {
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 
-	err = cmd.Run()
+	err := cmd.Run()
 	if err == nil {
 		t.Fatalf("expected build to fail for directory without Go files, got success:\n%s", out.String())
 	}
@@ -214,17 +204,7 @@ func TestBuildCommandWritesGitignoreAtRepositoryRoot(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repoRoot, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatalf("resolve repo root: %v", err)
-	}
-
-	binPath := filepath.Join(t.TempDir(), "gograph")
-	build := exec.Command("go", "build", "-o", binPath, filepath.Join(repoRoot, "cmd", "gograph", "main.go"))
-	build.Dir = repoRoot
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build test binary: %v\n%s", err, out)
-	}
+	binPath := buildTestBinary(t)
 
 	root := t.TempDir()
 	initGit := exec.Command("git", "init")

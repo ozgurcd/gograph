@@ -95,10 +95,8 @@ jobs:
       - name: Build and test
         run: |
           go build -v ./...
-          mkdir -p bin
-          go build -o bin/gograph ./cmd/gograph
-          go test -v ./...
-          go test -race ./...
+          go test -count=1 -v ./...
+          go test -count=1 -race ./...
           go vet ./...
 
       - name: Install pinned analysis tools
@@ -107,11 +105,20 @@ jobs:
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
           go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
 
+      - name: Install pinned Grype
+        id: grype
+        uses: anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7
+        with:
+          grype-version: v0.116.1
+
       - name: Run static and vulnerability analysis
+        env:
+          GRYPE: ${{ steps.grype.outputs.cmd }}
         run: |
           staticcheck ./...
           golangci-lint run ./...
           govulncheck ./...
+          make vulnerability-check
 
       - name: Build and validate MCP bundles
         run: |
@@ -145,6 +152,11 @@ jobs:
           distribution: goreleaser
           version: ${{ env.GORELEASER_VERSION }}
           args: release --snapshot --clean --skip=publish
+
+      - name: Scan exact release archives
+        env:
+          GRYPE: ${{ steps.grype.outputs.cmd }}
+        run: make scan-release-artifacts RELEASE_DIST=dist
 
   release:
     name: Publish GitHub release and Homebrew formula

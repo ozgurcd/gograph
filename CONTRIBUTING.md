@@ -33,7 +33,13 @@ must use `make build` rather than a raw `go build` command.
 
 1. **Create a branch:** Create a new branch for your feature or bugfix (`git checkout -b feature/my-new-feature`).
 2. **Write code:** Implement your changes. Ensure you add tests if you are adding new functionality.
-3. **Format and verify:** Run `make format-check`, `go test -race ./...`, `go vet ./...`, `staticcheck ./...`, `golangci-lint run ./...`, and `govulncheck ./...` before committing. `make test` runs the full local verification suite when those tools and Grype are installed.
+3. **Format and verify:** Run `make test` before committing. It disables the Go
+   test cache for both the normal and race suites, runs formatting, vet, lint,
+   static analysis, and `govulncheck`, and applies Grype's high-severity gate
+   to `go.mod` plus the freshly rebuilt native binary. CLI executable tests
+   compile the current checkout into an ephemeral directory and use isolated
+   fixtures; they never reuse `bin/gograph`, `bin/gograph-test`, or a
+   repository-resident graph. Install the tools used by the Makefile first.
 4. **Commit:** Write clear, concise commit messages.
 5. **Push:** Push to your fork and submit a Pull Request against the `main` branch.
 6. **Review:** Maintainers will review your PR, suggest changes if needed, and merge it.
@@ -68,8 +74,8 @@ currently in preview, and published versions and metadata are immutable.
 
 Current release pins are Registry schema `2025-12-11`, MCPB manifest schema
 `0.4`, `@anthropic-ai/mcpb` `2.1.2`, `mcp-publisher` `1.7.9`, and GoReleaser
-`v2.17.0`. Review the official upstream schema and release notes before
-changing a pin. CI must
+`v2.17.0`; GitHub Actions vulnerability scans use Grype `v0.116.1`. Review the
+official upstream schema and release notes before changing a pin. CI must
 download the publisher by exact version, verify its pinned SHA-256 digest, and
 must not use a moving `latest` URL.
 
@@ -85,11 +91,17 @@ No version argument is required. The target computes the next patch version,
 builds all six MCPBs, renders their immutable URLs and SHA-256 hashes into
 `server.json`, runs the complete release verification and native MCP smoke
 test, verifies modules and `go mod tidy`, runs `go vet`, and builds a pinned,
-non-publishing GoReleaser snapshot in the temporary release directory. It then
-commits only the generated version/release metadata and creates an annotated
-version tag. It atomically pushes that exact commit to the official remote's
-`main` together with the tag. The tag starts the immutable GitHub release,
-Homebrew reconciliation, and official MCP Registry publication workflow.
+non-publishing GoReleaser snapshot in the temporary release directory. The
+gate scans only explicit current inputs: declared modules in `go.mod`, the
+fresh native binary, and each of the exact six newly generated ordinary
+GoReleaser archives. A missing or extra archive fails closed. Ambient ignored
+outputs under `bin/`, `dist/`, `.release-mcpb/`, and `.release-work/` are not
+release evidence and are never included by a repository-wide Grype scan. It
+then commits only the generated version/release metadata and creates an
+annotated version tag. It atomically pushes that exact commit to the official
+remote's `main` together with the tag. The tag starts the immutable GitHub
+release, Homebrew reconciliation, and official MCP Registry publication
+workflow.
 
 The command fails closed before publishing unless HEAD is attached to a branch,
 the worktree is clean, the selected remote's `main` is an ancestor of HEAD, the
@@ -122,9 +134,10 @@ gate remains available:
 make release-verify
 ```
 
-This advanced target runs the full local, MCPB, schema, hash, documentation,
-and smoke-test checks against the currently declared version without creating
-a commit, tag, or push.
+This advanced target runs the cache-disabled local suites; explicit
+source/native/archive vulnerability scans; and the full MCPB, schema, hash,
+documentation, and smoke-test checks against the currently declared version
+without creating a commit, tag, or push.
 
 After the atomic push, GoReleaser publishes the ordinary assets, six MCPBs,
 checksums, and `server.json`. The workflow reconciles GoReleaser's generated

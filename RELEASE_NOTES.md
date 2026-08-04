@@ -55,6 +55,21 @@
   `golang.org/x/mod`, `x/sync`, `x/sys`, and `x/tools` set, so dependency scans
   no longer retain the high-severity `GO-2026-5970` advisory.
 
+### Release Verification Provenance
+
+- Replaced the ambient repository-wide Grype scan with explicit scans of
+  `go.mod` and the freshly rebuilt native binary. Historical ignored outputs
+  under `bin/`, `dist/`, `.release-mcpb/`, or `.release-work/` can no longer
+  contaminate release results or be mistaken for current candidates.
+- The release gate now requires and scans each of the exact six freshly
+  generated GoReleaser `.tar.gz`/`.zip` archives. Missing, substituted, or
+  extra matching archives fail closed, and CI repeats the current-input and
+  archive checks with pinned Grype `v0.116.1` before publication.
+- Normal and race suites run with `-count=1`. CLI integration tests compile one
+  current, version-marked executable into a cleaned OS temp directory and use
+  isolated source/graph fixtures, so stale `bin/gograph[-test]` files and
+  repository-resident `.gograph` state cannot satisfy them.
+
 ### Build-Context-Aware Repository Indexing
 
 - The AST scanner and precise package loader now share cmd/go's effective

@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -11,86 +12,58 @@ import (
 	"testing"
 )
 
-// binaryPath returns the path to the compiled gograph binary, building it if needed.
-// Relies on the Makefile-standard output location: <module_root>/bin/gograph.
-func binaryPath(t *testing.T) string {
+func runBinaryAt(t *testing.T, dir string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-	// Walk up from this test file to find the module root (contains go.mod).
-	dir := "."
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		t.Fatalf("filepath.Abs: %v", err)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(abs, "go.mod")); err == nil {
-			break
-		}
-		parent := filepath.Dir(abs)
-		if parent == abs {
-			t.Fatal("could not find module root (no go.mod found)")
-		}
-		abs = parent
-	}
-	bin := filepath.Join(abs, "bin", "gograph")
-	if _, err := os.Stat(bin); os.IsNotExist(err) {
-		t.Fatalf("binary not found at %s — run 'make build' first", bin)
-	}
-	return bin
-}
-
-// runBinary runs the gograph binary with the given args and returns stdout, stderr, exit code.
-func runBinary(t *testing.T, args ...string) (stdout, stderr string, code int) {
-	t.Helper()
-	bin := binaryPath(t)
-	cmd := exec.Command(bin, args...)
+	cmd := exec.Command(buildTestBinary(t), args...)
+	cmd.Dir = dir
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = io.Writer(&outBuf)
 	cmd.Stderr = io.Writer(&errBuf)
 	err := cmd.Run()
 	code = 0
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			code = exitErr.ExitCode()
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("run gograph %v: %v", args, err)
 		}
+		code = exitErr.ExitCode()
 	}
 	return outBuf.String(), errBuf.String(), code
 }
 
-// requireGraph ensures .gograph/graph.json exists at the module root.
-// If it is missing, it builds it using the compiled binary.
-// Tests that call this will skip cleanly if the binary itself cannot build.
-func requireGraph(t *testing.T) {
+func writeIsolatedModule(t *testing.T, source string) string {
 	t.Helper()
-	bin := binaryPath(t)
-
-	// Find module root.
-	abs, err := filepath.Abs(".")
-	if err != nil {
-		t.Fatalf("filepath.Abs: %v", err)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/cli-fixture\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatalf("write fixture go.mod: %v", err)
 	}
-	for {
-		if _, err := os.Stat(filepath.Join(abs, "go.mod")); err == nil {
-			break
-		}
-		parent := filepath.Dir(abs)
-		if parent == abs {
-			t.Fatal("could not find module root")
-		}
-		abs = parent
+	if err := os.WriteFile(filepath.Join(root, "fixture.go"), []byte(source), 0o644); err != nil {
+		t.Fatalf("write fixture source: %v", err)
 	}
+	return root
+}
 
-	graphFile := filepath.Join(abs, ".gograph", "graph.json")
-	if _, err := os.Stat(graphFile); err == nil {
-		return // already exists
-	}
+func runDocBinary(t *testing.T, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+	root := writeIsolatedModule(t, "package fixture\n\nfunc Fixture() {}\n")
+	return runBinaryAt(t, root, args...)
+}
 
-	// Build it.
-	cmd := exec.Command(bin, "build", ".")
-	cmd.Dir = abs
+func setupUntestedFixture(t *testing.T) string {
+	t.Helper()
+	root := writeIsolatedModule(t, `package cli
+
+func Entry() string { return UntestedLeaf() }
+
+func UntestedLeaf() string { return "ok" }
+`)
+	cmd := exec.Command(buildTestBinary(t), "build", ".")
+	cmd.Dir = root
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Skipf("skipping: could not build graph: %v\n%s", err, out)
+		t.Fatalf("build isolated untested graph: %v\n%s", err, out)
 	}
+	return root
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +71,7 @@ func requireGraph(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDocStdlibSymbol(t *testing.T) {
-	stdout, _, code := runBinary(t, "doc", "fmt.Errorf")
+	stdout, _, code := runDocBinary(t, "doc", "fmt.Errorf")
 	if code != 0 {
 		t.Fatalf("gograph doc fmt.Errorf exited %d", code)
 	}
@@ -111,7 +84,7 @@ func TestDocStdlibSymbol(t *testing.T) {
 }
 
 func TestDocInterface(t *testing.T) {
-	stdout, _, code := runBinary(t, "doc", "io.Reader")
+	stdout, _, code := runDocBinary(t, "doc", "io.Reader")
 	if code != 0 {
 		t.Fatalf("gograph doc io.Reader exited %d", code)
 	}
@@ -121,7 +94,7 @@ func TestDocInterface(t *testing.T) {
 }
 
 func TestDocPackageLevel(t *testing.T) {
-	stdout, _, code := runBinary(t, "doc", "net/http.HandleFunc")
+	stdout, _, code := runDocBinary(t, "doc", "net/http.HandleFunc")
 	if code != 0 {
 		t.Fatalf("gograph doc net/http.HandleFunc exited %d", code)
 	}
@@ -131,7 +104,7 @@ func TestDocPackageLevel(t *testing.T) {
 }
 
 func TestDocUnknownSymbolReturnsError(t *testing.T) {
-	_, stderr, code := runBinary(t, "doc", "doesnotexist.ZZZNonexistent99999")
+	_, stderr, code := runDocBinary(t, "doc", "doesnotexist.ZZZNonexistent99999")
 	if code == 0 {
 		t.Error("expected non-zero exit for unknown symbol, got 0")
 	}
@@ -142,7 +115,7 @@ func TestDocUnknownSymbolReturnsError(t *testing.T) {
 }
 
 func TestDocNoArgsPrintsUsage(t *testing.T) {
-	_, stderr, code := runBinary(t, "doc")
+	_, stderr, code := runDocBinary(t, "doc")
 	if code == 0 {
 		t.Error("expected non-zero exit when called with no args")
 	}
@@ -152,7 +125,7 @@ func TestDocNoArgsPrintsUsage(t *testing.T) {
 }
 
 func TestDocJSONMode(t *testing.T) {
-	stdout, _, code := runBinary(t, "--json", "doc", "fmt.Errorf")
+	stdout, _, code := runDocBinary(t, "--json", "doc", "fmt.Errorf")
 	if code != 0 {
 		t.Fatalf("gograph --json doc fmt.Errorf exited %d", code)
 	}
@@ -185,13 +158,13 @@ func TestDocJSONMode(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// gograph untested tests (integration — uses real graph.json if present)
+// gograph untested tests (integration against an isolated graph)
 // ---------------------------------------------------------------------------
 
 func TestUntestedRunsWithoutError(t *testing.T) {
-	requireGraph(t)
+	root := setupUntestedFixture(t)
 	// Verifies the command doesn't crash and produces valid output.
-	stdout, stderr, code := runBinary(t, "untested")
+	stdout, stderr, code := runBinaryAt(t, root, "untested")
 	if code != 0 {
 		t.Fatalf("gograph untested exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
@@ -204,8 +177,8 @@ func TestUntestedRunsWithoutError(t *testing.T) {
 }
 
 func TestUntestedTopFlag(t *testing.T) {
-	requireGraph(t)
-	stdout, _, code := runBinary(t, "untested", "--top", "3")
+	root := setupUntestedFixture(t)
+	stdout, _, code := runBinaryAt(t, root, "untested", "--top", "3")
 	if code != 0 {
 		t.Fatalf("gograph untested --top 3 exited %d", code)
 	}
@@ -226,8 +199,8 @@ func TestUntestedTopFlag(t *testing.T) {
 }
 
 func TestUntestedPkgFilter(t *testing.T) {
-	requireGraph(t)
-	stdout, _, code := runBinary(t, "untested", "--pkg", "cli")
+	root := setupUntestedFixture(t)
+	stdout, _, code := runBinaryAt(t, root, "untested", "--pkg", "cli")
 	if code != 0 {
 		t.Fatalf("gograph untested --pkg cli exited %d", code)
 	}
@@ -247,8 +220,8 @@ func TestUntestedPkgFilter(t *testing.T) {
 }
 
 func TestUntestedJSONMode(t *testing.T) {
-	requireGraph(t)
-	stdout, _, code := runBinary(t, "--json", "untested", "--top", "5")
+	root := setupUntestedFixture(t)
+	stdout, _, code := runBinaryAt(t, root, "--json", "untested", "--top", "5")
 	if code != 0 {
 		t.Fatalf("gograph --json untested exited %d", code)
 	}
@@ -291,7 +264,8 @@ func TestUntestedJSONMode(t *testing.T) {
 }
 
 func TestUntestedInvalidTopFlag(t *testing.T) {
-	_, stderr, code := runBinary(t, "untested", "--top", "notanumber")
+	root := setupUntestedFixture(t)
+	_, stderr, code := runBinaryAt(t, root, "untested", "--top", "notanumber")
 	if code == 0 {
 		t.Error("expected non-zero exit for invalid --top value")
 	}

@@ -4,49 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
-
-var (
-	testBinaryOnce sync.Once
-	testBinaryPath string
-	testBinaryErr  error
-)
-
-// buildTestBinary always compiles the current source once per package test run.
-func buildTestBinary(t *testing.T) string {
-	t.Helper()
-	testBinaryOnce.Do(func() {
-		repoRoot, err := filepath.Abs("../..")
-		if err != nil {
-			testBinaryErr = fmt.Errorf("resolve repo root: %w", err)
-			return
-		}
-		binDir, err := os.MkdirTemp("", "gograph-test-bin-*")
-		if err != nil {
-			testBinaryErr = fmt.Errorf("create test bin dir: %w", err)
-			return
-		}
-		testBinaryPath = filepath.Join(binDir, "gograph")
-		cmd := exec.Command("go", "build", "-o", testBinaryPath, filepath.Join(repoRoot, "cmd", "gograph", "main.go"))
-		cmd.Dir = repoRoot
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			testBinaryErr = fmt.Errorf("build test binary: %w\nOutput: %s", err, out)
-		}
-	})
-	if testBinaryErr != nil {
-		t.Fatal(testBinaryErr)
-	}
-	return testBinaryPath
-}
 
 // setupGraphFixture creates a minimal Go project in a temp directory, builds
 // the gograph index at the root, and returns (root, binPath).

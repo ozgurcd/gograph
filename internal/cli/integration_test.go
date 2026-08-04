@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,31 +10,11 @@ import (
 	"testing"
 )
 
-// runCmd builds the CLI binary (once per test run) and executes it against the testdata fixture.
-// It returns the stdout JSON string or fails the test.
-func runCmd(t *testing.T, args ...string) []byte {
+// runCmd executes the current package-scoped CLI binary against an isolated
+// fixture copy. It returns stdout or fails the test.
+func runCmd(t *testing.T, fixtureDir string, args ...string) []byte {
 	t.Helper()
-	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatalf("failed to resolve project root: %v", err)
-	}
-
-	binPath := filepath.Join(root, "bin", "gograph-test")
-
-	// Build binary only if it doesn't exist to speed up tests, or we could always build it.
-	// For reliable tests, we build it once per package test execution using TestMain,
-	// but since we don't have TestMain set up here, we'll build it if needed.
-	if _, err := os.Stat(binPath); os.IsNotExist(err) {
-		cmd := exec.Command("go", "build", "-o", binPath, filepath.Join(root, "cmd", "gograph", "main.go"))
-		cmd.Dir = root
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("failed to build test binary: %v\nOutput: %s", err, string(out))
-		}
-	}
-
-	fixtureDir := filepath.Join(root, "testdata", "fixture")
-	cmd := exec.Command(binPath, args...)
+	cmd := exec.Command(buildTestBinary(t), args...)
 	cmd.Dir = fixtureDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -47,12 +28,49 @@ func runCmd(t *testing.T, args ...string) []byte {
 	return out
 }
 
+func copyJSONFixture(t *testing.T) string {
+	t.Helper()
+	source := filepath.Join(testRepositoryRoot, "testdata", "fixture")
+	destination := t.TempDir()
+	err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		if entry.IsDir() {
+			if entry.Name() == ".gograph" {
+				return filepath.SkipDir
+			}
+			return os.MkdirAll(filepath.Join(destination, rel), 0o755)
+		}
+		if !entry.Type().IsRegular() {
+			return &fs.PathError{Op: "copy fixture", Path: path, Err: fs.ErrInvalid}
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(destination, rel), data, 0o644)
+	})
+	if err != nil {
+		t.Fatalf("copy JSON fixture: %v", err)
+	}
+	return destination
+}
+
 func TestJSONSchema(t *testing.T) {
+	fixtureDir := copyJSONFixture(t)
 	// 1. Build the graph for the fixture repository
-	runCmd(t, "build", ".")
+	runCmd(t, fixtureDir, "build", ".")
 
 	t.Run("callers schema", func(t *testing.T) {
-		out := runCmd(t, "callers", "GetUser", "--json")
+		out := runCmd(t, fixtureDir, "callers", "GetUser", "--json")
 
 		var env map[string]interface{}
 		if err := json.Unmarshal(out, &env); err != nil {
@@ -89,7 +107,7 @@ func TestJSONSchema(t *testing.T) {
 	})
 
 	t.Run("hotspot schema", func(t *testing.T) {
-		out := runCmd(t, "hotspot", "--json")
+		out := runCmd(t, fixtureDir, "hotspot", "--json")
 
 		var env map[string]interface{}
 		if err := json.Unmarshal(out, &env); err != nil {
@@ -111,7 +129,7 @@ func TestJSONSchema(t *testing.T) {
 	})
 
 	t.Run("deps schema", func(t *testing.T) {
-		out := runCmd(t, "deps", "auth", "--json")
+		out := runCmd(t, fixtureDir, "deps", "auth", "--json")
 
 		var env map[string]interface{}
 		if err := json.Unmarshal(out, &env); err != nil {
@@ -132,7 +150,7 @@ func TestJSONSchema(t *testing.T) {
 	})
 
 	t.Run("empty results schema", func(t *testing.T) {
-		out := runCmd(t, "query", "NonExistentFunctionXYZ123", "--json")
+		out := runCmd(t, fixtureDir, "query", "NonExistentFunctionXYZ123", "--json")
 
 		var env map[string]interface{}
 		if err := json.Unmarshal(out, &env); err != nil {

@@ -13,16 +13,7 @@ import (
 )
 
 func TestPreciseInterfaceCallerFormsAndBuildDeterminism(t *testing.T) {
-	repositoryRoot, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	binary := filepath.Join(t.TempDir(), "gograph")
-	buildBinary := exec.Command("go", "build", "-o", binary, "./cmd/gograph")
-	buildBinary.Dir = repositoryRoot
-	if output, err := buildBinary.CombinedOutput(); err != nil {
-		t.Fatalf("build gograph: %v\n%s", err, output)
-	}
+	binary := buildTestBinary(t)
 
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/interfacecall\n\ngo 1.26\n"), 0o644); err != nil {
