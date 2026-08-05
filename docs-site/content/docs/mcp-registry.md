@@ -4,11 +4,15 @@ weight: 5
 description: "Discover and install gograph as a local MCP Bundle, select the correct platform asset, and understand the preview limitations."
 ---
 
-gograph is published to the official Model Context Protocol Registry as:
+gograph is published to the official Model Context Protocol Registry under
+this server ID:
 
 ```text
 io.github.ozgurcd/gograph
 ```
+
+The server ID is a Registry identifier, not a web address. You can
+[inspect its active versions in the official Registry API](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.ozgurcd%2Fgograph).
 
 The official Registry is currently in preview. Its API, stored data, and
 client support may change before general availability.

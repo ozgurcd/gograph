@@ -79,9 +79,11 @@ go install github.com/ozgurcd/gograph/cmd/gograph@latest
 ```
 
 **Official MCP Registry / MCPB (preview)**
-```text
-io.github.ozgurcd/gograph
-```
+
+Registry server ID: `io.github.ozgurcd/gograph` (this is an identifier, not a
+web address). [View installation details](/docs/mcp-registry/) or
+[inspect the official Registry records](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.ozgurcd%2Fgograph).
+
 This installs a platform-specific local MCP bundle in clients that support
 MCPB; it does not place the CLI on `PATH`. Select the Go project directory and
 the macOS/Linux/Windows amd64/arm64 asset matching the host. See the
