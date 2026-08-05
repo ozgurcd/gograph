@@ -2,7 +2,7 @@
   "name": "gograph",
   "display_name": "Gograph \u2014 Go Repository Intelligence",
   "description": "Local AST-aware Go repository analysis for coding agents. Provides 61 query, analysis, and workflow capabilities (65 MCP endpoints including session lifecycle) covering call graphs, impact, interfaces, type usage, security-flow candidates, architecture policies, diagrams, error flow, and local workflow telemetry.",
-  "version": "1.5.5",
+  "version": "1.5.6",
   "author": "ozgurcd",
   "repository": "https://github.com/ozgurcd/gograph",
   "homepage": "https://gograph.identuum.ai",
