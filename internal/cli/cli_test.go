@@ -15,7 +15,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ozgurcd/gograph/internal/cli"
 )
@@ -421,9 +420,8 @@ func TestStaleExitCodes(t *testing.T) {
 	}
 
 	mainGo := filepath.Join(root, "main.go")
-	future := time.Now().Add(time.Hour)
-	if err := os.Chtimes(mainGo, future, future); err != nil {
-		t.Fatalf("mark main.go newer: %v", err)
+	if err := os.WriteFile(mainGo, []byte("package main\nfunc main() { println(1) }\n"), 0o644); err != nil {
+		t.Fatalf("change main.go: %v", err)
 	}
 
 	cmd = exec.Command(bin, "stale")
@@ -464,9 +462,8 @@ func TestStaleExitCodeIsSuccessfulSessionTelemetry(t *testing.T) {
 	}
 
 	mainGo := filepath.Join(root, "main.go")
-	future := time.Now().Add(time.Hour)
-	if err := os.Chtimes(mainGo, future, future); err != nil {
-		t.Fatalf("mark main.go newer: %v", err)
+	if err := os.WriteFile(mainGo, []byte("package main\nfunc main() { println(1) }\n"), 0o644); err != nil {
+		t.Fatalf("change main.go: %v", err)
 	}
 
 	cmd = exec.Command(bin, "stale")

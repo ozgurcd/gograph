@@ -74,8 +74,10 @@
   <meta property="og:locale" content="en_us">
   <meta property="og:type" content="article">
     <meta property="article:section" content="docs">
+      <meta property="og:image" content="https://gograph.identuum.ai/images/gograph-social-preview.png">
 
-  <meta name="twitter:card" content="summary">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://gograph.identuum.ai/images/gograph-social-preview.png">
   <meta name="twitter:title" content="Agent Workflows">
   <meta name="twitter:description" content="Recommended operational workflows for developers and AI agents using gograph.">
 
@@ -113,7 +115,7 @@
   "articleBody": "To maximize efficiency, reduce latency, and guarantee safety when modifying codebases, we recommend following these standardized workflows. These steps can be programmed into AI system instructions or executed manually.\nWorkflow 1: Onboarding to a New Repo When opening an unfamiliar Go repository, use this workflow to get oriented in seconds:\nVerify Index Status: gograph stats gograph stale If stale or missing, run gograph build .. Find High-Risk Hotspots: gograph hotspot --top 10 Identifies the most heavily referenced functions in the codebase. Map Package Coupling: gograph coupling Gives a high-level table showing package stability and dependencies. Inspect the Global API Surface: gograph skeleton Exposes every package signature with bodies stripped. Workflow 2: Safe-Edit Symbol Lifecycle Before changing the signature or behavior of any function, method, or struct, follow this cycle:\n[ plan ] ──► [ context ] ──► [ Edit Code ] ──► [ build . --precise ] ──► [ review --uncommitted ] Plan first: gograph plan This automatically checks for callers, associated tests, and risk profiles (e.g. database transactions or env reads). Extract Symbol Context: gograph context Bundles raw AST info, the exact source block of the target, and immediate dependencies in one call. Perform the Edit: Modify the code as needed. Type-checked build: gograph build . --precise Attempts type/load analysis, computes type-checked interface implementers, and retains every valid named in-repository CHA target at interface call sites. Check both fields in gograph stats: precision: precise confirms enrichment succeeded, while precise_fallback means the published AST graph could not be enriched. A failed retry retains an existing fresh successful precise artifact for the same selected sources instead of downgrading it. build_status independently reports whether AST parsing and selection were complete; parse failures or selection/security warnings make it partial. Post-edit review: gograph review --uncommitted Validates complexity drift, test coverage, and security risk introductions before making a commit. Workflow 3: Package-Level Refactoring Before splitting, merging, or moving a Go package, execute this check:\nDiscover all external consumers: gograph dependents Finds every other package that imports your target. A package with high fan-in (low instability) is difficult to change without sweeping breaking changes. Review public API contracts: gograph public Ensure you know exactly what symbols are exported and consumed externally. Workflow 4: Security Flow Review Use the production-only scan first, then narrow by sink or source and inspect each reported path in source:\ngograph flow --no-tests gograph flow --sink process_execution --no-tests gograph flow --source decoded_json --sink sql_query --no-tests --json Treat findings as review leads. The analysis is interprocedural and path-insensitive, with call/return matching across up to 16 nested repository calls. When a project has a function that returns a validated or normalized value, declare it in .gograph/flow.json; scope it to the sink kind it actually protects. Do not mark a boolean/error-only validator as a sanitizer for an unchanged input value.\nWorkflow 5: CI Quality Gate Gate thresholds live in a regular, non-linked project-root .gograph.yml; they are not command flags. Scaffold the file once, review its documented defaults, and commit it:\ngograph gate init gograph complexity gograph coupling gograph godobj Orphan and new-coupling limits compare the current publication with the immediately preceding persisted graph embedded as its baseline. They are skipped when no preceding graph exists. The CI job publishes a current graph and then runs the gate:\ngograph build . --precise gograph gate gate refuses stale graph data and evaluates only the thresholds present in .gograph.yml. Package import-boundary policy is separate; run gograph boundaries as another CI step when boundaries.json is used.\n",
   "wordCount" : "583",
   "inLanguage": "en",
-  "datePublished": "0001-01-01T00:00:00Z",
+  "image": "https://gograph.identuum.ai/images/gograph-social-preview.png","datePublished": "0001-01-01T00:00:00Z",
   "dateModified": "0001-01-01T00:00:00Z",
   "author":{
     "@type": "Person",
@@ -164,6 +166,11 @@
         </div>
         <ul id="menu" class="menu">
             <li>
+                <a href="https://gograph.identuum.ai/demo/" title="Try Demo">
+                    <span>Try Demo</span>
+                </a>
+            </li>
+            <li>
                 <a href="https://gograph.identuum.ai/docs/getting-started/" title="Get Started">
                     <span>Get Started</span>
                 </a>
@@ -181,6 +188,11 @@
             <li>
                 <a href="https://gograph.identuum.ai/docs/workflows/" title="Workflows">
                     <span class="active">Workflows</span>
+                </a>
+            </li>
+            <li>
+                <a href="https://gograph.identuum.ai/benchmarks/" title="Evidence">
+                    <span>Evidence</span>
                 </a>
             </li>
             <li>
@@ -312,23 +324,6 @@ and then runs the gate:</p>
     <ul class="post-tags">
     </ul>
   </footer>
-<script src="https://giscus.app/client.js"
-        data-repo="ozgurcd/gograph"
-        data-repo-id=""
-        data-category="Blog Comments"
-        data-category-id=""
-        data-mapping="pathname"
-        data-strict="0"
-        data-reactions-enabled="1"
-        data-emit-metadata="0"
-        data-input-position="top"
-        data-theme="preferred_color_scheme"
-        data-lang="en"
-        data-loading="lazy"
-        crossorigin="anonymous"
-        async>
-</script>
-
 </article>
     </main>
 

@@ -5,11 +5,11 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <meta name="robots" content="index, follow">
-<title>Call-Graph | gograph – Go Codebase Analysis &amp; MCP Server</title>
+<title>Evidence &amp; Methodology | gograph – Go Codebase Analysis &amp; MCP Server</title>
 <meta name="keywords" content="">
-<meta name="description" content="gograph is a local structural graph and MCP server for safer Go refactors, repository analysis, and coding-agent workflows.">
+<meta name="description" content="Reproduce gograph&#39;s structural evidence benchmark and inspect its complete raw results.">
 <meta name="author" content="Ozgur Demir">
-<link rel="canonical" href="https://gograph.identuum.ai/tags/call-graph/">
+<link rel="canonical" href="https://gograph.identuum.ai/benchmarks/">
 <link crossorigin="anonymous" href="/assets/css/stylesheet.cd9298b33628769aa1bc1acebbbfd7aa11ce81dfe03484d479e1907760249a1d.css" integrity="sha256-zZKYszYodpqhvBrOu7/XqhHOgd/gNITUeeGQd2Akmh0=" rel="preload stylesheet" as="style">
 <link rel="icon" href="https://gograph.identuum.ai/favicon.ico">
 <link rel="icon" type="image/png" sizes="16x16" href="https://gograph.identuum.ai/favicon-16x16.png">
@@ -18,8 +18,7 @@
 <link rel="mask-icon" href="https://gograph.identuum.ai/safari-pinned-tab.svg">
 <meta name="theme-color" content="#2e2e33">
 <meta name="msapplication-TileColor" content="#2e2e33">
-<link rel="alternate" type="application/rss+xml" href="https://gograph.identuum.ai/tags/call-graph/index.xml" title="rss">
-<link rel="alternate" hreflang="en" href="https://gograph.identuum.ai/tags/call-graph/">
+<link rel="alternate" hreflang="en" href="https://gograph.identuum.ai/benchmarks/">
 <noscript>
     <style>
         #theme-toggle,
@@ -68,21 +67,69 @@
 </script>
 <script data-goatcounter="https://gograph.goatcounter.com/count"
         async src="//gc.zgo.at/count.js"></script>
-<meta property="og:url" content="https://gograph.identuum.ai/tags/call-graph/">
+<meta property="og:url" content="https://gograph.identuum.ai/benchmarks/">
   <meta property="og:site_name" content="gograph – Go Codebase Analysis & MCP Server">
-  <meta property="og:title" content="Call-Graph">
-  <meta property="og:description" content="gograph is a local structural graph and MCP server for safer Go refactors, repository analysis, and coding-agent workflows.">
+  <meta property="og:title" content="Evidence & Methodology">
+  <meta property="og:description" content="Reproduce gograph&#39;s structural evidence benchmark and inspect its complete raw results.">
   <meta property="og:locale" content="en_us">
-  <meta property="og:type" content="website">
+  <meta property="og:type" content="article">
       <meta property="og:image" content="https://gograph.identuum.ai/images/gograph-social-preview.png">
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image" content="https://gograph.identuum.ai/images/gograph-social-preview.png">
-  <meta name="twitter:title" content="Call-Graph">
-  <meta name="twitter:description" content="gograph is a local structural graph and MCP server for safer Go refactors, repository analysis, and coding-agent workflows.">
+  <meta name="twitter:title" content="Evidence & Methodology">
+  <meta name="twitter:description" content="Reproduce gograph&#39;s structural evidence benchmark and inspect its complete raw results.">
 
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position":  1 ,
+      "name": "Evidence \u0026 Methodology",
+      "item": "https://gograph.identuum.ai/benchmarks/"
+    }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Evidence \u0026 Methodology",
+  "name": "Evidence \u0026 Methodology",
+  "description": "Reproduce gograph's structural evidence benchmark and inspect its complete raw results.",
+  "keywords": [
+
+  ],
+  "articleBody": "Claims you can reproduce gograph’s checked-in benchmark uses a controlled Go fixture with manually reviewable ground truth. It verifies implicit interface implementations, interface-dispatched callers, and a composed change-context workflow.\nThe current v1.5.5 report was generated with a complete precise graph. Every declared evidence item was found by the corresponding gograph workflow:\nScenario gograph evidence Text-search evidence Process calls Implicit interface implementations 2/2 0/2 1 vs 1 Interface-dispatched caller 2/2 1/2 1 vs 1 Composed change context 4/4 4/4 1 vs 3 Explore the no-install demo →\nWhat the benchmark does not claim This is a deterministic structural-evidence benchmark. It does not claim a fixed token reduction, universal speedup, hallucination rate, or complete end-to-end coding-agent success rate. The fixture is small, elapsed times depend on the host, and text search returns different evidence.\nReproduce it git clone https://github.com/ozgurcd/gograph cd gograph make build make benchmark The harness records the binary version, source revision, runner, suite, and fixture SHA-256 digests, graph precision and build health, complete raw outputs, evidence coverage, output size, process-call count, and repeated timing.\nReview the suite and fixture, the complete v1.5.5 result, and the methodology.\n",
+  "wordCount" : "186",
+  "inLanguage": "en",
+  "image": "https://gograph.identuum.ai/images/gograph-social-preview.png","datePublished": "0001-01-01T00:00:00Z",
+  "dateModified": "0001-01-01T00:00:00Z",
+  "author":{
+    "@type": "Person",
+    "name": "Ozgur Demir"
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://gograph.identuum.ai/benchmarks/"
+  },
+  "publisher": {
+    "@type": "Person",
+    "name": "gograph – Go Codebase Analysis \u0026 MCP Server",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://gograph.identuum.ai/favicon.ico"
+    }
+  }
+}
+</script>
 </head>
-<body class="list" id="top">
+<body id="top">
     <header class="header">
     <nav class="header-nav">
         <div class="logo">
@@ -138,7 +185,7 @@
             </li>
             <li>
                 <a href="https://gograph.identuum.ai/benchmarks/" title="Evidence">
-                    <span>Evidence</span>
+                    <span class="active">Evidence</span>
                 </a>
             </li>
             <li>
@@ -160,47 +207,98 @@
         </ul>
     </nav>
 </header>
-<main class="main"> 
-<header class="page-header"><nav class="breadcrumbs" role="navigation" aria-label="Breadcrumb">
+<main class="main">
+
+<article class="post-single">
+  <header class="post-header">
+    <nav class="breadcrumbs" role="navigation" aria-label="Breadcrumb">
             <a href="/">Home</a>
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-right">
-                <polyline points="9 18 15 12 9 6"></polyline>
-            </svg>
-            <a href="/tags/">Tags</a>
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
         stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-right">
         <polyline points="9 18 15 12 9 6"></polyline>
     </svg>
 </nav>
-  <h1>
-    Call-Graph
-  </h1>
-</header>
+    <h1 class="post-title entry-hint-parent">
+      Evidence &amp; Methodology
+    </h1>
+    <div class="post-description">
+      Reproduce gograph&#39;s structural evidence benchmark and inspect its complete raw results.
+    </div>
+    <div class="post-meta">
 
-<article class="post-entry tag-entry"> 
-  <header class="entry-header">
-    <h2 class="entry-hint-parent">Analyzing a Go Codebase with gograph — Starting with Itself
-    </h2>
+<span>1 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span>
+
+</div>
   </header>
-  <div class="entry-content">
-    <p>1. The Static Context Dilemma in AI-Assisted Engineering Modern software engineering is increasingly co-authored by AI coding agents. Those agents need both textual search and structural evidence to navigate a repository efficiently.
-When an agent needs to understand how a function is used, it typically defaults to one of two inefficient strategies:
-Broad textual search: Useful for literals and non-Go content, but it also returns comments, test mocks, Markdown references, and unrelated same-name matches when the question is structural. Whole-file reads: Sometimes necessary, but often larger than the function or relationship needed for the immediate task. gograph adds a local, persisted Abstract Syntax Tree (AST) graph, with optional type-checked enrichment. It supports questions such as “show the indexed callers of this method” or “extract this function’s source block”. Its output remains static-analysis evidence with documented limits.
-...</p>
-  </div>
-  <footer class="entry-footer">
+  <div class="post-content md-content"><h2 id="claims-you-can-reproduce">Claims you can reproduce<a hidden class="anchor" aria-hidden="true" href="#claims-you-can-reproduce">#</a></h2>
+<p>gograph&rsquo;s checked-in benchmark uses a controlled Go fixture with manually
+reviewable ground truth. It verifies implicit interface implementations,
+interface-dispatched callers, and a composed change-context workflow.</p>
+<p>The current v1.5.5 report was generated with a complete precise graph. Every
+declared evidence item was found by the corresponding gograph workflow:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Scenario</th>
+					<th style="text-align: right">gograph evidence</th>
+					<th style="text-align: right">Text-search evidence</th>
+					<th style="text-align: right">Process calls</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Implicit interface implementations</td>
+					<td style="text-align: right">2/2</td>
+					<td style="text-align: right">0/2</td>
+					<td style="text-align: right">1 vs 1</td>
+			</tr>
+			<tr>
+					<td>Interface-dispatched caller</td>
+					<td style="text-align: right">2/2</td>
+					<td style="text-align: right">1/2</td>
+					<td style="text-align: right">1 vs 1</td>
+			</tr>
+			<tr>
+					<td>Composed change context</td>
+					<td style="text-align: right">4/4</td>
+					<td style="text-align: right">4/4</td>
+					<td style="text-align: right">1 vs 3</td>
+			</tr>
+	</tbody>
+</table>
+<p><a href="/demo/">Explore the no-install demo →</a></p>
+<h2 id="what-the-benchmark-does-not-claim">What the benchmark does not claim<a hidden class="anchor" aria-hidden="true" href="#what-the-benchmark-does-not-claim">#</a></h2>
+<p>This is a deterministic structural-evidence benchmark. It does not claim a
+fixed token reduction, universal speedup, hallucination rate, or complete
+end-to-end coding-agent success rate. The fixture is small, elapsed times depend
+on the host, and text search returns different evidence.</p>
+<h2 id="reproduce-it">Reproduce it<a hidden class="anchor" aria-hidden="true" href="#reproduce-it">#</a></h2>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>git clone https://github.com/ozgurcd/gograph
+</span></span><span style="display:flex;"><span>cd gograph
+</span></span><span style="display:flex;"><span>make build
+</span></span><span style="display:flex;"><span>make benchmark
+</span></span></code></pre></div><p>The harness records the binary version, source revision, runner, suite, and
+fixture SHA-256 digests, graph precision and build health, complete raw outputs,
+evidence coverage, output size, process-call count, and repeated timing.</p>
+<p>Review the <a href="https://github.com/ozgurcd/gograph/tree/main/benchmarks">suite and fixture</a>,
+the <a href="https://github.com/ozgurcd/gograph/blob/main/benchmarks/results/gograph-v1.5.5.json">complete v1.5.5 result</a>,
+and the <a href="https://github.com/ozgurcd/gograph/blob/main/docs/benchmarking.md">methodology</a>.</p>
 
-<span title='2026-06-24 00:00:00 +0000 UTC'>June 24, 2026</span>&nbsp;·&nbsp;<span>10 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
-  <a class="entry-link" aria-label="post link to Analyzing a Go Codebase with gograph — Starting with Itself" href="https://gograph.identuum.ai/posts/analyzing-go-codebase-with-gograph/"></a>
+
+  </div>
+
+  <footer class="post-footer">
+    <ul class="post-tags">
+    </ul>
+  </footer>
 </article>
     </main>
-    
-<footer class="footer">
-        <span>&copy; 2026 <a href="https://gograph.identuum.ai/">gograph – Go Codebase Analysis &amp; MCP Server</a></span> · 
 
-    
-    
+<footer class="footer">
+        <span>&copy; 2026 <a href="https://gograph.identuum.ai/">gograph – Go Codebase Analysis &amp; MCP Server</a></span> ·
+
+
+
     <span>
         Powered by
         <a href="https://gohugo.io/?utm_source=papermod" rel="noopener" target="_blank">Hugo</a> &
@@ -218,12 +316,12 @@ Broad textual search: Useful for literals and non-Go content, but it also return
 <script>
     let menu = document.getElementById('menu');
     if (menu) {
-        
+
         const scrollPosition = localStorage.getItem("menu-scroll-position");
         if (scrollPosition) {
             menu.scrollLeft = parseInt(scrollPosition, 10);
         }
-        
+
         menu.onscroll = function () {
             localStorage.setItem("menu-scroll-position", menu.scrollLeft);
         }
@@ -273,6 +371,53 @@ Broad textual search: Useful for literals and non-Go content, but it also return
         }
     })
 
+</script>
+<script>
+    document.querySelectorAll('pre > code').forEach((codeblock) => {
+        const container = codeblock.parentNode.parentNode;
+
+        const copybutton = document.createElement('button');
+        copybutton.classList.add('copy-code');
+        copybutton.innerHTML = 'copy';
+
+        function copyingDone() {
+            copybutton.innerHTML = 'copied!';
+            setTimeout(() => {
+                copybutton.innerHTML = 'copy';
+            }, 2000);
+        }
+
+        copybutton.addEventListener('click', (cb) => {
+            if ('clipboard' in navigator) {
+                navigator.clipboard.writeText(codeblock.textContent);
+                copyingDone();
+                return;
+            }
+
+            const range = document.createRange();
+            range.selectNodeContents(codeblock);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            try {
+                document.execCommand('copy');
+                copyingDone();
+            } catch (e) { };
+            selection.removeRange(range);
+        });
+
+        if (container.classList.contains("highlight")) {
+            container.appendChild(copybutton);
+        } else if (container.parentNode.firstChild == container) {
+
+        } else if (codeblock.parentNode.parentNode.parentNode.parentNode.parentNode.nodeName == "TABLE") {
+
+            codeblock.parentNode.parentNode.parentNode.parentNode.parentNode.appendChild(copybutton);
+        } else {
+
+            codeblock.parentNode.appendChild(copybutton);
+        }
+    });
 </script>
 </body>
 

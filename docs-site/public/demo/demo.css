@@ -1,0 +1,231 @@
+.evidence-demo {
+  --demo-bg: #07111f;
+  --demo-panel: #0d1b2d;
+  --demo-border: #23405f;
+  --demo-text: #e8f1fa;
+  --demo-muted: #9bb1c7;
+  --demo-blue: #62b6ff;
+  --demo-green: #62d6a8;
+  margin: 2rem 0;
+  color: var(--demo-text);
+  background:
+    radial-gradient(circle at 100% 0%, rgb(30 111 165 / 24%), transparent 38%),
+    var(--demo-bg);
+  border: 1px solid var(--demo-border);
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgb(0 0 0 / 22%);
+}
+
+.demo-header,
+.demo-panel {
+  padding: clamp(1rem, 3vw, 2rem);
+}
+
+.demo-header {
+  border-bottom: 1px solid var(--demo-border);
+}
+
+.demo-kicker,
+.demo-meta,
+.demo-question,
+.demo-workflow-label {
+  color: var(--demo-muted);
+}
+
+.demo-kicker {
+  margin: 0 0 .35rem;
+  font-size: .76rem;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.demo-header h2,
+.demo-panel h3 {
+  margin: 0;
+  color: var(--demo-text);
+}
+
+.demo-meta {
+  margin: .6rem 0 0;
+  font-size: .88rem;
+}
+
+.demo-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .55rem;
+  padding: .75rem;
+  background: rgb(255 255 255 / 2%);
+  border-bottom: 1px solid var(--demo-border);
+}
+
+.demo-tab {
+  min-height: 3.25rem;
+  padding: .65rem .8rem;
+  color: var(--demo-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+}
+
+.demo-tab:hover,
+.demo-tab:focus-visible {
+  color: var(--demo-text);
+  border-color: var(--demo-border);
+}
+
+.demo-tab[aria-selected="true"] {
+  color: #06111d;
+  background: var(--demo-blue);
+}
+
+.demo-question {
+  margin: .55rem 0 1.1rem;
+  font-size: 1.02rem;
+}
+
+.demo-finding {
+  padding: .8rem 1rem;
+  color: #c9f8e6;
+  background: rgb(98 214 168 / 10%);
+  border-left: 3px solid var(--demo-green);
+  border-radius: 6px;
+}
+
+.demo-command {
+  display: block;
+  margin: 1rem 0;
+  padding: .85rem 1rem;
+  overflow-x: auto;
+  color: #d9edff;
+  background: #030a13;
+  border: 1px solid var(--demo-border);
+  border-radius: 9px;
+  font-size: .86rem;
+}
+
+.demo-workflows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .85rem;
+  margin-top: 1rem;
+}
+
+.demo-workflow {
+  padding: 1rem;
+  background: var(--demo-panel);
+  border: 1px solid var(--demo-border);
+  border-radius: 12px;
+}
+
+.demo-workflow-label {
+  margin: 0 0 .65rem;
+  font-size: .78rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.demo-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .45rem;
+  margin-bottom: .8rem;
+}
+
+.demo-metric {
+  padding: .6rem;
+  background: rgb(255 255 255 / 3%);
+  border-radius: 8px;
+}
+
+.demo-metric strong,
+.demo-metric span {
+  display: block;
+}
+
+.demo-metric strong {
+  color: var(--demo-text);
+  font-size: 1.15rem;
+}
+
+.demo-metric span {
+  color: var(--demo-muted);
+  font-size: .7rem;
+  text-transform: uppercase;
+}
+
+.demo-evidence {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.demo-evidence li {
+  position: relative;
+  padding: .35rem 0 .35rem 1.3rem;
+  color: var(--demo-muted);
+  font-size: .86rem;
+}
+
+.demo-evidence li::before {
+  position: absolute;
+  left: 0;
+  content: "○";
+}
+
+.demo-evidence li.is-found {
+  color: var(--demo-text);
+}
+
+.demo-evidence li.is-found::before {
+  color: var(--demo-green);
+  content: "✓";
+}
+
+.demo-raw {
+  margin-top: 1rem;
+  border-top: 1px solid var(--demo-border);
+}
+
+.demo-raw summary {
+  padding: .8rem 0 0;
+  color: var(--demo-blue);
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.demo-raw pre {
+  max-height: 30rem;
+  margin: .75rem 0 0;
+  padding: 1rem;
+  overflow: auto;
+  color: #cfe5f7;
+  background: #02070d;
+  border-radius: 8px;
+  font-size: .76rem;
+  white-space: pre-wrap;
+}
+
+.demo-limitations {
+  padding: 0 clamp(1rem, 3vw, 2rem) 1.5rem;
+  color: var(--demo-muted);
+  font-size: .82rem;
+}
+
+.demo-error {
+  padding: 1.5rem;
+  color: #ffd1d1;
+}
+
+@media (max-width: 760px) {
+  .demo-tabs,
+  .demo-workflows {
+    grid-template-columns: 1fr;
+  }
+}

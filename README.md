@@ -78,6 +78,12 @@ policy marker must be rebuilt with the current binary before graph-backed
 commands use them. Older binaries do not enforce this boundary and should not
 be used to analyze untrusted repositories.
 
+Each indexed source file stores a SHA-256 content digest. Rebuilds reparse all
+selected files in a changed package together and reuse parser records for
+unchanged packages; `stats` reports `reused_files` and `rebuilt_packages`.
+Precise builds reuse that AST work but still recompute repository-wide
+type/CHA/SSA enrichment so cross-package dispatch remains correct.
+
 MCP refreshes stay in memory by default. To publish each successful refresh
 for CLI consumers and later server processes, start the server explicitly with:
 
@@ -120,7 +126,7 @@ of evidence):*
 
 **Native MCP Server** — query, analysis, and workflow capabilities have MCP equivalents for Claude, Cursor, Copilot, and other MCP clients. Host/build operations (`build`, `gate`, `snapshot`, plugin/hook installation, server startup, help, and version) intentionally remain CLI-only, and transport-specific presentation differs where appropriate.
 
-**Explicit Freshness Model** — CLI graph-backed analysis reads the last trusted persisted graph. `gograph stale` is a tri-state predicate in text and JSON modes: exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error; a missing or unsupported source-policy marker is an explicit status-1 rebuild requirement. MCP source-analysis tools check freshness per call, adopt a newer persisted precise graph, and rebuild in memory after edits using the latest requested analysis mode. MCP `stale`, default `changes`, and `stats` inspect the trusted persisted snapshot, or the startup auto-build fallback when no usable artifact exists. With `--persist-refresh`, that snapshot advances after a successful refresh, so default `changes` compares against the newly published state and normally no longer reports that refresh's source edits.
+**Explicit Freshness Model** — CLI graph-backed analysis reads the last trusted persisted graph. `gograph stale` compares selected source content digests plus the effective build/module fingerprint; mtimes are diagnostic only for current indexes. It is a tri-state predicate in text and JSON modes: exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error; a missing or unsupported source-policy marker is an explicit status-1 rebuild requirement. MCP source-analysis tools check the same freshness per call, adopt a newer persisted precise graph, and incrementally rebuild changed package ASTs in memory using the latest requested analysis mode. MCP `stale`, default `changes`, and `stats` inspect the trusted persisted snapshot, or the startup auto-build fallback when no usable artifact exists. With `--persist-refresh`, that snapshot advances after a successful refresh, so default `changes` compares against the newly published state and normally no longer reports that refresh's source edits.
 
 **Compact Composite Workflows** — `context`, `plan`, and `explain` combine source and graph evidence that would otherwise require several separate queries. Actual tool-call and token savings depend on the repository and task.
 
@@ -153,7 +159,7 @@ normal response format.
 | **Change Analysis** | `plan`, `review`, `risk`, `impact [--uncommitted\|--since]`, `changes [--git]`, `api --since` | Pre-edit planning, post-edit review, risk analysis, blast radius, drift. |
 | **Architecture** | `boundaries`, `coupling`, `complexity`, `godobj`, `orphans`, `arity` | Quality gates, dead code, coupling, god objects. |
 | **Types & Structs** | `fields`, `implementers [--test-only]`, `interfaces`, `embeds`, `constructors`, `literals`, `usages`, `mutate`, `schema` | Struct fields, interface satisfaction, type usage. |
-| **Infrastructure** | `routes`, `sql`, `envs`, `errors`, `concurrency`, `globals`, `httpcalls`, `deps [--transitive]`, `dependents`, `imports` | HTTP routes, SQL, env vars, concurrency, outbound HTTP calls, imports. |
+| **Infrastructure** | `routes`, `sql`, `envs`, `errors`, `concurrency`, `globals`, `httpcalls`, `deps [--transitive]`, `dependents`, `imports` | HTTP routes (including constant nested Gin/Echo/Fiber groups and Chi Route closures), SQL, env vars, concurrency, outbound HTTP calls, imports. |
 | **Security** | `flow [term] [--source kind] [--sink kind] [--config path] [--no-tests]` | Potential untrusted-data paths to SQL, process, filesystem, and outbound HTTP sinks. |
 | **Testing** | `tests`, `fixtures`, `mocks` | Test coverage map, helpers, mock implementations. |
 | **Error Tracing** | `errorflow [--no-tests]`, `trace` | Reverse-BFS from error strings to HTTP entry points. |

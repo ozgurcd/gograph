@@ -4,6 +4,11 @@
     <title>gograph on gograph – Go Codebase Analysis &amp; MCP Server</title>
     <link>https://gograph.identuum.ai/</link>
     <description>Recent content in gograph on gograph – Go Codebase Analysis &amp; MCP Server</description>
+    <image>
+      <title>gograph – Go Codebase Analysis &amp; MCP Server</title>
+      <url>https://gograph.identuum.ai/images/gograph-social-preview.png</url>
+      <link>https://gograph.identuum.ai/images/gograph-social-preview.png</link>
+    </image>
     <generator>Hugo</generator>
     <language>en-us</language>
     <lastBuildDate>Wed, 24 Jun 2026 00:00:00 +0000</lastBuildDate>
@@ -49,6 +54,20 @@
       <pubDate>Wed, 24 Jun 2026 00:00:00 +0000</pubDate>
       <guid>https://gograph.identuum.ai/posts/analyzing-go-codebase-with-gograph/</guid>
       <description>A historical, reproducible snapshot of gograph analyzing its own Go codebase, with structural-query examples and documented limitations.</description>
+    </item>
+    <item>
+      <title>Evidence &amp; Methodology</title>
+      <link>https://gograph.identuum.ai/benchmarks/</link>
+      <pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate>
+      <guid>https://gograph.identuum.ai/benchmarks/</guid>
+      <description>Reproduce gograph&amp;#39;s structural evidence benchmark and inspect its complete raw results.</description>
+    </item>
+    <item>
+      <title>Try the Evidence Demo</title>
+      <link>https://gograph.identuum.ai/demo/</link>
+      <pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate>
+      <guid>https://gograph.identuum.ai/demo/</guid>
+      <description>Explore verified gograph output in the browser without installing anything.</description>
     </item>
   </channel>
 </rss>

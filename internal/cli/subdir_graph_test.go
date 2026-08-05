@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // setupGraphFixture creates a minimal Go project in a temp directory, builds
@@ -125,9 +124,8 @@ func TestFilesystemCommandsFromSubdirectory(t *testing.T) {
 	}
 
 	mainGo := filepath.Join(root, "main.go")
-	future := time.Now().Add(time.Hour)
-	if err := os.Chtimes(mainGo, future, future); err != nil {
-		t.Fatalf("mark main.go newer: %v", err)
+	if err := os.WriteFile(mainGo, []byte("package main\nfunc main() { println(1) }\n"), 0o644); err != nil {
+		t.Fatalf("change main.go: %v", err)
 	}
 	for _, args := range [][]string{{"stale"}, {"changes"}} {
 		cmd := exec.Command(bin, args...)

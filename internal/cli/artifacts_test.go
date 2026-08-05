@@ -38,6 +38,17 @@ func buildTestGraph(t *testing.T, root string) *graph.Graph {
 	return g
 }
 
+func graphWithMainDigest(original *graph.Graph, digest string) *graph.Graph {
+	built := *original
+	built.Files = append([]graph.FileNode(nil), original.Files...)
+	for index := range built.Files {
+		if filepath.Clean(built.Files[index].Path) == "main.go" {
+			built.Files[index].ContentDigest = digest
+		}
+	}
+	return &built
+}
+
 func TestPublishGraphArtifactsWritesCompleteBundleAndBaseline(t *testing.T) {
 	root := writeTestModule(t)
 	first := buildTestGraph(t, root)
@@ -485,7 +496,8 @@ func TestGraphRefresherPublishesOnlyFinalFreshRetry(t *testing.T) {
 	source := filepath.Join(root, "main.go")
 	initial := buildTestGraph(t, root)
 	changedAt := initial.GeneratedAt.Add(5 * time.Second)
-	if err := os.Chtimes(source, changedAt, changedAt); err != nil {
+	changedSource := []byte("package main\nfunc main() { println(1) }\n")
+	if err := os.WriteFile(source, changedSource, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -497,12 +509,13 @@ func TestGraphRefresherPublishesOnlyFinalFreshRetry(t *testing.T) {
 		root,
 		func(string) (*graph.Graph, error) {
 			builds++
-			built := *initial
+			built := graphWithMainDigest(initial, initial.Files[0].ContentDigest)
 			built.GeneratedAt = changedAt.Add(-time.Second)
 			if builds == 2 {
 				built.GeneratedAt = changedAt.Add(time.Second)
+				built = graphWithMainDigest(built, graph.SourceDigest(changedSource))
 			}
-			return &built, nil
+			return built, nil
 		},
 		func(string) (*graph.Graph, error) { return nil, errors.New("unexpected precise build") },
 		func(g *graph.Graph) (graphPublication, error) {
@@ -525,7 +538,8 @@ func TestGraphRefresherRetriesFailedPublicationWithoutRebuild(t *testing.T) {
 	source := filepath.Join(root, "main.go")
 	initial := buildTestGraph(t, root)
 	changedAt := initial.GeneratedAt.Add(5 * time.Second)
-	if err := os.Chtimes(source, changedAt, changedAt); err != nil {
+	changedSource := []byte("package main\nfunc main() { println(1) }\n")
+	if err := os.WriteFile(source, changedSource, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -536,9 +550,9 @@ func TestGraphRefresherRetriesFailedPublicationWithoutRebuild(t *testing.T) {
 		root,
 		func(string) (*graph.Graph, error) {
 			builds++
-			built := *initial
+			built := graphWithMainDigest(initial, graph.SourceDigest(changedSource))
 			built.GeneratedAt = changedAt.Add(time.Second)
-			return &built, nil
+			return built, nil
 		},
 		func(string) (*graph.Graph, error) { return nil, errors.New("unexpected precise build") },
 		func(g *graph.Graph) (graphPublication, error) {
@@ -566,7 +580,8 @@ func TestGraphRefresherDoesNotRepublishOwnArtifact(t *testing.T) {
 	source := filepath.Join(root, "main.go")
 	initial := buildTestGraph(t, root)
 	changedAt := initial.GeneratedAt.Add(5 * time.Second)
-	if err := os.Chtimes(source, changedAt, changedAt); err != nil {
+	changedSource := []byte("package main\nfunc main() { println(1) }\n")
+	if err := os.WriteFile(source, changedSource, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -577,9 +592,9 @@ func TestGraphRefresherDoesNotRepublishOwnArtifact(t *testing.T) {
 		root,
 		func(string) (*graph.Graph, error) {
 			builds++
-			built := *initial
+			built := graphWithMainDigest(initial, graph.SourceDigest(changedSource))
 			built.GeneratedAt = changedAt.Add(time.Second)
-			return &built, nil
+			return built, nil
 		},
 		func(string) (*graph.Graph, error) { return nil, errors.New("unexpected precise build") },
 		func(g *graph.Graph) (graphPublication, error) {
@@ -612,7 +627,7 @@ func TestGraphRefresherNeverPublishesPreciseFallback(t *testing.T) {
 	initial := buildTestGraph(t, root)
 	initial.Build.Precision = graph.PrecisionPrecise
 	changedAt := initial.GeneratedAt.Add(5 * time.Second)
-	if err := os.Chtimes(source, changedAt, changedAt); err != nil {
+	if err := os.WriteFile(source, []byte("package main\nfunc main() { println(1) }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

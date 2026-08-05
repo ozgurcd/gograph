@@ -253,6 +253,7 @@ func enrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 							CalleeRaw:      calleeName,
 							CalleeSymbolID: calleeSymID,
 							Synthetic:      true,
+							Precise:        true,
 						})
 					}
 					continue
@@ -373,6 +374,7 @@ func enrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 					File:           relFile,
 					Line:           pos.Line,
 					Column:         pos.Column,
+					Precise:        true,
 				})
 			}
 		}
@@ -410,6 +412,7 @@ func enrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 				Function: fnID,
 				File:     s.File,
 				Line:     s.Line,
+				Precise:  true,
 			})
 		}
 	}
@@ -715,9 +718,12 @@ func materializeInvokeCalls(calls []graph.CallEdge, groups map[string]*invokeCal
 		}
 
 		edges := make([]graph.CallEdge, 0, len(targetIDs))
-		for _, targetID := range targetIDs {
+		for targetIndex, targetID := range targetIDs {
 			edge := group.prototype
 			edge.CalleeSymbolID = targetID
+			// Preserve one parser-owned edge when an unresolved AST edge existed;
+			// additional concrete targets are precise-only enrichment records.
+			edge.Precise = len(group.existingIndices) == 0 || targetIndex > 0
 			edges = append(edges, edge)
 		}
 

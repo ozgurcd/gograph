@@ -11,6 +11,7 @@ import (
 	"go/printer"
 	"go/token"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
@@ -116,23 +117,21 @@ func parseSource(fset *token.FileSet, path string, src any, relPath, pkgImportPa
 	}
 
 	// Extract HTTP Routes
+	routePrefixes := resolveRoutePrefixes(f)
 	ast.Inspect(f, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
 
-		var method string
-		switch f := call.Fun.(type) {
-		case *ast.SelectorExpr:
-			name := f.Sel.Name
-			if name == "GET" || name == "POST" || name == "PUT" || name == "DELETE" || name == "PATCH" || name == "OPTIONS" || name == "HEAD" || name == "Any" || name == "Handle" || name == "HandleFunc" {
-				method = name
-			}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
 		}
+		method := routeMethod(selector.Sel.Name)
 		if method != "" && len(call.Args) >= 1 {
-			if lit, ok := call.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-				path := strings.Trim(lit.Value, "\"")
+			if routePath, ok := routeString(call.Args[0]); ok {
+				path := joinRoutePath(routePrefixForExpr(selector.X, routePrefixes), routePath)
 				handler := ""
 				inlineBody := ""
 				handlerAppended := false
@@ -203,6 +202,142 @@ func parseSource(fset *token.FileSet, path string, src any, relPath, pkgImportPa
 	})
 
 	return result, nil
+}
+
+// resolveRoutePrefixes derives constant route-group prefixes from common
+// Gin, Echo, Fiber, and Chi registration shapes. Objects, rather than names,
+// key the environment so shadowed router variables do not contaminate one
+// another. A small fixed-point pass handles declarations and nested Route
+// closures regardless of traversal order.
+func resolveRoutePrefixes(file *ast.File) map[any]string {
+	prefixes := make(map[any]string)
+	for changed := true; changed; {
+		changed = false
+		ast.Inspect(file, func(node ast.Node) bool {
+			switch value := node.(type) {
+			case *ast.AssignStmt:
+				for index, lhs := range value.Lhs {
+					if index >= len(value.Rhs) {
+						break
+					}
+					ident, ok := lhs.(*ast.Ident)
+					if !ok || ident.Obj == nil {
+						continue
+					}
+					if prefix, ok := groupedRoutePrefix(value.Rhs[index], prefixes); ok && prefixes[ident.Obj] != prefix {
+						prefixes[ident.Obj] = prefix
+						changed = true
+					}
+				}
+			case *ast.ValueSpec:
+				for index, ident := range value.Names {
+					if ident.Obj == nil || index >= len(value.Values) {
+						continue
+					}
+					if prefix, ok := groupedRoutePrefix(value.Values[index], prefixes); ok && prefixes[ident.Obj] != prefix {
+						prefixes[ident.Obj] = prefix
+						changed = true
+					}
+				}
+			case *ast.CallExpr:
+				selector, ok := value.Fun.(*ast.SelectorExpr)
+				if !ok || selector.Sel.Name != "Route" || len(value.Args) < 2 {
+					break
+				}
+				path, ok := routeString(value.Args[0])
+				closure, closureOK := value.Args[1].(*ast.FuncLit)
+				if !ok || !closureOK || closure.Type.Params == nil || len(closure.Type.Params.List) == 0 || len(closure.Type.Params.List[0].Names) == 0 {
+					break
+				}
+				parameter := closure.Type.Params.List[0].Names[0]
+				if parameter.Obj == nil {
+					break
+				}
+				prefix := joinRoutePath(routePrefixForExpr(selector.X, prefixes), path)
+				if prefixes[parameter.Obj] != prefix {
+					prefixes[parameter.Obj] = prefix
+					changed = true
+				}
+			}
+			return true
+		})
+	}
+	return prefixes
+}
+
+func groupedRoutePrefix(expr ast.Expr, prefixes map[any]string) (string, bool) {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok {
+		return "", false
+	}
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "Group" || len(call.Args) == 0 {
+		return "", false
+	}
+	path, ok := routeString(call.Args[0])
+	if !ok {
+		return "", false
+	}
+	return joinRoutePath(routePrefixForExpr(selector.X, prefixes), path), true
+}
+
+func routePrefixForExpr(expr ast.Expr, prefixes map[any]string) string {
+	switch value := expr.(type) {
+	case *ast.Ident:
+		return prefixes[value.Obj]
+	case *ast.CallExpr:
+		selector, ok := value.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return ""
+		}
+		base := routePrefixForExpr(selector.X, prefixes)
+		if selector.Sel.Name == "Group" && len(value.Args) > 0 {
+			if path, ok := routeString(value.Args[0]); ok {
+				return joinRoutePath(base, path)
+			}
+		}
+		// Chi's With and similar fluent middleware calls preserve the router's
+		// current mount point.
+		return base
+	case *ast.ParenExpr:
+		return routePrefixForExpr(value.X, prefixes)
+	}
+	return ""
+}
+
+func routeMethod(name string) string {
+	switch name {
+	case "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD":
+		return name
+	case "Get", "Post", "Put", "Delete", "Patch", "Options", "Head":
+		return strings.ToUpper(name)
+	case "Any", "Handle", "HandleFunc":
+		return name
+	default:
+		return ""
+	}
+}
+
+func routeString(expr ast.Expr) (string, bool) {
+	literal, ok := expr.(*ast.BasicLit)
+	if !ok || literal.Kind != token.STRING {
+		return "", false
+	}
+	value, err := strconv.Unquote(literal.Value)
+	if err != nil {
+		return "", false
+	}
+	return value, true
+}
+
+func joinRoutePath(prefix, suffix string) string {
+	if prefix == "" {
+		return suffix
+	}
+	if suffix == "" {
+		return prefix
+	}
+	return strings.TrimSuffix(prefix, "/") + "/" + strings.TrimPrefix(suffix, "/")
 }
 
 type syncPrimitive string
@@ -692,20 +827,32 @@ func extractGenDecl(fset *token.FileSet, d *ast.GenDecl, relPath, pkgName, pkgIm
 		}
 
 		sym := graph.SymbolNode{
-			ID:               fmt.Sprintf("%s::%s", pkgImportPath, ts.Name.Name),
-			Kind:             kind,
-			Name:             ts.Name.Name,
-			PackageName:      pkgName,
-			File:             relPath,
-			Line:             pos.Line,
-			EndLine:          endPos.Line,
-			Doc:              strings.TrimSpace(doc),
-			InterfaceMethods: methods,
-			StructFields:     fields,
-			EmbeddedStructs:  embeds,
+			ID:                       fmt.Sprintf("%s::%s", pkgImportPath, ts.Name.Name),
+			Kind:                     kind,
+			Name:                     ts.Name.Name,
+			PackageName:              pkgName,
+			File:                     relPath,
+			Line:                     pos.Line,
+			EndLine:                  endPos.Line,
+			Doc:                      strings.TrimSpace(doc),
+			InterfaceMethods:         cloneStringMap(methods),
+			DeclaredInterfaceMethods: cloneStringMap(methods),
+			StructFields:             fields,
+			EmbeddedStructs:          embeds,
 		}
 		result.Symbols = append(result.Symbols, sym)
 	}
+}
+
+func cloneStringMap(source map[string]string) map[string]string {
+	if len(source) == 0 {
+		return nil
+	}
+	clone := make(map[string]string, len(source))
+	for key, value := range source {
+		clone[key] = value
+	}
+	return clone
 }
 
 func mutationTypeName(expr ast.Expr) string {

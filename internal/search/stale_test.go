@@ -83,6 +83,38 @@ func TestStale_Stale(t *testing.T) {
 	}
 }
 
+func TestStaleDetectsContentChangeWithPreservedMtime(t *testing.T) {
+	dir := t.TempDir()
+	mtime := time.Now().Add(-time.Hour)
+	path := filepath.Join(dir, "same-time.go")
+	original := []byte("package x\nconst Value = 1\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	g := &graph.Graph{
+		GeneratedAt: time.Now(),
+		Files: []graph.FileNode{{
+			Path:          "same-time.go",
+			ContentDigest: graph.SourceDigest(original),
+		}},
+		Build: &graph.BuildMetadata{AnalysisCacheVersion: graph.CurrentAnalysisCacheVersion},
+	}
+
+	if err := os.WriteFile(path, []byte("package x\nconst Value = 2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	sr := search.Stale(g, dir)
+	if !sr.IsStale || len(sr.ChangedFiles) != 1 || sr.ChangedFiles[0] != "same-time.go" {
+		t.Fatalf("preserved-mtime edit not detected by digest: %#v", sr)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // TestStale_NewestSourceFields: NewestSourceMtime and NewestSourceFile are populated
 // even when is_stale=false.

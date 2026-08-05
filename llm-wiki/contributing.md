@@ -32,6 +32,8 @@ Query, analysis, and workflow features belong on both CLI and MCP. Intentional C
 - `internal/wiki`: generated wiki rendering from graph/search data.
 - `internal/cli` and `internal/mcp`: transport, process, persistence, and integration wiring.
 - Keep deterministic ordering and explicit AST/precise/fallback semantics.
+- Freshness changes require byte-digest tests that preserve mtimes, legacy-index fallback coverage, and changed-package versus unchanged-package reuse assertions. Precise incremental tests must prove repository-wide enrichment is reconstructed without duplicate or missing edges.
+- Route extraction changes require grouped/nested parser fixtures and explicit CLI/MCP parity coverage; constant prefixes may be composed, while dynamic expressions must remain conservative.
 - Surface errors directly, serialize successful empty collections as `[]` with count zero, preserve command-aware JSON error envelopes, and test ambiguous symbol names.
 - Document local I/O, Go-toolchain/network behavior, audit telemetry, and artifact mutation accurately.
 

@@ -74,8 +74,10 @@
   <meta property="og:description" content="Explore installation, CLI command references, AI agent MCP integration, and structural analysis workflows.">
   <meta property="og:locale" content="en_us">
   <meta property="og:type" content="website">
+      <meta property="og:image" content="https://gograph.identuum.ai/images/gograph-social-preview.png">
 
-  <meta name="twitter:card" content="summary">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://gograph.identuum.ai/images/gograph-social-preview.png">
   <meta name="twitter:title" content="Documentation Portal">
   <meta name="twitter:description" content="Explore installation, CLI command references, AI agent MCP integration, and structural analysis workflows.">
 
@@ -125,6 +127,11 @@
         </div>
         <ul id="menu" class="menu">
             <li>
+                <a href="https://gograph.identuum.ai/demo/" title="Try Demo">
+                    <span>Try Demo</span>
+                </a>
+            </li>
+            <li>
                 <a href="https://gograph.identuum.ai/docs/getting-started/" title="Get Started">
                     <span>Get Started</span>
                 </a>
@@ -142,6 +149,11 @@
             <li>
                 <a href="https://gograph.identuum.ai/docs/workflows/" title="Workflows">
                     <span>Workflows</span>
+                </a>
+            </li>
+            <li>
+                <a href="https://gograph.identuum.ai/benchmarks/" title="Evidence">
+                    <span>Evidence</span>
                 </a>
             </li>
             <li>
@@ -287,8 +299,9 @@ Verify Index Status: gograph stats gograph stale If stale or missing, run gograp
     </h2>
   </header>
   <div class="entry-content">
-    <p>gograph is published to the official Model Context Protocol Registry as:
-io.github.ozgurcd/gograph The official Registry is currently in preview. Its API, stored data, and client support may change before general availability.
+    <p>gograph is published to the official Model Context Protocol Registry under this server ID:
+io.github.ozgurcd/gograph The server ID is a Registry identifier, not a web address. You can inspect its active versions in the official Registry API.
+The official Registry is currently in preview. Its API, stored data, and client support may change before general availability.
 Registry installation is a separate path Homebrew and go install place the normal gograph CLI on PATH. You then configure an MCP client to run gograph mcp &lt;project-directory&gt;. The Claude Code marketplace entry supplies workflow guidance but still needs that binary and a project registration.
 ...</p>
   </div>

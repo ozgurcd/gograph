@@ -264,7 +264,13 @@ from an HTTP handler to a SQL call without first reading every intermediate
 file. It does not prove that the path executes at runtime.
 
 ### 9. Graph freshness check
-`gograph stale` compares the selected-file inventory, effective Go build context, and source modification times with the persisted graph. It detects added, deleted, newly inactive, and newly active source files even when timestamps alone cannot. It displays the graph age, changed files, and whether the build context changed, then tells the agent to re-run `gograph build .` when needed. It uses the trusted directory from which `graph.json` was loaded—not its serialized `root` metadata—so results are identical from repository subdirectories. Agents should run this before any structural analysis.
+`gograph stale` compares the selected-file inventory, effective Go build context, and SHA-256 source-content digests with the persisted graph. It detects byte edits even when mtimes are preserved, plus added, deleted, newly inactive, and newly active source files. The newest mtime remains diagnostic only. It displays the graph age, changed files, and whether the build context changed, then tells the agent to re-run `gograph build .` when needed. It uses the trusted directory from which `graph.json` was loaded—not its serialized `root` metadata—so results are identical from repository subdirectories. Agents should run this before any structural analysis.
+
+On rebuild, gograph reparses every selected file in a changed package and
+reuses parser-owned records for unchanged packages. `gograph stats` exposes
+the resulting `reused_files` and `rebuilt_packages` counts. Precise mode keeps
+this AST reuse but recomputes repository-wide type/CHA/SSA enrichment for
+cross-package correctness.
 
 The command uses the same tri-state exit contract in text and JSON modes: `0`
 means the graph is current, `2` means it is stale, and `1` means an operational
@@ -601,54 +607,34 @@ LIMITATIONS
 
 ---
 
-#### ⚠️ Critical Limitation: Route-Grouping (Gin, Echo, Chi, Fiber)
+#### Grouped Routes (Gin, Echo, Chi, Fiber)
 
-**This limitation affects the majority of production Go HTTP services.**
+gograph composes constant route prefixes across Gin, Echo, and Fiber
+`.Group("...")` assignments and chains, plus nested Chi
+`.Route("...", func(r Router) { ... })` closures. Chi's title-case verb methods
+such as `Get` and `Delete` are normalized to HTTP verbs.
 
-gograph resolves HTTP routes by reading the **literal string** passed as the first argument to router registration calls (`.GET()`, `.POST()`, `.PUT()`, etc.). It does **not** track variable assignments or chain `.Group()` calls.
-
-**Flat routing (works correctly):**
+**Flat and grouped routing:**
 ```go
-router.POST("/api/users", CreateUser)   // recorded: POST /api/users ✅
-router.GET("/api/users/:id", GetUser)   // recorded: GET /api/users/:id ✅
+v1 := router.Group("/api/v1")
+users := v1.Group("/users")
+users.POST("/", CreateUser)             // recorded: POST /api/v1/users/
+users.GET("/:id", GetUser)              // recorded: GET /api/v1/users/:id
+
+router.Route("/admin", func(r Router) {
+    r.Get("/audit", Audit)               // recorded: GET /admin/audit
+})
 ```
 
-**Grouped routing (prefix is lost):**
-```go
-v1 := router.Group("/api/v1")           // variable — not recorded
-users := v1.Group("/users")             // chained variable — not recorded
-users.POST("/", CreateUser)             // recorded: POST /  ❌ (prefix lost)
-users.GET("/:id", GetUser)              // recorded: GET /:id  ❌ (prefix lost)
-```
-
-In a codebase that uses `Group()`, searching `gograph endpoint "POST /api/v1/users"` **returns no results** because that string never appears as a literal in the AST. The assembled path only exists at runtime.
-
-**This affects:** Gin (`router.Group`), Echo (`e.Group`), Chi (`r.Route`), Fiber (`app.Group`), and any framework using route group composition.
-
-#### ✅ Recommended Usage Pattern
-
-**Always prefer handler symbol name over route pattern.** The handler name is always a literal identifier in the AST, regardless of how routing is organized:
+The prefix expression itself must be a string literal. Dynamically computed
+prefixes such as `router.Group(prefixFromConfig)` cannot be reconstructed
+without executing application code; those routes retain their known literal
+suffix. Query a constant final path when available, or use the handler symbol
+for dynamic cases:
 
 ```bash
-# PREFERRED — works with ALL routing styles (flat, grouped, nested)
-gograph endpoint "CreateUser"
-gograph endpoint "GetUserByID"
-gograph endpoint "DeleteOrder"
-
-# CONDITIONAL — only works if the path is a flat literal (no Group() prefix)
-gograph endpoint "POST /api/users"
-gograph endpoint "/api/users"
-```
-
-**Workflow for grouped routers:**
-```bash
-# Step 1: find all registered routes and their handler names
 gograph routes
-
-# Step 2: note the handler name for the route you care about
-# Output: POST /  → handler: CreateUser
-
-# Step 3: query by handler name
+gograph endpoint "POST /api/v1/users/"
 gograph endpoint "CreateUser"
 ```
 
@@ -713,8 +699,8 @@ This reports packages connected through the indexed import graph so the agent
 can prioritize review without following each import manually.
 
 ### 18. Change detection
-`gograph changes` compares every selected source file's modification time against the persisted graph's `generated_at` timestamp and reports:
-- **MODIFIED** — symbols in files newer than the persisted graph
+`gograph changes` compares every selected source file's content digest against the persisted graph and reports:
+- **MODIFIED** — symbols in files whose bytes differ from the persisted graph
 - **NEW** — top-level declarations in changed files not recorded in the graph
 - **DELETED** — symbols whose recorded files are absent from the current safely
   selected inventory: gone, ignored, build-inactive, or unsafe to read
@@ -817,7 +803,7 @@ depend on process exit status intentionally remain CLI-only.
 
 MCP agents should call `gograph_capabilities` first when they need to discover available gograph tools and recommended workflows.
 
-At startup, the MCP server loads a regular repository-confined persisted graph with the exact current source-policy marker, or creates an in-memory AST graph when the artifact is missing, unreadable, unsafe, or unsupported. Source-analysis tools check freshness per call, adopt a newer persisted precise graph, and rebuild in memory after edits using the latest requested analysis mode; rebuild failures and precise fallbacks are returned visibly. A precise or precise-fallback session therefore re-attempts CHA/SSA after an edit instead of silently serving AST-only analysis. If the same sources already have a fresh successful precise artifact, a failed retry retains it rather than publishing a fallback. `gograph_stale`, default `gograph_changes`, and `gograph_stats` inspect trusted persisted `graph.json` when available, or the startup auto-build fallback when no usable artifact exists.
+At startup, the MCP server loads a regular repository-confined persisted graph with the exact current source-policy marker, or creates an in-memory AST graph when the artifact is missing, unreadable, unsafe, or unsupported. Source-analysis tools compare source-content digests and the build/module fingerprint per call, adopt a newer persisted precise graph, and reparse changed packages in memory while reusing unchanged package AST records; rebuild failures and precise fallbacks are returned visibly. A precise or precise-fallback session still re-attempts repository-wide CHA/SSA after an edit instead of silently serving AST-only analysis. If the same sources already have a fresh successful precise artifact, a failed retry retains it rather than publishing a fallback. `gograph_stale`, default `gograph_changes`, and `gograph_stats` inspect trusted persisted `graph.json` when available, or the startup auto-build fallback when no usable artifact exists.
 
 Refreshes are in-memory by default. Starting the server as
 `gograph mcp [path] --persist-refresh` opts into writing or overwriting
@@ -858,7 +844,7 @@ non-read-only because a request may publish artifacts.
 
 The current suite registers 65 MCP endpoints: 61 query, analysis, and workflow tools plus four session lifecycle tools. The live `gograph_capabilities` payload is tested against the server registry. The optional `mermaid=true` parameter on `callers`, `callees`, `impact`, `endpoint`, `dependents`, `deps`, `path`, and `coupling` returns the same Markdown-fenced Mermaid presentation as CLI `--mermaid`; absent or false, each tool retains its normal response format.
 - **`gograph_capabilities`**: Discover available tools and workflows.
-- **`gograph_stale`**: Check whether trusted persisted `.gograph/graph.json`, or the startup fallback when no usable artifact exists, is outdated relative to selected Go source files or the effective build context. Returns JSON with `is_stale`, `graph_age`, `newest_source_mtime`, `newest_source_file`, `changed_files[]`, and `build_context_changed`.
+- **`gograph_stale`**: Check whether trusted persisted `.gograph/graph.json`, or the startup fallback when no usable artifact exists, is outdated relative to selected Go source content digests or the effective build context. The newest mtime fields are diagnostic only. Returns JSON with `is_stale`, `graph_age`, `newest_source_mtime`, `newest_source_file`, `changed_files[]`, and `build_context_changed`.
 - **`gograph_session_create`**: Start a telemetry audit session using a strictly validated ID and regular, repository-confined state under `.gograph/sessions/`; linked storage is refused.
 - **`gograph_session_end`**: End the active session using the same rooted regular-file boundary and remove its active pointer.
 - **`gograph_session_audit`**: Review and grade agent compliance and tool success rates. IDs accept only letters, digits, and underscore; logs must be regular repository-confined files.
@@ -878,7 +864,7 @@ The current suite registers 65 MCP endpoints: 61 query, analysis, and workflow t
   drift against a Git reference or a saved graph path ending in `.json`. Saved
   graphs must be regular non-linked files inside the selected project, require
   the exact current source-policy marker, and cannot supply the trusted root.
-- **`gograph_routes`**: Extract all HTTP REST API routes found in the codebase. Annotates routes using unresolvable factory handlers (e.g. `promhttp.Handler()`) with `[dynamic handler]` in the detail, setting `DynamicHandler: true`.
+- **`gograph_routes`**: Extract all HTTP REST API routes found in the codebase. Constant nested Gin/Echo/Fiber Group prefixes and Chi Route closure prefixes are composed into final paths; dynamic prefix expressions remain best-effort suffixes. Routes using unresolvable factory handlers (e.g. `promhttp.Handler()`) are annotated with `[dynamic handler]`, setting `DynamicHandler: true`.
 - **`gograph_node`**: AST metadata for a symbol: kind, file, line, signature, doc comment. Lighter than `gograph_source` when you only need metadata.
 - **`gograph_path`**: Shortest BFS call chain between two symbols. Use to confirm whether a handler actually reaches a given function; accepts `mermaid=true` for visual output.
 - **`gograph_changes`**: Symbols modified/added/deleted since the trusted persisted graph, or the startup fallback when no usable artifact exists. Deleted includes files absent from the current safely selected inventory. With `git_ref`, returns symbols in files changed since that ref (MODIFIED only).
@@ -1076,10 +1062,10 @@ methodology, and limitations.
   1. Use standard Go **package-qualified dot-notation** (e.g. `service.GenerateRequest`, `graph.Graph` or `graph.Graph.Build`) with call-graph commands that advertise symbol selectors. `callers` also accepts `Interface.Method` on a precise graph.
   2. For precise target matching with no same-name conflation, pass the fully-qualified symbol ID (e.g., `gograph callers 'github.com/foo/bar/internal/auth::(*Service).Validate'`). The same FQ-ID syntax works for `callees`, `impact`, and `path` (both endpoints). Requires `--precise` mode at build time.
 - **Precise interface dispatch is a CHA over-approximation.** One interface invocation can have several valid named in-repository targets; gograph retains all of them and interface-qualified caller queries deduplicate the source expression. Promoted concrete methods are represented by their wrapper target plus a traversal-only synthetic forwarding edge to the declared method. CHA can include implementations that are not instantiated in a particular runtime configuration, while reflection, `unsafe`, plugins, unresolved function values, test-only packages, unnamed concrete types, and module-external implementations can still cause omissions. If `go/packages` omits any indexed non-test file, the graph is marked `precise_fallback` instead of claiming full precision.
-- **Graph call counts are edge counts.** In a precise graph, one interface call expression contributes one edge per retained concrete target, and promoted-method forwarding can add explicitly marked synthetic traversal edges. Current caller/callee call-site output hides forwarding edges and deduplicates parallel targets for presentation. Older v2 binaries can decode the additive fields but may count or display synthetic records as ordinary edges, so use the current binary with newly generated precise graphs.
+- **Graph call counts are edge counts.** In a precise graph, one interface call expression contributes one edge per retained concrete target, and promoted-method forwarding can add explicitly marked synthetic traversal edges. Current caller/callee call-site output hides forwarding edges and deduplicates parallel targets for presentation. Content digests, analysis-cache markers, parser/precise provenance, and reuse counters are also additive v2 fields. A legacy graph without digests uses mtime freshness until rebuilt and is not eligible for parser-record reuse. Older v2 binaries can decode the additive fields but may count or display synthetic records as ordinary edges, so use the current binary with newly generated precise graphs.
 - **No cross-repo / module-external edges.** External dependencies are extracted from `go.mod` to summarize the tech stack, but call edges into third-party packages are not resolved.
 - **Security flow is a conservative heuristic.** It is path-insensitive, uses field/root approximation, and matches call/return context for at most 16 nested repository calls. Default graphs have weaker method/interface resolution than precise graphs. Reflection, globals, arbitrary heap aliases, and unresolved dynamic calls can cause misses or false positives. External-call propagation is marked low confidence. A finding is not an exploitability claim.
-- **CLI snapshot vs MCP refresh.** CLI graph-backed analysis reflects the last trusted published graph. MCP source-analysis tools check both source freshness and newer persisted graphs, then rebuild in memory after source changes using the current requested mode. A precise refresh that falls back fails the analysis request visibly; MCP `stale`, default `changes`, and `stats` inspect the trusted persisted snapshot, or the startup fallback when no usable artifact exists. `--persist-refresh` advances that snapshot after successful refreshes, so default `changes` uses the new state as its baseline. It stores only the latest artifact set and does not avoid a rebuild when switching back to a previously analyzed branch.
+- **CLI snapshot vs MCP refresh.** CLI graph-backed analysis reflects the last trusted published graph. MCP source-analysis tools compare source digests plus the build/module fingerprint and newer persisted graphs, then reparse changed packages in memory using the current requested mode. Precise mode still recomputes repository-wide CHA/SSA. A precise refresh that falls back fails the analysis request visibly; MCP `stale`, default `changes`, and `stats` inspect the trusted persisted snapshot, or the startup fallback when no usable artifact exists. `--persist-refresh` advances that snapshot after successful refreshes, so default `changes` uses the new state as its baseline. It stores only the latest artifact set and does not avoid a rebuild when switching back to a previously analyzed branch.
 
 ## TL;DR
 

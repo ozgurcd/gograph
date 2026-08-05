@@ -39,7 +39,7 @@ Choose the tool that matches the question:
 ## ⚡ Comparative Analysis: Unix vs. gograph
 
 ### Practical Impact
-Replacing broad text searches with AST-derived, symbol-focused responses reduces irrelevant context and tool round trips. Results remain static-analysis evidence rather than proof: dynamic dispatch, grouped routes, test attribution, and error flow have documented limits.
+Replacing broad text searches with AST-derived, symbol-focused responses reduces irrelevant context and tool round trips. Results remain static-analysis evidence rather than proof: dynamic dispatch, dynamically computed route prefixes, test attribution, and error flow have documented limits. Constant nested Gin/Echo/Fiber groups and Chi Route closures are composed into their final indexed paths.
 
 ---
 
@@ -119,12 +119,13 @@ gograph mcp [path] [--persist-refresh]
 By default, if `.gograph/graph.json` is missing, unreadable, unsafe, or has a
 missing/unsupported source-policy marker, startup creates an in-memory AST
 graph without publishing CLI build artifacts. A loaded graph's serialized root
-is ignored in favor of the selected project. Source-analysis tools check
-source freshness and newer trusted persisted artifacts per call, then rebuild
-after edits in the current requested mode. `gograph_stale`, default
+is ignored in favor of the selected project. Source-analysis tools compare
+source-content digests and the build/module fingerprint, check newer trusted
+persisted artifacts per call, then reparse changed packages after edits.
+`gograph_stale`, default
 `gograph_changes`, and `gograph_stats` use a trusted persisted graph when one
 exists and otherwise inspect the startup in-memory fallback. Precise and
-precise-fallback sessions re-run CHA/SSA, and a failed precise refresh is
+precise-fallback sessions still re-run repository-wide CHA/SSA, and a failed precise refresh is
 returned visibly. A failed precise publication retry cannot replace an
 existing fresh successful precise artifact covering the same selected sources.
 

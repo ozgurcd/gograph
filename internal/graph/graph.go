@@ -14,7 +14,8 @@ import "time"
 // locations, and missing synthetic markers to ordinary source calls. Older v2
 // readers can decode new graphs, but do not understand the presentation-only
 // semantics of additional synthetic forwarding records and may count or show
-// them as ordinary edges.
+// them as ordinary edges. Content digests, cache/provenance markers, and reuse
+// counters are also additive; missing cache markers simply disable reuse.
 const Version = "2"
 
 // CurrentSourcePolicyVersion identifies graphs built after repository source
@@ -23,6 +24,11 @@ const Version = "2"
 // the indexed repository or use an unknown future policy and must be rebuilt
 // before they are queried.
 const CurrentSourcePolicyVersion = 1
+
+// CurrentAnalysisCacheVersion identifies graphs whose file-level records can
+// be decomposed back into parser output and safely reused by an incremental
+// build. Bump this whenever parser/precise provenance changes.
+const CurrentAnalysisCacheVersion = 1
 
 // Graph is the top-level data structure written to .gograph/graph.json.
 type Graph struct {
@@ -63,6 +69,14 @@ type BuildMetadata struct {
 	// SourcePolicyVersion is a security trust marker, independent of the graph
 	// schema version. Missing and non-current values are intentionally not trusted.
 	SourcePolicyVersion int `json:"source_policy_version,omitempty"`
+	// AnalysisCacheVersion guards reuse of serialized file-level analysis.
+	// Missing and non-current values force a complete parser rebuild.
+	AnalysisCacheVersion int `json:"analysis_cache_version,omitempty"`
+	// ReusedFiles is the number of selected files restored from the previous
+	// graph without reparsing. RebuiltPackages counts package directories whose
+	// selected files were reparsed together.
+	ReusedFiles     int `json:"reused_files,omitempty"`
+	RebuiltPackages int `json:"rebuilt_packages,omitempty"`
 	// BuildContextFingerprint hashes effective build and module-selection
 	// inputs, including nested module boundaries. The historical JSON field
 	// name is retained for schema-v2 compatibility.
@@ -155,6 +169,9 @@ type MutationEdge struct {
 	File     string `json:"file"`
 	Line     int    `json:"line"`
 	Via      string `json:"via,omitempty"`
+	// Precise marks an edge introduced by type-checked enrichment rather than
+	// the parser. It lets incremental builds recover the parser-only base.
+	Precise bool `json:"precise,omitempty"`
 }
 
 // LiteralEdge records a composite-literal initialization site for a named struct
@@ -296,6 +313,9 @@ type FileNode struct {
 	PackageName string `json:"package_name"`
 	Lines       int    `json:"lines"`
 	Generated   bool   `json:"generated"`
+	// ContentDigest is the SHA-256 digest of the exact source bytes parsed into
+	// this file node. It drives freshness checks and safe incremental reuse.
+	ContentDigest string `json:"content_digest,omitempty"`
 }
 
 // SymbolKind categorises a symbol.
@@ -332,9 +352,12 @@ type SymbolNode struct {
 	Signature        string            `json:"signature,omitempty"`
 	MethodSignature  string            `json:"method_signature,omitempty"`
 	InterfaceMethods map[string]string `json:"interface_methods,omitempty"`
-	StructFields     []StructField     `json:"struct_fields,omitempty"`
-	EmbeddedStructs  []string          `json:"embedded_structs,omitempty"`
-	Arity            int               `json:"arity,omitempty"`
+	// DeclaredInterfaceMethods retains parser-owned declarations before precise
+	// enrichment adds methods inherited through embedded interfaces.
+	DeclaredInterfaceMethods map[string]string `json:"declared_interface_methods,omitempty"`
+	StructFields             []StructField     `json:"struct_fields,omitempty"`
+	EmbeddedStructs          []string          `json:"embedded_structs,omitempty"`
+	Arity                    int               `json:"arity,omitempty"`
 }
 
 // StructField represents a field inside a struct.
@@ -371,6 +394,9 @@ type CallEdge struct {
 	// retained for graph traversal/reachability only; presentation layers must
 	// not report it as a file:line invocation.
 	Synthetic bool `json:"synthetic,omitempty"`
+	// Precise marks a call introduced by type-checked enrichment. Parser calls
+	// remain false, even when precise analysis resolves their CalleeSymbolID.
+	Precise bool `json:"precise,omitempty"`
 	// ReturnUsage describes how the caller consumes the return value.
 	// Values: "discarded", "assigned", "partially_ignored", "returned",
 	//         "goroutine", "deferred", "" (nested/passed as argument).

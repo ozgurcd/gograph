@@ -17,7 +17,7 @@ import (
 type ChangeStatus string
 
 const (
-	// ChangeModified means the symbol's source file is newer than graph.json.
+	// ChangeModified means the symbol's source-file content differs from graph.json.
 	// The symbol may or may not have changed — agents should inspect it.
 	ChangeModified ChangeStatus = "modified"
 	// ChangeNew means the declaration was found in a changed file but is not
@@ -46,41 +46,56 @@ type ChangedSymbol struct {
 type ChangesResult struct {
 	// GraphAge is when graph.json was last generated.
 	GraphAge time.Time `json:"graph_age"`
-	// ChangedFiles lists source files newer than the graph.
+	// ChangedFiles lists source files whose selected content differs from the graph.
 	ChangedFiles []string `json:"changed_files"`
 	// Symbols lists all symbols affected by the source changes.
 	Symbols []ChangedSymbol `json:"symbols"`
 }
 
 // Changes compares the current source tree against graph.json to report what
-// has likely changed since the graph was persisted. It identifies:
-//   - Symbols in files newer than the graph (ChangeModified)
+// has changed since the graph was persisted. It identifies:
+//   - Symbols in files whose content digest changed (ChangeModified)
 //   - Top-level declarations in changed files not found in the graph (ChangeNew)
 //   - Graph symbols whose files are absent from the current safely selected
 //     source inventory (ChangeDeleted)
 //
 // root is the absolute path to the repository root.
 func Changes(g *graph.Graph, root string) *ChangesResult {
-	graphTime := g.GeneratedAt
-	result := &ChangesResult{GraphAge: graphTime}
+	result := &ChangesResult{GraphAge: g.GeneratedAt}
 
 	// Step 1: Scan the same source set used by graph construction. This keeps
 	// generated, vendored, and gitignored files out of freshness reports.
 	changedFiles := make(map[string]bool)
 	existingFiles := make(map[string]bool)
+	previousDigests := make(map[string]string, len(g.Files))
+	for _, file := range g.Files {
+		previousDigests[graphFileRelative(root, file.Path)] = file.ContentDigest
+	}
+	sourceReader, sourceRootErr := sourcefs.Open(root)
+	if sourceReader != nil {
+		defer func() { _ = sourceReader.Close() }()
+	}
 	files, _ := scanner.Walk(root)
 	for _, path := range files {
-		info, err := os.Lstat(path)
-		if err != nil {
-			continue
-		}
+		info, statErr := os.Lstat(path)
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			continue
 		}
 		rel = filepath.Clean(rel)
 		existingFiles[rel] = true
-		if info.ModTime().After(graphTime) {
+		var digest string
+		if sourceRootErr == nil {
+			if data, readErr := sourceReader.ReadFile(rel); readErr == nil {
+				digest = graph.SourceDigest(data)
+			}
+		}
+		oldDigest := previousDigests[rel]
+		changed := oldDigest != "" && (digest == "" || digest != oldDigest)
+		if oldDigest == "" && statErr == nil {
+			changed = info.ModTime().After(g.GeneratedAt)
+		}
+		if changed {
 			changedFiles[rel] = true
 			result.ChangedFiles = append(result.ChangedFiles, rel)
 		}
@@ -119,10 +134,6 @@ func Changes(g *graph.Graph, root string) *ChangesResult {
 
 	// Parse changed files for NEW top-level declarations.
 	fset := token.NewFileSet()
-	sourceReader, sourceRootErr := sourcefs.Open(root)
-	if sourceReader != nil {
-		defer func() { _ = sourceReader.Close() }()
-	}
 	for relPath := range changedFiles {
 		if sourceRootErr != nil {
 			continue

@@ -355,7 +355,7 @@ when available; outside Git, the build target .gitignore is used.
 If no Go files are found, or none can be parsed, build exits before replacing artifacts.
 Partial builds record parse failures and selection/security warnings in graph.json.
   gograph stats   → counts plus complete/partial build and ast/precise/fallback status
-  gograph stale   → checks source selection, build context, and modification times;
+  gograph stale   → checks source selection, build context, and content digests;
                     exits 0 (up to date), 1 (error), or 2 (stale)
 
 CLI graph-backed analysis uses the last trusted persisted graph, written by a manual build or an
@@ -495,9 +495,9 @@ Know these before trusting results:
                         dynamic calls are not modeled. Use a precise build for stronger method/
                         interface targets. External calls lower confidence.
                         Sanitizers apply to return values only.
-  endpoint              route patterns only resolve flat string literals. Gin/Echo/Chi
-                        Group() prefixes are lost at AST level — always search by handler
-                        symbol name, not route string.
+  endpoint              constant Gin/Echo/Fiber Group() and Chi Route() prefixes are
+                        composed. Dynamic prefixes remain best-effort; search those by
+                        known suffix or handler symbol.
   impact / skeleton     can produce very large output on hotspot symbols or large repos.
                         Use callers --depth N for bounded traversal instead of impact.
   CLI snapshot results  reflect the last trusted persisted graph. Run 'gograph stale' first;
@@ -520,7 +520,7 @@ INDEXING:
 build . [--precise]  : parse AST, stage graph.json + reports, commit graph.json last
                        Honors Go build constraints and cmd/go package-directory rules;
                        skips generated, module-ignored, and Git-ignored sources.
-stale                : check source selection, build context, and modification times
+stale                : check source selection, build context, and content digests
                        exit 0 = up to date, 1 = error, 2 = stale
 stats                : schema/build/precision health, parse failures, and symbol/call/route counts
 
@@ -670,7 +670,8 @@ func runBuild(args []string) int {
 	fmt.Printf("gograph build: scanning %s\n", absRoot)
 
 	buildConfig, configErr := resolveBuildConfig(absRoot)
-	g, err := buildGraphWithConfig(absRoot, buildConfig, configErr)
+	previous, _ := loadGraph(absRoot)
+	g, err := buildGraphWithConfig(absRoot, buildConfig, configErr, previous)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error building graph: %v\n", err)
 		return 1
@@ -708,10 +709,11 @@ func runBuild(args []string) int {
 
 func BuildGraph(absRoot string) (*graph.Graph, error) {
 	buildConfig, configErr := resolveBuildConfig(absRoot)
-	return buildGraphWithConfig(absRoot, buildConfig, configErr)
+	previous, _ := loadGraph(absRoot)
+	return buildGraphWithConfig(absRoot, buildConfig, configErr, previous)
 }
 
-func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr error) (*graph.Graph, error) {
+func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr error, previousGraphs ...*graph.Graph) (*graph.Graph, error) {
 	files, selectionFingerprint, walkErrs := scanner.WalkWithConfigAndFingerprint(absRoot, buildConfig)
 	if configErr != nil {
 		walkErrs = append([]error{fmt.Errorf("using default Go build context: %w", configErr)}, walkErrs...)
@@ -720,6 +722,7 @@ func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr
 		ScannedFiles:            len(files),
 		Precision:               graph.PrecisionAST,
 		SourcePolicyVersion:     graph.CurrentSourcePolicyVersion,
+		AnalysisCacheVersion:    graph.CurrentAnalysisCacheVersion,
 		BuildContextFingerprint: selectionFingerprint,
 	}
 	for _, e := range walkErrs {
@@ -757,7 +760,6 @@ func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr
 		}
 	}
 
-	fset := token.NewFileSet()
 	pkgMap := make(map[string]*graph.PackageNode)
 	sourceReader, err := sourcefs.Open(absRoot)
 	if err != nil {
@@ -765,51 +767,100 @@ func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr
 	}
 	defer func() { _ = sourceReader.Close() }()
 
+	type selectedSource struct {
+		path   string
+		rel    string
+		dir    string
+		digest string
+	}
+	selected := make([]selectedSource, 0, len(files))
+	currentFiles := make(map[string]selectedSource, len(files))
 	for _, path := range files {
 		rel, err := filepath.Rel(absRoot, path)
 		if err != nil {
 			rel = path
 		}
+		rel = filepath.Clean(rel)
 		dir := filepath.Dir(rel)
-		pkgImportPath := dirToImportPath[dir]
 		source, err := sourceReader.ReadFile(rel)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  warning: read %s: %v\n", rel, err)
 			buildMetadata.Failures = append(buildMetadata.Failures, graph.BuildFailure{File: rel, Error: err.Error()})
 			continue
 		}
-		result, err := parser.ParseSource(fset, path, source, rel, pkgImportPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
-			buildMetadata.Failures = append(buildMetadata.Failures, graph.BuildFailure{File: rel, Error: err.Error()})
-			continue
-		}
-		buildMetadata.ParsedFiles++
+		item := selectedSource{path: path, rel: rel, dir: dir, digest: graph.SourceDigest(source)}
+		selected = append(selected, item)
+		currentFiles[rel] = item
+	}
 
-		g.Files = append(g.Files, result.File)
-		g.Symbols = append(g.Symbols, result.Symbols...)
-		g.Imports = append(g.Imports, result.Imports...)
-		g.Calls = append(g.Calls, result.Calls...)
-		g.EnvReads = append(g.EnvReads, result.Env...)
-		g.Routes = append(g.Routes, result.Routes...)
-		g.SQLs = append(g.SQLs, result.SQLs...)
-		g.Errors = append(g.Errors, result.Errors...)
-		g.Concurrency = append(g.Concurrency, result.Concurrency...)
-		g.TestEdges = append(g.TestEdges, result.TestEdges...)
-		g.Mutations = append(g.Mutations, result.Mutations...)
-		g.Literals = append(g.Literals, result.Literals...)
-		g.HTTPCalls = append(g.HTTPCalls, result.HTTPCalls...)
-		g.FlowFunctions = append(g.FlowFunctions, result.FlowFunctions...)
-
-		if _, ok := pkgMap[dir]; !ok {
-			pkgMap[dir] = &graph.PackageNode{
-				ID:                   dir,
-				Name:                 result.File.PackageName,
-				ImportPathBestEffort: pkgImportPath,
-				Dir:                  dir,
+	var previous *graph.Graph
+	if len(previousGraphs) > 0 {
+		previous = previousGraphs[0]
+	}
+	reuseEligible := previous != nil && previous.UsesCurrentSourcePolicy() &&
+		previous.Build.AnalysisCacheVersion == graph.CurrentAnalysisCacheVersion &&
+		previous.Build.BuildContextFingerprint == selectionFingerprint
+	previousFiles := make(map[string]graph.FileNode)
+	var reusableResults map[string]*parser.FileResult
+	changedDirs := make(map[string]bool)
+	if reuseEligible {
+		reusableResults = indexReusableFileAnalysis(previous)
+		for _, file := range previous.Files {
+			rel := graphFileRelative(absRoot, file.Path)
+			previousFiles[rel] = file
+			if _, exists := currentFiles[rel]; !exists || file.ContentDigest == "" {
+				changedDirs[filepath.Dir(rel)] = true
 			}
 		}
-		pkgMap[dir].Files = append(pkgMap[dir].Files, rel)
+		for _, failure := range previous.Build.Failures {
+			changedDirs[filepath.Dir(graphFileRelative(absRoot, failure.File))] = true
+		}
+		for rel, item := range currentFiles {
+			old, exists := previousFiles[rel]
+			if !exists || old.ContentDigest != item.digest {
+				changedDirs[item.dir] = true
+			}
+		}
+	} else {
+		for _, item := range selected {
+			changedDirs[item.dir] = true
+		}
+	}
+	for dir := range changedDirs {
+		if _, exists := dirToImportPath[dir]; exists {
+			buildMetadata.RebuiltPackages++
+		}
+	}
+
+	fset := token.NewFileSet()
+	for _, item := range selected {
+		pkgImportPath := dirToImportPath[item.dir]
+		if reuseEligible && !changedDirs[item.dir] {
+			if result, exists := reusableResults[item.rel]; exists {
+				result.File.ContentDigest = item.digest
+				appendFileResult(g, result)
+				buildMetadata.ParsedFiles++
+				buildMetadata.ReusedFiles++
+				addPackageFile(pkgMap, item.dir, pkgImportPath, result.File.PackageName, item.rel)
+				continue
+			}
+		}
+		source, err := sourceReader.ReadFile(item.rel)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: read %s: %v\n", item.rel, err)
+			buildMetadata.Failures = append(buildMetadata.Failures, graph.BuildFailure{File: item.rel, Error: err.Error()})
+			continue
+		}
+		result, err := parser.ParseSource(fset, item.path, source, item.rel, pkgImportPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+			buildMetadata.Failures = append(buildMetadata.Failures, graph.BuildFailure{File: item.rel, Error: err.Error()})
+			continue
+		}
+		result.File.ContentDigest = item.digest
+		buildMetadata.ParsedFiles++
+		appendFileResult(g, result)
+		addPackageFile(pkgMap, item.dir, pkgImportPath, result.File.PackageName, item.rel)
 	}
 	if buildMetadata.ParsedFiles == 0 {
 		firstFailure := "unknown parse failure"
@@ -832,6 +883,143 @@ func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr
 	filterPotentialCalls(g)
 	sortGraph(g)
 	return g, nil
+}
+
+func appendFileResult(g *graph.Graph, result *parser.FileResult) {
+	g.Files = append(g.Files, result.File)
+	g.Symbols = append(g.Symbols, result.Symbols...)
+	g.Imports = append(g.Imports, result.Imports...)
+	g.Calls = append(g.Calls, result.Calls...)
+	g.EnvReads = append(g.EnvReads, result.Env...)
+	g.Routes = append(g.Routes, result.Routes...)
+	g.SQLs = append(g.SQLs, result.SQLs...)
+	g.Errors = append(g.Errors, result.Errors...)
+	g.Concurrency = append(g.Concurrency, result.Concurrency...)
+	g.TestEdges = append(g.TestEdges, result.TestEdges...)
+	g.Mutations = append(g.Mutations, result.Mutations...)
+	g.Literals = append(g.Literals, result.Literals...)
+	g.HTTPCalls = append(g.HTTPCalls, result.HTTPCalls...)
+	g.FlowFunctions = append(g.FlowFunctions, result.FlowFunctions...)
+}
+
+func addPackageFile(packages map[string]*graph.PackageNode, dir, importPath, packageName, rel string) {
+	if _, ok := packages[dir]; !ok {
+		packages[dir] = &graph.PackageNode{
+			ID:                   dir,
+			Name:                 packageName,
+			ImportPathBestEffort: importPath,
+			Dir:                  dir,
+		}
+	}
+	packages[dir].Files = append(packages[dir].Files, rel)
+}
+
+func graphFileRelative(root, path string) string {
+	if filepath.IsAbs(path) {
+		if rel, err := filepath.Rel(root, path); err == nil {
+			return filepath.Clean(rel)
+		}
+	}
+	return filepath.Clean(path)
+}
+
+// indexReusableFileAnalysis reconstructs parser-owned records in one linear
+// pass. Precise-only records are intentionally omitted; precise enrichment is
+// subsequently recomputed across the complete repository graph.
+func indexReusableFileAnalysis(previous *graph.Graph) map[string]*parser.FileResult {
+	results := make(map[string]*parser.FileResult, len(previous.Files))
+	for _, file := range previous.Files {
+		rel := filepath.Clean(file.Path)
+		file.ID = rel
+		file.Path = rel
+		results[rel] = &parser.FileResult{File: file}
+	}
+	lookup := func(path string) *parser.FileResult {
+		return results[filepath.Clean(path)]
+	}
+	for _, symbol := range previous.Symbols {
+		result := lookup(symbol.File)
+		if result == nil {
+			continue
+		}
+		symbol.InterfaceMethods = cloneStringMap(symbol.DeclaredInterfaceMethods)
+		symbol.DeclaredInterfaceMethods = cloneStringMap(symbol.DeclaredInterfaceMethods)
+		result.Symbols = append(result.Symbols, symbol)
+	}
+	for _, edge := range previous.Imports {
+		if result := lookup(edge.FromFile); result != nil {
+			result.Imports = append(result.Imports, edge)
+		}
+	}
+	for _, edge := range previous.Calls {
+		if result := lookup(edge.File); result != nil && !edge.Precise {
+			edge.CalleeSymbolID = ""
+			edge.Synthetic = false
+			result.Calls = append(result.Calls, edge)
+		}
+	}
+	for _, edge := range previous.EnvReads {
+		if result := lookup(edge.File); result != nil {
+			result.Env = append(result.Env, edge)
+		}
+	}
+	for _, edge := range previous.Routes {
+		if result := lookup(edge.File); result != nil {
+			result.Routes = append(result.Routes, edge)
+		}
+	}
+	for _, edge := range previous.SQLs {
+		if result := lookup(edge.File); result != nil {
+			result.SQLs = append(result.SQLs, edge)
+		}
+	}
+	for _, edge := range previous.Errors {
+		if result := lookup(edge.File); result != nil {
+			result.Errors = append(result.Errors, edge)
+		}
+	}
+	for _, edge := range previous.Concurrency {
+		if result := lookup(edge.File); result != nil {
+			result.Concurrency = append(result.Concurrency, edge)
+		}
+	}
+	for _, edge := range previous.TestEdges {
+		if result := lookup(edge.File); result != nil {
+			result.TestEdges = append(result.TestEdges, edge)
+		}
+	}
+	for _, edge := range previous.Mutations {
+		if result := lookup(edge.File); result != nil && !edge.Precise {
+			result.Mutations = append(result.Mutations, edge)
+		}
+	}
+	for _, edge := range previous.Literals {
+		if result := lookup(edge.File); result != nil {
+			result.Literals = append(result.Literals, edge)
+		}
+	}
+	for _, edge := range previous.HTTPCalls {
+		if result := lookup(edge.SourceFile); result != nil {
+			result.HTTPCalls = append(result.HTTPCalls, edge)
+		}
+	}
+	for _, item := range previous.FlowFunctions {
+		if result := lookup(item.File); result != nil {
+			result.FlowFunctions = append(result.FlowFunctions, item)
+		}
+	}
+	return results
+}
+
+func cloneStringMap(source map[string]string) map[string]string {
+	if len(source) == 0 {
+		return nil
+	}
+	clone := make(map[string]string, len(source))
+	for key, value := range source {
+		clone[key] = value
+	}
+	return clone
 }
 
 // enrichGraphPreciselyWithConfig records the outcome in the graph even when
@@ -863,7 +1051,8 @@ func enrichGraphPreciselyWithConfig(absRoot string, g *graph.Graph, buildConfig 
 // silently serve AST-only results.
 func buildPreciseGraph(absRoot string) (*graph.Graph, error) {
 	buildConfig, configErr := resolveBuildConfig(absRoot)
-	g, err := buildGraphWithConfig(absRoot, buildConfig, configErr)
+	previous, _ := loadGraph(absRoot)
+	g, err := buildGraphWithConfig(absRoot, buildConfig, configErr, previous)
 	if err != nil {
 		return nil, err
 	}
@@ -1908,7 +2097,7 @@ INDEXING
                              Inactive build-constrained files, cmd/go wildcard-excluded
                              directories, generated sources, go.mod ignore paths, AI
                              worktrees, and Git-ignored paths are automatically skipped.
-  stale                      Check selected files, build context, and modification times.
+  stale                      Check selected files, build context, and content digests.
                              Exit 0 when current, 2 when stale, and 1 on error;
                              --json uses the same exit contract.
                              Agents should run this before structural analysis.
@@ -1916,7 +2105,8 @@ INDEXING
                              timestamp, and counts of packages, files, symbols,
                              calls, imports, routes, SQL queries, env reads, and
                              test edges, flow functions, build completeness, analysis
-                             precision (ast/precise/precise_fallback), and parse failures. Zero
+                             precision (ast/precise/precise_fallback), parser reuse,
+                             rebuilt-package count, and parse failures. Zero
                              re-parsing — reads graph.json only.
 
 AGENT WORKFLOW RULES (CRITICAL)
@@ -2399,6 +2589,8 @@ func runStats() int {
 	fmt.Printf("build_status   : %s\n", st.BuildStatus)
 	if st.BuildStatus != "unknown" {
 		fmt.Printf("parsed_files   : %d/%d\n", st.ParsedFiles, st.ScannedFiles)
+		fmt.Printf("reused_files   : %d\n", st.ReusedFiles)
+		fmt.Printf("rebuilt_pkgs   : %d\n", st.RebuiltPackages)
 		fmt.Printf("parse_failures : %d\n", st.ParseFailures)
 	}
 	return 0
@@ -2956,7 +3148,7 @@ func runChanges(args []string) int {
 		return 0
 	}
 
-	// --- default mode: mtime vs graph.json ---
+	// --- default mode: content digests vs graph.json ---
 	result := search.Changes(g, root)
 	if jsonMode {
 		return PrintJSON(okEnvelope("changes", "", result, len(result.ChangedFiles)+len(result.Symbols)))
@@ -3539,9 +3731,8 @@ Flags:
 		fmt.Printf("No matching HTTP routes found for %q\n\n", query)
 		fmt.Println("Possible reasons:")
 		fmt.Println("  1. The route does not exist — run 'gograph routes' to see all registered routes.")
-		fmt.Println("  2. The codebase uses grouped routing (Gin Group(), Echo Group(), Chi Route()).")
-		fmt.Println("     Grouped routes lose their prefix in the AST — only the leaf path is recorded.")
-		fmt.Println("     Example: router.Group(\"/api/v1\") + g.POST(\"/users\", H) is stored as POST /users")
+		fmt.Println("  2. The route uses a dynamically computed group prefix that static analysis cannot resolve.")
+		fmt.Println("     Constant Gin/Echo/Fiber Group() and Chi Route() prefixes are composed automatically.")
 		fmt.Println("")
 		fmt.Println("Fix: search by handler symbol name instead of route pattern:")
 		fmt.Printf("  gograph endpoint \"<HandlerFunctionName>\"\n")

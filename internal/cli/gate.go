@@ -31,7 +31,7 @@ const gateConfigTemplate = `# .gograph.yml — quality gates enforced by 'gograp
 # Each setting below is OPTIONAL: omit a line to disable that gate.
 # Run 'gograph gate' from a working tree where 'gograph build .' has
 # already produced .gograph/graph.json.
-# The gate fails closed when source files are newer than graph.json.
+# The gate fails closed when selected source content differs from graph.json.
 
 # max_complexity: fail if any function's cyclomatic complexity exceeds N.
 # Calibrate by running 'gograph complexity' once and reading the top score;

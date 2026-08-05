@@ -52,16 +52,32 @@ filesystem transaction; a crash can leave reports ahead of the previous
 `graph.json`. The lock file remains as separate operational state. A failed
 `build --precise` retry keeps an existing fresh precise artifact for the same
 selected sources instead of publishing a downgrade.
+
+Every successfully parsed file stores a SHA-256 digest. A later build reparses
+all selected files in each changed package directory and reuses parser-owned
+records for unchanged packages. This package boundary avoids mixing old and
+new declarations within one Go package. `--precise` benefits from the reused
+AST base, but type loading and CHA/SSA enrichment still run repository-wide so
+cross-package method sets and dispatch targets remain correct.
 - **Arguments**: `path` (optional, defaults to `.`)
 - **Flags**: 
   - `--precise`: Attempts type-checked CHA/SSA enrichment after a repository preflight that rejects source-tree links `cmd/go` may inspect across the selected root plus its effective module root, or the workspace root and member trees; `.git` and `.gograph` are excluded from that walk. It also rejects special recognized build inputs, unsafe workspace members, and linked/non-regular module/workspace metadata entries. Enrichment needs compilable, build-selected packages; on unsafe input, failure, or an incomplete non-test package load gograph warns and publishes the unchanged AST graph unless a fresh successful precise artifact already covers the same safely selected sources. Graph metadata records `precise`, `precise_fallback`, or `ast`. Precise interface calls retain one parallel call edge per valid named in-repository target; promoted methods add an explicitly marked traversal-only forwarding edge.
-  - **Graph v2 compatibility**: Precision/column/synthetic fields remain additive, but persisted graphs without the exact current source-policy marker are deliberately rebuild-required because their source-derived data cannot be trusted. Older v2 binaries can decode newly written graphs but do not enforce repository source confinement and may count or display synthetic forwarding records as ordinary calls; use the current binary for untrusted repositories and new graphs.
+  - **Graph v2 compatibility**: Precision/column/synthetic, content-digest,
+    analysis-cache, parser/precise provenance, and reuse-count fields remain
+    additive. Graphs without the exact current source-policy marker are
+    deliberately rebuild-required because their source-derived data cannot be
+    trusted. A legacy graph without digests retains mtime-based freshness until
+    one current build upgrades it, but is never eligible for parser-record
+    reuse. Older v2 binaries can decode newly written graphs but do not enforce
+    repository source confinement and may count or display synthetic forwarding
+    records as ordinary calls; use the current binary for untrusted repositories
+    and new graphs.
 
 ### stale
 ```bash
 gograph stale [--json]
 ```
-Compares the selected-file inventory, effective Go build context, and source modification times with `.gograph/graph.json`. It reports added, deleted, newly active, newly inactive, and modified selected files plus build-context changes.
+Compares the selected-file inventory, effective Go build context, and SHA-256 source-content digests with `.gograph/graph.json`. Modification times remain diagnostic fields only. It reports added, deleted, newly active, newly inactive, and byte-modified selected files plus build-context changes.
 
 Text and JSON modes use the same exit contract:
 
@@ -98,6 +114,8 @@ Provides a source-parse-free index health summary derived from the persisted
   - `build_status` (`complete` or `partial`)
   - `scanned_files` and `parsed_files` in JSON; text renders
     `parsed_files` as `parsed/scanned`
+  - `reused_files` and `rebuilt_packages` in JSON; text renders the latter as
+    `rebuilt_pkgs`
   - `parse_failures`
 
 ---
@@ -318,7 +336,11 @@ constants of a package.
 ```bash
 gograph routes
 ```
-Extracts all HTTP REST API routes found in the codebase (handles Gin, Chi, Echo, and net/http literals).
+Extracts HTTP REST API routes from Gin, Chi, Echo, Fiber, and net/http-style
+registration calls. Constant nested Gin/Echo/Fiber `Group` prefixes and Chi
+`Route` closure prefixes are composed into final paths. Dynamically computed
+prefix expressions remain unresolved, so those routes retain their known
+literal suffix.
 
 ### sql
 ```bash
@@ -422,7 +444,7 @@ Synthesizes AST data into a rich, prompt-ready natural language prose narrative.
 gograph endpoint <route> [--depth N] [--include-tests] [--json|--mermaid]
 ```
 Generates a complete vertical slice report for a single HTTP endpoint.
-- **Inputs**: Handler symbol name (always works), route path fragment (e.g. `/users`), or route pattern (`POST /api/users`).
+- **Inputs**: Handler symbol name, route path fragment (e.g. `/users`), or route pattern (`POST /api/users`). Constant grouped prefixes are resolved; for a dynamic group prefix, use the known suffix or handler symbol.
 - **Composes**: Route definition + handler function + full downstream callee chain (BFS, default depth 5) + database SQL queries + env vars read.
 - **Flags**: `--depth` is clamped to 1-20; `--include-tests` includes routes registered in `_test.go` files; `--mermaid` returns a fenced flowchart instead of the normal text/JSON presentation.
 
@@ -625,7 +647,7 @@ gograph mcp [path] [--persist-refresh]
 Starts a Model Context Protocol (MCP) server over `stdio`, exposing gograph's
 query, analysis, and workflow capabilities as native tools for integration with
 AI clients (e.g., Claude Code, Cursor).
-- **Freshness**: If `graph.json` is missing, unreadable, linked through a descendant path, or has a missing/unsupported source-policy marker, startup builds a safe in-memory AST graph. Source-analysis tools check source freshness and newer persisted artifacts per call, then rebuild after edits in the current requested mode. MCP `stale`, default `changes`, and `stats` inspect the trusted persisted snapshot, or the startup in-memory fallback when no usable artifact exists. Precise and precise-fallback sessions re-run CHA/SSA, and a failed precise refresh is returned visibly.
+- **Freshness**: If `graph.json` is missing, unreadable, linked through a descendant path, or has a missing/unsupported source-policy marker, startup builds a safe in-memory AST graph. Source-analysis tools compare selected source digests plus the build/module fingerprint and newer persisted artifacts per call, then reparse changed packages while reusing unchanged package AST records. MCP `stale`, default `changes`, and `stats` inspect the trusted persisted snapshot, or the startup in-memory fallback when no usable artifact exists. Precise and precise-fallback sessions still re-run repository-wide CHA/SSA, and a failed precise refresh is returned visibly.
 - **Persistence**: Refreshes remain in memory by default. `--persist-refresh`
   writes or overwrites `.gograph/graph.json` and the nine Markdown reports only
   after a successful, confirmed-fresh refresh. It does not update `.gitignore`

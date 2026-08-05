@@ -9,10 +9,40 @@ import (
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/ozgurcd/gograph/internal/cli"
 	"github.com/ozgurcd/gograph/internal/graph"
 	mcppkg "github.com/ozgurcd/gograph/internal/mcp"
 	"github.com/ozgurcd/gograph/internal/search"
 )
+
+func TestCLIAndMCPGroupedRouteParity(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/routes\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source := `package routes
+func register(router *Router) {
+	v1 := router.Group("/api/v1")
+	users := v1.Group("/users")
+	users.POST("/:id", UpdateUser)
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "routes.go"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g, err := cli.BuildGraph(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cliResults := search.Routes(g)
+	if len(cliResults) != 1 || cliResults[0].Name != "POST /api/v1/users/:id" {
+		t.Fatalf("CLI route results = %#v", cliResults)
+	}
+	mcpText := callTool(t, setupHandlers(t, g)["gograph_routes"], nil)
+	if !strings.Contains(mcpText, cliResults[0].Name) || !strings.Contains(mcpText, "UpdateUser") {
+		t.Fatalf("MCP route output does not match CLI route evidence:\n%s", mcpText)
+	}
+}
 
 func parityRegressionGraph(t *testing.T) *graph.Graph {
 	t.Helper()

@@ -84,7 +84,10 @@ Files and directories ignored by Git are excluded consistently from builds,
 freshness checks, and change detection. If no Go files are found, or every Go
 file fails to parse, the build exits without replacing an existing graph.
 Partial status retains parse failures and selection/security warnings in
-`graph.json` build metadata. Descendant symlinks and special files for
+`graph.json` build metadata. Each successfully parsed source stores a SHA-256
+digest. Subsequent builds reparse changed packages and reuse parser records for
+unchanged packages; precise builds still recompute repository-wide CHA/SSA.
+Descendant symlinks and special files for
 extensions recognized by `go/build` are reported and excluded;
 linked/non-regular `go.mod`, `go.sum`, `go.work`, `go.work.sum`, and
 `vendor/modules.txt` metadata is rejected before toolchain use. Applicable
@@ -138,6 +141,8 @@ test_edges     : 522
 flow_functions : 311
 build_status   : complete
 parsed_files   : 187/187
+reused_files   : 0
+rebuilt_pkgs   : 42
 parse_failures : 0
 ```
 
@@ -145,7 +150,7 @@ parse_failures : 0
 gograph stale
 ```
 
-Compares the current selected-file inventory, effective Go build context, and source modification times with `graph.json`. It uses the same build-constraint and ignore policy as `build`; `stale` and graph-backed query commands use the trusted directory from which `graph.json` was loaded, not its serialized `root` metadata, so they work identically from subdirectories. Exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error; text and `--json` modes use the same contract. Normally rebuild for status `2`. A status-`1` message that explicitly reports a missing or unsupported source-policy marker is a one-time rebuild migration; resolve other status-`1` errors instead of hiding them with an automatic rebuild.
+Compares the current selected-file inventory, effective Go build context, and SHA-256 source-content digests with `graph.json`; modification times are diagnostic only. It uses the same build-constraint and ignore policy as `build`; `stale` and graph-backed query commands use the trusted directory from which `graph.json` was loaded, not its serialized `root` metadata, so they work identically from subdirectories. Exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error; text and `--json` modes use the same contract. Normally rebuild for status `2`. A status-`1` message that explicitly reports a missing or unsupported source-policy marker is a one-time rebuild migration; resolve other status-`1` errors instead of hiding them with an automatic rebuild.
 
 ## Step 3 — Run repository-wide queries
 
@@ -254,7 +259,7 @@ You can check whether a rebuild is needed:
 gograph stale
 ```
 
-The MCP server checks source freshness and newer persisted graphs per analysis call. After an edit it rebuilds in memory using the current requested mode, so a precise session re-runs CHA/SSA rather than silently becoming AST-only; if that refresh cannot complete precisely, the analysis call returns an error. MCP `stale`, default `changes`, and `stats` inspect a trusted persisted graph when present, or the startup in-memory fallback when the artifact is missing, unreadable, unsafe, or uses an unsupported source policy.
+The MCP server checks source-content digests, the selected inventory/build fingerprint, and newer persisted graphs per analysis call. After an edit it reparses changed packages while reusing unchanged package AST records. A precise session still re-runs repository-wide CHA/SSA rather than silently becoming AST-only; if that refresh cannot complete precisely, the analysis call returns an error. MCP `stale`, default `changes`, and `stats` inspect a trusted persisted graph when present, or the startup in-memory fallback when the artifact is missing, unreadable, unsafe, or uses an unsupported source policy.
 
 MCP refreshes are in-memory by default. Start with
 `gograph mcp [path] --persist-refresh` to publish successful refreshes to the

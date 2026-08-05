@@ -52,3 +52,15 @@ func TestBuildMetadataPreciseRequested(t *testing.T) {
 		}
 	}
 }
+
+func TestStatsReportsIncrementalBuildWork(t *testing.T) {
+	result := search.Stats(&graph.Graph{Build: &graph.BuildMetadata{
+		ScannedFiles:    8,
+		ParsedFiles:     8,
+		ReusedFiles:     6,
+		RebuiltPackages: 1,
+	}})
+	if result.ReusedFiles != 6 || result.RebuiltPackages != 1 {
+		t.Fatalf("incremental stats = reused %d rebuilt %d, want 6/1", result.ReusedFiles, result.RebuiltPackages)
+	}
+}

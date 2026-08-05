@@ -372,6 +372,7 @@ func collectIndirectMutations(prog *ssa.Program, absRoot string, userMutators ma
 						File:     strings.TrimPrefix(pos.Filename, absRoot+"/"),
 						Line:     pos.Line,
 						Via:      "chan<-",
+						Precise:  true,
 					})
 				case ssa.CallInstruction:
 					common := i.Common()
@@ -415,6 +416,7 @@ func collectIndirectMutations(prog *ssa.Program, absRoot string, userMutators ma
 						File:     strings.TrimPrefix(pos.Filename, absRoot+"/"),
 						Line:     pos.Line,
 						Via:      calleeFn.Name(),
+						Precise:  true,
 					})
 				}
 			}

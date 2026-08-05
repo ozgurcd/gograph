@@ -6,23 +6,25 @@ import (
 
 // StatsResult holds a summary of the current graph index.
 type StatsResult struct {
-	SchemaVersion string              `json:"schema_version"`
-	GeneratedAt   string              `json:"generated_at"`
-	Precision     graph.PrecisionMode `json:"precision"`
-	Packages      int                 `json:"packages"`
-	Files         int                 `json:"files"`
-	Symbols       int                 `json:"symbols"`
-	Calls         int                 `json:"calls"`
-	Imports       int                 `json:"imports"`
-	Routes        int                 `json:"routes"`
-	SQLs          int                 `json:"sqls"`
-	EnvReads      int                 `json:"env_reads"`
-	TestEdges     int                 `json:"test_edges"`
-	FlowFunctions int                 `json:"flow_functions"`
-	BuildStatus   string              `json:"build_status"`
-	ScannedFiles  int                 `json:"scanned_files,omitempty"`
-	ParsedFiles   int                 `json:"parsed_files,omitempty"`
-	ParseFailures int                 `json:"parse_failures,omitempty"`
+	SchemaVersion   string              `json:"schema_version"`
+	GeneratedAt     string              `json:"generated_at"`
+	Precision       graph.PrecisionMode `json:"precision"`
+	Packages        int                 `json:"packages"`
+	Files           int                 `json:"files"`
+	Symbols         int                 `json:"symbols"`
+	Calls           int                 `json:"calls"`
+	Imports         int                 `json:"imports"`
+	Routes          int                 `json:"routes"`
+	SQLs            int                 `json:"sqls"`
+	EnvReads        int                 `json:"env_reads"`
+	TestEdges       int                 `json:"test_edges"`
+	FlowFunctions   int                 `json:"flow_functions"`
+	BuildStatus     string              `json:"build_status"`
+	ScannedFiles    int                 `json:"scanned_files,omitempty"`
+	ParsedFiles     int                 `json:"parsed_files,omitempty"`
+	ReusedFiles     int                 `json:"reused_files,omitempty"`
+	RebuiltPackages int                 `json:"rebuilt_packages,omitempty"`
+	ParseFailures   int                 `json:"parse_failures,omitempty"`
 }
 
 // Stats derives index health counts directly from the in-memory graph. It
@@ -51,6 +53,8 @@ func Stats(g *graph.Graph) StatsResult {
 		}
 		result.ScannedFiles = g.Build.ScannedFiles
 		result.ParsedFiles = g.Build.ParsedFiles
+		result.ReusedFiles = g.Build.ReusedFiles
+		result.RebuiltPackages = g.Build.RebuiltPackages
 		result.ParseFailures = len(g.Build.Failures)
 	}
 	return result

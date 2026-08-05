@@ -9,6 +9,7 @@ import (
 
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/scanner"
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
 
 func normalizeSymbolName(name string) string {
@@ -441,8 +442,9 @@ type GodObjectCandidate struct {
 }
 
 // Stale compares graph.json's selected-file inventory, effective build
-// context, and GeneratedAt timestamp with the current repository state. Pass
-// the absolute repository root path.
+// context, and persisted content digests with the current repository state.
+// File modification times remain diagnostic only. Pass the absolute
+// repository root path.
 //
 // Returns:
 //   - is_stale:            true when selected files or their build context differ.
@@ -450,8 +452,8 @@ type GodObjectCandidate struct {
 //   - newest_source_mtime: UTC mtime of the newest .go file found (populated
 //     regardless of staleness — useful for diagnosis).
 //   - newest_source_file:  repo-relative path of that newest file.
-//   - changed_files:       files newer than the graph or added/removed from the
-//     active build selection (stale case only).
+//   - changed_files:       files whose bytes changed or that were added/removed
+//     from the active build selection (stale case only).
 //   - build_context_changed: true when source-selection inputs changed.
 func Stale(g *graph.Graph, root string) StaleResult {
 	graphTime := g.GeneratedAt
@@ -461,6 +463,14 @@ func Stale(g *graph.Graph, root string) StaleResult {
 
 	files, buildContextFingerprint, _ := scanner.WalkWithFingerprint(root)
 	currentFiles := make(map[string]struct{}, len(files))
+	previousDigests := make(map[string]string, len(g.Files))
+	for _, file := range g.Files {
+		previousDigests[graphFileRelative(root, file.Path)] = file.ContentDigest
+	}
+	sourceReader, sourceErr := sourcefs.Open(root)
+	if sourceReader != nil {
+		defer func() { _ = sourceReader.Close() }()
+	}
 	for _, path := range files {
 		rel := graphFileRelative(root, path)
 		currentFiles[rel] = struct{}{}
@@ -472,7 +482,21 @@ func Stale(g *graph.Graph, root string) StaleResult {
 			newestMtime = info.ModTime()
 			newestPath = path
 		}
-		if info.ModTime().After(graphTime) {
+		oldDigest := previousDigests[rel]
+		if oldDigest == "" {
+			// Legacy graphs did not persist digests. Preserve their historical
+			// mtime fallback until the next successful build upgrades them.
+			if info.ModTime().After(graphTime) {
+				staleFiles[rel] = struct{}{}
+			}
+			continue
+		}
+		if sourceErr != nil {
+			staleFiles[rel] = struct{}{}
+			continue
+		}
+		source, err := sourceReader.ReadFile(rel)
+		if err != nil || graph.SourceDigest(source) != oldDigest {
 			staleFiles[rel] = struct{}{}
 		}
 	}
