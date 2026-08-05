@@ -27,7 +27,7 @@ architecture without embeddings or a hosted code index.
 brew install ozgurcd/tap/gograph
 # or: go install github.com/ozgurcd/gograph/cmd/gograph@latest
 
-# Build a fast AST graph, then verify it
+# Build a type-enriched precise graph, then verify it
 gograph build . --precise
 gograph stats
 
