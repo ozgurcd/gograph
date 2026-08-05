@@ -1,29 +1,42 @@
 # AGENTS.md
 
-<!-- BEGIN SCRINIUM ENFORCEMENT -->
-# Scrinium Enforcement
+# Project authority
 
-Audience: Codex, OpenCode, Antigravity-compatible agents.
-Generated for agents: antigravity, claudecode, codex, opencode.
+Current source, tests, generated CLI/MCP contracts, release artifacts, and live
+services are the source of truth for behavior. `llm-wiki/` stores durable
+decisions, rationale, security constraints, provenance, and cross-session
+context; it is not a substitute for verifying the code or current external
+state. Generated gograph wiki pages are caches and must be freshness-checked
+before use.
 
-Scrinium is the project memory and governance server. Treat `llm-wiki/` as the source of truth for durable project context.
+# Conditional Scrinium use
 
-## Required Loop
+Do not start Scrinium, call `capabilities`, or create a Scrinium session for a
+read-only question, repository status check, trivial edit, or ordinary change
+that creates no durable cross-session knowledge. A code or documentation change
+by itself does not require a Scrinium session.
 
-1. Start Scrinium MCP with command `scrinium` and args `/Users/odemir/Development/identuum/gograph/scrinium.json`.
-2. After any harness or plugin bootstrap instructions are loaded, call Scrinium `capabilities` before project work or wiki writes.
-3. Call `begin_session` before project changes.
-4. Read `index.md` and `agent-rules.md` with `read_wiki_page`.
-5. Read any relevant workflow pages before specialized wiki work.
-6. Make project changes.
-7. Update `llm-wiki` through Scrinium tools so durable context stays current.
-8. Update `log.md`, `index.md`, and `source-registry.md` when Scrinium reports they are required.
-9. Call `session_status`.
-10. Call `finish_session` before reporting completion.
+Use Scrinium when the task will create or update maintained `llm-wiki/`
+content, or when a material architecture, security, release, governance, or
+externally sourced decision should persist for future agents.
 
-Do not report completion while `finish_session` fails. Satisfy its pending maintenance checklist first.
+When Scrinium is required:
 
-## Boundaries
+1. Start one server for the working session with `scrinium ./scrinium.json`.
+2. Call `capabilities` once for that server connection, then call
+   `begin_session`.
+3. Read `index.md` and `agent-rules.md`, which Scrinium requires before wiki
+   writes. Read only the additional pages directly relevant to the task; do not
+   preload the whole wiki.
+4. Make project changes and write only durable knowledge through Scrinium.
+   Do not log routine implementation details, formatting cleanup, or facts that
+   are already obvious from source control.
+5. Update `log.md`, `index.md`, and `source-registry.md` only when
+   `session_status` requires them. Use one concise log entry per material
+   outcome.
+6. Call `session_status` and `finish_session` before reporting completion of a
+   session that was started. Do not call them when no Scrinium session exists.
 
-Scrinium can enforce wiki writes made through its MCP tools. It cannot see arbitrary direct filesystem edits unless the agent records them back into the wiki before finishing.
-<!-- END SCRINIUM ENFORCEMENT -->
+Protected pages must use Scrinium's draft workflow. Scrinium governs writes
+made through its tools; it is workflow assistance, not a security boundary for
+arbitrary filesystem edits.

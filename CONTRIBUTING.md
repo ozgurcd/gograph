@@ -60,10 +60,14 @@ the eight graph-oriented CLI commands that accept `--mermaid` have MCP tools
 with an optional `mermaid=true` parameter; both surfaces return
 Markdown-fenced Mermaid for that presentation.
 
-Use Scrinium for durable wiki maintenance. Read `llm-wiki/index.md`,
-`llm-wiki/project.md`, `llm-wiki/agent-rules.md`, and
-`llm-wiki/agent-contract.md` before project changes. Do not edit the protected
-`agent-rules.md` directly; propose changes through Scrinium's draft workflow.
+Use Scrinium only when maintained `llm-wiki/` content must change or a material
+architecture, security, release, governance, or external-source decision needs
+durable cross-session context. Ordinary changes and read-only work do not need
+a Scrinium session or mandatory wiki preload. When a wiki write is required,
+call `capabilities` once for the connection, begin a session, read `index.md`,
+`agent-rules.md`, and only directly relevant pages, then satisfy
+`session_status` and finish the session. Do not edit protected pages directly;
+use Scrinium's draft workflow.
 
 ## Publishing an MCP Registry Release
 

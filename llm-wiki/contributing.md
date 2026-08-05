@@ -2,7 +2,7 @@
 title: Contributing Guidelines
 type: workflow
 status: current
-updated: 2026-08-04
+updated: 2026-08-05
 sources:
   - SRC-20260614-gograph-legacy-contributing
 ---
@@ -41,4 +41,6 @@ Use `make build` so version metadata is injected; do not substitute a raw reposi
 
 ## Scrinium governance
 
-Start Scrinium from the repository's `scrinium.json`, call `capabilities` and `begin_session`, then read `index.md`, `agent-rules.md`, and relevant workflow pages. Write durable wiki changes through Scrinium. `agent-rules.md`, `architecture/*`, and `core-decisions/*` are protected; propose their changes through a draft. Update the canonical log, index, and source registry when session status requires it, and do not report completion until `finish_session` succeeds.
+Scrinium is conditional durable-memory infrastructure, not a mandatory preflight for every task. Source, tests, generated contracts, release artifacts, and live services remain authoritative for behavior. Read-only work, trivial edits, and ordinary changes that create no reusable cross-session knowledge do not require a Scrinium session.
+
+Use Scrinium when maintained wiki content must change or a material architecture, security, release, governance, or external-source decision should persist. Call `capabilities` once per server connection, begin a session, read `index.md`, `agent-rules.md`, and only directly relevant pages, then write durable knowledge through Scrinium. Avoid routine implementation and formatting-only log entries. Satisfy `session_status` and call `finish_session` only for a session that was started. Protected pages use the draft workflow.

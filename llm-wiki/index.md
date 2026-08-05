@@ -8,7 +8,7 @@
 - [project.md](project.md) — Project identity, correctness model, analysis modes, and MCP refresh/publication contract.
 - [agent-contract.md](agent-contract.md) — Workflow lifecycle, verification, CLI/MCP parity, context fidelity, and auditing.
 - [agent-rules.md](agent-rules.md) — Workflow guidelines and rules for development.
-- [scrinium-guide.md](scrinium-guide.md) — Reference guide for using Scrinium.
+- [scrinium-guide.md](scrinium-guide.md) — Conditional, token-conscious Scrinium usage and governance limits.
 - [mcp-registry.md](mcp-registry.md) — Live v1.5.3 Registry identity, MCPB representation, release invariants, and preview limits.
 
 ## Generated Reports (rebuilt dynamically)
@@ -30,7 +30,8 @@
 
 ## Drafts
 
-- `drafts/rules.md` — Proposed protected rules page awaiting review/promotion.
+- `drafts/rules.md` — Legacy proposed protected rules page awaiting review/promotion.
+- `drafts/lean-scrinium-agent-rules.md` — Proposed conditional, token-conscious replacement for protected agent rules.
 
 ## Sources
 
