@@ -28,7 +28,7 @@ brew install ozgurcd/tap/gograph
 # or: go install github.com/ozgurcd/gograph/cmd/gograph@latest
 
 # Build a fast AST graph, then verify it
-gograph build .
+gograph build . --precise
 gograph stats
 
 # Start with repository-wide results that require no guessed symbol
