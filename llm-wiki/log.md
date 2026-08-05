@@ -345,3 +345,9 @@ Normalized the security-flow page link into the index's Schemas and Security sec
 - Added constant nested route-prefix resolution for Gin, Echo, Fiber, and Chi Route closures. Dynamic prefixes remain conservative and retain only statically known path text.
 - Kept CLI and MCP aligned through shared graph/search data, added parity and regression tests, exposed reuse work in stats, and updated maintained Markdown, Hugo source, generated site output, CLI help, MCP contracts, and project wiki pages.
 - Verified with the full test/race/lint/staticcheck/vulnerability suite, release Go checks, coverage, fuzzing, docs build, Linux/Windows compilation, two precise self-builds (the second reused all 167 files), and gograph review --uncommitted.
+
+## 2026-08-05 — Integrated concurrent remote main before release
+
+- Merged remote PR #34 (`origin/main` at `7f6692b`) into local `main` without discarding the local digest/incremental-route implementation commit.
+- Preserved the remote quick-start change to `gograph build . --precise` and corrected its adjacent description to say it builds a type-enriched precise graph.
+- Verified the resulting v1.5.6 candidate with `make release-dry-run`; preflight, uncached tests, race detector, lint/static analysis, dependency and artifact vulnerability scans, docs, MCPB verification/smoke, and GoReleaser snapshot all passed. Dry-run metadata was restored and no refs were published.
