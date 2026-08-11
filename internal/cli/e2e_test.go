@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -413,8 +414,14 @@ func TestE2E_ClaudePluginInstall(t *testing.T) {
 
 func TestE2E_HookGuard(t *testing.T) {
 	binPath := buildTestBinary(t)
+	indexed := t.TempDir()
+	if err := os.Mkdir(filepath.Join(indexed, ".gograph"), 0o755); err != nil {
+		t.Fatalf("mkdir indexed root: %v", err)
+	}
+	unindexed := t.TempDir()
+
 	cmd := exec.Command(binPath, "hook-guard")
-	cmd.Stdin = strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"grep -rn 'runHookGuard\\|evaluateHookCommand' internal/cli/*.go"}}`)
+	cmd.Stdin = strings.NewReader(fmt.Sprintf(`{"tool_name":"Bash","cwd":%q,"tool_input":{"command":"grep -rn 'runHookGuard\\|evaluateHookCommand' internal/cli/*.go"}}`, indexed))
 	out, err := cmd.CombinedOutput()
 	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 2 {
 		t.Fatalf("hook-guard exit = %v, want 2\n%s", err, out)
@@ -424,8 +431,23 @@ func TestE2E_HookGuard(t *testing.T) {
 	}
 
 	allow := exec.Command(binPath, "hook-guard")
-	allow.Stdin = strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"rg TODO -g '*.go'"}}`)
+	allow.Stdin = strings.NewReader(fmt.Sprintf(`{"tool_name":"Bash","cwd":%q,"tool_input":{"command":"rg TODO -g '*.go'"}}`, indexed))
 	if out, err := allow.CombinedOutput(); err != nil {
 		t.Fatalf("hook-guard should allow comment search: %v\n%s", err, out)
+	}
+
+	allowUnindexed := exec.Command(binPath, "hook-guard")
+	allowUnindexed.Stdin = strings.NewReader(fmt.Sprintf(`{"tool_name":"Bash","cwd":%q,"tool_input":{"command":"grep -rn SomeFunc ."}}`, unindexed))
+	if out, err := allowUnindexed.CombinedOutput(); err != nil {
+		t.Fatalf("hook-guard should allow symbol search outside an indexed repository: %v\n%s", err, out)
+	}
+
+	fallback := exec.Command(binPath, "hook-guard")
+	fallback.Dir = indexed
+	fallback.Stdin = strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"rg SomeFunc"}}`)
+	out, err = fallback.CombinedOutput()
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 2 {
+		t.Fatalf("hook-guard without cwd should use the process working directory: %v\n%s", err, out)
 	}
 }

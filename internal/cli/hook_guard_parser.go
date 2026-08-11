@@ -75,16 +75,28 @@ var hookGoKeywords = map[string]struct{}{
 }
 
 func classifyHookCommand(command string) hookDecision {
-	argv, inputPaths, ok := lexHookCommand(command)
+	invocation, ok := parseHookCommand(command)
 	if !ok {
 		return hookDecision{}
+	}
+	return classifyHookSearchInvocation(invocation)
+}
+
+func parseHookCommand(command string) (hookSearchInvocation, bool) {
+	argv, inputPaths, ok := lexHookCommand(command)
+	if !ok {
+		return hookSearchInvocation{}, false
 	}
 
 	invocation, ok := parseHookSearchInvocation(argv)
 	if !ok {
-		return hookDecision{}
+		return hookSearchInvocation{}, false
 	}
 	invocation.inputPaths = inputPaths
+	return invocation, true
+}
+
+func classifyHookSearchInvocation(invocation hookSearchInvocation) hookDecision {
 	if !hookSearchesGo(invocation) {
 		return hookDecision{}
 	}

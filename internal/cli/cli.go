@@ -642,7 +642,7 @@ gograph session <action>     : start/end audit sessions (create [word], end, aud
                                now correctly recorded in session audit counters.
 add-claude-plugin    : install Claude Desktop MCP config + shared rules + Claude Code hook;
                        Claude Code MCP registration uses the printed 'claude mcp add' command
-hook-guard           : PreToolUse hook — blocks grep on Go symbols, redirects to gograph`)
+hook-guard           : PreToolUse hook — redirects indexed-repository Go symbol greps to gograph`)
 	return 0
 }
 
@@ -2357,9 +2357,11 @@ AGENT INTEGRATION
                              Claude Code MCP registration still requires the printed
                              'claude mcp add' command. Partial installation exits non-zero.
   hook-guard                 PreToolUse hook invoked by Claude Code. Reads a JSON
-                             tool call from stdin; blocks grep on Go symbols and
-                             suggests the equivalent gograph command. Exit 0 = allow,
-                             exit 2 = block. Not intended for direct human use.
+                             tool call and cwd from stdin; blocks grep on Go symbols
+                             only when a searched path belongs to a repository with
+                             a .gograph index, then suggests the equivalent gograph
+                             command. Exit 0 = allow, exit 2 = block. Not intended
+                             for direct human use.
 
 OTHER
   version, -v                Print version.

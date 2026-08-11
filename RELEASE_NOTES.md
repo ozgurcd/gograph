@@ -257,6 +257,16 @@
 
 ### Fixes
 
+#### Hook Guard Is Scoped to Indexed Search Targets
+`gograph hook-guard` now reads the Claude Code hook payload's `cwd`, resolves
+parsed `grep`/`rg` targets against it, and intervenes only when at least one
+effective target has a real `.gograph` ancestor. This prevents the globally
+installed hook from blocking symbol-like searches in unindexed folders and
+handles cross-repository paths in both directions. If `cwd` is absent, the
+hook process working directory remains the fallback. The guard stays
+intentionally CLI-only because it is a host `PreToolUse` integration rather
+than a graph query or analysis endpoint.
+
 #### Hook Guard Alternation Parsing
 `gograph hook-guard` now recognizes identifier-only alternations without
 mistaking quoted regex pipes for shell pipelines. Basic `grep` `\|`, extended

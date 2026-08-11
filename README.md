@@ -225,7 +225,7 @@ local MCP command if you explicitly want that behavior.
 ```bash
 gograph add-claude-plugin
 ```
-This registers the Claude Desktop MCP server, injects shared `CLAUDE.md` steering rules, and installs a Claude Code `PreToolUse` hook. For Claude Code MCP registration, also run the command printed by the installer: `claude mcp add gograph -- gograph mcp .`. The installer exits non-zero when any installation step fails.
+This registers the Claude Desktop MCP server, injects shared `CLAUDE.md` steering rules, and installs a Claude Code `PreToolUse` hook. The hook redirects Go-symbol searches only when an effective search target belongs to a repository with a `.gograph` index, so unindexed folders in multi-root workspaces remain unaffected. For Claude Code MCP registration, also run the command printed by the installer: `claude mcp add gograph -- gograph mcp .`. The installer exits non-zero when any installation step fails.
 
 **Alternative — install via Claude Code plugin marketplace:**
 ```bash

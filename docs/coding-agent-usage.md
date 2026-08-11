@@ -116,7 +116,7 @@ gograph mcp [path] [--persist-refresh]
                                  # stdio MCP server; optional successful-refresh publication
 gograph httpcalls [term]         # all outbound net/http calls (Get, Post, PostForm, Head); filter by method or URL substring
 gograph add-claude-plugin        # install MCP server + CLAUDE.md rules + PreToolUse hook (Claude Desktop & Claude Code)
-gograph hook-guard               # PreToolUse hook binary — reads tool call JSON from stdin, blocks Go symbol greps (invoked automatically by Claude Code)
+gograph hook-guard               # PreToolUse hook binary — blocks indexed-repository Go symbol greps (invoked automatically by Claude Code)
 # --- CI ENFORCEMENT ---
 gograph gate                     # read regular non-linked project-root .gograph.yml and fail CI on threshold violations
 # --- SNAPSHOTS ---
@@ -134,7 +134,7 @@ Running `gograph add-claude-plugin` performs three installation steps in one com
 |---|---|---|
 | **MCP server** | Registers gograph so Claude has native tool access | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) |
 | **CLAUDE.md rules** | Injects steering instructions Claude reads at session start | `~/.claude/CLAUDE.md` |
-| **PreToolUse hook** | Intercepts broad `grep`/`rg` Go-symbol searches and suggests structural tools | `~/.claude/hooks/gograph-guard.sh` + `~/.claude/settings.json` |
+| **PreToolUse hook** | Intercepts broad `grep`/`rg` Go-symbol searches in indexed repositories and suggests structural tools | `~/.claude/hooks/gograph-guard.sh` + `~/.claude/settings.json` |
 
 ### How the hook works
 
@@ -142,10 +142,12 @@ The hook (`gograph hook-guard`) is invoked automatically by Claude Code before e
 
 1. Reads the tool call JSON from stdin.
 2. Checks if the command is `grep` or `rg`.
-3. If the search can cover Go files and every non-exempt pattern branch is either one Go identifier or an identifier-only alternation (3+ ASCII identifier characters per branch) → **blocks** with exit code `2` and tells Claude which `gograph` tool to use instead.
-4. Otherwise → **allows** with exit code `0`.
+3. Resolves parsed search paths against the payload's `cwd` (falling back to the hook process working directory when `cwd` is absent) and checks each path for a real `.gograph` ancestor.
+4. If at least one effective target belongs to an indexed repository, the search can cover Go files, and every non-exempt pattern branch is either one Go identifier or an identifier-only alternation (3+ ASCII identifier characters per branch) → **blocks** with exit code `2` and tells Claude which `gograph` tool to use instead.
+5. Otherwise → **allows** with exit code `0`.
 
 **Allowed through (not blocked):**
+- Searches whose effective targets have no `.gograph` ancestor, including non-Go repositories in multi-root workspaces
 - Searches targeting only non-Go files (`*.yaml`, `*.md`, `*.sql`, etc.)
 - Comment/doc-only searches (TODO, FIXME, HACK, etc.)
 - Searches targeting only `docs/`, `.github/`, `testdata/`, or `migrations/`
@@ -161,6 +163,11 @@ grep -rn "runCheck" .            # → gograph_callers "runCheck"
 grep -rn 'LoadUser\|SaveUser' .   # basic grep alternation → LoadUser first
 rg 'LoadUser|SaveUser' -g '*.go'  # ripgrep alternation → LoadUser first
 ```
+
+Index detection follows the actual parsed targets rather than only `cwd`. A
+command launched from an unindexed repository is still steered when it searches
+an indexed sibling, while a command launched from an indexed repository is
+allowed when all of its search targets are unindexed.
 
 Alternation follows the selected search dialect: basic `grep` uses `\|`, while
 `grep -E` and `rg` use bare `|`. The hook parses direct `grep`/`rg` arguments,

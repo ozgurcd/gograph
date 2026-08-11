@@ -5,12 +5,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+
+	"github.com/ozgurcd/gograph/internal/rootfind"
 )
 
 // hookGuardInput is the JSON structure Claude Code sends to PreToolUse hooks.
 type hookGuardInput struct {
 	ToolName  string         `json:"tool_name"`
 	ToolInput map[string]any `json:"tool_input"`
+	CWD       string         `json:"cwd"`
 }
 
 // runHookGuard reads a JSON tool call from stdin and decides whether to allow or block it.
@@ -27,16 +31,31 @@ func runHookGuard() int {
 	if command == "" {
 		return 0
 	}
-	return evaluateHookCommand(command)
+	cwd := input.CWD
+	if cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			return 0
+		}
+	}
+	return evaluateHookCommandAt(command, cwd)
 }
 
-// evaluateHookCommand returns 2 (block) or 0 (allow).
-func evaluateHookCommand(command string) int {
-	return evaluateHookCommandTo(command, os.Stdout)
+// evaluateHookCommandAt returns 2 (block) or 0 (allow).
+func evaluateHookCommandAt(command, cwd string) int {
+	return evaluateHookCommandAtTo(command, cwd, os.Stdout)
 }
 
-func evaluateHookCommandTo(command string, output io.Writer) int {
-	decision := classifyHookCommand(command)
+func evaluateHookCommandAtTo(command, cwd string, output io.Writer) int {
+	invocation, ok := parseHookCommand(command)
+	if !ok {
+		return 0
+	}
+	decision := classifyHookSearchInvocation(invocation)
+	if decision.block && !hookSearchesIndexedRepository(invocation, cwd) {
+		decision = hookDecision{}
+	}
 	if !decision.block {
 		return 0
 	}
@@ -57,4 +76,53 @@ func evaluateHookCommandTo(command string, output io.Writer) int {
     grep -r "..." --include="*.yaml"
 `, command, pattern, pattern, pattern, pattern)
 	return 2
+}
+
+func hookSearchesIndexedRepository(invocation hookSearchInvocation, cwd string) bool {
+	if cwd == "" {
+		return false
+	}
+	if !filepath.IsAbs(cwd) {
+		absolute, err := filepath.Abs(cwd)
+		if err != nil {
+			return false
+		}
+		cwd = absolute
+	}
+
+	for _, target := range hookSearchTargets(invocation) {
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(cwd, target)
+		}
+		if _, ok := rootfind.FindRootFrom(target); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func hookSearchTargets(invocation hookSearchInvocation) []string {
+	var targets []string
+	if len(invocation.inputPaths) > 0 {
+		inputPath := invocation.inputPaths[len(invocation.inputPaths)-1]
+		if hookPathCanContainGo(inputPath) &&
+			(hookHasStdinPath(invocation.paths) ||
+				(len(invocation.paths) == 0 && (invocation.tool != hookToolGrep || !invocation.recursive))) {
+			targets = append(targets, inputPath)
+		}
+	}
+
+	if len(invocation.paths) == 0 {
+		if len(targets) == 0 {
+			targets = append(targets, ".")
+		}
+		return targets
+	}
+
+	for _, path := range invocation.paths {
+		if hookPathCanContainGo(path) {
+			targets = append(targets, path)
+		}
+	}
+	return targets
 }

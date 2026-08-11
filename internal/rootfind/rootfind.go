@@ -22,15 +22,32 @@ func FindRoot() string {
 	if err != nil {
 		return "."
 	}
+	if root, ok := FindRootFrom(dir); ok {
+		return root
+	}
+	return "."
+}
+
+// FindRootFrom walks up from start until it finds a directory that contains a
+// real ".gograph" directory. start may name a directory, file, or not-yet-
+// expanded glob; in each case its ancestors are considered. The boolean is
+// false when no indexed ancestor exists.
+func FindRootFrom(start string) (string, bool) {
+	if start == "" {
+		return "", false
+	}
+	dir, err := filepath.Abs(start)
+	if err != nil {
+		return "", false
+	}
 	for {
 		info, statErr := os.Lstat(filepath.Join(dir, gographDir))
 		if statErr == nil && info.Mode()&os.ModeSymlink == 0 && info.IsDir() {
-			return dir
+			return dir, true
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			// Reached filesystem root — fall back to cwd.
-			return "."
+			return "", false
 		}
 		dir = parent
 	}

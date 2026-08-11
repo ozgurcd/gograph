@@ -27,7 +27,7 @@ Rules (applied when gograph MCP server is connected):
 
 const hookScript = `#!/bin/sh
 # gograph-guard: Smart PreToolUse hook for Claude Code.
-# Intercepts broad grep/rg calls targeting Go symbols and suggests gograph MCP tools.
+# Intercepts broad grep/rg calls targeting Go symbols in indexed repositories.
 # Installed automatically by: gograph add-claude-plugin
 exec gograph hook-guard
 `

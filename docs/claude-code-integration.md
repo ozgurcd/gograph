@@ -135,7 +135,7 @@ This single command performs **three installation steps**:
 |---|---|---|
 | **MCP server** | Registers gograph in `claude_desktop_config.json` | macOS: `~/Library/Application Support/Claude/` |
 | **CLAUDE.md rules** | Injects steering rules Claude reads at every session start | `~/.claude/CLAUDE.md` |
-| **PreToolUse hook** | Smart hook that intercepts `grep`/`rg` on Go symbols | `~/.claude/hooks/gograph-guard.sh` + `~/.claude/settings.json` |
+| **PreToolUse hook** | Smart hook that intercepts `grep`/`rg` on Go symbols in indexed repositories | `~/.claude/hooks/gograph-guard.sh` + `~/.claude/settings.json` |
 
 The installer exits non-zero if any step fails. Restart Claude Desktop / Claude Code after successful installation. Claude Code MCP registration is still per project, as shown below.
 
@@ -143,11 +143,13 @@ The installer exits non-zero if any step fails. Restart Claude Desktop / Claude 
 
 The hook (`gograph hook-guard`) runs automatically before every `Bash` tool call Claude makes. When Claude tries to `grep` for a Go symbol, the hook:
 
-1. Detects it is a Go symbol search (every non-exempt pattern branch is a valid identifier or an identifier-only alternation, with each branch matching `[A-Za-z_][a-zA-Z0-9_]{2,}`)
-2. Blocks the call (exit code `2`) and outputs which `gograph` tool to use instead
-3. Claude immediately retries using the correct `gograph_query` / `gograph_context` / etc. call
+1. Resolves parsed search targets against the tool call's `cwd` and checks for a real `.gograph` ancestor
+2. Detects it is a Go symbol search (every non-exempt pattern branch is a valid identifier or an identifier-only alternation, with each branch matching `[A-Za-z_][a-zA-Z0-9_]{2,}`)
+3. Blocks the call (exit code `2`) and outputs which `gograph` tool to use instead
+4. Claude immediately retries using the correct `gograph_query` / `gograph_context` / etc. call
 
 **The hook is smart — it only intercepts symbol searches.** These pass through unchanged:
+- Searches whose effective targets have no `.gograph` ancestor, including non-Go repositories in multi-root workspaces
 - Searches targeting only non-Go files (`*.yaml`, `*.md`, `*.sql`, `*.sh`)
 - Comment/doc-only searches (TODO, FIXME, HACK, DEPRECATED)
 - Searches targeting only `docs/`, `.github/`, `testdata/`, or `migrations/`
@@ -158,6 +160,10 @@ Alternation is mode-aware: basic `grep` uses `\|`; `grep -E` and `rg` use bare
 `|`. The hook understands direct-command quoting, pattern flags, glob/context
 option values, and the first shell pipeline stage. Unsupported or dynamic shell
 syntax is allowed because the hook is steering rather than a security boundary.
+Explicit paths take precedence over the launch directory for index detection:
+searches from an unindexed folder into an indexed sibling are steered, while
+searches from an indexed folder into only unindexed targets are allowed. When
+the hook payload omits `cwd`, the hook process working directory is used.
 
 ### Claude Code (CLI) — Per-Project Registration
 

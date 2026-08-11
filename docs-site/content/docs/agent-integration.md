@@ -284,7 +284,7 @@ If the agent tries to run `grep -rn "MyStruct" .`, the hook guard blocks the com
 > MyStruct` or `gograph callers MyStruct`. If precision fell back or a known
 > call is missing, verify with `gopls` or targeted source/text search.*
 
-The hook is a steering aid, not a security boundary: it targets likely Go-identifier searches and intentionally allows comment, documentation, and non-Go searches.
+The hook is a steering aid, not a security boundary: it targets likely Go-identifier searches and intentionally allows comment, documentation, and non-Go searches. It also allows searches whose effective targets have no real `.gograph` ancestor, so unindexed folders in multi-root workspaces are unaffected.
 
 Identifier-only alternations are also steered: basic `grep` recognizes `\|`,
 while `grep -E` and `rg` recognize bare `|`. Literal-pipe patterns in
@@ -292,7 +292,14 @@ fixed-string mode, escaped pipes in `grep -E`/`rg`, mixed regex/literal patterns
 and unsupported dynamic shell syntax remain allowed. Quotes, pattern flags,
 glob/context option values, and the first shell pipeline stage are parsed before
 classification. Mixed targets are blocked when any selected path can contain Go
-source; comment markers do not hide another symbol branch.
+source and belongs to an indexed repository; comment markers do not hide
+another symbol branch.
+
+Index detection uses `cwd` from the hook payload and the parser's effective
+search paths. Relative targets are resolved against `cwd`; an omitted `cwd`
+falls back to the hook process working directory. A search from an unindexed
+folder into an indexed sibling is still steered, while a search from an indexed
+folder into only unindexed targets is allowed.
 
 ---
 

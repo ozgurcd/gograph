@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -755,11 +757,106 @@ func TestClassifyHookCommandReturnsEveryAlternative(t *testing.T) {
 	}
 }
 
+func TestEvaluateHookCommandIndexedScope(t *testing.T) {
+	base := t.TempDir()
+	indexed := filepath.Join(base, "indexed")
+	indexedNested := filepath.Join(indexed, "internal", "cli")
+	unindexed := filepath.Join(base, "unindexed")
+	if err := os.MkdirAll(filepath.Join(indexed, ".gograph"), 0o755); err != nil {
+		t.Fatalf("mkdir indexed root: %v", err)
+	}
+	if err := os.MkdirAll(indexedNested, 0o755); err != nil {
+		t.Fatalf("mkdir indexed nested directory: %v", err)
+	}
+	if err := os.MkdirAll(unindexed, 0o755); err != nil {
+		t.Fatalf("mkdir unindexed root: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		cwd      string
+		command  string
+		wantExit int
+	}{
+		{
+			name:     "indexed cwd default target blocks",
+			cwd:      indexedNested,
+			command:  `rg SomeFunc`,
+			wantExit: 2,
+		},
+		{
+			name:     "unindexed cwd default target allows",
+			cwd:      unindexed,
+			command:  `rg SomeFunc`,
+			wantExit: 0,
+		},
+		{
+			name:     "indexed cwd with unindexed target allows",
+			cwd:      indexed,
+			command:  fmt.Sprintf(`rg SomeFunc %q`, filepath.Join(unindexed, "*.go")),
+			wantExit: 0,
+		},
+		{
+			name:     "unindexed cwd with indexed target blocks",
+			cwd:      unindexed,
+			command:  fmt.Sprintf(`rg SomeFunc %q`, filepath.Join(indexed, "internal", "*.go")),
+			wantExit: 2,
+		},
+		{
+			name:     "unindexed cwd with relative indexed target blocks",
+			cwd:      unindexed,
+			command:  fmt.Sprintf(`rg SomeFunc %q`, filepath.Join("..", "indexed", "internal", "*.go")),
+			wantExit: 2,
+		},
+		{
+			name:     "indexed cwd with relative unindexed target allows",
+			cwd:      indexed,
+			command:  fmt.Sprintf(`rg SomeFunc %q`, filepath.Join("..", "unindexed", "*.go")),
+			wantExit: 0,
+		},
+		{
+			name:     "mixed targets block when one is indexed",
+			cwd:      unindexed,
+			command:  fmt.Sprintf(`rg SomeFunc %q %q`, filepath.Join(unindexed, "*.go"), filepath.Join(indexed, "*.go")),
+			wantExit: 2,
+		},
+		{
+			name:     "redirected indexed Go input blocks",
+			cwd:      unindexed,
+			command:  fmt.Sprintf(`grep -n SomeFunc < %q`, filepath.Join(indexed, "file.go")),
+			wantExit: 2,
+		},
+		{
+			name:     "redirected unindexed Go input allows",
+			cwd:      indexed,
+			command:  fmt.Sprintf(`grep -n SomeFunc < %q`, filepath.Join(unindexed, "file.go")),
+			wantExit: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var output bytes.Buffer
+			got := evaluateHookCommandAtTo(tt.command, tt.cwd, &output)
+			if got != tt.wantExit {
+				t.Fatalf("evaluateHookCommandAtTo(%q, %q) = %d, want %d\noutput:\n%s", tt.command, tt.cwd, got, tt.wantExit, output.String())
+			}
+			if tt.wantExit == 0 && output.Len() != 0 {
+				t.Fatalf("allowed command wrote output:\n%s", output.String())
+			}
+		})
+	}
+}
+
 func assertHookGuardDecision(t *testing.T, command string, wantExit int, wantSymbol string) {
 	t.Helper()
 
-	firstExit, firstOutput := evaluateHookCommandForTest(t, command)
-	secondExit, secondOutput := evaluateHookCommandForTest(t, command)
+	cwd := t.TempDir()
+	if err := os.Mkdir(filepath.Join(cwd, ".gograph"), 0o755); err != nil {
+		t.Fatalf("mkdir indexed root: %v", err)
+	}
+	firstExit, firstOutput := evaluateHookCommandForTest(command, cwd)
+	secondExit, secondOutput := evaluateHookCommandForTest(command, cwd)
 	if firstExit != secondExit || firstOutput != secondOutput {
 		t.Fatalf("evaluateHookCommand(%q) is not deterministic:\nfirst: exit=%d output=%q\nsecond: exit=%d output=%q",
 			command, firstExit, firstOutput, secondExit, secondOutput)
@@ -786,10 +883,8 @@ func assertHookGuardDecision(t *testing.T, command string, wantExit int, wantSym
 	}
 }
 
-func evaluateHookCommandForTest(t *testing.T, command string) (int, string) {
-	t.Helper()
-
+func evaluateHookCommandForTest(command, cwd string) (int, string) {
 	var output bytes.Buffer
-	exitCode := evaluateHookCommandTo(command, &output)
+	exitCode := evaluateHookCommandAtTo(command, cwd, &output)
 	return exitCode, output.String()
 }
