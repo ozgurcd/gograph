@@ -88,6 +88,30 @@
         "command": "gograph context ReserveStock --json",
         "finding": "One response bundles the implementation, caller, error dependency, and mapped test."
       }
+    },
+    {
+      "id": "exact-symbol-source",
+      "title": "Extract one exact source block",
+      "question": "What is the complete ReserveStock implementation without reading neighboring code?",
+      "evidence": [
+        {"id": "source", "description": "The complete ReserveStock source is returned", "needle": "product.Stock--"}
+      ],
+      "gograph": {
+        "label": "gograph AST source range",
+        "steps": [
+          {"program": "{gograph}", "args": ["source", "ReserveStock"]}
+        ]
+      },
+      "baseline": {
+        "label": "text search with context window",
+        "steps": [
+          {"program": "rg", "args": ["--sort", "path", "-n", "-A", "8", "func ReserveStock", "--glob", "*.go", "."]}
+        ]
+      },
+      "demo": {
+        "command": "gograph source ReserveStock",
+        "finding": "The AST range stops at the function boundary instead of spilling into the next declaration."
+      }
     }
   ]
 }

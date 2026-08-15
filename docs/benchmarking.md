@@ -66,7 +66,7 @@ go run ./scripts/benchmark.go \
 ## Current v1.5.7 result
 
 The checked-in report was produced by `gograph version v1.5.7-f8284a3` with a
-complete precise graph. All three gograph workflows recovered every declared
+complete precise graph. All four gograph workflows recovered every declared
 ground-truth item:
 
 | Scenario | gograph | Text-search baseline | Process calls |
@@ -74,12 +74,13 @@ ground-truth item:
 | Implicit interface implementations | 2/2 | 0/2 | 1 vs 1 |
 | Interface-dispatched caller | 2/2 | 1/2 | 1 vs 1 |
 | Composed change context | 4/4 | 4/4 | 1 vs 3 |
+| Exact symbol source | 1/1 | 1/1 | 1 vs 1 |
 
-This supports three narrow claims: precise gograph analysis can expose Go's
+This supports four narrow claims: precise gograph analysis can expose Go's
 implicit interface relationships, can qualify an interface-dispatched caller,
-and can compose source/caller/dependency/test evidence into one response on the
-published fixture. It does not establish end-to-end agent accuracy or token
-cost.
+can compose source/caller/dependency/test evidence into one response, and can
+extract an AST-bounded function without fixed-context spillover on the published
+fixture. It does not establish end-to-end agent accuracy or token cost.
 
 ## Extending the evidence
 

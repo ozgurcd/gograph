@@ -8,7 +8,8 @@ url: "/benchmarks/"
 
 gograph's checked-in benchmark uses a controlled Go fixture with manually
 reviewable ground truth. It verifies implicit interface implementations,
-interface-dispatched callers, and a composed change-context workflow.
+interface-dispatched callers, a composed change-context workflow, and exact
+AST-bounded source extraction.
 
 The current v1.5.7 report was generated with a complete precise graph. Every
 declared evidence item was found by the corresponding gograph workflow:
@@ -18,6 +19,7 @@ declared evidence item was found by the corresponding gograph workflow:
 | Implicit interface implementations | 2/2 | 0/2 | 1 vs 1 |
 | Interface-dispatched caller | 2/2 | 1/2 | 1 vs 1 |
 | Composed change context | 4/4 | 4/4 | 1 vs 3 |
+| Exact symbol source | 1/1 | 1/1 | 1 vs 1 |
 
 [Explore the fixture and verified evidence →](/demo/)
 

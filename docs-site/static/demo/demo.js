@@ -52,7 +52,6 @@
     const state = {
       mode: "explore",
       workflow: 0,
-      comparison: 0,
       benchmark: 0,
       file: workspace.workflows[0].focus.path,
       highlight: workspace.workflows[0].focus,
@@ -128,11 +127,10 @@
         <header class="demo-compare-head">
           <div>
             <p class="demo-kicker">Measured against literal text search</p>
-            <h3>Structural answers and text matches, side by side.</h3>
+            <h3>Three questions. Three clear structural wins.</h3>
           </div>
-          <p>These are complete outputs from the checked-in benchmark. The comparison rewards evidence for the declared structural question—not one tool in every situation.</p>
+          <p>Each example highlights one practical advantage from the checked-in benchmark: more correct evidence, fewer round trips, or less output to read.</p>
         </header>
-        <nav class="demo-compare-tabs" role="tablist" aria-label="Output comparison scenarios"></nav>
         <div class="demo-compare-panel"></div>
       </section>
 
@@ -161,7 +159,6 @@
     const codeBody = root.querySelector(".demo-code-body");
     const inspector = root.querySelector(".demo-inspector");
     const search = root.querySelector(".demo-workflow-search input");
-    const comparisonTabs = root.querySelector(".demo-compare-tabs");
     const comparisonPanel = root.querySelector(".demo-compare-panel");
     const scenarioTabs = root.querySelector(".demo-scenario-tabs");
     const benchmarkPanel = root.querySelector(".demo-benchmark-panel");
@@ -354,88 +351,69 @@
     };
 
     const renderComparison = () => {
-      const scenario = report.scenarios[state.comparison];
-      const explanation = workspace.comparisons.find((item) => item.scenario === scenario.id);
-      const coverageWinner = scenario.gograph.evidence_found > scenario.baseline.evidence_found ? "gograph" : "tie";
-      const callsWinner = scenario.gograph.tool_calls < scenario.baseline.tool_calls
-        ? "gograph"
-        : scenario.gograph.tool_calls > scenario.baseline.tool_calls ? "baseline" : "tie";
-      const timingWinner = scenario.gograph.median_millis < scenario.baseline.median_millis
-        ? "gograph"
-        : scenario.gograph.median_millis > scenario.baseline.median_millis ? "baseline" : "tie";
-
-      comparisonTabs.querySelectorAll("button").forEach((button, index) => {
-        const selected = index === state.comparison;
-        button.setAttribute("aria-selected", String(selected));
-        button.tabIndex = selected ? 0 : -1;
-      });
-
-      const valueCell = (value, side, winner, note) => `
-        <div class="demo-criterion-value${winner === side ? " is-best" : ""}" role="cell">
-          <strong>${escapeHTML(value)}</strong><small>${escapeHTML(note)}</small>
-        </div>`;
       const output = (workflow) => workflow.steps.map((step) => `$ ${step.command}\n${step.output}`).join("\n\n");
+      const metric = (scenario) => {
+        if (scenario.id === "implicit-interface-implementers") {
+          return {
+            unit: "evidence found",
+            gograph: `${scenario.gograph.evidence_found}/${scenario.gograph.evidence_total}`,
+            baseline: `${scenario.baseline.evidence_found}/${scenario.baseline.evidence_total}`
+          };
+        }
+        if (scenario.id === "composed-change-context") {
+          return {
+            unit: "calls · captured median",
+            gograph: `${scenario.gograph.tool_calls} · ${scenario.gograph.median_millis} ms`,
+            baseline: `${scenario.baseline.tool_calls} · ${scenario.baseline.median_millis} ms`
+          };
+        }
+        return {
+          unit: "output to read",
+          gograph: formatBytes(scenario.gograph.output_bytes),
+          baseline: formatBytes(scenario.baseline.output_bytes)
+        };
+      };
 
       comparisonPanel.innerHTML = `
-        <div class="demo-compare-title">
-          <div>
-            <span class="demo-pass-badge">✓ Measured ground truth</span>
-            <h3>${escapeHTML(explanation.headline)}</h3>
-            <p>${escapeHTML(scenario.question)}</p>
-          </div>
-          <p class="demo-compare-takeaway">${escapeHTML(explanation.takeaway)}</p>
+        <div class="demo-win-list">
+          ${workspace.comparisons.map((example) => {
+            const scenario = report.scenarios.find((item) => item.id === example.scenario);
+            const values = metric(scenario);
+            return `
+              <article class="demo-win-card">
+                <header>
+                  <span>${escapeHTML(example.step)}</span>
+                  <div><small>${escapeHTML(example.label)}</small><h3>${escapeHTML(example.headline)}</h3></div>
+                </header>
+                <p class="demo-win-question">${escapeHTML(scenario.question)}</p>
+                <div class="demo-win-metric" aria-label="${escapeHTML(values.unit)}">
+                  <div class="is-winner"><span>gograph</span><strong>${escapeHTML(values.gograph)}</strong></div>
+                  <span aria-hidden="true">vs</span>
+                  <div><span>rg</span><strong>${escapeHTML(values.baseline)}</strong></div>
+                  <small>${escapeHTML(values.unit)}</small>
+                </div>
+                <p class="demo-win-takeaway">${escapeHTML(example.takeaway)}</p>
+                <div class="demo-win-explain">
+                  <p><strong>gograph</strong>${escapeHTML(example.gograph)}</p>
+                  <p><strong>rg</strong>${escapeHTML(example.baseline)}</p>
+                </div>
+                <details class="demo-win-raw">
+                  <summary>Show the measured outputs</summary>
+                  <div class="demo-output-grid">
+                    <section class="demo-output-card is-gograph">
+                      <header><span>gograph</span><small>${scenario.gograph.output_lines} lines · ${formatBytes(scenario.gograph.output_bytes)}</small></header>
+                      <pre>${escapeHTML(output(scenario.gograph))}</pre>
+                    </section>
+                    <section class="demo-output-card">
+                      <header><span>rg</span><small>${scenario.baseline.output_lines} lines · ${formatBytes(scenario.baseline.output_bytes)}</small></header>
+                      <pre>${escapeHTML(output(scenario.baseline))}</pre>
+                    </section>
+                  </div>
+                </details>
+              </article>`;
+          }).join("")}
         </div>
-
-        <div class="demo-criteria" role="table" aria-label="gograph and rg comparison criteria">
-          <div class="demo-criteria-row is-header" role="row">
-            <strong role="columnheader">Criterion</strong>
-            <strong role="columnheader">gograph</strong>
-            <strong role="columnheader">rg baseline</strong>
-          </div>
-          <div class="demo-criteria-row" role="row">
-            <span role="rowheader">Ground-truth evidence</span>
-            ${valueCell(`${scenario.gograph.evidence_found}/${scenario.gograph.evidence_total}`, "gograph", coverageWinner, "structural items recovered")}
-            ${valueCell(`${scenario.baseline.evidence_found}/${scenario.baseline.evidence_total}`, "baseline", coverageWinner, "structural items recovered")}
-          </div>
-          <div class="demo-criteria-row" role="row">
-            <span role="rowheader">Process calls</span>
-            ${valueCell(String(scenario.gograph.tool_calls), "gograph", callsWinner, "commands in workflow")}
-            ${valueCell(String(scenario.baseline.tool_calls), "baseline", callsWinner, "commands in workflow")}
-          </div>
-          <div class="demo-criteria-row" role="row">
-            <span role="rowheader">Median elapsed</span>
-            ${valueCell(`${scenario.gograph.median_millis} ms`, "gograph", timingWinner, "captured local run")}
-            ${valueCell(`${scenario.baseline.median_millis} ms`, "baseline", timingWinner, "captured local run")}
-          </div>
-          <div class="demo-criteria-row" role="row">
-            <span role="rowheader">Output size</span>
-            ${valueCell(formatBytes(scenario.gograph.output_bytes), "gograph", "none", "structured response")}
-            ${valueCell(formatBytes(scenario.baseline.output_bytes), "baseline", "none", "literal match output")}
-          </div>
-          <div class="demo-criteria-row" role="row">
-            <span role="rowheader">Result semantics</span>
-            ${valueCell("Typed relationships", "gograph", "gograph", "symbol, file, line, relation")}
-            ${valueCell("Matching lines", "baseline", "none", "path, line, matching text")}
-          </div>
-        </div>
-
-        <div class="demo-meaning-grid">
-          <section><span>What gograph establishes</span><p>${escapeHTML(explanation.gograph)}</p></section>
-          <section><span>What rg establishes</span><p>${escapeHTML(explanation.baseline)}</p></section>
-        </div>
-
-        <div class="demo-output-grid">
-          <section class="demo-output-card is-gograph">
-            <header><span>gograph output</span><small>${scenario.gograph.output_lines} lines · ${formatBytes(scenario.gograph.output_bytes)}</small></header>
-            <pre>${escapeHTML(output(scenario.gograph))}</pre>
-          </section>
-          <section class="demo-output-card">
-            <header><span>rg output</span><small>${scenario.baseline.output_lines} lines · ${formatBytes(scenario.baseline.output_bytes)}</small></header>
-            <pre>${escapeHTML(output(scenario.baseline))}</pre>
-          </section>
-        </div>
-
-        <p class="demo-compare-note"><strong>Read this fairly:</strong> rg is faster and often smaller for literal text lookup. gograph is designed for typed relationships and composed repository questions. Timing and payload size are fixture-specific; evidence coverage is checked against this suite's declared ground truth.</p>`;
+        <p class="demo-compare-note"><strong>Scope:</strong> These are fixture-specific measurements for the declared questions. rg remains the better tool for fast literal lookup; these examples show where repository structure changes the result.</p>`;
     };
 
     modeButtons.forEach((button) => {
@@ -457,16 +435,6 @@
     });
 
     report.scenarios.forEach((scenario, index) => {
-      const comparisonButton = document.createElement("button");
-      comparisonButton.type = "button";
-      comparisonButton.setAttribute("role", "tab");
-      comparisonButton.innerHTML = `<span>0${index + 1}</span>${escapeHTML(scenario.title)}`;
-      comparisonButton.addEventListener("click", () => {
-        state.comparison = index;
-        renderComparison();
-      });
-      comparisonTabs.appendChild(comparisonButton);
-
       const button = document.createElement("button");
       button.type = "button";
       button.setAttribute("role", "tab");

@@ -6,10 +6,9 @@ url: "/demo/"
 
 Follow a request through a small Go service, inspect the code behind each
 finding, and see what an agent can learn before it edits. Then open the verified
-comparison to inspect actual gograph and `rg` output across evidence coverage,
-process calls, elapsed time, payload size, and result semantics. The evidence
-view preserves the reproducible benchmark, exact commands, and complete raw
-output.
+comparison for three clear examples: evidence text search misses, a three-search
+checklist reduced to one call, and a smaller exact source block. The evidence
+view preserves the reproducible benchmark and complete raw output.
 
 <link rel="stylesheet" href="/demo/demo.css">
 

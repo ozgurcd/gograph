@@ -254,24 +254,30 @@
   "comparisons": [
     {
       "scenario": "implicit-interface-implementers",
-      "headline": "Type relationships that text never states",
+      "step": "01",
+      "label": "More correct evidence",
+      "headline": "Find what text never says",
       "gograph": "Resolves Go's implicit interface satisfaction from the type-checked graph and returns both concrete implementations.",
       "baseline": "Finds literal references to ProductRepository, but the implementing structs never name that interface.",
-      "takeaway": "For an implicit type relationship, structural analysis recovers 2/2 declared evidence items while the literal search recovers 0/2."
-    },
-    {
-      "scenario": "interface-dispatch-callers",
-      "headline": "A typed caller instead of a selector match",
-      "gograph": "Resolves the interface-qualified Save method to CheckoutService.Checkout and preserves the exact call-site location.",
-      "baseline": "Finds the .Save( selector text, but the matched line alone does not establish the receiver's interface type.",
-      "takeaway": "For interface dispatch, structural output recovers both the caller and typed call-site evidence; text search recovers the call site only."
+      "takeaway": "gograph recovers both implementations; rg recovers neither."
     },
     {
       "scenario": "composed-change-context",
-      "headline": "One composed response instead of a search checklist",
+      "step": "02",
+      "label": "Fewer round trips",
+      "headline": "Replace a search checklist",
       "gograph": "Returns source, callers, dependencies, and mapped tests in one structured response designed for an agent workflow.",
-      "baseline": "Recovers the same declared evidence with three targeted searches and smaller literal-match output.",
-      "takeaway": "Both workflows recover 4/4 evidence items here; gograph reduces three process calls to one and supplies semantic fields at the cost of a larger payload."
+      "baseline": "Needs three targeted searches to recover the same declared context evidence.",
+      "takeaway": "One gograph call replaces three searches and is faster in this captured workflow."
+    },
+    {
+      "scenario": "exact-symbol-source",
+      "step": "03",
+      "label": "Less output to read",
+      "headline": "Stop at the function boundary",
+      "gograph": "Uses the AST source range to return exactly the ReserveStock implementation.",
+      "baseline": "A fixed rg context window includes an extra blank line and the next function declaration.",
+      "takeaway": "The exact structural source block is smaller than the text-search context window."
     }
   ],
   "workflows": [

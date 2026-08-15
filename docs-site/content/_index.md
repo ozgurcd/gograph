@@ -14,9 +14,9 @@ MCP without embeddings or a hosted code index.
 
 Trace a checkout request, inspect source-backed graph findings, and build a
 change plan in the guided workspace. Compare actual gograph and `rg` output
-across several measured criteria. The separate evidence view preserves the
-precise interface and change-context benchmark, declared ground truth, exact
-commands, and complete raw output. Read the [methodology and limitations →](/benchmarks/)
+through three clear structural examples. The separate evidence view preserves
+the precise benchmark, declared ground truth, exact commands, and complete raw
+output. Read the [methodology and limitations →](/benchmarks/)
 
 ```bash
 gograph build .           # fast AST graph; tolerates incomplete packages
