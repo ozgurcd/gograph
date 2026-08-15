@@ -1,0 +1,384 @@
+{
+  "schema_version": "1",
+  "repository": {
+    "name": "refactor-shop",
+    "module": "example.com/refactorshop",
+    "build": "complete",
+    "precision": "type-checked",
+    "file_count": 7,
+    "symbol_count": 21,
+    "description": "A compact checkout service with an HTTP entry point, orchestration layer, repository interface, two implicit implementations, and mapped tests.",
+    "disclosure": "This is a curated, precomputed tour of the checked-in benchmark fixture. It only offers supported queries; it does not simulate a live terminal."
+  },
+  "files": [
+    {
+      "path": "cmd/shop/main.go",
+      "language": "go",
+      "lines": [
+        "package main",
+        "",
+        "import (",
+        "\t\"log\"",
+        "\t\"net/http\"",
+        "",
+        "\t\"example.com/refactorshop/catalog\"",
+        "\t\"example.com/refactorshop/httpapi\"",
+        "\t\"example.com/refactorshop/memory\"",
+        "\t\"example.com/refactorshop/service\"",
+        ")",
+        "",
+        "func main() {",
+        "\trepository := memory.NewRepository(catalog.Product{ID: \"gopher\", Stock: 10})",
+        "\tcheckout := service.NewCheckoutService(repository)",
+        "\thandler := httpapi.NewHandler(checkout)",
+        "\tmux := http.NewServeMux()",
+        "\thttpapi.Register(mux, handler)",
+        "\tlog.Fatal(http.ListenAndServe(\":8080\", mux))",
+        "}"
+      ]
+    },
+    {
+      "path": "catalog/catalog.go",
+      "language": "go",
+      "lines": [
+        "package catalog",
+        "",
+        "import \"context\"",
+        "",
+        "type Product struct {",
+        "\tID    string",
+        "\tStock int",
+        "}",
+        "",
+        "type ProductRepository interface {",
+        "\tFind(context.Context, string) (Product, error)",
+        "\tSave(context.Context, Product) error",
+        "}"
+      ]
+    },
+    {
+      "path": "httpapi/handler.go",
+      "language": "go",
+      "lines": [
+        "package httpapi",
+        "",
+        "import (",
+        "\t\"net/http\"",
+        "\t\"strings\"",
+        "",
+        "\t\"example.com/refactorshop/service\"",
+        ")",
+        "",
+        "type Handler struct {",
+        "\tcheckout *service.CheckoutService",
+        "}",
+        "",
+        "func NewHandler(checkout *service.CheckoutService) *Handler {",
+        "\treturn &Handler{checkout: checkout}",
+        "}",
+        "",
+        "func (h *Handler) Checkout(w http.ResponseWriter, r *http.Request) {",
+        "\tproductID := strings.TrimPrefix(r.URL.Path, \"/checkout/\")",
+        "\tif _, err := h.checkout.Checkout(r.Context(), productID); err != nil {",
+        "\t\thttp.Error(w, err.Error(), http.StatusBadRequest)",
+        "\t\treturn",
+        "\t}",
+        "\tw.WriteHeader(http.StatusNoContent)",
+        "}",
+        "",
+        "func Register(mux *http.ServeMux, handler *Handler) {",
+        "\tmux.HandleFunc(\"/checkout/\", handler.Checkout)",
+        "}"
+      ]
+    },
+    {
+      "path": "memory/repository.go",
+      "language": "go",
+      "lines": [
+        "package memory",
+        "",
+        "import (",
+        "\t\"context\"",
+        "\t\"fmt\"",
+        "\t\"sync\"",
+        "",
+        "\t\"example.com/refactorshop/catalog\"",
+        ")",
+        "",
+        "type MemoryRepository struct {",
+        "\tmu       sync.Mutex",
+        "\tproducts map[string]catalog.Product",
+        "}",
+        "",
+        "func NewRepository(products ...catalog.Product) *MemoryRepository {",
+        "\tstored := make(map[string]catalog.Product, len(products))",
+        "\tfor _, product := range products {",
+        "\t\tstored[product.ID] = product",
+        "\t}",
+        "\treturn &MemoryRepository{products: stored}",
+        "}",
+        "",
+        "func (r *MemoryRepository) Find(_ context.Context, id string) (catalog.Product, error) {",
+        "\tr.mu.Lock()",
+        "\tdefer r.mu.Unlock()",
+        "\tproduct, ok := r.products[id]",
+        "\tif !ok {",
+        "\t\treturn catalog.Product{}, fmt.Errorf(\"product %q not found\", id)",
+        "\t}",
+        "\treturn product, nil",
+        "}",
+        "",
+        "func (r *MemoryRepository) Save(_ context.Context, product catalog.Product) error {",
+        "\tr.mu.Lock()",
+        "\tdefer r.mu.Unlock()",
+        "\tr.products[product.ID] = product",
+        "\treturn nil",
+        "}"
+      ]
+    },
+    {
+      "path": "service/checkout.go",
+      "language": "go",
+      "lines": [
+        "package service",
+        "",
+        "import (",
+        "\t\"context\"",
+        "\t\"fmt\"",
+        "",
+        "\t\"example.com/refactorshop/catalog\"",
+        ")",
+        "",
+        "type CheckoutService struct {",
+        "\trepository catalog.ProductRepository",
+        "}",
+        "",
+        "func NewCheckoutService(repository catalog.ProductRepository) *CheckoutService {",
+        "\treturn &CheckoutService{repository: repository}",
+        "}",
+        "",
+        "func ReserveStock(product catalog.Product) (catalog.Product, error) {",
+        "\tif product.Stock == 0 {",
+        "\t\treturn catalog.Product{}, fmt.Errorf(\"product %q is out of stock\", product.ID)",
+        "\t}",
+        "\tproduct.Stock--",
+        "\treturn product, nil",
+        "}",
+        "",
+        "func (s *CheckoutService) Checkout(ctx context.Context, productID string) (catalog.Product, error) {",
+        "\tproduct, err := s.repository.Find(ctx, productID)",
+        "\tif err != nil {",
+        "\t\treturn catalog.Product{}, fmt.Errorf(\"find product: %w\", err)",
+        "\t}",
+        "\tproduct, err = ReserveStock(product)",
+        "\tif err != nil {",
+        "\t\treturn catalog.Product{}, err",
+        "\t}",
+        "\tif err := s.repository.Save(ctx, product); err != nil {",
+        "\t\treturn catalog.Product{}, fmt.Errorf(\"save product: %w\", err)",
+        "\t}",
+        "\treturn product, nil",
+        "}"
+      ]
+    },
+    {
+      "path": "service/checkout_test.go",
+      "language": "go",
+      "lines": [
+        "package service_test",
+        "",
+        "import (",
+        "\t\"context\"",
+        "\t\"testing\"",
+        "",
+        "\t\"example.com/refactorshop/catalog\"",
+        "\t\"example.com/refactorshop/memory\"",
+        "\t\"example.com/refactorshop/service\"",
+        ")",
+        "",
+        "func TestCheckoutDecrementsStock(t *testing.T) {",
+        "\trepository := memory.NewRepository(catalog.Product{ID: \"gopher\", Stock: 2})",
+        "\tcheckout := service.NewCheckoutService(repository)",
+        "",
+        "\tproduct, err := checkout.Checkout(context.Background(), \"gopher\")",
+        "\tif err != nil {",
+        "\t\tt.Fatal(err)",
+        "\t}",
+        "\tif product.Stock != 1 {",
+        "\t\tt.Fatalf(\"stock = %d, want 1\", product.Stock)",
+        "\t}",
+        "}",
+        "",
+        "func TestReserveStockRejectsEmptyInventory(t *testing.T) {",
+        "\t_, err := service.ReserveStock(catalog.Product{ID: \"gopher\"})",
+        "\tif err == nil {",
+        "\t\tt.Fatal(\"ReserveStock returned nil error for empty inventory\")",
+        "\t}",
+        "}"
+      ]
+    },
+    {
+      "path": "sqlrepo/repository.go",
+      "language": "go",
+      "lines": [
+        "package sqlrepo",
+        "",
+        "import (",
+        "\t\"context\"",
+        "\t\"database/sql\"",
+        "",
+        "\t\"example.com/refactorshop/catalog\"",
+        ")",
+        "",
+        "type SQLRepository struct {",
+        "\tdb *sql.DB",
+        "}",
+        "",
+        "func NewRepository(db *sql.DB) *SQLRepository {",
+        "\treturn &SQLRepository{db: db}",
+        "}",
+        "",
+        "func (r *SQLRepository) Find(ctx context.Context, id string) (catalog.Product, error) {",
+        "\tvar product catalog.Product",
+        "\terr := r.db.QueryRowContext(ctx, \"SELECT id, stock FROM products WHERE id = ?\", id).Scan(&product.ID, &product.Stock)",
+        "\treturn product, err",
+        "}",
+        "",
+        "func (r *SQLRepository) Save(ctx context.Context, product catalog.Product) error {",
+        "\t_, err := r.db.ExecContext(ctx, \"UPDATE products SET stock = ? WHERE id = ?\", product.Stock, product.ID)",
+        "\treturn err",
+        "}"
+      ]
+    }
+  ],
+  "workflows": [
+    {
+      "id": "trace-endpoint",
+      "step": "01",
+      "label": "Trace a request",
+      "title": "Start at the HTTP boundary",
+      "question": "Where does a checkout request enter the application?",
+      "command": "gograph endpoint /checkout/ --depth 4 --json",
+      "summary": "The route resolves to Handler.Checkout, giving an agent the concrete entry point before it reads service code.",
+      "kind": "Guided query",
+      "focus": { "path": "httpapi/handler.go", "start": 18, "end": 28 },
+      "facts": [
+        { "label": "Route", "value": "HandleFunc /checkout/", "detail": "net/http registration" },
+        { "label": "Handler", "value": "(*Handler).Checkout", "detail": "httpapi/handler.go:18" },
+        { "label": "Response", "value": "204 or 400", "detail": "visible in source" }
+      ],
+      "trail": [
+        { "label": "/checkout/", "meta": "HTTP route" },
+        { "label": "Handler.Checkout", "meta": "entry point" },
+        { "label": "CheckoutService.Checkout", "meta": "service call" }
+      ],
+      "related": [
+        { "label": "Open service orchestration", "path": "service/checkout.go", "start": 26, "end": 39 },
+        { "label": "Open route registration", "path": "httpapi/handler.go", "start": 27, "end": 29 }
+      ]
+    },
+    {
+      "id": "context",
+      "step": "02",
+      "label": "Understand a symbol",
+      "title": "Gather change context in one query",
+      "question": "What should an agent inspect before changing ReserveStock?",
+      "command": "gograph context ReserveStock --json",
+      "summary": "One response bundles the exact source, callers, dependency, and mapped test instead of requiring separate searches and full-file reads.",
+      "kind": "Benchmark verified",
+      "benchmark_scenario": "composed-change-context",
+      "focus": { "path": "service/checkout.go", "start": 18, "end": 24 },
+      "facts": [
+        { "label": "Caller", "value": "CheckoutService.Checkout", "detail": "service/checkout.go:31" },
+        { "label": "Dependency", "value": "fmt.Errorf", "detail": "service/checkout.go:20" },
+        { "label": "Mapped test", "value": "TestReserveStockRejectsEmptyInventory", "detail": "checkout_test.go:25" }
+      ],
+      "trail": [
+        { "label": "Checkout", "meta": "caller" },
+        { "label": "ReserveStock", "meta": "target symbol" },
+        { "label": "fmt.Errorf", "meta": "callee" }
+      ],
+      "related": [
+        { "label": "Open mapped test", "path": "service/checkout_test.go", "start": 25, "end": 30 },
+        { "label": "Open caller", "path": "service/checkout.go", "start": 26, "end": 39 }
+      ]
+    },
+    {
+      "id": "plan-change",
+      "step": "03",
+      "label": "Plan a refactor",
+      "title": "Turn structure into an edit checklist",
+      "question": "What is the likely impact of changing ReserveStock?",
+      "command": "gograph plan ReserveStock --with-context --json",
+      "summary": "The plan identifies the public symbol, its implementation, the test file to run, and relevant risk signals before any edit is made.",
+      "kind": "Guided query",
+      "focus": { "path": "service/checkout.go", "start": 18, "end": 24 },
+      "facts": [
+        { "label": "Read first", "value": "service/checkout.go:18", "detail": "target implementation" },
+        { "label": "Test file", "value": "service/checkout_test.go", "detail": "statically attributed" },
+        { "label": "Risk signal", "value": "Public API: yes", "detail": "SQL touched: no" }
+      ],
+      "trail": [
+        { "label": "Read", "meta": "target source" },
+        { "label": "Edit", "meta": "public function" },
+        { "label": "Verify", "meta": "mapped tests" }
+      ],
+      "related": [
+        { "label": "Open target test", "path": "service/checkout_test.go", "start": 25, "end": 30 },
+        { "label": "Inspect Product type", "path": "catalog/catalog.go", "start": 5, "end": 8 }
+      ]
+    },
+    {
+      "id": "interface-dispatch",
+      "step": "04",
+      "label": "Follow dispatch",
+      "title": "Resolve a call through an interface",
+      "question": "Who calls ProductRepository.Save through an interface value?",
+      "command": "gograph callers ProductRepository.Save --exact --json",
+      "summary": "The type-checked graph connects the interface-qualified method to CheckoutService.Checkout and preserves the exact repository.Save call site.",
+      "kind": "Benchmark verified",
+      "benchmark_scenario": "interface-dispatch-callers",
+      "focus": { "path": "service/checkout.go", "start": 26, "end": 39 },
+      "facts": [
+        { "label": "Caller", "value": "(*CheckoutService).Checkout", "detail": "service/checkout.go:26" },
+        { "label": "Call site", "value": "s.repository.Save", "detail": "service/checkout.go:35" },
+        { "label": "Receiver", "value": "ProductRepository", "detail": "interface field" }
+      ],
+      "trail": [
+        { "label": "CheckoutService", "meta": "orchestrator" },
+        { "label": "ProductRepository.Save", "meta": "interface dispatch" },
+        { "label": "Save implementations", "meta": "concrete targets" }
+      ],
+      "related": [
+        { "label": "Open interface contract", "path": "catalog/catalog.go", "start": 10, "end": 13 },
+        { "label": "Open SQL implementation", "path": "sqlrepo/repository.go", "start": 24, "end": 27 }
+      ]
+    },
+    {
+      "id": "implementers",
+      "step": "05",
+      "label": "Find implementations",
+      "title": "Reveal implicit type relationships",
+      "question": "Which concrete types satisfy ProductRepository without declaring it?",
+      "command": "gograph implementers ProductRepository --json",
+      "summary": "Go's implicit interfaces become explicit evidence: both the in-memory and SQL repositories satisfy the contract.",
+      "kind": "Benchmark verified",
+      "benchmark_scenario": "implicit-interface-implementers",
+      "focus": { "path": "catalog/catalog.go", "start": 10, "end": 13 },
+      "facts": [
+        { "label": "Implementation", "value": "MemoryRepository", "detail": "memory/repository.go:11" },
+        { "label": "Implementation", "value": "SQLRepository", "detail": "sqlrepo/repository.go:10" },
+        { "label": "Evidence", "value": "2 of 2 found", "detail": "type-checked benchmark" }
+      ],
+      "trail": [
+        { "label": "MemoryRepository", "meta": "implicit implementation" },
+        { "label": "ProductRepository", "meta": "interface contract" },
+        { "label": "SQLRepository", "meta": "implicit implementation" }
+      ],
+      "related": [
+        { "label": "Open memory implementation", "path": "memory/repository.go", "start": 24, "end": 39 },
+        { "label": "Open SQL implementation", "path": "sqlrepo/repository.go", "start": 18, "end": 27 }
+      ]
+    }
+  ]
+}

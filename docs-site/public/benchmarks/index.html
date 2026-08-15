@@ -105,8 +105,8 @@
   "keywords": [
 
   ],
-  "articleBody": "Claims you can reproduce gograph’s checked-in benchmark uses a controlled Go fixture with manually reviewable ground truth. It verifies implicit interface implementations, interface-dispatched callers, and a composed change-context workflow.\nThe current v1.5.5 report was generated with a complete precise graph. Every declared evidence item was found by the corresponding gograph workflow:\nScenario gograph evidence Text-search evidence Process calls Implicit interface implementations 2/2 0/2 1 vs 1 Interface-dispatched caller 2/2 1/2 1 vs 1 Composed change context 4/4 4/4 1 vs 3 Explore the no-install demo →\nWhat the benchmark does not claim This is a deterministic structural-evidence benchmark. It does not claim a fixed token reduction, universal speedup, hallucination rate, or complete end-to-end coding-agent success rate. The fixture is small, elapsed times depend on the host, and text search returns different evidence.\nReproduce it git clone https://github.com/ozgurcd/gograph cd gograph make build make benchmark The harness records the binary version, source revision, runner, suite, and fixture SHA-256 digests, graph precision and build health, complete raw outputs, evidence coverage, output size, process-call count, and repeated timing.\nReview the suite and fixture, the complete v1.5.5 result, and the methodology.\n",
-  "wordCount" : "186",
+  "articleBody": "Claims you can reproduce gograph’s checked-in benchmark uses a controlled Go fixture with manually reviewable ground truth. It verifies implicit interface implementations, interface-dispatched callers, and a composed change-context workflow.\nThe current v1.5.5 report was generated with a complete precise graph. Every declared evidence item was found by the corresponding gograph workflow:\nScenario gograph evidence Text-search evidence Process calls Implicit interface implementations 2/2 0/2 1 vs 1 Interface-dispatched caller 2/2 1/2 1 vs 1 Composed change context 4/4 4/4 1 vs 3 Explore the fixture and verified evidence →\nWhat the benchmark does not claim This is a deterministic structural-evidence benchmark. It does not claim a fixed token reduction, universal speedup, hallucination rate, or complete end-to-end coding-agent success rate. The fixture is small, elapsed times depend on the host, and text search returns different evidence.\nReproduce it git clone https://github.com/ozgurcd/gograph cd gograph make build make benchmark The harness records the binary version, source revision, runner, suite, and fixture SHA-256 digests, graph precision and build health, complete raw outputs, evidence coverage, output size, process-call count, and repeated timing.\nReview the suite and fixture, the complete v1.5.5 result, and the methodology.\n",
+  "wordCount" : "188",
   "inLanguage": "en",
   "image": "https://gograph.identuum.ai/images/gograph-social-preview.png","datePublished": "0001-01-01T00:00:00Z",
   "dateModified": "0001-01-01T00:00:00Z",
@@ -266,7 +266,7 @@ declared evidence item was found by the corresponding gograph workflow:</p>
 			</tr>
 	</tbody>
 </table>
-<p><a href="/demo/">Explore the no-install demo →</a></p>
+<p><a href="/demo/">Explore the fixture and verified evidence →</a></p>
 <h2 id="what-the-benchmark-does-not-claim">What the benchmark does not claim<a hidden class="anchor" aria-hidden="true" href="#what-the-benchmark-does-not-claim">#</a></h2>
 <p>This is a deterministic structural-evidence benchmark. It does not claim a
 fixed token reduction, universal speedup, hallucination rate, or complete

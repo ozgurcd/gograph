@@ -19,7 +19,7 @@ declared evidence item was found by the corresponding gograph workflow:
 | Interface-dispatched caller | 2/2 | 1/2 | 1 vs 1 |
 | Composed change context | 4/4 | 4/4 | 1 vs 3 |
 
-[Explore the no-install demo →](/demo/)
+[Explore the fixture and verified evidence →](/demo/)
 
 ## What the benchmark does not claim
 

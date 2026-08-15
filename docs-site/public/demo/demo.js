@@ -9,16 +9,25 @@
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 
-  const workflowHTML = (name, workflow) => `
-    <section class="demo-workflow">
-      <p class="demo-workflow-label">${escapeHTML(name)} · ${escapeHTML(workflow.label)}</p>
-      <div class="demo-metrics">
-        <div class="demo-metric"><strong>${workflow.evidence_found}/${workflow.evidence_total}</strong><span>evidence</span></div>
-        <div class="demo-metric"><strong>${workflow.tool_calls}</strong><span>process calls</span></div>
-        <div class="demo-metric"><strong>${workflow.median_millis} ms</strong><span>median</span></div>
+  const workflowMetrics = (workflow) => `
+    <div class="demo-metrics">
+      <div class="demo-metric"><strong>${workflow.evidence_found}/${workflow.evidence_total}</strong><span>evidence</span></div>
+      <div class="demo-metric"><strong>${workflow.tool_calls}</strong><span>process calls</span></div>
+      <div class="demo-metric"><strong>${workflow.median_millis} ms</strong><span>median</span></div>
+    </div>`;
+
+  const benchmarkWorkflow = (name, workflow, featured) => `
+    <section class="demo-benchmark-card${featured ? " is-featured" : ""}">
+      <div class="demo-benchmark-card-head">
+        <p>${escapeHTML(name)}</p>
+        <span>${escapeHTML(workflow.label)}</span>
       </div>
-      <ul class="demo-evidence">
-        ${workflow.evidence.map((item) => `<li class="${item.found ? "is-found" : ""}">${escapeHTML(item.description)}</li>`).join("")}
+      ${workflowMetrics(workflow)}
+      <ul class="demo-evidence-list">
+        ${workflow.evidence.map((item) => `
+          <li class="${item.found ? "is-found" : ""}" title="${item.found ? "Evidence found" : "Evidence not found"}">
+            ${escapeHTML(item.description)}
+          </li>`).join("")}
       </ul>
       <details class="demo-raw">
         <summary>Inspect complete raw output</summary>
@@ -27,54 +36,335 @@
     </section>`;
 
   try {
-    const response = await fetch("/demo/data.json", { cache: "no-cache" });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const report = await response.json();
-    let selected = 0;
+    const [workspaceResponse, reportResponse] = await Promise.all([
+      fetch("/demo/workspace.json", { cache: "no-cache" }),
+      fetch("/demo/data.json", { cache: "no-cache" })
+    ]);
+    if (!workspaceResponse.ok) throw new Error(`workspace HTTP ${workspaceResponse.status}`);
+    if (!reportResponse.ok) throw new Error(`evidence HTTP ${reportResponse.status}`);
+
+    const workspace = await workspaceResponse.json();
+    const report = await reportResponse.json();
+    const state = {
+      mode: "explore",
+      workflow: 0,
+      benchmark: 0,
+      file: workspace.workflows[0].focus.path,
+      highlight: workspace.workflows[0].focus,
+      filter: ""
+    };
 
     root.innerHTML = `
-      <header class="demo-header">
-        <p class="demo-kicker">Reproducible evidence · no installation</p>
-        <h2>${escapeHTML(report.description)}</h2>
-        <p class="demo-meta">${escapeHTML(report.binary_version)} · ${escapeHTML(report.setup.precision)} precision · fixture ${escapeHTML(report.fixture_sha256.slice(0, 12))}</p>
+      <header class="demo-hero">
+        <div>
+          <p class="demo-kicker">Interactive repository lab</p>
+          <h2>See the structure an agent sees.</h2>
+          <p class="demo-hero-copy">Follow a checkout request from route to repository, inspect exact source, and turn graph evidence into a safer edit plan.</p>
+        </div>
+        <div class="demo-repo-summary" aria-label="Repository snapshot status">
+          <div class="demo-repo-name"><span class="demo-status-dot"></span><strong>${escapeHTML(workspace.repository.name)}</strong></div>
+          <dl>
+            <div><dt>Build</dt><dd>${escapeHTML(workspace.repository.build)}</dd></div>
+            <div><dt>Precision</dt><dd>${escapeHTML(workspace.repository.precision)}</dd></div>
+            <div><dt>Fixture</dt><dd>${workspace.repository.file_count} files · ${workspace.repository.symbol_count} symbols</dd></div>
+          </dl>
+        </div>
       </header>
-      <nav class="demo-tabs" aria-label="Benchmark scenarios"></nav>
-      <div class="demo-panel"></div>
-      <div class="demo-limitations"><strong>Limits:</strong> ${report.limitations.map(escapeHTML).join(" ")}</div>`;
 
-    const tabs = root.querySelector(".demo-tabs");
-    const panel = root.querySelector(".demo-panel");
+      <nav class="demo-mode-tabs" role="tablist" aria-label="Demo views">
+        <button type="button" role="tab" aria-selected="true" aria-controls="demo-explore" data-mode="explore">
+          <span>Explore</span><small>Guided repository workspace</small>
+        </button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="demo-evidence" data-mode="evidence">
+          <span>Verified evidence</span><small>Reproducible benchmark output</small>
+        </button>
+      </nav>
 
-    const render = () => {
-      const scenario = report.scenarios[selected];
-      tabs.querySelectorAll("button").forEach((button, index) => {
-        button.setAttribute("aria-selected", String(index === selected));
+      <section id="demo-explore" class="demo-view" role="tabpanel">
+        <div class="demo-workspace-bar">
+          <div>
+            <span class="demo-window-dot"></span><span class="demo-window-dot"></span><span class="demo-window-dot"></span>
+            <strong>${escapeHTML(workspace.repository.module)}</strong>
+          </div>
+          <label class="demo-workflow-search">
+            <span>Filter investigations</span>
+            <input type="search" placeholder="Search workflows…" autocomplete="off">
+          </label>
+        </div>
+        <div class="demo-workspace-grid">
+          <aside class="demo-sidebar" aria-label="Guided investigations and repository files">
+            <section>
+              <div class="demo-section-label"><span>Investigations</span><span>5 guided</span></div>
+              <div class="demo-workflow-list"></div>
+            </section>
+            <section class="demo-repository-tree">
+              <div class="demo-section-label"><span>Repository</span><span>${workspace.repository.file_count} Go files</span></div>
+              <div class="demo-file-list"></div>
+            </section>
+          </aside>
+
+          <section class="demo-code-panel" aria-label="Source code">
+            <div class="demo-code-head"></div>
+            <div class="demo-code-body" tabindex="0"></div>
+          </section>
+
+          <aside class="demo-inspector" aria-label="Structural evidence"></aside>
+        </div>
+        <footer class="demo-disclosure">
+          <span>Curated, not simulated</span>
+          <p>${escapeHTML(workspace.repository.disclosure)}</p>
+        </footer>
+      </section>
+
+      <section id="demo-evidence" class="demo-view demo-benchmark" role="tabpanel" hidden>
+        <header class="demo-benchmark-head">
+          <div>
+            <p class="demo-kicker">Checked-in benchmark result</p>
+            <h3>${escapeHTML(report.description)}</h3>
+          </div>
+          <div class="demo-snapshot-meta">
+            <span>${escapeHTML(report.binary_version)}</span>
+            <span>${escapeHTML(report.setup.precision)} precision</span>
+            <span>fixture ${escapeHTML(report.fixture_sha256.slice(0, 12))}</span>
+          </div>
+        </header>
+        <nav class="demo-scenario-tabs" role="tablist" aria-label="Benchmark scenarios"></nav>
+        <div class="demo-benchmark-panel"></div>
+        <div class="demo-limitations"><strong>Scope and limits</strong><p>${report.limitations.map(escapeHTML).join(" ")}</p></div>
+      </section>`;
+
+    const modeButtons = [...root.querySelectorAll("[data-mode]")];
+    const views = [...root.querySelectorAll(".demo-view")];
+    const workflowList = root.querySelector(".demo-workflow-list");
+    const fileList = root.querySelector(".demo-file-list");
+    const codeHead = root.querySelector(".demo-code-head");
+    const codeBody = root.querySelector(".demo-code-body");
+    const inspector = root.querySelector(".demo-inspector");
+    const search = root.querySelector(".demo-workflow-search input");
+    const scenarioTabs = root.querySelector(".demo-scenario-tabs");
+    const benchmarkPanel = root.querySelector(".demo-benchmark-panel");
+
+    const setMode = (mode) => {
+      state.mode = mode;
+      modeButtons.forEach((button) => {
+        const selected = button.dataset.mode === mode;
+        button.setAttribute("aria-selected", String(selected));
+        button.tabIndex = selected ? 0 : -1;
       });
-      panel.innerHTML = `
-        <h3>${escapeHTML(scenario.title)}</h3>
-        <p class="demo-question">${escapeHTML(scenario.question)}</p>
-        <p class="demo-finding">${escapeHTML(scenario.demo.finding)}</p>
-        <code class="demo-command">$ ${escapeHTML(scenario.demo.command)}</code>
-        <div class="demo-workflows">
-          ${workflowHTML("Structural result", scenario.gograph)}
-          ${workflowHTML("Comparison", scenario.baseline)}
+      views.forEach((view) => {
+        view.hidden = view.id !== `demo-${mode}`;
+      });
+    };
+
+    const getFile = (path) => workspace.files.find((file) => file.path === path);
+
+    const renderCode = () => {
+      const file = getFile(state.file);
+      if (!file) return;
+      const range = state.highlight && state.highlight.path === file.path ? state.highlight : null;
+      const highlighted = range ? `Lines ${range.start}–${range.end}` : "Source view";
+      codeHead.innerHTML = `
+        <div><span class="demo-file-icon">go</span><strong>${escapeHTML(file.path)}</strong></div>
+        <span>${highlighted}</span>`;
+      codeBody.innerHTML = `<pre>${file.lines.map((line, index) => {
+        const number = index + 1;
+        const active = range && number >= range.start && number <= range.end;
+        return `<span class="demo-code-line${active ? " is-highlighted" : ""}"><span class="demo-line-number">${number}</span><code>${escapeHTML(line) || "&nbsp;"}</code></span>`;
+      }).join("")}</pre>`;
+      if (range) {
+        const activeLine = codeBody.querySelector(".is-highlighted");
+        if (activeLine) {
+          codeBody.scrollTop = Math.max(0, activeLine.offsetTop - (codeBody.clientHeight / 2));
+        }
+      } else {
+        codeBody.scrollTop = 0;
+      }
+      fileList.querySelectorAll("button").forEach((button) => {
+        button.classList.toggle("is-active", button.dataset.path === state.file);
+      });
+    };
+
+    const openFile = (path, start, end) => {
+      state.file = path;
+      state.highlight = start ? { path, start, end } : null;
+      renderCode();
+    };
+
+    const switchToBenchmark = (scenarioID) => {
+      const index = report.scenarios.findIndex((scenario) => scenario.id === scenarioID);
+      if (index >= 0) state.benchmark = index;
+      renderBenchmark();
+      setMode("evidence");
+      root.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+
+    const renderInspector = () => {
+      const workflow = workspace.workflows[state.workflow];
+      inspector.innerHTML = `
+        <div class="demo-inspector-head">
+          <span class="demo-query-kind${workflow.benchmark_scenario ? " is-verified" : ""}">${escapeHTML(workflow.kind)}</span>
+          <span>${escapeHTML(workflow.step)} / ${String(workspace.workflows.length).padStart(2, "0")}</span>
+        </div>
+        <div class="demo-inspector-copy">
+          <p class="demo-inspector-question">${escapeHTML(workflow.question)}</p>
+          <h3>${escapeHTML(workflow.title)}</h3>
+          <p>${escapeHTML(workflow.summary)}</p>
+        </div>
+        <div class="demo-command-row">
+          <code><span>$</span> ${escapeHTML(workflow.command)}</code>
+          <button type="button" class="demo-copy-command" aria-label="Copy command">Copy</button>
+        </div>
+        <div class="demo-facts">
+          ${workflow.facts.map((fact) => `
+            <div class="demo-fact">
+              <span>${escapeHTML(fact.label)}</span>
+              <strong>${escapeHTML(fact.value)}</strong>
+              <small>${escapeHTML(fact.detail)}</small>
+            </div>`).join("")}
+        </div>
+        <div class="demo-trail">
+          <div class="demo-section-label"><span>Structural trail</span><span>Graph evidence</span></div>
+          <div class="demo-trail-nodes">
+            ${workflow.trail.map((node, index) => `
+              ${index ? '<span class="demo-trail-arrow" aria-hidden="true">→</span>' : ""}
+              <div><strong>${escapeHTML(node.label)}</strong><small>${escapeHTML(node.meta)}</small></div>`).join("")}
+          </div>
+        </div>
+        <div class="demo-next-files">
+          <div class="demo-section-label"><span>Inspect next</span><span>Source</span></div>
+          ${workflow.related.map((item) => `
+            <button type="button" data-related-path="${escapeHTML(item.path)}" data-related-start="${item.start}" data-related-end="${item.end}">
+              <span>${escapeHTML(item.label)}</span><small>${escapeHTML(item.path)}:${item.start}</small>
+            </button>`).join("")}
+        </div>
+        ${workflow.benchmark_scenario ? `
+          <button type="button" class="demo-open-evidence" data-scenario="${escapeHTML(workflow.benchmark_scenario)}">
+            Open the reproducible evidence <span aria-hidden="true">→</span>
+          </button>` : ""}`;
+
+      inspector.querySelector(".demo-copy-command").addEventListener("click", async (event) => {
+        try {
+          await navigator.clipboard.writeText(workflow.command);
+          event.currentTarget.textContent = "Copied";
+        } catch (_) {
+          event.currentTarget.textContent = "Select command";
+        }
+      });
+      inspector.querySelectorAll("[data-related-path]").forEach((button) => {
+        button.addEventListener("click", () => openFile(
+          button.dataset.relatedPath,
+          Number(button.dataset.relatedStart),
+          Number(button.dataset.relatedEnd)
+        ));
+      });
+      const evidenceButton = inspector.querySelector(".demo-open-evidence");
+      if (evidenceButton) {
+        evidenceButton.addEventListener("click", () => switchToBenchmark(evidenceButton.dataset.scenario));
+      }
+    };
+
+    const selectWorkflow = (index) => {
+      state.workflow = index;
+      const workflow = workspace.workflows[index];
+      state.file = workflow.focus.path;
+      state.highlight = workflow.focus;
+      renderWorkflowList();
+      renderInspector();
+      renderCode();
+    };
+
+    const renderWorkflowList = () => {
+      const query = state.filter.trim().toLowerCase();
+      workflowList.innerHTML = workspace.workflows.map((workflow, index) => {
+        const searchable = `${workflow.label} ${workflow.title} ${workflow.question} ${workflow.command}`.toLowerCase();
+        if (query && !searchable.includes(query)) return "";
+        return `
+          <button type="button" class="demo-workflow-button${index === state.workflow ? " is-active" : ""}" data-workflow="${index}">
+            <span>${escapeHTML(workflow.step)}</span>
+            <span><strong>${escapeHTML(workflow.label)}</strong><small>${escapeHTML(workflow.command.replace("gograph ", ""))}</small></span>
+          </button>`;
+      }).join("");
+      if (!workflowList.innerHTML.trim()) {
+        workflowList.innerHTML = '<p class="demo-no-results">No guided investigations match.</p>';
+      }
+      workflowList.querySelectorAll("[data-workflow]").forEach((button) => {
+        button.addEventListener("click", () => selectWorkflow(Number(button.dataset.workflow)));
+      });
+    };
+
+    const renderFileTree = () => {
+      let currentDirectory = "";
+      fileList.innerHTML = workspace.files.map((file) => {
+        const parts = file.path.split("/");
+        const directory = parts.slice(0, -1).join("/");
+        const directoryHTML = directory !== currentDirectory
+          ? `<p class="demo-directory"><span>⌄</span>${escapeHTML(directory)}/</p>`
+          : "";
+        currentDirectory = directory;
+        return `${directoryHTML}<button type="button" data-path="${escapeHTML(file.path)}"><span class="demo-go-file">GO</span>${escapeHTML(parts.at(-1))}</button>`;
+      }).join("");
+      fileList.querySelectorAll("button").forEach((button) => {
+        button.addEventListener("click", () => openFile(button.dataset.path));
+      });
+    };
+
+    const renderBenchmark = () => {
+      const scenario = report.scenarios[state.benchmark];
+      scenarioTabs.querySelectorAll("button").forEach((button, index) => {
+        const selected = index === state.benchmark;
+        button.setAttribute("aria-selected", String(selected));
+        button.tabIndex = selected ? 0 : -1;
+      });
+      benchmarkPanel.innerHTML = `
+        <div class="demo-benchmark-intro">
+          <div>
+            <span class="demo-pass-badge">✓ Ground truth passed</span>
+            <h3>${escapeHTML(scenario.title)}</h3>
+            <p>${escapeHTML(scenario.question)}</p>
+          </div>
+          <code>$ ${escapeHTML(scenario.demo.command)}</code>
+        </div>
+        <p class="demo-finding"><span>Finding</span>${escapeHTML(scenario.demo.finding)}</p>
+        <div class="demo-benchmark-grid">
+          ${benchmarkWorkflow("Structural result", scenario.gograph, true)}
+          ${benchmarkWorkflow("Comparison", scenario.baseline, false)}
         </div>`;
     };
+
+    modeButtons.forEach((button) => {
+      button.addEventListener("click", () => setMode(button.dataset.mode));
+      button.addEventListener("keydown", (event) => {
+        if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+        event.preventDefault();
+        const next = button === modeButtons[0] ? modeButtons[1] : modeButtons[0];
+        setMode(next.dataset.mode);
+        next.focus();
+      });
+    });
+
+    search.addEventListener("input", () => {
+      state.filter = search.value;
+      renderWorkflowList();
+    });
 
     report.scenarios.forEach((scenario, index) => {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "demo-tab";
       button.setAttribute("role", "tab");
-      button.textContent = scenario.title;
+      button.innerHTML = `<span>0${index + 1}</span>${escapeHTML(scenario.title)}`;
       button.addEventListener("click", () => {
-        selected = index;
-        render();
+        state.benchmark = index;
+        renderBenchmark();
       });
-      tabs.appendChild(button);
+      scenarioTabs.appendChild(button);
     });
-    render();
+
+    renderFileTree();
+    renderWorkflowList();
+    renderInspector();
+    renderCode();
+    renderBenchmark();
   } catch (error) {
-    root.innerHTML = `<p class="demo-error">The verified demo data could not be loaded: ${escapeHTML(error.message)}</p>`;
+    root.innerHTML = `<p class="demo-error">The interactive demo data could not be loaded: ${escapeHTML(error.message)}</p>`;
   }
 })();

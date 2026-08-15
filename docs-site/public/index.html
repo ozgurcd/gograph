@@ -180,10 +180,11 @@
 type-checked CHA/SSA enrichment. Use it to trace callers and interface
 implementations, plan change impact, and enforce architecture through CLI or
 MCP without embeddings or a hosted code index.</p>
-<p><strong><a href="/demo/">Try verified gograph output without installing →</a></strong></p>
-<p>Inspect the precise interface and change-context benchmark, its declared
-ground truth, exact commands, and complete raw output. Read the
-<a href="/benchmarks/">methodology and limitations →</a></p>
+<p><strong><a href="/demo/">Explore a Go repository without installing →</a></strong></p>
+<p>Trace a checkout request, inspect source-backed graph findings, and build a
+change plan in the guided workspace. Its separate evidence view preserves the
+precise interface and change-context benchmark, declared ground truth, exact
+commands, and complete raw output. Read the <a href="/benchmarks/">methodology and limitations →</a></p>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>gograph build .           <span style="color:#75715e"># fast AST graph; tolerates incomplete packages</span>
 </span></span><span style="display:flex;"><span>gograph stats             <span style="color:#75715e"># verify build health and analysis precision</span>
 </span></span><span style="display:flex;"><span>gograph summary           <span style="color:#75715e"># repository overview; no symbol name required</span>

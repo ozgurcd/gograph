@@ -47,7 +47,12 @@ workflows three times, verifies the declared evidence, and writes:
 
 - `benchmarks/results/gograph-v1.5.5.json` — the complete checked-in report;
 - `docs-site/static/demo/data.json` — the identical data consumed by the
-  no-install public demo.
+  verified-evidence view in the no-install public demo.
+
+The demo's guided repository workspace reads its curated navigation and exact
+fixture source snapshot from `docs-site/static/demo/workspace.json`. That tour
+does not replace or modify the reproducible benchmark result; it links each
+benchmark-backed investigation to the matching scenario in `data.json`.
 
 To run the harness without replacing checked-in results:
 

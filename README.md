@@ -13,7 +13,7 @@ type-checked CHA/SSA enrichment. Its CLI and MCP workflows help coding agents
 trace callers and interface implementations, plan change impact, and enforce
 architecture without embeddings or a hosted code index.
 
-**[Try the verified no-install demo](https://gograph.identuum.ai/demo/)** ·
+**[Explore the interactive no-install demo](https://gograph.identuum.ai/demo/)** ·
 **[Review the reproducible benchmark](docs/benchmarking.md)**
 
 ![Gograph Demo](gograph-demo.gif)
