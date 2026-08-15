@@ -13,7 +13,8 @@ MCP without embeddings or a hosted code index.
 **[Explore a Go repository without installing →](/demo/)**
 
 Trace a checkout request, inspect source-backed graph findings, and build a
-change plan in the guided workspace. Its separate evidence view preserves the
+change plan in the guided workspace. Compare actual gograph and `rg` output
+across several measured criteria. The separate evidence view preserves the
 precise interface and change-context benchmark, declared ground truth, exact
 commands, and complete raw output. Read the [methodology and limitations →](/benchmarks/)
 

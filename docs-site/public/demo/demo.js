@@ -9,6 +9,10 @@
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 
+  const formatBytes = (value) => value < 1024
+    ? `${value} B`
+    : `${(value / 1024).toFixed(1)} kB`;
+
   const workflowMetrics = (workflow) => `
     <div class="demo-metrics">
       <div class="demo-metric"><strong>${workflow.evidence_found}/${workflow.evidence_total}</strong><span>evidence</span></div>
@@ -48,6 +52,7 @@
     const state = {
       mode: "explore",
       workflow: 0,
+      comparison: 0,
       benchmark: 0,
       file: workspace.workflows[0].focus.path,
       highlight: workspace.workflows[0].focus,
@@ -74,6 +79,9 @@
       <nav class="demo-mode-tabs" role="tablist" aria-label="Demo views">
         <button type="button" role="tab" aria-selected="true" aria-controls="demo-explore" data-mode="explore">
           <span>Explore</span><small>Guided repository workspace</small>
+        </button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="demo-compare" data-mode="compare">
+          <span>Compare with rg</span><small>Actual outputs and tradeoffs</small>
         </button>
         <button type="button" role="tab" aria-selected="false" aria-controls="demo-evidence" data-mode="evidence">
           <span>Verified evidence</span><small>Reproducible benchmark output</small>
@@ -116,6 +124,18 @@
         </footer>
       </section>
 
+      <section id="demo-compare" class="demo-view demo-compare" role="tabpanel" hidden>
+        <header class="demo-compare-head">
+          <div>
+            <p class="demo-kicker">Measured against literal text search</p>
+            <h3>Structural answers and text matches, side by side.</h3>
+          </div>
+          <p>These are complete outputs from the checked-in benchmark. The comparison rewards evidence for the declared structural question—not one tool in every situation.</p>
+        </header>
+        <nav class="demo-compare-tabs" role="tablist" aria-label="Output comparison scenarios"></nav>
+        <div class="demo-compare-panel"></div>
+      </section>
+
       <section id="demo-evidence" class="demo-view demo-benchmark" role="tabpanel" hidden>
         <header class="demo-benchmark-head">
           <div>
@@ -141,6 +161,8 @@
     const codeBody = root.querySelector(".demo-code-body");
     const inspector = root.querySelector(".demo-inspector");
     const search = root.querySelector(".demo-workflow-search input");
+    const comparisonTabs = root.querySelector(".demo-compare-tabs");
+    const comparisonPanel = root.querySelector(".demo-compare-panel");
     const scenarioTabs = root.querySelector(".demo-scenario-tabs");
     const benchmarkPanel = root.querySelector(".demo-benchmark-panel");
 
@@ -331,12 +353,99 @@
         </div>`;
     };
 
+    const renderComparison = () => {
+      const scenario = report.scenarios[state.comparison];
+      const explanation = workspace.comparisons.find((item) => item.scenario === scenario.id);
+      const coverageWinner = scenario.gograph.evidence_found > scenario.baseline.evidence_found ? "gograph" : "tie";
+      const callsWinner = scenario.gograph.tool_calls < scenario.baseline.tool_calls
+        ? "gograph"
+        : scenario.gograph.tool_calls > scenario.baseline.tool_calls ? "baseline" : "tie";
+      const timingWinner = scenario.gograph.median_millis < scenario.baseline.median_millis
+        ? "gograph"
+        : scenario.gograph.median_millis > scenario.baseline.median_millis ? "baseline" : "tie";
+
+      comparisonTabs.querySelectorAll("button").forEach((button, index) => {
+        const selected = index === state.comparison;
+        button.setAttribute("aria-selected", String(selected));
+        button.tabIndex = selected ? 0 : -1;
+      });
+
+      const valueCell = (value, side, winner, note) => `
+        <div class="demo-criterion-value${winner === side ? " is-best" : ""}" role="cell">
+          <strong>${escapeHTML(value)}</strong><small>${escapeHTML(note)}</small>
+        </div>`;
+      const output = (workflow) => workflow.steps.map((step) => `$ ${step.command}\n${step.output}`).join("\n\n");
+
+      comparisonPanel.innerHTML = `
+        <div class="demo-compare-title">
+          <div>
+            <span class="demo-pass-badge">✓ Measured ground truth</span>
+            <h3>${escapeHTML(explanation.headline)}</h3>
+            <p>${escapeHTML(scenario.question)}</p>
+          </div>
+          <p class="demo-compare-takeaway">${escapeHTML(explanation.takeaway)}</p>
+        </div>
+
+        <div class="demo-criteria" role="table" aria-label="gograph and rg comparison criteria">
+          <div class="demo-criteria-row is-header" role="row">
+            <strong role="columnheader">Criterion</strong>
+            <strong role="columnheader">gograph</strong>
+            <strong role="columnheader">rg baseline</strong>
+          </div>
+          <div class="demo-criteria-row" role="row">
+            <span role="rowheader">Ground-truth evidence</span>
+            ${valueCell(`${scenario.gograph.evidence_found}/${scenario.gograph.evidence_total}`, "gograph", coverageWinner, "structural items recovered")}
+            ${valueCell(`${scenario.baseline.evidence_found}/${scenario.baseline.evidence_total}`, "baseline", coverageWinner, "structural items recovered")}
+          </div>
+          <div class="demo-criteria-row" role="row">
+            <span role="rowheader">Process calls</span>
+            ${valueCell(String(scenario.gograph.tool_calls), "gograph", callsWinner, "commands in workflow")}
+            ${valueCell(String(scenario.baseline.tool_calls), "baseline", callsWinner, "commands in workflow")}
+          </div>
+          <div class="demo-criteria-row" role="row">
+            <span role="rowheader">Median elapsed</span>
+            ${valueCell(`${scenario.gograph.median_millis} ms`, "gograph", timingWinner, "captured local run")}
+            ${valueCell(`${scenario.baseline.median_millis} ms`, "baseline", timingWinner, "captured local run")}
+          </div>
+          <div class="demo-criteria-row" role="row">
+            <span role="rowheader">Output size</span>
+            ${valueCell(formatBytes(scenario.gograph.output_bytes), "gograph", "none", "structured response")}
+            ${valueCell(formatBytes(scenario.baseline.output_bytes), "baseline", "none", "literal match output")}
+          </div>
+          <div class="demo-criteria-row" role="row">
+            <span role="rowheader">Result semantics</span>
+            ${valueCell("Typed relationships", "gograph", "gograph", "symbol, file, line, relation")}
+            ${valueCell("Matching lines", "baseline", "none", "path, line, matching text")}
+          </div>
+        </div>
+
+        <div class="demo-meaning-grid">
+          <section><span>What gograph establishes</span><p>${escapeHTML(explanation.gograph)}</p></section>
+          <section><span>What rg establishes</span><p>${escapeHTML(explanation.baseline)}</p></section>
+        </div>
+
+        <div class="demo-output-grid">
+          <section class="demo-output-card is-gograph">
+            <header><span>gograph output</span><small>${scenario.gograph.output_lines} lines · ${formatBytes(scenario.gograph.output_bytes)}</small></header>
+            <pre>${escapeHTML(output(scenario.gograph))}</pre>
+          </section>
+          <section class="demo-output-card">
+            <header><span>rg output</span><small>${scenario.baseline.output_lines} lines · ${formatBytes(scenario.baseline.output_bytes)}</small></header>
+            <pre>${escapeHTML(output(scenario.baseline))}</pre>
+          </section>
+        </div>
+
+        <p class="demo-compare-note"><strong>Read this fairly:</strong> rg is faster and often smaller for literal text lookup. gograph is designed for typed relationships and composed repository questions. Timing and payload size are fixture-specific; evidence coverage is checked against this suite's declared ground truth.</p>`;
+    };
+
     modeButtons.forEach((button) => {
       button.addEventListener("click", () => setMode(button.dataset.mode));
       button.addEventListener("keydown", (event) => {
         if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
         event.preventDefault();
-        const next = button === modeButtons[0] ? modeButtons[1] : modeButtons[0];
+        const index = modeButtons.indexOf(button);
+        const direction = event.key === 'ArrowRight' ? 1 : -1;
+        const next = modeButtons[(index + direction + modeButtons.length) % modeButtons.length];
         setMode(next.dataset.mode);
         next.focus();
       });
@@ -348,6 +457,16 @@
     });
 
     report.scenarios.forEach((scenario, index) => {
+      const comparisonButton = document.createElement("button");
+      comparisonButton.type = "button";
+      comparisonButton.setAttribute("role", "tab");
+      comparisonButton.innerHTML = `<span>0${index + 1}</span>${escapeHTML(scenario.title)}`;
+      comparisonButton.addEventListener("click", () => {
+        state.comparison = index;
+        renderComparison();
+      });
+      comparisonTabs.appendChild(comparisonButton);
+
       const button = document.createElement("button");
       button.type = "button";
       button.setAttribute("role", "tab");
@@ -363,6 +482,7 @@
     renderWorkflowList();
     renderInspector();
     renderCode();
+    renderComparison();
     renderBenchmark();
   } catch (error) {
     root.innerHTML = `<p class="demo-error">The interactive demo data could not be loaded: ${escapeHTML(error.message)}</p>`;

@@ -251,6 +251,29 @@
       ]
     }
   ],
+  "comparisons": [
+    {
+      "scenario": "implicit-interface-implementers",
+      "headline": "Type relationships that text never states",
+      "gograph": "Resolves Go's implicit interface satisfaction from the type-checked graph and returns both concrete implementations.",
+      "baseline": "Finds literal references to ProductRepository, but the implementing structs never name that interface.",
+      "takeaway": "For an implicit type relationship, structural analysis recovers 2/2 declared evidence items while the literal search recovers 0/2."
+    },
+    {
+      "scenario": "interface-dispatch-callers",
+      "headline": "A typed caller instead of a selector match",
+      "gograph": "Resolves the interface-qualified Save method to CheckoutService.Checkout and preserves the exact call-site location.",
+      "baseline": "Finds the .Save( selector text, but the matched line alone does not establish the receiver's interface type.",
+      "takeaway": "For interface dispatch, structural output recovers both the caller and typed call-site evidence; text search recovers the call site only."
+    },
+    {
+      "scenario": "composed-change-context",
+      "headline": "One composed response instead of a search checklist",
+      "gograph": "Returns source, callers, dependencies, and mapped tests in one structured response designed for an agent workflow.",
+      "baseline": "Recovers the same declared evidence with three targeted searches and smaller literal-match output.",
+      "takeaway": "Both workflows recover 4/4 evidence items here; gograph reduces three process calls to one and supplies semantic fields at the cost of a larger payload."
+    }
+  ],
   "workflows": [
     {
       "id": "trace-endpoint",
