@@ -10,7 +10,7 @@ gograph's checked-in benchmark uses a controlled Go fixture with manually
 reviewable ground truth. It verifies implicit interface implementations,
 interface-dispatched callers, and a composed change-context workflow.
 
-The current v1.5.5 report was generated with a complete precise graph. Every
+The current v1.5.7 report was generated with a complete precise graph. Every
 declared evidence item was found by the corresponding gograph workflow:
 
 | Scenario | gograph evidence | Text-search evidence | Process calls |
@@ -42,5 +42,5 @@ fixture SHA-256 digests, graph precision and build health, complete raw outputs,
 evidence coverage, output size, process-call count, and repeated timing.
 
 Review the [suite and fixture](https://github.com/ozgurcd/gograph/tree/main/benchmarks),
-the [complete v1.5.5 result](https://github.com/ozgurcd/gograph/blob/main/benchmarks/results/gograph-v1.5.5.json),
+the [complete v1.5.7 result](https://github.com/ozgurcd/gograph/blob/main/benchmarks/results/gograph-v1.5.7.json),
 and the [methodology](https://github.com/ozgurcd/gograph/blob/main/docs/benchmarking.md).

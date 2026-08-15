@@ -45,7 +45,7 @@ make benchmark
 `make benchmark` runs the fixture tests, builds a precise graph, executes all
 workflows three times, verifies the declared evidence, and writes:
 
-- `benchmarks/results/gograph-v1.5.5.json` — the complete checked-in report;
+- `benchmarks/results/gograph-v1.5.7.json` — the complete checked-in report;
 - `docs-site/static/demo/data.json` — the identical data consumed by the
   verified-evidence view in the no-install public demo.
 
@@ -63,9 +63,9 @@ go run ./scripts/benchmark.go \
   --runs 3
 ```
 
-## Current v1.5.5 result
+## Current v1.5.7 result
 
-The checked-in report was produced by `gograph version v1.5.5-11363b9` with a
+The checked-in report was produced by `gograph version v1.5.7-f8284a3` with a
 complete precise graph. All three gograph workflows recovered every declared
 ground-truth item:
 
