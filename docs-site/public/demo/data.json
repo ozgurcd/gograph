@@ -2,13 +2,13 @@
   "schema_version": "1",
   "suite": "refactor-shop-structural-evidence",
   "description": "A controlled Go refactor fixture with manually reviewable structural ground truth.",
-  "generated_at": "2026-08-15T19:39:30Z",
-  "source_revision": "f8284a3427945922dc60cb8d0e2dfeadcb300187",
+  "generated_at": "2026-08-15T20:17:25Z",
+  "source_revision": "8f0e43d26e8e3a73e2e67df666c0fec8dee70366",
   "source_dirty": false,
-  "binary_version": "gograph version v1.5.7-f8284a3",
+  "binary_version": "gograph version v1.5.7-8f0e43d",
   "runner_sha256": "96481811fd48c1095cad04881376d89b927590e6d26f676a75f711474d380dcf",
   "fixture_sha256": "d3c3e6a35b53ef2e5c571fd4b84a5be5a43875f79a02170397103b15fe6c04ad",
-  "suite_sha256": "cfe4fec5a2f3cc8e4b2218a038c89c277cebf117d35293dc770d5dc7fef129dc",
+  "suite_sha256": "64e99d35232d27297683bce195339ae52d72cc996ecd4f13f099ccff2e764dfb",
   "analysis_mode": "precise",
   "setup": {
     "fixture_tests_passed": true,
@@ -45,7 +45,7 @@
       "gograph": {
         "label": "gograph precise graph",
         "tool_calls": 1,
-        "median_millis": 6,
+        "median_millis": 8,
         "output_bytes": 516,
         "output_lines": 23,
         "output_sha256": "ee1d5d94784066c9ed0cda67c16f2bff807eabd4434dbe7515eda6aec3d8164c",
@@ -75,7 +75,7 @@
       "baseline": {
         "label": "literal text search",
         "tool_calls": 1,
-        "median_millis": 2,
+        "median_millis": 4,
         "output_bytes": 228,
         "output_lines": 3,
         "output_sha256": "459de6f55956d6739598f98f6e0d05ee2233ebca64099fc2828306dff12573b2",
@@ -127,7 +127,7 @@
       "gograph": {
         "label": "gograph precise graph",
         "tool_calls": 1,
-        "median_millis": 5,
+        "median_millis": 8,
         "output_bytes": 492,
         "output_lines": 19,
         "output_sha256": "85e670c0cff182c6d461a0e8088475c4d851b9747c3b28d158e8afd27ea9deaa",
@@ -157,7 +157,7 @@
       "baseline": {
         "label": "selector text search",
         "tool_calls": 1,
-        "median_millis": 2,
+        "median_millis": 4,
         "output_bytes": 82,
         "output_lines": 1,
         "output_sha256": "3c3c9e29f6f946de8f875f76c07d203bc7228f9b4fa856516da95c173c80734c",
@@ -219,7 +219,7 @@
       "gograph": {
         "label": "gograph composed context",
         "tool_calls": 1,
-        "median_millis": 6,
+        "median_millis": 8,
         "output_bytes": 3506,
         "output_lines": 101,
         "output_sha256": "dfdfbeae9ccaf0cd6733233032dd3e8e27f510fe604a96d8eb9c9f120b8737e1",
@@ -259,7 +259,7 @@
       "baseline": {
         "label": "targeted text-search checklist",
         "tool_calls": 3,
-        "median_millis": 8,
+        "median_millis": 11,
         "output_bytes": 886,
         "output_lines": 13,
         "output_sha256": "da0a3a44b83386f7beb4e166c39bfab4f3f34a8cc8205e3f2eee9ed8d14985ca",
@@ -303,6 +303,73 @@
             "command": "rg --sort path -n TestReserveStock --glob *_test.go .",
             "exit_code": 0,
             "output": "./service/checkout_test.go:25:func TestReserveStockRejectsEmptyInventory(t *testing.T) {\n"
+          }
+        ]
+      },
+      "passed": true
+    },
+    {
+      "id": "exact-symbol-source",
+      "title": "Extract one exact source block",
+      "question": "What is the complete ReserveStock implementation without reading neighboring code?",
+      "demo": {
+        "command": "gograph source ReserveStock",
+        "finding": "The AST range stops at the function boundary instead of spilling into the next declaration."
+      },
+      "evidence": [
+        {
+          "id": "source",
+          "description": "The complete ReserveStock source is returned",
+          "needle": "product.Stock--"
+        }
+      ],
+      "gograph": {
+        "label": "gograph AST source range",
+        "tool_calls": 1,
+        "median_millis": 8,
+        "output_bytes": 297,
+        "output_lines": 8,
+        "output_sha256": "74a70ed8fd7637e4008574a655306dbc292f558635fecfa396c720e9481591e5",
+        "evidence_found": 1,
+        "evidence_total": 1,
+        "evidence_coverage": 1,
+        "evidence": [
+          {
+            "id": "source",
+            "description": "The complete ReserveStock source is returned",
+            "found": true
+          }
+        ],
+        "steps": [
+          {
+            "command": "gograph source ReserveStock",
+            "exit_code": 0,
+            "output": "// example.com/refactorshop/service::ReserveStock (service/checkout.go:18-24)\nfunc ReserveStock(product catalog.Product) (catalog.Product, error) {\n\tif product.Stock == 0 {\n\t\treturn catalog.Product{}, fmt.Errorf(\"product %q is out of stock\", product.ID)\n\t}\n\tproduct.Stock--\n\treturn product, nil\n}\n"
+          }
+        ]
+      },
+      "baseline": {
+        "label": "text search with context window",
+        "tool_calls": 1,
+        "median_millis": 4,
+        "output_bytes": 546,
+        "output_lines": 9,
+        "output_sha256": "b2b1309752b8687acd8bf126e4bcad823094cf3394036f0f19df74cde46d6dcf",
+        "evidence_found": 1,
+        "evidence_total": 1,
+        "evidence_coverage": 1,
+        "evidence": [
+          {
+            "id": "source",
+            "description": "The complete ReserveStock source is returned",
+            "found": true
+          }
+        ],
+        "steps": [
+          {
+            "command": "rg --sort path -n -A 8 func ReserveStock --glob *.go .",
+            "exit_code": 0,
+            "output": "./service/checkout.go:18:func ReserveStock(product catalog.Product) (catalog.Product, error) {\n./service/checkout.go-19-\tif product.Stock == 0 {\n./service/checkout.go-20-\t\treturn catalog.Product{}, fmt.Errorf(\"product %q is out of stock\", product.ID)\n./service/checkout.go-21-\t}\n./service/checkout.go-22-\tproduct.Stock--\n./service/checkout.go-23-\treturn product, nil\n./service/checkout.go-24-}\n./service/checkout.go-25-\n./service/checkout.go-26-func (s *CheckoutService) Checkout(ctx context.Context, productID string) (catalog.Product, error) {\n"
           }
         ]
       },

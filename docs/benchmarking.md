@@ -65,7 +65,7 @@ go run ./scripts/benchmark.go \
 
 ## Current v1.5.7 result
 
-The checked-in report was produced by `gograph version v1.5.7-f8284a3` with a
+The checked-in report was produced by `gograph version v1.5.7-8f0e43d` with a
 complete precise graph. All four gograph workflows recovered every declared
 ground-truth item:
 
