@@ -590,10 +590,13 @@
   border-radius: 8px;
 }
 
-.demo-command-row code {
+.evidence-demo .demo-command-row code {
   display: block;
+  padding: 0;
   overflow: auto;
   color: #d5e6f4;
+  background: transparent;
+  border-radius: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: .66rem;
   line-height: 1.55;
@@ -601,7 +604,7 @@
   white-space: nowrap;
 }
 
-.demo-command-row code span {
+.evidence-demo .demo-command-row code span {
   color: var(--demo-mint);
 }
 
