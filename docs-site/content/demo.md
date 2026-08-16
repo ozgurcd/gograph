@@ -10,7 +10,7 @@ comparison for three clear examples: evidence text search misses, a three-search
 checklist reduced to one call, and a smaller exact source block. The evidence
 view preserves the reproducible benchmark and complete raw output.
 
-<link rel="stylesheet" href="/demo/demo.css">
+<link rel="stylesheet" href="/demo/demo.css?v=20260816-contrast">
 
 <div id="gograph-evidence-demo" class="evidence-demo" aria-live="polite">
   <p class="demo-loading">Loading the interactive repository…</p>
