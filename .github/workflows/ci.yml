@@ -47,12 +47,6 @@ jobs:
     - name: Vet
       run: go vet ./...
 
-    - name: Install analysis tools
-      run: |
-        go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
-        go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
-        go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
-
     - name: Install pinned Grype
       id: grype
       uses: anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7
@@ -60,16 +54,16 @@ jobs:
         grype-version: v0.116.1
 
     - name: Staticcheck
-      run: staticcheck ./...
+      run: make staticcheck
 
     - name: GolangCI-Lint
-      run: golangci-lint run ./...
+      run: make lint
 
     - name: Vulnerability Check
       env:
         GRYPE: ${{ steps.grype.outputs.cmd }}
       run: |
-        govulncheck ./...
+        make govulncheck
         make vulnerability-check
 
     - name: Build and structurally validate all MCP bundles

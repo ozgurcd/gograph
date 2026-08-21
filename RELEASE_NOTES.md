@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Go 1.27 CI compatibility
+
+- Updated the pinned Staticcheck and GolangCI-Lint versions in both CI and the
+  tag-triggered release workflow to releases built for Go 1.27. The previous
+  Staticcheck pin could not decode Go 1.27 standard-library export data and
+  failed before analyzing the project. Local verification and CI now share the
+  exact analyzer commands from the Makefile; the release workflow carries the
+  same contract-tested versions so it can also verify older immutable tags.
+
 ### Go 1.27 baseline
 
 - Raised the module, CI, release, Docker, benchmark, and distributed-fixture

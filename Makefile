@@ -11,8 +11,11 @@ RELEASE_REMOTE ?= origin
 RELEASE_DIST ?= $(MCPB_OUTPUT)/goreleaser-dist
 GRYPE ?= grype
 override GORELEASER_VERSION := v2.17.0
+override STATICCHECK_VERSION := v0.8.0
+override GOLANGCI_LINT_VERSION := v2.13.1
+override GOVULNCHECK_VERSION := v1.3.0
 
-.PHONY: build test verify benchmark format-check vulnerability-check scan-release-artifacts release-artifact-vulnerability-check run-build clean bump-patch bump-minor bump-major install release release-dry-run release-verify release-go-check release-goreleaser-check mcpb-build mcpb-verify mcpb-smoke mcpb-check docs-check
+.PHONY: build test verify benchmark format-check lint staticcheck govulncheck vulnerability-check scan-release-artifacts release-artifact-vulnerability-check run-build clean bump-patch bump-minor bump-major install release release-dry-run release-verify release-go-check release-goreleaser-check mcpb-build mcpb-verify mcpb-smoke mcpb-check docs-check
 
 build:
 	$(eval VERSION := $(shell grep '^current_version' .bumpversion.cfg | awk '{print $$3}'))
@@ -88,17 +91,26 @@ format-check:
 		exit 1; \
 	fi
 
+lint:
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
+
+staticcheck:
+	go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) ./...
+
+govulncheck:
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
 test: format-check vulnerability-check
 	@echo "Running all unit tests and e2e integration tests..."
 	go test -count=1 -v ./...
 	@echo "Running race detector..."
 	go test -count=1 -race ./...
 	@echo "Running linter..."
-	golangci-lint run ./...
+	$(MAKE) --no-print-directory lint
 	@echo "Running static analysis..."
-	staticcheck ./...
+	$(MAKE) --no-print-directory staticcheck
 	@echo "Running vulnerability check..."
-	go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./...
+	$(MAKE) --no-print-directory govulncheck
 
 vulnerability-check: build
 	@echo "Scanning declared source dependencies..."

@@ -121,17 +121,28 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 		{
 			path: ".github/workflows/ci.yml",
 			required: []string{
+				"go-version: '1.27.0'",
+				"make staticcheck",
+				"make lint",
+				"make govulncheck",
 				"anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2",
 				"grype-version: v0.116.1",
 				"go test -count=1 -v ./...",
 				"go test -count=1 -race ./...",
 				"make vulnerability-check",
 			},
-			forbidden: []string{"grype dir:."},
+			forbidden: []string{"grype dir:.", "go install honnef.co/go/tools/cmd/staticcheck", "go install github.com/golangci/golangci-lint", "go install golang.org/x/vuln/cmd/govulncheck"},
 		},
 		{
 			path: ".github/workflows/release.yml",
 			required: []string{
+				"GO_VERSION: '1.27.0'",
+				"STATICCHECK_VERSION: 'v0.8.0'",
+				"GOLANGCI_LINT_VERSION: 'v2.13.1'",
+				"GOVULNCHECK_VERSION: 'v1.3.0'",
+				"go run honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION} ./...",
+				"go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION} run ./...",
+				"go run golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION} ./...",
 				"anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2",
 				"grype-version: v0.116.1",
 				"go test -count=1 -v ./...",
@@ -139,7 +150,7 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				"make vulnerability-check",
 				"make scan-release-artifacts RELEASE_DIST=dist",
 			},
-			forbidden: []string{"grype dir:."},
+			forbidden: []string{"grype dir:.", "go install honnef.co/go/tools/cmd/staticcheck", "go install github.com/golangci/golangci-lint", "go install golang.org/x/vuln/cmd/govulncheck"},
 		},
 	}
 	for _, test := range tests {
@@ -157,6 +168,35 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 			if strings.Contains(contents, forbidden) {
 				t.Errorf("%s contains ambient scan %q", test.path, forbidden)
 			}
+		}
+	}
+}
+
+func TestMakeAnalysisToolsUsePinnedVersions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("release Makefile uses a POSIX shell")
+	}
+	makePath, err := exec.LookPath("make")
+	if err != nil {
+		t.Skip("make is unavailable")
+	}
+	repositoryRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		target  string
+		command string
+	}{
+		{"staticcheck", "go run honnef.co/go/tools/cmd/staticcheck@v0.8.0 ./..."},
+		{"lint", "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run ./..."},
+		{"govulncheck", "go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./..."},
+	}
+	for _, test := range tests {
+		output := dryRunMake(t, makePath, repositoryRoot, test.target)
+		if !strings.Contains(output, test.command) {
+			t.Errorf("make %s is missing pinned command %q:\n%s", test.target, test.command, output)
 		}
 	}
 }
