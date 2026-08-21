@@ -10,6 +10,7 @@ import (
 	"go/parser"
 	"go/printer"
 	"go/token"
+	"maps"
 	"net/url"
 	"strconv"
 	"strings"
@@ -523,9 +524,7 @@ func (r *fileResolver) primitiveValue(expr ast.Expr, variables map[string]syncPr
 
 func (r *fileResolver) forFunction(decl *ast.FuncDecl) *functionResolver {
 	fr := &functionResolver{file: r, variables: make(map[string]syncPrimitive)}
-	for name, kind := range r.packageVars {
-		fr.variables[name] = kind
-	}
+	maps.Copy(fr.variables, r.packageVars)
 	collectFields := func(fields *ast.FieldList) {
 		if fields == nil {
 			return
@@ -849,9 +848,7 @@ func cloneStringMap(source map[string]string) map[string]string {
 		return nil
 	}
 	clone := make(map[string]string, len(source))
-	for key, value := range source {
-		clone[key] = value
-	}
+	maps.Copy(clone, source)
 	return clone
 }
 
@@ -1650,6 +1647,11 @@ func funcSignature(d *ast.FuncDecl) string {
 		sb.WriteString(") ")
 	}
 	sb.WriteString(d.Name.Name)
+	if d.Type != nil && d.Type.TypeParams != nil {
+		sb.WriteString("[")
+		sb.WriteString(fieldListString(d.Type.TypeParams))
+		sb.WriteString("]")
+	}
 	sb.WriteString("(")
 	if d.Type.Params != nil {
 		sb.WriteString(fieldListString(d.Type.Params))
@@ -1666,7 +1668,13 @@ func funcSignature(d *ast.FuncDecl) string {
 // funcTypeSignature builds just the parameter and return type signature (names omitted for duck-typing)
 func funcTypeSignature(ft *ast.FuncType) string {
 	var sb strings.Builder
-	sb.WriteString("func(")
+	sb.WriteString("func")
+	if ft.TypeParams != nil {
+		sb.WriteString("[")
+		sb.WriteString(fieldListString(ft.TypeParams))
+		sb.WriteString("]")
+	}
+	sb.WriteString("(")
 	if ft.Params != nil {
 		sb.WriteString(typeOnlyFieldListString(ft.Params))
 	}
@@ -1735,7 +1743,19 @@ func typeString(expr ast.Expr) string {
 	case *ast.ChanType:
 		return "chan " + typeString(t.Value)
 	case *ast.IndexExpr:
-		return typeString(t.X)
+		return typeString(t.X) + "[" + typeString(t.Index) + "]"
+	case *ast.IndexListExpr:
+		indexes := make([]string, 0, len(t.Indices))
+		for _, index := range t.Indices {
+			indexes = append(indexes, typeString(index))
+		}
+		return typeString(t.X) + "[" + strings.Join(indexes, ", ") + "]"
+	case *ast.UnaryExpr:
+		return t.Op.String() + typeString(t.X)
+	case *ast.BinaryExpr:
+		return typeString(t.X) + " " + t.Op.String() + " " + typeString(t.Y)
+	case *ast.ParenExpr:
+		return "(" + typeString(t.X) + ")"
 	default:
 		return "_"
 	}

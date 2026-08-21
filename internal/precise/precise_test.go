@@ -118,6 +118,11 @@ func TestEnrich_PopulatesCalls(t *testing.T) {
 	if len(g.Calls) == 0 {
 		t.Log("warning: no Call edges produced by Enrich; fixture may be trivial")
 	}
+	for _, edge := range g.Calls {
+		if edge.CalleeSymbolID != "" && !edge.Synthetic && edge.Resolution == "" {
+			t.Errorf("resolved call lacks resolution provenance: %+v", edge)
+		}
+	}
 }
 
 // TestEnrich_IsDeterministic runs Enrich twice and checks that the number of
@@ -341,6 +346,9 @@ func Purge(store Store) error {
 			}
 			if edge.CallerSymbolID != "example.com/invoke::Purge" || edge.CallerName != "Purge" || edge.ReturnUsage != "returned" {
 				t.Errorf("target %d did not preserve AST metadata: %+v", i, edge)
+			}
+			if edge.Resolution != graph.CallResolutionCHA {
+				t.Errorf("target %d resolution = %q, want %q", i, edge.Resolution, graph.CallResolutionCHA)
 			}
 		}
 		return got

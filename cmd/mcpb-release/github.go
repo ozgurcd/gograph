@@ -154,7 +154,7 @@ func verifyPublishedMCPBs(ctx context.Context, assets map[string]githubAsset, ex
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		return fmt.Errorf("create published MCPB smoke project: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(project, "go.mod"), []byte("module example.com/gograph-published-mcpb\n\ngo 1.26.5\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(project, "go.mod"), []byte("module example.com/gograph-published-mcpb\n\ngo 1.27.0\n"), 0o644); err != nil {
 		return fmt.Errorf("write published MCPB smoke go.mod: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(project, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {

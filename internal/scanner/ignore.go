@@ -304,7 +304,7 @@ func ValidateGoDocQuery(query string) error {
 		filepath.IsAbs(query) || filepath.VolumeName(query) != "" || strings.ContainsAny(query, "\\:\x00") {
 		return fmt.Errorf("unsafe go doc query %q: filesystem paths and flags are not allowed", query)
 	}
-	for _, segment := range strings.Split(query, "/") {
+	for segment := range strings.SplitSeq(query, "/") {
 		if segment == "" || strings.HasPrefix(segment, ".") {
 			return fmt.Errorf("unsafe go doc query %q: filesystem paths are not allowed", query)
 		}

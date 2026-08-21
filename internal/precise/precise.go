@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
+	"maps"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -254,6 +255,7 @@ func enrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 							CalleeSymbolID: calleeSymID,
 							Synthetic:      true,
 							Precise:        true,
+							Resolution:     graph.CallResolutionSynthetic,
 						})
 					}
 					continue
@@ -332,14 +334,16 @@ func enrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 				if existingIdx, dup := astEdgeIdx[key]; dup {
 					// Backfill: existing AST edge has no CalleeSymbolID.
 					// Fill it from CHA's resolution if we got one.
-					if calleeSymID != "" && g.Calls[existingIdx].CalleeSymbolID == "" {
+					if calleeSymID != "" && (g.Calls[existingIdx].CalleeSymbolID == "" || g.Calls[existingIdx].CalleeSymbolID == calleeSymID) {
 						g.Calls[existingIdx].CalleeSymbolID = calleeSymID
+						g.Calls[existingIdx].Resolution = graph.CallResolutionStatic
 					}
 					continue
 				}
 				if existingIdx, dup := astSiteIdx[siteKey]; dup {
-					if calleeSymID != "" && g.Calls[existingIdx].CalleeSymbolID == "" {
+					if calleeSymID != "" && (g.Calls[existingIdx].CalleeSymbolID == "" || g.Calls[existingIdx].CalleeSymbolID == calleeSymID) {
 						g.Calls[existingIdx].CalleeSymbolID = calleeSymID
+						g.Calls[existingIdx].Resolution = graph.CallResolutionStatic
 					}
 					continue
 				}
@@ -375,6 +379,7 @@ func enrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 					Line:           pos.Line,
 					Column:         pos.Column,
 					Precise:        true,
+					Resolution:     graph.CallResolutionStatic,
 				})
 			}
 		}
@@ -572,11 +577,8 @@ func enrichInterfaceMethods(g *graph.Graph, interfaces []*types.Interface, ids [
 			continue
 		}
 		methods := make(map[string]string, info.iface.NumMethods())
-		for name, signature := range symbol.InterfaceMethods {
-			methods[name] = signature
-		}
-		for methodIndex := 0; methodIndex < info.iface.NumMethods(); methodIndex++ {
-			method := info.iface.Method(methodIndex)
+		maps.Copy(methods, symbol.InterfaceMethods)
+		for method := range info.iface.Methods() {
 			if _, exists := methods[method.Name()]; exists {
 				continue
 			}
@@ -721,6 +723,7 @@ func materializeInvokeCalls(calls []graph.CallEdge, groups map[string]*invokeCal
 		for targetIndex, targetID := range targetIDs {
 			edge := group.prototype
 			edge.CalleeSymbolID = targetID
+			edge.Resolution = graph.CallResolutionCHA
 			// Preserve one parser-owned edge when an unresolved AST edge existed;
 			// additional concrete targets are precise-only enrichment records.
 			edge.Precise = len(group.existingIndices) == 0 || targetIndex > 0

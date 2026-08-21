@@ -290,14 +290,14 @@ func ssaAllFunctions(prog *ssa.Program) <-chan *ssa.Function {
 					// of that type. Enumerate both value-receiver and
 					// pointer-receiver method sets so we cover everything.
 					mset := prog.MethodSets.MethodSet(mem.Type())
-					for i := 0; i < mset.Len(); i++ {
-						if fn := prog.MethodValue(mset.At(i)); fn != nil {
+					for method := range mset.Methods() {
+						if fn := prog.MethodValue(method); fn != nil {
 							ch <- fn
 						}
 					}
 					ptrMset := prog.MethodSets.MethodSet(types.NewPointer(mem.Type()))
-					for i := 0; i < ptrMset.Len(); i++ {
-						if fn := prog.MethodValue(ptrMset.At(i)); fn != nil {
+					for method := range ptrMset.Methods() {
+						if fn := prog.MethodValue(method); fn != nil {
 							ch <- fn
 						}
 					}

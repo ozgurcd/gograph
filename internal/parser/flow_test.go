@@ -160,6 +160,48 @@ func handle(ctx *gin.Context, body io.Reader) {
 	}
 }
 
+func TestParseFileRecognizesGo127JSONV2Sources(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "decode_v2.go")
+	source := `package sample
+
+import (
+	"bytes"
+	jsontext "encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
+)
+
+func decode(data []byte) {
+	var fromBytes, fromReader, fromDecoder any
+	_ = jsonv2.Unmarshal(data, &fromBytes)
+	_ = jsonv2.UnmarshalRead(bytes.NewReader(data), &fromReader)
+	decoder := jsontext.NewDecoder(bytes.NewReader(data))
+	_ = jsonv2.UnmarshalDecode(decoder, &fromDecoder)
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := parser.ParseFile(token.NewFileSet(), path, "decode_v2.go", "example.com/sample")
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	targets := make(map[string]bool)
+	for _, function := range result.FlowFunctions {
+		for _, fact := range function.Facts {
+			if fact.Kind == "source" && fact.SourceKind == "decoded_json" {
+				targets[fact.Target] = true
+			}
+		}
+	}
+	for _, target := range []string{"fromBytes", "fromReader", "fromDecoder"} {
+		if !targets[target] {
+			t.Errorf("expected encoding/json/v2 source target %q, got %v", target, targets)
+		}
+	}
+}
+
 func TestParseFileIndexesMultipleReturnValues(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "returns.go")

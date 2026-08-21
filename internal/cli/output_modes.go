@@ -11,6 +11,10 @@ const (
 )
 
 var commandOutputModes = map[string]outputModeSupport{
+	"validate":     outputJSON,
+	"version":      outputJSON,
+	"--version":    outputJSON,
+	"-v":           outputJSON,
 	"query":        outputJSON | outputFilesOnly,
 	"focus":        outputJSON | outputFilesOnly,
 	"node":         outputJSON | outputFilesOnly,

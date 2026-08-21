@@ -61,7 +61,7 @@ func TestCLIAndMCPQueryAnalysisParity(t *testing.T) {
 	}
 
 	intentionalCLIOnly := map[string]bool{
-		"build": true, "gate": true, "snapshot": true, "mcp": true,
+		"build": true, "validate": true, "gate": true, "snapshot": true, "mcp": true,
 		"add-claude-plugin": true, "hook-guard": true,
 		"help": true, "--help": true, "-h": true,
 		"version": true, "--version": true, "-v": true,

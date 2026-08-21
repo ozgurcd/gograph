@@ -84,6 +84,40 @@ unchanged packages; `stats` reports `reused_files` and `rebuilt_packages`.
 Precise builds reuse that AST work but still recompute repository-wide
 type/CHA/SSA enrichment so cross-package dispatch remains correct.
 
+## Machine-readable structural validation
+
+External consumers can validate one closed structural predicate without
+parsing human CLI output:
+
+```bash
+gograph version --json
+gograph validate --repo /work/project --binding-json '{"schema_version":"gograph.binding.v1","predicate":"symbol_exists","subject":{"language":"go","kind":"symbol","id":"example.com/project/internal/auth::Authorize"},"required_precision":"ast"}' --json
+```
+
+The version and result schemas are `gograph.version.v1` and
+`gograph.validation.v1`; bindings use `gograph.binding.v1`. V1 supports only
+`symbol_exists`, `package_imports`, `call_edge_exists`, and `type_implements`.
+Validation is read-only and never builds or refreshes the graph. Exit `0` means
+`pass`, exit `1` means a conclusively evaluated `fail`, and exit `2` means
+`cannot_evaluate` or an invalid request.
+
+Negative results require predicate-specific completeness: symbol and direct
+import absence need a current complete AST graph; implementation absence needs
+a current precise-complete graph; call absence additionally requires complete
+resolution of the subject's relevant call edges. Missing, stale, partial,
+ambiguous, or unresolved evidence degrades to `cannot_evaluate`; a
+`precise_fallback` graph may support AST presence but never evaluated absence.
+The result binds the exact graph bytes, selected source/build-context manifest,
+and canonical binding with SHA-256 fingerprints.
+
+Gograph validates selected-build-context Go structure. It does not prove
+runtime behavior or business correctness. CHA edges are possible static targets,
+not runtime dispatch certainty. V1 excludes reachability, unstable or external
+symbol identities, unnamed types, and non-Go languages. See the exact
+[machine-validation contract](docs/machine-validation-contract.md).
+Applicable local module/workspace source roots must remain beneath the explicit
+`--repo` root; v1 returns `cannot_evaluate` instead of widening that authority.
+
 MCP refreshes stay in memory by default. To publish each successful refresh
 for CLI consumers and later server processes, start the server explicitly with:
 
@@ -122,9 +156,9 @@ of evidence):*
 
 ## Key Features
 
-**61 Query, Analysis, and Workflow Capabilities** — callers, callees, impact, context, plan, review, flow, errorflow, orphans, hotspot, coupling, and more. The MCP server registers 65 endpoints including four session lifecycle tools. Full [command reference →](https://gograph.identuum.ai/docs/command-reference/)
+**Machine and Agent Workflows** — callers, callees, impact, context, plan, review, flow, errorflow, structural validation, orphans, hotspot, coupling, and more. The MCP server registers 65 endpoints including four session lifecycle tools. Full [command reference →](https://gograph.identuum.ai/docs/command-reference/)
 
-**Native MCP Server** — query, analysis, and workflow capabilities have MCP equivalents for Claude, Cursor, Copilot, and other MCP clients. Host/build operations (`build`, `gate`, `snapshot`, plugin/hook installation, server startup, help, and version) intentionally remain CLI-only, and transport-specific presentation differs where appropriate.
+**Native MCP Server** — query, analysis, and workflow capabilities have MCP equivalents for Claude, Cursor, Copilot, and other MCP clients. Host/build and machine-validation operations (`build`, `validate`, `gate`, `snapshot`, plugin/hook installation, server startup, help, and version) intentionally remain CLI-only, and transport-specific presentation differs where appropriate.
 
 **Explicit Freshness Model** — CLI graph-backed analysis reads the last trusted persisted graph. `gograph stale` compares selected source content digests plus the effective build/module fingerprint; mtimes are diagnostic only for current indexes. It is a tri-state predicate in text and JSON modes: exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error; a missing or unsupported source-policy marker is an explicit status-1 rebuild requirement. MCP source-analysis tools check the same freshness per call, adopt a newer persisted precise graph, and incrementally rebuild changed package ASTs in memory using the latest requested analysis mode. MCP `stale`, default `changes`, and `stats` inspect the trusted persisted snapshot, or the startup auto-build fallback when no usable artifact exists. With `--persist-refresh`, that snapshot advances after a successful refresh, so default `changes` compares against the newly published state and normally no longer reports that refresh's source edits.
 
@@ -142,9 +176,10 @@ of evidence):*
 
 ## Command Reference
 
-Query and composed-analysis commands support `--json`; the exact `--files-only`
+Query and composed-analysis commands support `--json`; `version --json` and
+`validate ... --json` use their dedicated machine schemas. The exact `--files-only`
 surface is listed in the command reference. Operational commands such as
-`build`, `wiki`, `gate`, `snapshot`, installation, help, and version use text
+`build`, `wiki`, `gate`, `snapshot`, installation, and help use text
 output; `session audit` additionally supports raw JSON. CLI `--mermaid` renders
 `callers`, `callees`, `impact`, `endpoint`, `dependents`, `deps`, `path`, and
 `coupling` as fenced Mermaid. Their MCP equivalents accept `mermaid=true` and
@@ -154,6 +189,7 @@ normal response format.
 | Category | Commands | What it does |
 |---|---|---|
 | **Indexing** | `build . [--precise]`, `stale`, `stats` | Parse AST, write graph. Check freshness. Index health. |
+| **Machine Validation** | `version --json`, `validate --repo PATH --binding-json JSON --json` | Versioned exact structural predicates with tri-state outcomes. |
 | **Navigation** | `query`, `callers [--depth N]`, `callees [--depth N]`, `path`, `source`, `node` | Find symbols, trace call chains, extract source. |
 | **Context** | `context`, `explain`, `focus`, `endpoint` | Bundled structural data in one call. Token savers. |
 | **Change Analysis** | `plan`, `review`, `risk`, `impact [--uncommitted\|--since]`, `changes [--git]`, `api --since` | Pre-edit planning, post-edit review, risk analysis, blast radius, drift. |

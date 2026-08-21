@@ -128,9 +128,11 @@ func TestManifestRejectsMalformedInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	tests := map[string][]byte{
-		"unknown field": bytes.Replace(valid, []byte("{"), []byte(`{"unknown":true,`), 1),
-		"trailing JSON": append(append([]byte(nil), valid...), []byte(`{"second":true}`)...),
-		"invalid JSON":  []byte(`{"manifest_version":`),
+		"unknown field":   bytes.Replace(valid, []byte("{"), []byte(`{"unknown":true,`), 1),
+		"duplicate field": bytes.Replace(valid, []byte("{"), []byte(`{"manifest_version":"0.4",`), 1),
+		"trailing JSON":   append(append([]byte(nil), valid...), []byte(`{"second":true}`)...),
+		"invalid JSON":    []byte(`{"manifest_version":`),
+		"invalid UTF-8":   []byte{'{', '"', 'x', '"', ':', '"', 0xff, '"', '}'},
 	}
 	for name, data := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -177,6 +179,10 @@ func TestVendoredSchemasFailClosed(t *testing.T) {
 }`)
 	if err := ValidateServerJSON(serverJSON); err != nil {
 		t.Fatal(err)
+	}
+	duplicateServerName := bytes.Replace(serverJSON, []byte("{"), []byte(`{"name":"io.github.ozgurcd/gograph",`), 1)
+	if err := ValidateServerJSON(duplicateServerName); err == nil {
+		t.Fatal("server.json with a duplicate object name was accepted")
 	}
 	invalidServer := bytes.Replace(serverJSON, []byte(strings.Repeat("a", 64)), []byte("short"), 1)
 	if err := ValidateServerJSON(invalidServer); err == nil {

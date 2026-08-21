@@ -22,7 +22,7 @@ func (r *Reader) EnsureRealDirectory(name string, perm os.FileMode) error {
 		return nil
 	}
 	prefix := ""
-	for _, component := range strings.Split(clean, string(filepath.Separator)) {
+	for component := range strings.SplitSeq(clean, string(filepath.Separator)) {
 		prefix = filepath.Join(prefix, component)
 		info, statErr := r.root.Lstat(prefix)
 		if os.IsNotExist(statErr) {

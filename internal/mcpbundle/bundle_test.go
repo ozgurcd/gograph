@@ -235,7 +235,7 @@ func TestBuildAllVerifyAllAndSmokeNative(t *testing.T) {
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(project, "go.mod"), []byte("module example.com/mcpbsmoke\n\ngo 1.26.5\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(project, "go.mod"), []byte("module example.com/mcpbsmoke\n\ngo 1.27.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(project, "main.go"), []byte("package main\nfunc main() {}\n"), 0o644); err != nil {

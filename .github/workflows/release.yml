@@ -19,7 +19,7 @@ concurrency:
 
 env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-  GO_VERSION: '1.26.5'
+  GO_VERSION: '1.27.0'
   GORELEASER_VERSION: 'v2.17.0'
   HUGO_VERSION: '0.164.0'
   MCP_PUBLISHER_VERSION: 'v1.7.9'

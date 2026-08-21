@@ -80,9 +80,12 @@ type BuildMetadata struct {
 	// BuildContextFingerprint hashes effective build and module-selection
 	// inputs, including nested module boundaries. The historical JSON field
 	// name is retained for schema-v2 compatibility.
-	BuildContextFingerprint string         `json:"build_context_fingerprint,omitempty"`
-	Failures                []BuildFailure `json:"failures,omitempty"`
-	Warnings                []string       `json:"warnings,omitempty"`
+	BuildContextFingerprint string `json:"build_context_fingerprint,omitempty"`
+	// SourceFingerprint binds the graph to exact selected source and recognized
+	// build-selection metadata bytes without depending on repository location.
+	SourceFingerprint string         `json:"source_fingerprint,omitempty"`
+	Failures          []BuildFailure `json:"failures,omitempty"`
+	Warnings          []string       `json:"warnings,omitempty"`
 }
 
 // UsesCurrentSourcePolicy reports whether a graph was built with the current
@@ -397,6 +400,10 @@ type CallEdge struct {
 	// Precise marks a call introduced by type-checked enrichment. Parser calls
 	// remain false, even when precise analysis resolves their CalleeSymbolID.
 	Precise bool `json:"precise,omitempty"`
+	// Resolution records whether precise analysis established a static target,
+	// a CHA possible target, or a synthetic wrapper edge. It prevents consumers
+	// from mistaking a possible interface dispatch target for runtime certainty.
+	Resolution CallResolution `json:"resolution,omitempty"`
 	// ReturnUsage describes how the caller consumes the return value.
 	// Values: "discarded", "assigned", "partially_ignored", "returned",
 	//         "goroutine", "deferred", "" (nested/passed as argument).
@@ -406,6 +413,14 @@ type CallEdge struct {
 	// function and method symbols before serializing the graph.
 	Potential bool `json:"-"`
 }
+
+type CallResolution string
+
+const (
+	CallResolutionStatic    CallResolution = "resolved_static"
+	CallResolutionCHA       CallResolution = "cha_possible_target"
+	CallResolutionSynthetic CallResolution = "synthetic_wrapper"
+)
 
 // ImportEdge records an import statement in a file.
 type ImportEdge struct {

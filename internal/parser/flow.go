@@ -324,6 +324,8 @@ func classifyFlowSource(fset *token.FileSet, call *ast.CallExpr, callee, relPath
 	switch {
 	case importPath == "encoding/json" && method == "Unmarshal":
 		destination = 1
+	case importPath == "encoding/json/v2" && (method == "Unmarshal" || method == "UnmarshalRead" || method == "UnmarshalDecode"):
+		destination = 1
 	case method == "Decode" && isFlowJSONDecoderCall(call, resolver, jsonDecoders):
 		destination = 0
 	case isFlowFrameworkBindingCall(call, method, parameterTypes):

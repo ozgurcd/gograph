@@ -1,10 +1,9 @@
 package mcpbundle
 
 import (
-	"bytes"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
-	"io"
 	"regexp"
 	"slices"
 	"strings"
@@ -243,18 +242,9 @@ func DecodeManifest(data []byte, version string, target Target) (Manifest, error
 	if err := ValidateManifestSchema(data); err != nil {
 		return Manifest{}, err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	var manifest Manifest
-	if err := decoder.Decode(&manifest); err != nil {
+	if err := jsonv2.Unmarshal(data, &manifest, jsonv2.RejectUnknownMembers(true)); err != nil {
 		return Manifest{}, fmt.Errorf("decode manifest: %w", err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err == nil {
-			return Manifest{}, fmt.Errorf("decode manifest: trailing JSON value")
-		}
-		return Manifest{}, fmt.Errorf("decode manifest trailing data: %w", err)
 	}
 	if err := ValidateManifest(manifest, version, target); err != nil {
 		return Manifest{}, err

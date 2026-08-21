@@ -10,7 +10,7 @@ architecture boundary.
 
 ## Development Setup
 
-Install the Go version declared by [`go.mod`](go.mod) (currently Go 1.26.5 or
+Install the Go version declared by [`go.mod`](go.mod) (currently Go 1.27.0 or
 newer) and GNU Make. The Makefile injects version metadata, so repository builds
 must use `make build` rather than a raw `go build` command.
 

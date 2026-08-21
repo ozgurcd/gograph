@@ -12,7 +12,7 @@ RELEASE_DIST ?= $(MCPB_OUTPUT)/goreleaser-dist
 GRYPE ?= grype
 override GORELEASER_VERSION := v2.17.0
 
-.PHONY: build test benchmark format-check vulnerability-check scan-release-artifacts release-artifact-vulnerability-check run-build clean bump-patch bump-minor bump-major install release release-dry-run release-verify release-go-check release-goreleaser-check mcpb-build mcpb-verify mcpb-smoke mcpb-check docs-check
+.PHONY: build test verify benchmark format-check vulnerability-check scan-release-artifacts release-artifact-vulnerability-check run-build clean bump-patch bump-minor bump-major install release release-dry-run release-verify release-go-check release-goreleaser-check mcpb-build mcpb-verify mcpb-smoke mcpb-check docs-check
 
 build:
 	$(eval VERSION := $(shell grep '^current_version' .bumpversion.cfg | awk '{print $$3}'))
@@ -32,6 +32,8 @@ release-dry-run:
 	go run ./cmd/mcpb-release auto-release --repository-root . --remote "$(RELEASE_REMOTE)" --dry-run
 
 release-verify: release-go-check test docs-check release-artifact-vulnerability-check
+
+verify: release-go-check test docs-check
 
 release-go-check:
 	go mod verify

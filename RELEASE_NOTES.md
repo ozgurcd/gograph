@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### Go 1.27 baseline
+
+- Raised the module, CI, release, Docker, benchmark, and distributed-fixture
+  baseline to Go 1.27.0.
+- Adopted `encoding/json/v2` at strict, untrusted JSON boundaries. Validation
+  bindings, persisted validation snapshots, MCPB manifests, and Registry schema
+  inputs now reject duplicate object names and invalid UTF-8 through the
+  standard library instead of custom token scanning. Existing public JSON
+  output retains `encoding/json` v1 semantics while using Go 1.27's v2-backed
+  implementation internally.
+- Added analyzer coverage for Go 1.27 generic methods and for
+  `encoding/json/v2`'s `Unmarshal`, `UnmarshalRead`, and `UnmarshalDecode`
+  security-flow sources.
+- Reviewed the other Go 1.27 additions. The new `uuid` package cannot replace
+  `github.com/google/uuid` because it is an internal dependency of `mcp-go`,
+  not a direct gograph dependency. ML-DSA/ML-KEM, experimental SIMD, generic
+  methods as an internal implementation technique, and goroutine-leak
+  profiling are not used because gograph currently has no production
+  requirement that justifies them.
+
+### Machine-readable structural validation
+
+- Added `gograph version --json` (`gograph.version.v1`) and the read-only
+  `gograph validate --repo PATH --binding-json JSON --json` interface using
+  strict `gograph.binding.v1` and `gograph.validation.v1` documents.
+- V1 evaluates exact `symbol_exists`, `package_imports`, `call_edge_exists`, and
+  `type_implements` predicates. Predicate-specific completeness controls
+  negative results; incomplete, stale, ambiguous, fallback, or unresolved
+  evidence returns `cannot_evaluate`.
+- New graphs persist a location-independent SHA-256 source/build-selection
+  fingerprint. Validation also fingerprints the exact graph artifact and
+  canonical binding, rechecks source state after evaluation, and never rebuilds
+  or executes target code.
+- Updated `golang.org/x/mod` and its coordinated `x/tools`, `x/sync`, and
+  `x/sys` versions to clear the repository's high-severity dependency scan.
+
 ### Windows Call-Graph Queries
 
 - Caller and callee results are now regression-protected for Windows-style

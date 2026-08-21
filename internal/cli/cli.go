@@ -24,11 +24,13 @@ import (
 	"github.com/ozgurcd/gograph/internal/mcp"
 	"github.com/ozgurcd/gograph/internal/parser"
 	"github.com/ozgurcd/gograph/internal/precise"
+	"github.com/ozgurcd/gograph/internal/repositoryfingerprint"
 	"github.com/ozgurcd/gograph/internal/rootfind"
 	"github.com/ozgurcd/gograph/internal/scanner"
 	"github.com/ozgurcd/gograph/internal/search"
 	"github.com/ozgurcd/gograph/internal/session"
 	"github.com/ozgurcd/gograph/internal/sourcefs"
+	"github.com/ozgurcd/gograph/internal/validation"
 	"github.com/ozgurcd/gograph/internal/wiki"
 )
 
@@ -102,6 +104,10 @@ func Run(args []string) int {
 		}
 	}
 	args = filtered
+	if len(args) > 0 && args[0] == "validate" && (filesOnlyMode || mermaidMode) {
+		root, _, _ := parseValidationArgs(args[1:])
+		return writeValidationResult(validation.InvalidRequestResult(Version, root, "validate supports only --json"))
+	}
 
 	if err := validateOutputModes(args); err != nil {
 		return failCommand(commandFromArgs(args), err.Error())
@@ -125,6 +131,7 @@ func Run(args []string) int {
 		"add-claude-plugin": true,
 		"hook-guard":        true,
 		"version":           true,
+		"validate":          true,
 		"help":              true,
 		"-h":                true,
 		"--help":            true,
@@ -176,6 +183,8 @@ func dispatch(args []string) int {
 		return runSessionWithJSONErrors(args[1:])
 	case "build":
 		return runBuild(args[1:])
+	case "validate":
+		return runValidate(args[1:])
 	case "query":
 		return runQuery(args[1:])
 	case "focus":
@@ -314,8 +323,7 @@ func dispatch(args []string) int {
 		printHelp()
 		return 0
 	case "version", "--version", "-v":
-		fmt.Printf("gograph version v%s\n", Version)
-		return 0
+		return runVersion()
 	default:
 		if jsonMode {
 			return failCommandf(args[0], "unknown command: %s", args[0])
@@ -357,6 +365,9 @@ Partial builds record parse failures and selection/security warnings in graph.js
   gograph stats   → counts plus complete/partial build and ast/precise/fallback status
   gograph stale   → checks source selection, build context, and content digests;
                     exits 0 (up to date), 1 (error), or 2 (stale)
+  gograph validate --repo PATH --binding-json JSON --json
+                  → one exact structural predicate against the persisted snapshot;
+                    exits 0 (pass), 1 (evaluated fail), or 2 (cannot evaluate)
 
 CLI graph-backed analysis uses the last trusted persisted graph, written by a manual build or an
 opt-in MCP publication. The MCP server checks source freshness and newer
@@ -477,6 +488,7 @@ the graph-oriented commands listed below. Request only one output mode at a time
 For supported commands, use --json for structured pipelines and --files-only
 when you only need involved file paths. Operational commands remain text except
 that session audit also accepts --json and returns its native audit object.
+Machine validation uses gograph.validation.v1 instead of the generic envelope.
 
 ━━━ STATIC ANALYSIS LIMITATIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Know these before trusting results:
@@ -523,6 +535,9 @@ build . [--precise]  : parse AST, stage graph.json + reports, commit graph.json 
 stale                : check source selection, build context, and content digests
                        exit 0 = up to date, 1 = error, 2 = stale
 stats                : schema/build/precision health, parse failures, and symbol/call/route counts
+validate --repo PATH --binding-json JSON --json
+                     : exact symbol/import/call/implementation predicate against one
+                       current persisted graph; never builds or refreshes
 
 QUERY COMMANDS:
 boundaries [--config] : verify package architecture constraints using boundaries.json
@@ -687,6 +702,10 @@ func runBuild(args []string) int {
 	if err := writeGitignore(absRoot); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not update .gitignore: %v\n", err)
 	}
+	if err := refreshCompleteGraphSourceFingerprint(absRoot, g, buildConfig); err != nil {
+		fmt.Fprintf(os.Stderr, "error finalizing graph source fingerprint: %v\n", err)
+		return 1
+	}
 
 	jsonPath := filepath.Join(absRoot, graphFile)
 	publication, err := publishGraphArtifacts(absRoot, g, manualArtifactPublication)
@@ -715,6 +734,10 @@ func BuildGraph(absRoot string) (*graph.Graph, error) {
 
 func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr error, previousGraphs ...*graph.Graph) (*graph.Graph, error) {
 	files, selectionFingerprint, walkErrs := scanner.WalkWithConfigAndFingerprint(absRoot, buildConfig)
+	sourceIdentity, fingerprintErr := repositoryfingerprint.Compute(context.Background(), absRoot, buildConfig, files)
+	if fingerprintErr != nil {
+		walkErrs = append(walkErrs, fmt.Errorf("compute repository source fingerprint: %w", fingerprintErr))
+	}
 	if configErr != nil {
 		walkErrs = append([]error{fmt.Errorf("using default Go build context: %w", configErr)}, walkErrs...)
 	}
@@ -724,6 +747,7 @@ func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr
 		SourcePolicyVersion:     graph.CurrentSourcePolicyVersion,
 		AnalysisCacheVersion:    graph.CurrentAnalysisCacheVersion,
 		BuildContextFingerprint: selectionFingerprint,
+		SourceFingerprint:       sourceIdentity.Fingerprint,
 	}
 	for _, e := range walkErrs {
 		fmt.Fprintf(os.Stderr, "  warning: %v\n", e)
@@ -2066,10 +2090,10 @@ USAGE
   gograph <command> [arguments] [output flags]
 
 OUTPUT FLAGS
-  --json                     Structured JSON for query and composed-analysis commands.
+  --json                     Structured JSON for query, validation, version, and composed-analysis commands.
                              Operational commands such as build, wiki, gate, snapshot,
-                             plugin installation, help, and version remain text; session
-                             audit is the raw-JSON exception.
+                             plugin installation, and help remain text; session audit
+                             returns its native JSON object.
   --files-only               Flat, deduplicated paths for supported result-list commands;
                              empty results write zero lines.
   --mermaid                  Output visual dependency/call diagrams in Mermaid format.
@@ -2108,6 +2132,16 @@ INDEXING
                              precision (ast/precise/precise_fallback), parser reuse,
                              rebuilt-package count, and parse failures. Zero
                              re-parsing — reads graph.json only.
+
+MACHINE VALIDATION
+  version --json             Emit exactly one gograph.version.v1 JSON document.
+  validate --repo PATH --binding-json JSON --json
+                             Evaluate one strict gograph.binding.v1 structural predicate
+                             against the existing persisted graph. Never rebuilds. Emits
+                             one gograph.validation.v1 document and exits 0=pass,
+                             1=evaluated fail, or 2=cannot_evaluate/invalid request.
+                             V1 predicates: symbol_exists, package_imports,
+                             call_edge_exists, and type_implements.
 
 AGENT WORKFLOW RULES (CRITICAL)
   1. BEFORE editing: ALWAYS run 'gograph plan <symbol>' to understand the impact,
@@ -2364,7 +2398,7 @@ AGENT INTEGRATION
                              for direct human use.
 
 OTHER
-  version, -v                Print version.
+  version, -v                Print version; add --json for gograph.version.v1.
   help, -h                   Show this help.
 
 OUTPUTS (after 'build')

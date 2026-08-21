@@ -5,6 +5,7 @@ package mcpbundle
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 )
 
 const (
@@ -51,10 +52,8 @@ func TargetFor(goos, goarch string) (Target, bool) {
 // Validate rejects targets outside the six release combinations and catches
 // inconsistent MCPB platform identifiers.
 func (t Target) Validate() error {
-	for _, supported := range Targets {
-		if t == supported {
-			return nil
-		}
+	if slices.Contains(Targets, t) {
+		return nil
 	}
 	return fmt.Errorf("unsupported MCPB target %s/%s (platform %q)", t.GOOS, t.GOARCH, t.Platform)
 }

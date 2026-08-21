@@ -33,7 +33,7 @@ The codebase is organized into strict domains:
 
 ## 4. Development Standards
 
-- **Go Version:** The project requires **Go 1.26.5 or newer**. Never default to or generate code for older versions; 1.26.5 is the minimum security patch level used by CI and release builds.
+- **Go Version:** The project requires **Go 1.27.0 or newer**. Never default to or generate code for older versions; 1.27.0 is the minimum version used by CI and release builds.
 - **Build Pipeline:** Always compile the binary using `make build`. Never use raw `go build`, as the Makefile handles version injection (`ldflags`) via `bump2version`.
 - **Documentation Discipline:** Every new feature, command, or flag must be immediately documented across all relevant targets:
   1. `README.md`

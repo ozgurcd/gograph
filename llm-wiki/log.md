@@ -351,3 +351,24 @@ Normalized the security-flow page link into the index's Schemas and Security sec
 - Merged remote PR #34 (`origin/main` at `7f6692b`) into local `main` without discarding the local digest/incremental-route implementation commit.
 - Preserved the remote quick-start change to `gograph build . --precise` and corrected its adjacent description to say it builds a type-enriched precise graph.
 - Verified the resulting v1.5.6 candidate with `make release-dry-run`; preflight, uncached tests, race detector, lint/static analysis, dependency and artifact vulnerability scans, docs, MCPB verification/smoke, and GoReleaser snapshot all passed. Dry-run metadata was restored and no refs were published.
+
+## 2026-08-20 | design | Machine-readable structural validation contract
+
+- Added `docs/machine-validation-contract.md`. Current CLI JSON, MCP payloads, and graph schema are machine-readable building blocks but do not safely distinguish an absent subject from an evaluated absent relationship or bind one predicate to a fresh repository and graph fingerprint.
+- Proposed strict `gograph.binding.v1`, `gograph.validation.v1`, and `gograph.version.v1` schemas for exact module-backed Go symbol existence, direct package imports, exact call edges, and type implementation. Reachability and generic predicates remain deferred.
+- Negative results require predicate-specific completeness. Missing, stale, partial, fallback, ambiguous, or unsupported analysis degrades to `cannot_evaluate`; structural evidence does not establish runtime or business correctness.
+
+## [2026-08-20] implementation | Machine-readable structural validation v1
+
+- Implemented `gograph version --json` and read-only single-predicate `gograph validate --repo PATH --binding-json JSON --json` using strict `gograph.version.v1`, `gograph.binding.v1`, and `gograph.validation.v1` documents.
+- Validation supports exact module-qualified `symbol_exists`, `package_imports`, `call_edge_exists`, and `type_implements` predicates. Predicate-specific completeness controls evaluated absence; stale, partial, fallback, ambiguous, unresolved, or unsafe inputs degrade to `cannot_evaluate`.
+- New graphs persist a deterministic selected-source/build-metadata fingerprint. Results also bind the exact graph bytes and canonical binding, and precise call edges now record static, CHA-possible-target, or synthetic-wrapper provenance.
+- Added transport-neutral evaluation, strict repository snapshot loading, bounded structured evidence/diagnostics, CLI conformance coverage, user documentation, and a normal `make verify` gate. Gograph remains structural evidence only and does not prove runtime behavior or business correctness.
+
+## [2026-08-21] maintenance | Adopt Go 1.27 baseline
+
+- Raised the module, CI, release, Docker, benchmark, and distributed-fixture floor to Go 1.27.0; updated current contributor guidance.
+- Adopted explicit `encoding/json/v2` decoding at strict closed-schema boundaries while retaining compatible `encoding/json` output, and taught AST/precise analysis about Go 1.27 generic methods plus JSON v2 decode sources.
+- Kept JSON Schema validation and the MCP library's transitive UUID dependency because the standard library does not replace those ownership/contracts; did not add ML-DSA or ML-KEM without a product protocol requiring them.
+
+- Verification passed with `make verify`, focused Go 1.27 parser/precise regressions, and Linux/Windows amd64 cross-builds.

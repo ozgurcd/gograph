@@ -558,10 +558,7 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 		}
 	}
 
-	duration := end.Sub(start)
-	if duration < 0 {
-		duration = 0
-	}
+	duration := max(end.Sub(start), 0)
 
 	successRate := 100.0
 	if totalCommands > 0 {

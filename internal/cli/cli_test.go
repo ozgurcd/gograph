@@ -258,6 +258,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 	// Maintenance rule: when you add a command to help/capabilities, add it here too.
 	want := []string{
 		"build",
+		"validate",
 		"query",
 		"focus",
 		"node",

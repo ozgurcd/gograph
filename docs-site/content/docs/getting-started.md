@@ -6,7 +6,7 @@ description: "Install gograph, build your first graph, and run your first querie
 
 ## Prerequisites
 
-- Go 1.26.5 or later
+- Go 1.27.0 or later
 - A Go module repository (`go.mod` present)
 
 ## Install

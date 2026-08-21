@@ -2,6 +2,7 @@ package parser_test
 
 import (
 	"go/token"
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -9,6 +10,38 @@ import (
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/parser"
 )
+
+func TestParseFileIndexesGo127GenericMethods(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "generic_method.go")
+	source := `package sample
+
+type Box struct{}
+
+func (Box) Transform[T ~int | ~string](value T) T { return value }
+`
+	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := parser.ParseFile(token.NewFileSet(), path, "generic_method.go", "example.com/sample")
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	for _, symbol := range result.Symbols {
+		if symbol.Name != "Transform" {
+			continue
+		}
+		if got, want := symbol.Signature, "func (Box) Transform[T ~int | ~string](value T) (T)"; got != want {
+			t.Fatalf("generic method signature = %q, want %q", got, want)
+		}
+		if got, want := symbol.MethodSignature, "func[T ~int | ~string](T) (T)"; got != want {
+			t.Fatalf("generic method matching signature = %q, want %q", got, want)
+		}
+		return
+	}
+	t.Fatal("generic method Transform was not indexed")
+}
 
 func fixtureDir() string {
 	_, file, _, _ := runtime.Caller(0)

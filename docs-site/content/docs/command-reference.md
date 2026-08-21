@@ -384,7 +384,7 @@ Finds potential paths from untrusted inputs to security-sensitive operations. Te
 
 - **Sources**:
   - `http_request`: parameters typed as `*net/http.Request` or recognized Gin, Echo, Fiber, and fasthttp contexts.
-  - `decoded_json`: `encoding/json.Unmarshal`, `encoding/json.NewDecoder(...).Decode`, and recognized framework binding methods.
+  - `decoded_json`: `encoding/json.Unmarshal`, `encoding/json.NewDecoder(...).Decode`, Go 1.27's `encoding/json/v2` decode functions (`Unmarshal`, `UnmarshalRead`, and `UnmarshalDecode`), and recognized framework binding methods.
   - `environment`: `os.Getenv`, `os.LookupEnv`, and supported Viper package reads.
 - **Sinks**:
   - `sql_query`: the query-text argument to `Query`, `QueryRow`, `Exec`, `Prepare`, and `Raw` variants. Parameter values are not treated as query text.

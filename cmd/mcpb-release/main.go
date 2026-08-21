@@ -214,7 +214,7 @@ func runSmoke(ctx context.Context, args []string) error {
 		}
 		defer func() { _ = os.RemoveAll(temporary) }()
 		projectDir = temporary
-		if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/gograph-mcpb-smoke\n\ngo 1.26.5\n"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/gograph-mcpb-smoke\n\ngo 1.27.0\n"), 0o644); err != nil {
 			return fmt.Errorf("write smoke go.mod: %w", err)
 		}
 		if err := os.WriteFile(filepath.Join(projectDir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {

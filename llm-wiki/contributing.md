@@ -2,7 +2,7 @@
 title: Contributing Guidelines
 type: workflow
 status: current
-updated: 2026-08-05
+updated: 2026-08-21
 sources:
   - SRC-20260614-gograph-legacy-contributing
 ---
@@ -11,7 +11,7 @@ sources:
 
 ## Scope and source of truth
 
-gograph intentionally analyzes Go repositories; other-language parsers are a non-goal. Derive behavior from current source, tests, live CLI help, and the MCP tool registry rather than copying older documentation. The module currently requires Go 1.26.5 as declared by `go.mod`.
+gograph intentionally analyzes Go repositories; other-language parsers are a non-goal. Derive behavior from current source, tests, live CLI help, and the MCP tool registry rather than copying older documentation. The module currently requires Go 1.27.0 as declared by `go.mod`.
 
 ## Adding or changing a capability
 
@@ -35,6 +35,7 @@ Query, analysis, and workflow features belong on both CLI and MCP. Intentional C
 - Freshness changes require byte-digest tests that preserve mtimes, legacy-index fallback coverage, and changed-package versus unchanged-package reuse assertions. Precise incremental tests must prove repository-wide enrichment is reconstructed without duplicate or missing edges.
 - Route extraction changes require grouped/nested parser fixtures and explicit CLI/MCP parity coverage; constant prefixes may be composed, while dynamic expressions must remain conservative.
 - Surface errors directly, serialize successful empty collections as `[]` with count zero, preserve command-aware JSON error envelopes, and test ambiguous symbol names.
+- For Go 1.27, use explicit `encoding/json/v2` semantics at strict, closed-schema trust boundaries. Keep established public JSON output on `encoding/json` unless a deliberate compatibility change is approved; Go 1.27 already backs that API with the v2 implementation while preserving v1 behavior. Add ML-DSA, ML-KEM, or other cryptography only for a concrete protocol requirement, and do not replace an upstream-owned transitive dependency with a local wrapper solely because a similarly named standard package exists.
 - Document local I/O, Go-toolchain/network behavior, audit telemetry, and artifact mutation accurately.
 
 ## Build and verification

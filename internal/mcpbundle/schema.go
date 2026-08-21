@@ -3,7 +3,7 @@ package mcpbundle
 import (
 	"crypto/sha256"
 	_ "embed"
-	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"sync"
 
@@ -78,7 +78,7 @@ func compileSchema(resource, expectedSHA string, raw []byte) (*jsonschema.Schema
 		return nil, fmt.Errorf("vendored schema SHA-256 = %s, want %s", digest, expectedSHA)
 	}
 	var document any
-	if err := json.Unmarshal(raw, &document); err != nil {
+	if err := jsonv2.Unmarshal(raw, &document); err != nil {
 		return nil, fmt.Errorf("decode vendored schema: %w", err)
 	}
 	compiler := jsonschema.NewCompiler()
@@ -92,7 +92,7 @@ func compileSchema(resource, expectedSHA string, raw []byte) (*jsonschema.Schema
 
 func validateRawSchema(raw []byte, schema *jsonschema.Schema, label string) error {
 	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
+	if err := jsonv2.Unmarshal(raw, &value); err != nil {
 		return fmt.Errorf("decode %s: %w", label, err)
 	}
 	if value == nil {

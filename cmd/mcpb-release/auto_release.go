@@ -596,8 +596,8 @@ func gitRemoteURLs(ctx context.Context, runner releaseCommandRunner, root, remot
 
 func githubRepositoryFromRemoteURL(remoteURL string) (string, bool) {
 	value := strings.TrimSpace(remoteURL)
-	if strings.HasPrefix(value, "git@github.com:") {
-		return normalizeGitHubRepository(strings.TrimPrefix(value, "git@github.com:"))
+	if after, ok := strings.CutPrefix(value, "git@github.com:"); ok {
+		return normalizeGitHubRepository(after)
 	}
 	parsed, err := url.Parse(value)
 	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "ssh") || !strings.EqualFold(parsed.Hostname(), "github.com") {
@@ -689,7 +689,7 @@ func lookupRemoteTag(ctx context.Context, runner releaseCommandRunner, root, rem
 		return remoteTagState{}, fmt.Errorf("inspect remote tag %s: %w", tag, err)
 	}
 	state := remoteTagState{}
-	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(output)), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
@@ -869,7 +869,7 @@ func releaseOwnedPaths() []string {
 
 func nonemptyLines(value string) []string {
 	var result []string
-	for _, line := range strings.Split(value, "\n") {
+	for line := range strings.SplitSeq(value, "\n") {
 		if trimmed := strings.TrimSpace(line); trimmed != "" {
 			result = append(result, trimmed)
 		}
@@ -926,7 +926,7 @@ func readAlignedReleaseVersion(root string) (string, error) {
 
 func configCurrentVersion(contents []byte) (string, error) {
 	var version string
-	for _, line := range strings.Split(string(contents), "\n") {
+	for line := range strings.SplitSeq(string(contents), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if !strings.HasPrefix(trimmed, "current_version") {
 			continue
