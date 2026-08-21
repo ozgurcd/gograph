@@ -24,7 +24,7 @@ architecture without embeddings or a hosted code index.
 
 ```bash
 # Install
-brew install ozgurcd/tap/gograph
+brew install --cask ozgurcd/tap/gograph
 # or: go install github.com/ozgurcd/gograph/cmd/gograph@latest
 
 # Build a type-enriched precise graph, then verify it
@@ -41,7 +41,7 @@ Homebrew and `go install` install the normal `gograph` CLI. MCP clients that
 support MCP Bundles can instead discover the local stdio server in the
 [official MCP Registry](https://registry.modelcontextprotocol.io) as
 `io.github.ozgurcd/gograph`. Registry/MCPB installation is a separate
-distribution path; it does not install the Homebrew formula or configure the
+distribution path; it does not install the Homebrew cask or configure the
 Claude Code marketplace plugin. The Registry is currently in preview. See
 [Official MCP Registry and MCPB installation](docs/mcp-registry.md) for client
 support, target selection, and current limitations.
@@ -270,7 +270,7 @@ This registers the Claude Desktop MCP server, injects shared `CLAUDE.md` steerin
 ```
 Discovers gograph through Claude Code's plugin marketplace and ships a `SKILL.md` that auto-activates on Go work, teaching the agent the workflow (`capabilities` → `stats` → `plan` → `context` → edit → `review`), when a durable precise CLI build is useful, when to use structural queries, and when to verify with `gopls` or targeted text/source search.
 
-You still need the `gograph` binary installed (`brew install ozgurcd/tap/gograph` or `go install github.com/ozgurcd/gograph/cmd/gograph@latest`). Use `gograph add-claude-plugin` for Claude Desktop MCP wiring plus shared rules and the Claude Code hook; register the Claude Code MCP server with the printed `claude mcp add` command. Use the plugin marketplace when you prefer discovery from Claude Code's plugin UI.
+You still need the `gograph` binary installed (`brew install --cask ozgurcd/tap/gograph` or `go install github.com/ozgurcd/gograph/cmd/gograph@latest`). Use `gograph add-claude-plugin` for Claude Desktop MCP wiring plus shared rules and the Claude Code hook; register the Claude Code MCP server with the printed `claude mcp add` command. Use the plugin marketplace when you prefer discovery from Claude Code's plugin UI.
 
 **Other agents** (Cursor, Copilot, Antigravity, etc.):
 ```bash

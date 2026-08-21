@@ -226,12 +226,12 @@ the atomic push can succeed.
 
 GoReleaser publishes the ordinary archives, six MCPBs, `server.json`, and
 checksums from the verified tag. The workflow then idempotently reconciles the
-generated Homebrew formula, waits until every Registry-referenced asset is
+generated Homebrew cask, waits until every Registry-referenced asset is
 publicly available, authenticates with `mcp-publisher login github-oidc`, and
 publishes without a long-lived Registry token. Post-publication checks query
 the exact Registry name and version, download and hash every package, repeat
 the native MCP smoke test, and confirm the ordinary archives, checksums, and
-Homebrew formula remain intact.
+Homebrew cask remain intact.
 
 Release jobs are safe to rerun only when the already-published GitHub and
 Registry metadata match exactly. A mismatch must fail closed; publication must

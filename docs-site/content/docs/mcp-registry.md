@@ -25,12 +25,12 @@ Code marketplace entry supplies workflow guidance but still needs that binary
 and a project registration.
 
 Registry installation instead downloads a self-contained MCPB into a client
-that supports MCP Bundles. It does not install the Homebrew formula, run
+that supports MCP Bundles. It does not install the Homebrew cask, run
 `go install`, or configure the Claude Code marketplace plugin.
 
 | Installation | Result |
 |---|---|
-| `brew install ozgurcd/tap/gograph` | CLI binary plus manual local MCP registration |
+| `brew install --cask ozgurcd/tap/gograph` | CLI binary plus manual local MCP registration |
 | `go install github.com/ozgurcd/gograph/cmd/gograph@latest` | CLI binary plus manual local MCP registration |
 | Registry / MCPB | Platform-specific local server bundle managed by an MCPB-capable client |
 

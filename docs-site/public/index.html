@@ -2,7 +2,7 @@
 <html lang="en" dir="auto" data-theme="auto">
 
 <head>
-	<meta name="generator" content="Hugo 0.164.0"><meta charset="utf-8">
+	<meta name="generator" content="Hugo 0.165.0"><meta charset="utf-8">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <meta name="robots" content="index, follow">
@@ -223,7 +223,7 @@ related graph evidence. Savings depend on the repository and task.</li>
 </ul>
 <h2 id="install">Install<a hidden class="anchor" aria-hidden="true" href="#install">#</a></h2>
 <p><strong>Homebrew</strong></p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>brew install ozgurcd/tap/gograph
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>brew install --cask ozgurcd/tap/gograph
 </span></span></code></pre></div><p><strong>Go install</strong></p>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>go install github.com/ozgurcd/gograph/cmd/gograph@latest
 </span></span></code></pre></div><p><strong>Official MCP Registry / MCPB (preview)</strong></p>
@@ -348,8 +348,8 @@ them with persisted repository-level questions such as:</p>
     </h2>
   </header>
   <div class="entry-content">
-    <p>Prerequisites Go 1.26.5 or later A Go module repository (go.mod present) Install Homebrew (recommended)
-brew install ozgurcd/tap/gograph gograph version Go install
+    <p>Prerequisites Go 1.27.0 or later A Go module repository (go.mod present) Install Homebrew (recommended)
+brew install --cask ozgurcd/tap/gograph gograph version Go install
 go install github.com/ozgurcd/gograph/cmd/gograph@latest gograph version Official MCP Registry / MCPB (preview)
 MCPB-capable clients can discover io.github.ozgurcd/gograph in the official Registry. This installs a self-contained local MCP server bundle rather than a CLI on PATH. Select the bundle matching macOS, Linux, or Windows and the host’s amd64/arm64 architecture, then choose the root directory of the Go project to analyze. Current Registry metadata cannot select CPU architecture portably, so verify the asset filename instead of assuming automatic client selection. See Official MCP Registry for details.
 ...</p>
@@ -373,7 +373,7 @@ Global Flags Global flags may appear before or after the command:
   </div>
   <footer class="entry-footer">
 
-<span>22 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
+<span>23 min</span>&nbsp;·&nbsp;<span>Ozgur Demir</span></footer>
   <a class="entry-link" aria-label="post link to Command Reference" href="https://gograph.identuum.ai/docs/command-reference/"></a>
 </article>
 

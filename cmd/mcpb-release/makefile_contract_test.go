@@ -172,6 +172,59 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 	}
 }
 
+func TestReleaseUsesCurrentHomebrewCaskPublishing(t *testing.T) {
+	repositoryRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		path      string
+		required  []string
+		forbidden []string
+	}{
+		{
+			path: ".goreleaser.yaml",
+			required: []string{
+				"homebrew_casks:",
+				"binaries:",
+				"com.apple.quarantine",
+			},
+			forbidden: []string{"\nbrews:", "directory: Formula"},
+		},
+		{
+			path: ".github/workflows/release.yml",
+			required: []string{
+				"dist/homebrew/Casks/gograph.rb",
+				"Casks/gograph.rb",
+				"gh auth setup-git",
+				`{"gograph":"gograph"}`,
+				"rm -f \"$tap_dir/Formula/gograph.rb\"",
+			},
+			forbidden: []string{
+				`formula_path="dist/homebrew/Formula/gograph.rb"`,
+				"contents/Formula/gograph.rb > \"$remote_path\"",
+			},
+		},
+	}
+	for _, test := range tests {
+		data, err := os.ReadFile(filepath.Join(repositoryRoot, test.path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		contents := string(data)
+		for _, required := range test.required {
+			if !strings.Contains(contents, required) {
+				t.Errorf("%s is missing %q", test.path, required)
+			}
+		}
+		for _, forbidden := range test.forbidden {
+			if strings.Contains(contents, forbidden) {
+				t.Errorf("%s retains obsolete Homebrew configuration %q", test.path, forbidden)
+			}
+		}
+	}
+}
+
 func TestMakeAnalysisToolsUsePinnedVersions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("release Makefile uses a POSIX shell")

@@ -13,7 +13,7 @@ description: "Install gograph, build your first graph, and run your first querie
 
 **Homebrew (recommended)**
 ```bash
-brew install ozgurcd/tap/gograph
+brew install --cask ozgurcd/tap/gograph
 gograph version
 ```
 

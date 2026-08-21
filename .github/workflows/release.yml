@@ -219,7 +219,7 @@ jobs:
             --tag "$RELEASE_TAG" \
             --server server.json)" = matching
 
-      - name: Generate Homebrew formula for an existing matching release
+      - name: Generate Homebrew cask for an existing matching release
         if: steps.release_state.outputs.publish == 'false'
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
         with:
@@ -227,16 +227,16 @@ jobs:
           version: ${{ env.GORELEASER_VERSION }}
           args: release --clean --skip=publish
 
-      - name: Reconcile and verify Homebrew formula
+      - name: Reconcile and verify Homebrew cask
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          formula_path="dist/homebrew/Formula/gograph.rb"
-          test -s "$formula_path"
+          cask_path="dist/homebrew/Casks/gograph.rb"
+          test -s "$cask_path"
           desired_version="${{ needs.verify.outputs.version }}"
-          grep -Fq "version \"$desired_version\"" "$formula_path"
+          grep -Fq "version \"$desired_version\"" "$cask_path"
           published_checksums="$RUNNER_TEMP/published-checksums.txt"
           curl --fail --location --silent --show-error \
             "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/checksums.txt" \
@@ -249,21 +249,17 @@ jobs:
             local_hash="$(awk -v name="$asset" '$2 == name { print $1 }' dist/checksums.txt)"
             published_hash="$(awk -v name="$asset" '$2 == name { print $1 }' "$published_checksums")"
             test -n "$local_hash" && test "$local_hash" = "$published_hash"
-            grep -Fq "/releases/download/${RELEASE_TAG}/$asset" "$formula_path"
-            grep -Fq "sha256 \"$published_hash\"" "$formula_path"
+            grep -Fq "/releases/download/${RELEASE_TAG}/$asset" "$cask_path"
+            grep -Fq "sha256 \"$published_hash\"" "$cask_path"
           done
-          remote_path="$RUNNER_TEMP/gograph.rb"
-          metadata="$(gh api repos/ozgurcd/homebrew-tap/contents/Formula/gograph.rb 2>/dev/null || true)"
-          if [[ -n "$metadata" ]]; then
-            gh api -H 'Accept: application/vnd.github.raw+json' \
-              repos/ozgurcd/homebrew-tap/contents/Formula/gograph.rb > "$remote_path"
-            if cmp -s "$formula_path" "$remote_path"; then
-              echo "Homebrew formula already matches"
-              exit 0
-            fi
-            remote_version="$(sed -n 's/^  version "\([^"]*\)"/\1/p' "$remote_path")"
+          tap_dir="$RUNNER_TEMP/homebrew-tap"
+          gh auth setup-git
+          gh repo clone ozgurcd/homebrew-tap "$tap_dir"
+          for existing in "$tap_dir/Casks/gograph.rb" "$tap_dir/Formula/gograph.rb"; do
+            [[ -f "$existing" ]] || continue
+            remote_version="$(sed -n 's/^  version "\([^"]*\)"/\1/p' "$existing")"
             if [[ -z "$remote_version" ]]; then
-              echo "existing Homebrew formula has no parseable version" >&2
+              echo "existing Homebrew definition has no parseable version: $existing" >&2
               exit 1
             fi
             if [[ "$remote_version" != "$desired_version" ]]; then
@@ -273,19 +269,37 @@ jobs:
                 exit 1
               fi
             fi
+          done
+          mkdir -p "$tap_dir/Casks"
+          cp "$cask_path" "$tap_dir/Casks/gograph.rb"
+          migration_path="$tap_dir/tap_migrations.json"
+          if [[ -f "$migration_path" ]]; then
+            jq -S '. + {"gograph":"gograph"}' "$migration_path" > "$migration_path.next"
+          else
+            jq -n -S '{"gograph":"gograph"}' > "$migration_path.next"
           fi
-          encoded="$(base64 < "$formula_path" | tr -d '\n')"
-          request=(--method PUT repos/ozgurcd/homebrew-tap/contents/Formula/gograph.rb
-            -f "message=chore: update gograph to $desired_version"
-            -f "content=$encoded"
-            -f branch=main)
-          if [[ -n "$metadata" ]]; then
-            request+=(-f "sha=$(jq -er '.sha' <<< "$metadata")")
+          mv "$migration_path.next" "$migration_path"
+          rm -f "$tap_dir/Formula/gograph.rb"
+          git -C "$tap_dir" add --all
+          if ! git -C "$tap_dir" diff --cached --quiet; then
+            git -C "$tap_dir" config user.name github-actions
+            git -C "$tap_dir" config user.email github-actions@github.com
+            git -C "$tap_dir" commit -m "chore: update gograph cask to $desired_version"
+            git -C "$tap_dir" push origin HEAD:main
+          else
+            echo "Homebrew cask and migration already match"
           fi
-          gh api "${request[@]}" >/dev/null
+          remote_path="$RUNNER_TEMP/gograph.rb"
           gh api -H 'Accept: application/vnd.github.raw+json' \
-            repos/ozgurcd/homebrew-tap/contents/Formula/gograph.rb > "$remote_path"
-          cmp "$formula_path" "$remote_path"
+            repos/ozgurcd/homebrew-tap/contents/Casks/gograph.rb > "$remote_path"
+          cmp "$cask_path" "$remote_path"
+          gh api -H 'Accept: application/vnd.github.raw+json' \
+            repos/ozgurcd/homebrew-tap/contents/tap_migrations.json | \
+            jq -e '.gograph == "gograph"' >/dev/null
+          if gh api repos/ozgurcd/homebrew-tap/contents/Formula/gograph.rb >/dev/null 2>&1; then
+            echo "obsolete Homebrew formula still exists after cask migration" >&2
+            exit 1
+          fi
 
   registry-preflight:
     name: Verify Registry publication inputs

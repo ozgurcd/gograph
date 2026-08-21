@@ -52,17 +52,22 @@ release:
   # matching release as a no-op and fails on a partial or divergent release.
   replace_existing_artifacts: false
 
-brews:
+homebrew_casks:
   - name: gograph
-    # The release workflow publishes this generated formula idempotently after
+    # The release workflow publishes this generated cask idempotently after
     # GitHub assets are final. This keeps tap failures safely rerunnable.
     skip_upload: true
     repository:
       owner: ozgurcd
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
     homepage: "https://github.com/ozgurcd/gograph"
-    description: "A fast, AST-based repository structure and call graph analyzer for Go."
-    test: |
-      system "#{bin}/gograph --version"
+    description: "Fast, AST-based repository structure and call graph analyzer for Go"
+    binaries:
+      - gograph
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/gograph"]
+          end

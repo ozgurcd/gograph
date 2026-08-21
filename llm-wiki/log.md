@@ -372,3 +372,8 @@ Normalized the security-flow page link into the index's Schemas and Security sec
 - Kept JSON Schema validation and the MCP library's transitive UUID dependency because the standard library does not replace those ownership/contracts; did not add ML-DSA or ML-KEM without a product protocol requiring them.
 
 - Verification passed with `make verify`, focused Go 1.27 parser/precise regressions, and Linux/Windows amd64 cross-builds.
+
+## [2026-08-21] maintenance | Migrate Homebrew publication to casks
+
+- Replaced GoReleaser's deprecated formula publisher with `homebrew_casks`. Future release reconciliation publishes `Casks/gograph.rb`, adds the same-name formula-to-cask entry in `tap_migrations.json`, and removes the obsolete formula in one tap commit.
+- Full repository verification and a pinned GoReleaser snapshot passed; the snapshot generated the cask without deprecated-option warnings.

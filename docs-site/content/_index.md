@@ -72,7 +72,7 @@ Copilot, Antigravity, and OpenCode.
 
 **Homebrew**
 ```bash
-brew install ozgurcd/tap/gograph
+brew install --cask ozgurcd/tap/gograph
 ```
 
 **Go install**

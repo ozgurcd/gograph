@@ -8,6 +8,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +18,61 @@ import (
 	"testing"
 
 	"github.com/ozgurcd/gograph/internal/cli"
+	"github.com/ozgurcd/gograph/internal/graph"
 )
+
+func captureTestOutput(t *testing.T, run func()) (stdout, stderr string) {
+	t.Helper()
+
+	oldStdout, oldStderr := os.Stdout, os.Stderr
+	outReader, outWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	errReader, errWriter, err := os.Pipe()
+	if err != nil {
+		_ = outReader.Close()
+		_ = outWriter.Close()
+		t.Fatal(err)
+	}
+	os.Stdout, os.Stderr = outWriter, errWriter
+
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	outResult := make(chan readResult, 1)
+	errResult := make(chan readResult, 1)
+	go func() {
+		data, readErr := io.ReadAll(outReader)
+		outResult <- readResult{data: data, err: readErr}
+	}()
+	go func() {
+		data, readErr := io.ReadAll(errReader)
+		errResult <- readResult{data: data, err: readErr}
+	}()
+
+	func() {
+		defer func() {
+			os.Stdout, os.Stderr = oldStdout, oldStderr
+		}()
+		run()
+		_ = outWriter.Close()
+		_ = errWriter.Close()
+	}()
+
+	out := <-outResult
+	errOut := <-errResult
+	_ = outReader.Close()
+	_ = errReader.Close()
+	if out.err != nil {
+		t.Fatal(out.err)
+	}
+	if errOut.err != nil {
+		t.Fatal(errOut.err)
+	}
+	return string(out.data), string(errOut.data)
+}
 
 func TestBuildGraph(t *testing.T) {
 	// Create a temporary directory with a dummy Go file
@@ -72,12 +127,19 @@ func TestBuildGraphRejectsAllParseFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	g, err := cli.BuildGraph(root)
+	var g *graph.Graph
+	var err error
+	_, stderr := captureTestOutput(t, func() {
+		g, err = cli.BuildGraph(root)
+	})
 	if err == nil {
 		t.Fatalf("expected all-parse-failures error, got graph %+v", g)
 	}
 	if !strings.Contains(err.Error(), "none of 1 Go files parsed successfully") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stderr, "expected 'IDENT', found '{'") {
+		t.Fatalf("missing parse diagnostic: %q", stderr)
 	}
 }
 
@@ -90,12 +152,19 @@ func TestBuildGraphReportsPartialParseFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	g, err := cli.BuildGraph(root)
+	var g *graph.Graph
+	var err error
+	_, stderr := captureTestOutput(t, func() {
+		g, err = cli.BuildGraph(root)
+	})
 	if err != nil {
 		t.Fatalf("BuildGraph: %v", err)
 	}
 	if g.Build == nil || g.Build.Complete || g.Build.ScannedFiles != 2 || g.Build.ParsedFiles != 1 || len(g.Build.Failures) != 1 {
 		t.Fatalf("unexpected build metadata: %+v", g.Build)
+	}
+	if !strings.Contains(stderr, "expected 'IDENT', found '{'") {
+		t.Fatalf("missing parse diagnostic: %q", stderr)
 	}
 }
 

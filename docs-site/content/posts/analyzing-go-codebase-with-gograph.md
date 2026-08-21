@@ -332,7 +332,7 @@ The defensible benefit is measurable at the tool boundary: fewer search calls an
 Install the static analysis utility using Homebrew:
 
 ```bash
-brew install ozgurcd/tap/gograph
+brew install --cask ozgurcd/tap/gograph
 ```
 
 Alternatively, install directly from source (Go 1.27.0+):

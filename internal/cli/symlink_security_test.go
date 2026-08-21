@@ -14,9 +14,17 @@ import (
 
 func TestBuildGraphExcludesRepositorySourceSymlink(t *testing.T) {
 	root, sentinel := writeSymlinkSecurityModule(t)
-	g, err := BuildGraph(root)
+	var g *graph.Graph
+	var err error
+	_, stderr, _ := captureCLIParityOutput(t, func() int {
+		g, err = BuildGraph(root)
+		return exitSuccess
+	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(stderr, "linked.go") || !strings.Contains(stderr, "not a regular file") {
+		t.Fatalf("missing linked-source diagnostic: %q", stderr)
 	}
 	if !g.UsesCurrentSourcePolicy() {
 		t.Fatalf("build source policy = %+v, want current", g.Build)
@@ -268,8 +276,14 @@ func TestPreciseAndDocRefuseLinkedSourceInSiblingWorkspaceMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.Chdir(original) }()
-	if code := runDoc([]string{"fmt.Errorf"}); code != exitError {
+	_, stderr, code := captureCLIParityOutput(t, func() int {
+		return runDoc([]string{"fmt.Errorf"})
+	})
+	if code != exitError {
 		t.Fatalf("runDoc exit = %d, want sibling-source refusal", code)
+	}
+	if !strings.Contains(stderr, "linked.go") || !strings.Contains(stderr, "not a regular file") {
+		t.Fatalf("missing sibling-source diagnostic: %q", stderr)
 	}
 }
 
@@ -295,9 +309,18 @@ func TestLegacyGraphIsRebuiltInsteadOfRetained(t *testing.T) {
 		t.Fatalf("loadGraph legacy error = %v, want rebuild-required", err)
 	}
 
-	g, gotRoot, err := prepareMCPGraph(mcpOptions{Root: root, PersistRefresh: true})
+	var g *graph.Graph
+	var gotRoot string
+	var err error
+	_, stderr, _ := captureCLIParityOutput(t, func() int {
+		g, gotRoot, err = prepareMCPGraph(mcpOptions{Root: root, PersistRefresh: true})
+		return exitSuccess
+	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(stderr, "linked.go") || !strings.Contains(stderr, "not a regular file") {
+		t.Fatalf("missing legacy-rebuild diagnostic: %q", stderr)
 	}
 	if gotRoot != root || !g.UsesCurrentSourcePolicy() {
 		t.Fatalf("prepared graph/root = %+v/%q", g.Build, gotRoot)
@@ -385,8 +408,14 @@ func TestSourceRejectsCurrentPolicyGraphPointingAtSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.Chdir(original) }()
-	if code := runSource([]string{"OutsideOnly"}); code != exitError {
+	_, stderr, code := captureCLIParityOutput(t, func() int {
+		return runSource([]string{"OutsideOnly"})
+	})
+	if code != exitError {
 		t.Fatalf("runSource exit = %d, want confined-read failure", code)
+	}
+	if !strings.Contains(stderr, "unsafe repository source path") || !strings.Contains(stderr, "linked.go") {
+		t.Fatalf("missing confined-read diagnostic: %q", stderr)
 	}
 }
 
@@ -469,8 +498,14 @@ func TestDocRefusesRepositorySourceSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.Chdir(original) }()
-	if code := runDoc([]string{"fmt.Errorf"}); code != exitError {
+	_, stderr, code := captureCLIParityOutput(t, func() int {
+		return runDoc([]string{"fmt.Errorf"})
+	})
+	if code != exitError {
 		t.Fatalf("runDoc exit = %d, want refusal", code)
+	}
+	if !strings.Contains(stderr, "linked.go") || !strings.Contains(stderr, "not a regular file") {
+		t.Fatalf("missing linked-source diagnostic: %q", stderr)
 	}
 }
 

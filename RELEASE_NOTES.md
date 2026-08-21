@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Clean release diagnostics and Homebrew publication
+
+- Captured and asserted expected malformed-source and symlink-rejection output
+  inside the regression tests that produce it, preventing successful security
+  tests from creating false GitHub Actions error annotations.
+- Migrated GoReleaser's deprecated `brews` configuration to
+  `homebrew_casks`. Future releases atomically publish the cask, add Homebrew's
+  same-name formula-to-cask migration record, and remove the obsolete formula.
+- Updated Homebrew installation examples to use `brew install --cask`.
+
 ### Go 1.27 CI compatibility
 
 - Updated the pinned Staticcheck and GolangCI-Lint versions in both CI and the

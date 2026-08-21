@@ -145,7 +145,7 @@ without creating a commit, tag, or push.
 
 After the atomic push, GoReleaser publishes the ordinary assets, six MCPBs,
 checksums, and `server.json`. The workflow reconciles GoReleaser's generated
-Homebrew formula idempotently, waits for every referenced GitHub asset to be
+Homebrew cask idempotently, waits for every referenced GitHub asset to be
 publicly downloadable, publishes with GitHub Actions OIDC, and verifies the
 Registry record and downloadable hashes. Do not add a long-lived Registry
 token.
