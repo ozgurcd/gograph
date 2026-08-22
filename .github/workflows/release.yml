@@ -249,7 +249,9 @@ jobs:
             local_hash="$(awk -v name="$asset" '$2 == name { print $1 }' dist/checksums.txt)"
             published_hash="$(awk -v name="$asset" '$2 == name { print $1 }' "$published_checksums")"
             test -n "$local_hash" && test "$local_hash" = "$published_hash"
-            grep -Fq "/releases/download/${RELEASE_TAG}/$asset" "$cask_path"
+            # GoReleaser deliberately emits the Homebrew runtime interpolation
+            # `v#{version}` here, while the version stanza above pins its value.
+            grep -Fq "/releases/download/v#{version}/$asset" "$cask_path"
             grep -Fq "sha256 \"$published_hash\"" "$cask_path"
           done
           tap_dir="$RUNNER_TEMP/homebrew-tap"

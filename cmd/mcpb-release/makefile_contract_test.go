@@ -197,6 +197,7 @@ func TestReleaseUsesCurrentHomebrewCaskPublishing(t *testing.T) {
 				"dist/homebrew/Casks/gograph.rb",
 				"Casks/gograph.rb",
 				"gh auth setup-git",
+				`grep -Fq "/releases/download/v#{version}/$asset" "$cask_path"`,
 				`{"gograph":"gograph"}`,
 				"rm -f \"$tap_dir/Formula/gograph.rb\"",
 			},
