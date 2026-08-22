@@ -198,12 +198,14 @@ func TestReleaseUsesCurrentHomebrewCaskPublishing(t *testing.T) {
 				"Casks/gograph.rb",
 				"gh auth setup-git",
 				`grep -Fq "/releases/download/v#{version}/$asset" "$cask_path"`,
+				`sed -i "s/sha256 \"$local_hash\"/sha256 \"$published_hash\"/" "$cask_path"`,
 				`{"gograph":"gograph"}`,
 				"rm -f \"$tap_dir/Formula/gograph.rb\"",
 			},
 			forbidden: []string{
 				`formula_path="dist/homebrew/Formula/gograph.rb"`,
 				"contents/Formula/gograph.rb > \"$remote_path\"",
+				`test "$local_hash" = "$published_hash"`,
 			},
 		},
 	}

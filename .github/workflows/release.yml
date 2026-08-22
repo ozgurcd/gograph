@@ -248,10 +248,15 @@ jobs:
             gograph_Linux_x86_64.tar.gz; do
             local_hash="$(awk -v name="$asset" '$2 == name { print $1 }' dist/checksums.txt)"
             published_hash="$(awk -v name="$asset" '$2 == name { print $1 }' "$published_checksums")"
-            test -n "$local_hash" && test "$local_hash" = "$published_hash"
+            test -n "$local_hash" && test -n "$published_hash"
             # GoReleaser deliberately emits the Homebrew runtime interpolation
             # `v#{version}` here, while the version stanza above pins its value.
             grep -Fq "/releases/download/v#{version}/$asset" "$cask_path"
+            test "$(grep -Fc "sha256 \"$local_hash\"" "$cask_path")" = 1
+            # A recovery run rebuilds archives only to regenerate the cask. Go
+            # build/archive bytes are not promised to reproduce across runner
+            # instances, so bind the cask to the immutable published assets.
+            sed -i "s/sha256 \"$local_hash\"/sha256 \"$published_hash\"/" "$cask_path"
             grep -Fq "sha256 \"$published_hash\"" "$cask_path"
           done
           tap_dir="$RUNNER_TEMP/homebrew-tap"
