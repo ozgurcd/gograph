@@ -12,7 +12,7 @@ import (
 // the current gograph project root. It is kept as the CLI-facing compatibility
 // wrapper; callers with a loaded graph should pass its root explicitly below.
 func BuildBaselineGraphFromGitRef(ref string, buildGraph func(string) (*graph.Graph, error)) (*graph.Graph, error) {
-	return BuildBaselineGraphFromGitRefAtRoot(rootfind.FindRoot(), ref, buildGraph)
+	return BuildBaselineGraphFromGitRefAtRoot(rootfind.FindRepositoryRoot(), ref, buildGraph)
 }
 
 func BuildBaselineGraphFromGitRefAtRoot(root, ref string, buildGraph func(string) (*graph.Graph, error)) (*graph.Graph, error) {

@@ -327,6 +327,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 	// Maintenance rule: when you add a command to help/capabilities, add it here too.
 	want := []string{
 		"build",
+		"workspace",
 		"validate",
 		"query",
 		"focus",
@@ -598,7 +599,7 @@ func TestHelpDocumentsEveryCanonicalCommand(t *testing.T) {
 		"deps", "dependents", "changes", "godobj", "plan", "review", "risk", "api",
 		"routes", "sql", "httpcalls", "errorflow", "flow", "errors", "envs", "concurrency", "tests",
 		"capabilities", "wiki", "doc", "mcp", "session", "add-claude-plugin", "hook-guard",
-		"version", "help",
+		"version", "help", "workspace",
 	}
 	for _, name := range want {
 		if !documented[name] {
@@ -627,6 +628,10 @@ func TestHelpDocumentsImplementedModes(t *testing.T) {
 		"Sources: http_request, decoded_json, environment.",
 		"Sinks: sql_query, process_execution, filesystem, outbound_http.",
 		"Tests are included by default; --no-tests excludes them.",
+		"workspace build [path] [--refresh-members]",
+		"workspace path [--scope id] [--workspace path] [--include-possible] <from> <to>",
+		"gograph_workspace_status",
+		"CLI --json and MCP JSON have identical native values",
 	} {
 		if !strings.Contains(help, mode) {
 			t.Errorf("gograph --help does not document implemented mode %q", mode)
@@ -667,6 +672,16 @@ func TestCapabilitiesDocumentsImplementedModes(t *testing.T) {
 		"type/variable/constant",
 		"UNKNOWN/-1",
 		"Filesystem-shaped queries are rejected",
+		"━━━ FEDERATED WORKSPACES",
+		"gograph workspace build --refresh-members",
+		"gograph_workspace_status",
+		"gograph_workspace_query",
+		"gograph_workspace_path",
+		"gograph_workspace_impact",
+		"MCP JSON text is exactly the CLI results object",
+		"ambiguous/possible evidence",
+		"Workspace changes are not part",
+		"disables member-configured fsmonitor hooks",
 	} {
 		if !strings.Contains(capabilities, want) {
 			t.Errorf("gograph capabilities does not document implemented mode %q", want)
@@ -675,6 +690,42 @@ func TestCapabilitiesDocumentsImplementedModes(t *testing.T) {
 	for _, stale := range []string{"llm-wiki/README.md", "llm-wiki/rules.md", "since last build"} {
 		if strings.Contains(capabilities, stale) {
 			t.Errorf("gograph capabilities retains stale guidance %q", stale)
+		}
+	}
+}
+
+func TestWorkspaceDocumentationSurfacesDescribeCLIAndMCPParity(t *testing.T) {
+	for path, required := range map[string][]string{
+		"../../README.md": {
+			"Federated Workspaces",
+			"four read-only workspace MCP tools return the same native result values as CLI `--json`",
+		},
+		"../../RELEASE_NOTES.md": {
+			"Workspace status, query, path, and impact have one CLI/MCP result contract",
+		},
+		"../../docs/workspaces.md": {
+			"CLI and MCP use the same native result contracts",
+			"gograph_workspace_status",
+			"--include-possible",
+		},
+		"../../docs-site/content/docs/command-reference.md": {
+			"## Federated Workspaces",
+			"the MCP JSON text is exactly the native value",
+			"gograph_workspace_impact",
+		},
+		"../../llm-wiki/workspace-v1.md": {
+			"## CLI and MCP parity",
+			"Workspace build, member refresh, and overlay publication remain CLI-only mutations",
+		},
+	} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read documentation %s: %v", path, err)
+		}
+		for _, want := range required {
+			if !strings.Contains(string(content), want) {
+				t.Errorf("%s does not document %q", path, want)
+			}
 		}
 	}
 }

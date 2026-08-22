@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Federated cross-repository workspaces
+
+- Added a confined `gograph.workspace-manifest.v1` and deterministic
+  `gograph.workspace-artifact.v1`. Member repository graphs remain independent
+  and authoritative; the workspace artifact stores only per-scope module
+  ownership, external Go-call resolutions, and first-class HTTP contracts.
+- Added `gograph workspace build`, `status`, `query`, `path`, `impact`, and a
+  separate four-tool read-only workspace MCP server. Member refresh is an
+  explicit `--refresh-members` multi-repository mutation whose JSON result
+  distinguishes planned, attempted, successful, and failed member writes.
+- Workspace status, query, path, and impact have one CLI/MCP result contract:
+  CLI `--json` wraps the native value in its standard envelope and each
+  read-only MCP tool returns that exact value as JSON text. Contract tests
+  compare decoded values for default and explicit scopes and for exact-only
+  and possible-edge traversal.
+- Added structured cross-repository identities, orthogonal certainty and
+  evidence-origin metadata, input versus exact-artifact fingerprints,
+  resolution scopes, collision detection, and strict descendant path
+  confinement. HTTP scheme/host/port remain evidence qualifiers; logical
+  authority, method, and normalized path form contract identity.
+- Workspace loading revalidates confined member paths and verifies serialized
+  module ownership against actual `go.mod` directives. Rooted atomic overlay
+  publication rejects linked destinations. Heuristic Go calls, CHA targets,
+  and dynamic HTTP handlers no longer participate in exact traversal, while
+  synthetic wrapper calls and module-import edges remain available virtually.
+- Repository root discovery preserves enclosing graphs for nested modules but
+  does not cross a nested Git boundary. Advisory workspace Git status disables
+  configured filesystem-monitor hooks and optional index writes.
+- Repository graph v2 gained additive module inventory and a workspace-facts
+  capability marker. Repository-only CLI and MCP contracts remain unchanged.
+
 ### Clean release diagnostics and Homebrew publication
 
 - Captured and asserted expected malformed-source and symlink-rejection output

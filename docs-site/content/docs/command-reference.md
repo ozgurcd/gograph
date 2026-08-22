@@ -12,7 +12,8 @@ This reference documents every command available in the `gograph` CLI, compiled 
 
 Global flags may appear before or after the command:
 
-- `--json`: Structured output for query and composed-analysis commands.
+- `--json`: Structured output for query/composed-analysis commands and
+  workspace build, status, query, path, and impact.
 - `--files-only`: Deduplicated paths for the commands listed under Output
   Modes; an empty result writes zero lines.
 - `--mermaid`: Mermaid output for `callers`, `callees`, `impact`,
@@ -632,6 +633,95 @@ Finds functions with excessive parameter counts. Defaults to `--min 5`.
 
 ---
 
+## Federated Workspaces
+
+A regular `.gograph-workspace.yml` establishes a workspace root. Every member
+must be a unique relative descendant without symlink traversal. Each member's
+`.gograph/graph.json` remains authoritative and independently fingerprinted;
+the deterministic `.gograph/workspace.json` contains only scoped
+cross-repository ownership, resolution, and HTTP-contract facts.
+
+### workspace build
+
+```bash
+gograph workspace build [path] [--refresh-members] [--json]
+```
+
+Without `--refresh-members`, reads member graphs and writes only the workspace
+overlay. Missing, stale, incomplete, incompatible, or insufficiently precise
+members fail the build without replacing the previous overlay.
+`--refresh-members` explicitly permits sequential writes in member repositories
+and is not transactional. Its JSON reports `refresh_plan`,
+`refresh_attempted`, `refresh_succeeded`, and `refresh_failed`, including
+before/after artifact fingerprints, so a failure after earlier successful
+member writes is visible.
+
+### workspace status
+
+```bash
+gograph workspace status [path] [--json]
+```
+
+Reports `complete`, `partial`, or `cannot_evaluate`, with each member's
+availability, freshness, exact artifact/source/build-context fingerprints,
+analysis mode, capabilities, advisory repository revision/dirty state, and
+diagnostics. Overlay status includes presence, freshness, input fingerprint,
+external exact-byte artifact fingerprint, resolver versions, and diagnostics.
+The advisory Git probes disable repository-configured filesystem monitors and
+optional index locking.
+
+### workspace query
+
+```bash
+gograph workspace query [--scope id] [--workspace path] <term...> [--json]
+```
+
+Searches symbols, packages, modules, and first-class HTTP contracts in the
+selected scope. `repository:symbol` is presentation/query syntax only;
+persisted identities are structured.
+
+### workspace path
+
+```bash
+gograph workspace path [--scope id] [--workspace path] [--include-possible] <from> <to> [--json]
+```
+
+Finds a shortest path over the selected member graphs plus the workspace
+overlay. Cross-repository Go resolutions materialize as ordinary `calls`;
+HTTP clients and handlers connect through a contract as `calls_http` then
+`serves_http`.
+
+### workspace impact
+
+```bash
+gograph workspace impact [--scope id] [--workspace path] [--include-possible] <target> [--json]
+```
+
+Finds transitive incoming dependencies in the same virtual graph. Path and
+impact traverse only `exact` evidence by default. `--include-possible` opts
+into both `ambiguous` and `possible` evidence for exploration.
+
+### workspace mcp
+
+```bash
+gograph workspace mcp [path]
+```
+
+Starts a separate read-only workspace MCP server with exactly four tools:
+`gograph_workspace_status`, `gograph_workspace_query`,
+`gograph_workspace_path`, and `gograph_workspace_impact`. For each operation,
+the MCP JSON text is exactly the native value placed in the CLI `--json`
+envelope's `results` field, including scope selection, ordering, and traversal
+semantics. MCP cannot refresh member graphs or publish the overlay.
+
+Multiple scopes require `--scope` unless the manifest defines `default_scope`
+or contains exactly one scope. Duplicate module or logical HTTP ownership is
+an error within a scope unless shared HTTP ownership is explicit; duplicates
+in mutually exclusive scopes are allowed. Workspace changes, snapshots, RPC,
+topics, and shared-schema resolution are outside workspace v1.
+
+---
+
 ## Agent Integration
 
 ### capabilities
@@ -748,7 +838,8 @@ Print the build version or the complete CLI help contract.
 
 ## Output Modes
 
-Query/composed commands and `check` support `--json` using the envelope keys
+Query/composed commands, `check`, and workspace build/status/query/path/impact
+support `--json` using the envelope keys
 `schema_version`, `command`, `status`, `query`, `count`, and `results`.
 Successful envelopes always include numeric `count`; collection-shaped empty
 results are `[]`, not `null`. Hard failures use `status: "error"` and exit 1.
@@ -763,8 +854,9 @@ results are `[]`, not `null`. Hard failures use `status: "error"` and exit 1.
 `dependents`. An empty files-only result writes zero lines. `--mermaid` is supported by
 `callers`, `callees`, `impact`, `endpoint`, `dependents`, `deps`, `path`, and
 `coupling`; bare `gograph --mermaid` renders `diagram`. Unsupported or
-conflicting output flags fail. Operational commands (`build`, `wiki`, `gate`,
-`snapshot`, session create/end/cleanup, installation, help, and version) remain text. Use global
+conflicting output flags fail. Other operational commands (repository `build`,
+`wiki`, `gate`, `snapshot`, session create/end/cleanup, installation, help, and
+version) remain text. Use global
 `--intention` / `-i` to provide the rationale required by analytical CLI
 commands during an active audit session.
 
@@ -776,6 +868,7 @@ Successful-result mode support is:
 | JSON, files | `query`, `focus`, `node`, `public`, `fields`, `embeds`, `imports`, `implementers`, `envs`, `interfaces`, `concurrency`, `tests`, `routes`, `sql`, `errors`, `flow`, `orphans`, `mutate`, `constructors`, `literals`, `usages`, `returnusage`, `schema`, `globals`, `mocks`, `fixtures`, `boundaries`, `httpcalls` |
 | JSON, Mermaid | `path`, `coupling`, `deps`, `endpoint` |
 | JSON | `source`, `errorflow`, `trace`, `stale`, `stats`, `summary`, `untested`, `doc`, `godobj`, `skeleton`, `arity`, `complexity`, `context`, `hotspot`, `changes`, `explain`, `plan`, `review`, `risk`, `api`, `check` |
+| JSON | `workspace build`, `workspace status`, `workspace query`, `workspace path`, `workspace impact` |
 | Raw JSON | `session audit` |
 | Mermaid | `diagram`, or bare `gograph --mermaid` |
 

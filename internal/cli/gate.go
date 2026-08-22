@@ -69,7 +69,7 @@ func runGate(args []string) int {
 		return runGateInit()
 	}
 
-	root := rootfind.FindRoot()
+	root := rootfind.FindRepositoryRoot()
 	data, _, _, err := projectfile.ReadConfig(root, ".gograph.yml", "")
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -219,7 +219,7 @@ func runGate(args []string) int {
 // edit by hand. Conservative defaults; the template documents each
 // threshold so users can tune without consulting external docs.
 func runGateInit() int {
-	root := rootfind.FindRoot()
+	root := rootfind.FindRepositoryRoot()
 	configPath := filepath.Join(root, ".gograph.yml")
 	repository, err := sourcefs.Open(root)
 	if err != nil {

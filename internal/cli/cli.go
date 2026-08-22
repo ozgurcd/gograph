@@ -22,6 +22,7 @@ import (
 	"github.com/ozgurcd/gograph/internal/buildctx"
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/mcp"
+	"github.com/ozgurcd/gograph/internal/moduleinventory"
 	"github.com/ozgurcd/gograph/internal/parser"
 	"github.com/ozgurcd/gograph/internal/precise"
 	"github.com/ozgurcd/gograph/internal/repositoryfingerprint"
@@ -183,6 +184,8 @@ func dispatch(args []string) int {
 		return runSessionWithJSONErrors(args[1:])
 	case "build":
 		return runBuild(args[1:])
+	case "workspace":
+		return runWorkspace(args[1:])
 	case "validate":
 		return runValidate(args[1:])
 	case "query":
@@ -397,6 +400,29 @@ publishes each confirmed-fresh startup build or refresh as graph.json plus nine
 reports. It keeps one latest state (not a branch cache), does not edit .gitignore,
 and returns publication failures to the triggering tool for a later retry.
 
+━━━ FEDERATED WORKSPACES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+A regular .gograph-workspace.yml establishes a workspace root and confines
+every member beneath it. Member graph.json artifacts remain authoritative and
+independently fingerprinted; .gograph/workspace.json is a deterministic,
+scope-specific cross-repository overlay rather than a merged fleet graph.
+
+  gograph workspace build                 read members; write only the overlay
+  gograph workspace build --refresh-members
+                                            explicitly permit member graph writes
+  gograph workspace status --json         member and overlay health/fingerprints
+  gograph workspace query [--scope ID] TERM --json
+  gograph workspace path [--scope ID] FROM TO --json
+  gograph workspace impact [--scope ID] TARGET --json
+
+Path and impact traverse exact facts by default. Add --include-possible only
+for exploratory traversal of ambiguous/possible evidence. The workspace MCP
+server is read-only and exposes gograph_workspace_status,
+gograph_workspace_query, gograph_workspace_path, and gograph_workspace_impact.
+For those four operations, MCP JSON text is exactly the CLI results object;
+the CLI only adds its generic command envelope. Workspace changes are not part
+of workspace v1. Advisory Git status disables member-configured fsmonitor hooks
+and optional index writes.
+
 ━━━ COMMON WORKFLOWS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Start of any session         → summary  (top hotspots + worst instability + highest complexity + orphan/god-obj counts in ONE call)
   Onboard to unfamiliar repo   → hotspot, skeleton, focus <pkg>
@@ -486,8 +512,10 @@ the graph-oriented commands listed below. Request only one output mode at a time
                   (supported by deps, dependents, coupling, callers, callees, path, impact, endpoint)
 
 For supported commands, use --json for structured pipelines and --files-only
-when you only need involved file paths. Operational commands remain text except
-that session audit also accepts --json and returns its native audit object.
+when you only need involved file paths. Other mutation/administration commands
+remain text; session audit accepts --json and returns its native audit object.
+Workspace build, status, query, path, and impact also accept --json;
+workspace status/query/path/impact results are identical to their MCP JSON.
 Machine validation uses gograph.validation.v1 instead of the generic envelope.
 
 ━━━ STATIC ANALYSIS LIMITATIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -519,8 +547,9 @@ Know these before trusting results:
                         changes/stats inspect trusted persisted graph.json, or the startup
                         auto-build fallback when no usable artifact exists. --persist-refresh
                         can publish successful refreshes for later CLI/server processes.
-  Subdirectory safe     graph-backed query commands auto-discover the project root
-                        (walks up to the nearest .gograph/ directory). No need to cd
+  Subdirectory safe     graph-backed query commands auto-discover the repository root
+                        from Go/Git analysis inputs or a supported graph.json. A
+                        workspace-only .gograph/ directory is not repository authority. No need to cd
                         back to the repo root before running plan or review.
 
 ━━━ COMMANDS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -532,6 +561,10 @@ INDEXING:
 build . [--precise]  : parse AST, stage graph.json + reports, commit graph.json last
                        Honors Go build constraints and cmd/go package-directory rules;
                        skips generated, module-ignored, and Git-ignored sources.
+workspace <command>  : federated cross-repository overlay. Commands: build, status,
+                       query, path, impact, mcp. Member refresh is opt-in through
+                       'workspace build --refresh-members'. CLI and MCP status,
+                       query, path, and impact share the same result contracts.
 stale                : check source selection, build context, and content digests
                        exit 0 = up to date, 1 = error, 2 = stale
 stats                : schema/build/precision health, parse failures, and symbol/call/route counts
@@ -905,6 +938,15 @@ func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr
 	}
 
 	filterPotentialCalls(g)
+	modules, moduleErr := moduleinventory.Discover(absRoot, g.Packages)
+	if moduleErr != nil {
+		fmt.Fprintf(os.Stderr, "  warning: %v\n", moduleErr)
+		buildMetadata.Complete = false
+		buildMetadata.Warnings = append(buildMetadata.Warnings, moduleErr.Error())
+	} else {
+		g.Modules = modules
+		buildMetadata.WorkspaceFactsVersion = graph.CurrentWorkspaceFactsVersion
+	}
 	sortGraph(g)
 	return g, nil
 }
@@ -1591,7 +1633,7 @@ func parseMCPArgs(args []string) (mcpOptions, error) {
 func prepareMCPGraph(options mcpOptions) (*graph.Graph, string, error) {
 	root := options.Root
 	if root == "." {
-		root = rootfind.FindRoot()
+		root = rootfind.FindRepositoryRoot()
 	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
@@ -1654,7 +1696,7 @@ func loadGraph(root string) (*graph.Graph, error) {
 	// the actual gograph project root by walking upward. This lets commands such
 	// as plan and review work from subdirectories.
 	if root == "." {
-		root = rootfind.FindRoot()
+		root = rootfind.FindRepositoryRoot()
 	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
@@ -1709,7 +1751,7 @@ func graphRoot(g *graph.Graph) string {
 		}
 		return filepath.Clean(g.Root)
 	}
-	root := rootfind.FindRoot()
+	root := rootfind.FindRepositoryRoot()
 	if absRoot, err := filepath.Abs(root); err == nil {
 		return absRoot
 	}
@@ -1889,6 +1931,12 @@ func pseudoImportPath(dir string) string {
 
 func sortGraph(g *graph.Graph) {
 	g.Calls = dedupeCalls(g.Calls)
+	sort.Slice(g.Modules, func(i, j int) bool {
+		if g.Modules[i].Path != g.Modules[j].Path {
+			return g.Modules[i].Path < g.Modules[j].Path
+		}
+		return g.Modules[i].Dir < g.Modules[j].Dir
+	})
 	sort.Slice(g.Files, func(i, j int) bool { return g.Files[i].Path < g.Files[j].Path })
 	sort.Slice(g.Packages, func(i, j int) bool { return g.Packages[i].ID < g.Packages[j].ID })
 	sort.Slice(g.Symbols, func(i, j int) bool {
@@ -1930,6 +1978,12 @@ func sortGraph(g *graph.Graph) {
 		}
 		if g.Calls[i].Synthetic != g.Calls[j].Synthetic {
 			return !g.Calls[i].Synthetic
+		}
+		if g.Calls[i].Resolution != g.Calls[j].Resolution {
+			return g.Calls[i].Resolution < g.Calls[j].Resolution
+		}
+		if g.Calls[i].Precise != g.Calls[j].Precise {
+			return !g.Calls[i].Precise
 		}
 		return g.Calls[i].ReturnUsage < g.Calls[j].ReturnUsage
 	})
@@ -2059,7 +2113,8 @@ func dedupeCalls(calls []graph.CallEdge) []graph.CallEdge {
 	type key struct {
 		callerID, callerName, calleeRaw, calleeID, file, usage string
 		line, column                                           int
-		synthetic                                              bool
+		synthetic, precise                                     bool
+		resolution                                             graph.CallResolution
 	}
 	seen := make(map[key]bool, len(calls))
 	deduped := calls[:0]
@@ -2074,6 +2129,8 @@ func dedupeCalls(calls []graph.CallEdge) []graph.CallEdge {
 			line:       call.Line,
 			column:     call.Column,
 			synthetic:  call.Synthetic,
+			precise:    call.Precise,
+			resolution: call.Resolution,
 		}
 		if seen[k] {
 			continue
@@ -2091,9 +2148,10 @@ USAGE
 
 OUTPUT FLAGS
   --json                     Structured JSON for query, validation, version, and composed-analysis commands.
-                             Operational commands such as build, wiki, gate, snapshot,
-                             plugin installation, and help remain text; session audit
-                             returns its native JSON object.
+                             Workspace build/status/query/path/impact also support it.
+                             Other operational commands such as repository build, wiki,
+                             gate, snapshot, plugin installation, and help remain text;
+                             session audit returns its native JSON object.
   --files-only               Flat, deduplicated paths for supported result-list commands;
                              empty results write zero lines.
   --mermaid                  Output visual dependency/call diagrams in Mermaid format.
@@ -2132,6 +2190,34 @@ INDEXING
                              precision (ast/precise/precise_fallback), parser reuse,
                              rebuilt-package count, and parse failures. Zero
                              re-parsing — reads graph.json only.
+
+WORKSPACES
+  workspace build [path] [--refresh-members]
+                             Build the deterministic cross-repository overlay. By
+                             default member repositories are read-only and must
+                             already have complete, current graphs. The explicit
+                             --refresh-members option may update member artifacts;
+                             JSON reports planned, attempted, succeeded, and failed
+                             mutations without implying cross-repository rollback.
+  workspace status [path]   Report member availability/freshness/capabilities and
+                             overlay input/artifact fingerprints.
+  workspace query [--scope id] [--workspace path] <term...>
+                             Search symbols, packages, modules, and HTTP contracts.
+  workspace path [--scope id] [--workspace path] [--include-possible] <from> <to>
+                             Find a shortest path in the virtual federated graph.
+  workspace impact [--scope id] [--workspace path] [--include-possible] <target>
+                             Find transitive cross-repository dependents.
+                             Ambiguous/possible facts are excluded unless explicitly
+                             included. Multiple scopes require --scope unless the
+                             manifest defines default_scope.
+  workspace mcp [path]      Serve workspace status, query, path, and impact tools.
+                             These tools are read-only. Their JSON values exactly
+                             match the corresponding CLI --json results object;
+                             the CLI adds only its generic command envelope.
+                             MCP tools: gograph_workspace_status,
+                             gograph_workspace_query, gograph_workspace_path,
+                             and gograph_workspace_impact.
+                             CLI --json and MCP JSON have identical native values.
 
 MACHINE VALIDATION
   version --json             Emit exactly one gograph.version.v1 JSON document.
@@ -3916,7 +4002,7 @@ func runPlan(args []string) int {
 	var rawContexts []*search.ContextResult
 	var contexts []planContextJSON
 	if withContext && len(plan.ReadFirst) > 0 {
-		root, _ = filepath.Abs(rootfind.FindRoot())
+		root = graphRoot(g)
 		for _, sym := range plan.ReadFirst {
 			_, result := search.ContextForPlanResult(g, root, sym)
 			if result == nil {

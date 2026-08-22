@@ -276,6 +276,39 @@ func TestReaderMutationRejectsRepositoryLinks(t *testing.T) {
 	}
 }
 
+func TestAtomicReplaceRegularFileIsConfinedAndReplacesBytes(t *testing.T) {
+	base := t.TempDir()
+	repository := filepath.Join(base, "repository")
+	mustWrite(t, filepath.Join(repository, ".gograph", "workspace.json"), "old")
+	reader, err := Open(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close() }()
+	if err := reader.AtomicReplaceRegularFile(".gograph/workspace.json", []byte("new\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	data, err := reader.ReadRegularFile(".gograph/workspace.json")
+	if err != nil || string(data) != "new\n" {
+		t.Fatalf("atomic data = %q, %v", data, err)
+	}
+	outside := filepath.Join(base, "outside")
+	mustWrite(t, outside, "KEEP")
+	if err := os.Remove(filepath.Join(repository, ".gograph", "workspace.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repository, ".gograph", "workspace.json")); err != nil {
+		t.Skipf("create artifact symlink: %v", err)
+	}
+	if err := reader.AtomicReplaceRegularFile(".gograph/workspace.json", []byte("CHANGED"), 0o640); !errors.Is(err, ErrUnsafeSourcePath) {
+		t.Fatalf("atomic linked destination error = %v, want ErrUnsafeSourcePath", err)
+	}
+	outsideData, err := os.ReadFile(outside)
+	if err != nil || string(outsideData) != "KEEP" {
+		t.Fatalf("outside data = %q, %v", outsideData, err)
+	}
+}
+
 func mustWrite(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

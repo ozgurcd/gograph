@@ -53,7 +53,7 @@ func runCheck(args []string) int {
 		}
 	}
 
-	root := rootfind.FindRoot()
+	root := rootfind.FindRepositoryRoot()
 	config := &search.CheckConfig{
 		Checks: map[string]any{
 			"boundaries":     "warn",

@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ozgurcd/gograph/internal/graph"
 )
 
 func TestFindRoot_NoGographDir_FallsBackToCwd(t *testing.T) {
@@ -132,5 +134,92 @@ func TestFindRootFrom(t *testing.T) {
 				t.Fatalf("FindRootFrom(%q) = (%q, %v), want (%q, %v)", tt.start, got, ok, tt.want, tt.ok)
 			}
 		})
+	}
+}
+
+func TestFindRepositoryRootIgnoresWorkspaceOnlyArtifactDirectory(t *testing.T) {
+	root := t.TempDir()
+	workspaceDir := filepath.Join(root, ".gograph")
+	if err := os.MkdirAll(workspaceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspaceDir, "workspace.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(root, "child")
+	if err := os.Mkdir(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := FindRepositoryRootFrom(child); ok {
+		t.Fatal("workspace-only .gograph directory established a repository root")
+	}
+	if err := os.WriteFile(filepath.Join(workspaceDir, "graph.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := FindRepositoryRootFrom(child); ok {
+		t.Fatal("invalid graph.json established a repository root")
+	}
+	if err := os.WriteFile(filepath.Join(workspaceDir, "graph.json"), []byte(`{"version":"`+graph.Version+`"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := FindRepositoryRootFrom(child); !ok || got != root {
+		t.Fatalf("FindRepositoryRootFrom = (%q, %v), want (%q, true)", got, ok, root)
+	}
+}
+
+func TestFindRepositoryRootUsesAnalysisInputsFromFilePath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/root\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "nested", "main.go")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("package nested\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := FindRepositoryRootFrom(file); !ok || got != root {
+		t.Fatalf("FindRepositoryRootFrom(file) = (%q, %v), want (%q, true)", got, ok, root)
+	}
+}
+
+func TestFindRepositoryRootPrefersEnclosingGraphOverNestedModule(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".gograph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".gograph", "graph.json"), []byte(`{"version":"`+graph.Version+`"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(root, "nested")
+	if err := os.MkdirAll(filepath.Join(nested, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte("module example.com/nested\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := FindRepositoryRootFrom(filepath.Join(nested, "pkg")); !ok || got != root {
+		t.Fatalf("FindRepositoryRootFrom(nested module) = (%q, %v), want enclosing graph (%q, true)", got, ok, root)
+	}
+}
+
+func TestFindRepositoryRootDoesNotCrossNestedGitBoundary(t *testing.T) {
+	outer := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outer, ".gograph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outer, ".gograph", "graph.json"), []byte(`{"version":"`+graph.Version+`"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(outer, "nested")
+	if err := os.MkdirAll(filepath.Join(nested, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte("module example.com/nested\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := FindRepositoryRootFrom(nested); !ok || got != nested {
+		t.Fatalf("FindRepositoryRootFrom(nested repository) = (%q, %v), want (%q, true)", got, ok, nested)
 	}
 }

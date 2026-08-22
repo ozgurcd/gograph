@@ -90,6 +90,12 @@ func supportedOutputModes(args []string) outputModeSupport {
 			}
 		}
 	}
+	if args[0] == "workspace" {
+		if len(args) > 1 && args[1] == "mcp" {
+			return 0
+		}
+		return outputJSON
+	}
 	return commandOutputModes[args[0]]
 }
 
@@ -116,6 +122,9 @@ func validateOutputModes(args []string) error {
 	if len(args) > 0 {
 		command = args[0]
 		if (command == "session" || command == "--session") && len(args) > 1 {
+			command += " " + args[1]
+		}
+		if command == "workspace" && len(args) > 1 {
 			command += " " + args[1]
 		}
 	}

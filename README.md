@@ -158,6 +158,8 @@ of evidence):*
 
 **Machine and Agent Workflows** — callers, callees, impact, context, plan, review, flow, errorflow, structural validation, orphans, hotspot, coupling, and more. The MCP server registers 65 endpoints including four session lifecycle tools. Full [command reference →](https://gograph.identuum.ai/docs/command-reference/)
 
+**Federated Workspaces** — model multiple checked-out repositories through independently fingerprinted repository graphs plus a small deterministic cross-repository overlay. Resolution scopes support alternative fleets such as OSS/CE without merging repository ownership. P0 resolves Go modules, ordinary cross-repository Go calls, and first-class HTTP contracts for workspace-wide status, query, path, and impact analysis. The four read-only workspace MCP tools return the same native result values as CLI `--json`; member refresh and overlay publication remain explicit CLI mutations. [Workspace guide →](docs/workspaces.md)
+
 **Native MCP Server** — query, analysis, and workflow capabilities have MCP equivalents for Claude, Cursor, Copilot, and other MCP clients. Host/build and machine-validation operations (`build`, `validate`, `gate`, `snapshot`, plugin/hook installation, server startup, help, and version) intentionally remain CLI-only, and transport-specific presentation differs where appropriate.
 
 **Explicit Freshness Model** — CLI graph-backed analysis reads the last trusted persisted graph. `gograph stale` compares selected source content digests plus the effective build/module fingerprint; mtimes are diagnostic only for current indexes. It is a tri-state predicate in text and JSON modes: exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error; a missing or unsupported source-policy marker is an explicit status-1 rebuild requirement. MCP source-analysis tools check the same freshness per call, adopt a newer persisted precise graph, and incrementally rebuild changed package ASTs in memory using the latest requested analysis mode. MCP `stale`, default `changes`, and `stats` inspect the trusted persisted snapshot, or the startup auto-build fallback when no usable artifact exists. With `--persist-refresh`, that snapshot advances after a successful refresh, so default `changes` compares against the newly published state and normally no longer reports that refresh's source edits.
@@ -180,7 +182,8 @@ Query and composed-analysis commands support `--json`; `version --json` and
 `validate ... --json` use their dedicated machine schemas. The exact `--files-only`
 surface is listed in the command reference. Operational commands such as
 `build`, `wiki`, `gate`, `snapshot`, installation, and help use text
-output; `session audit` additionally supports raw JSON. CLI `--mermaid` renders
+output; workspace build/status/query/path/impact also accept `--json`, and
+`session audit` additionally supports raw JSON. CLI `--mermaid` renders
 `callers`, `callees`, `impact`, `endpoint`, `dependents`, `deps`, `path`, and
 `coupling` as fenced Mermaid. Their MCP equivalents accept `mermaid=true` and
 return the same Markdown-fenced Mermaid text; without it, each tool retains its

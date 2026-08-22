@@ -30,6 +30,12 @@ const CurrentSourcePolicyVersion = 1
 // build. Bump this whenever parser/precise provenance changes.
 const CurrentAnalysisCacheVersion = 1
 
+// CurrentWorkspaceFactsVersion identifies repository graphs that carry the
+// local module and interaction facts required by workspace resolution. It is
+// independent of the repository graph wire version so existing repository
+// consumers continue to accept additive graph-v2 fields.
+const CurrentWorkspaceFactsVersion = 1
+
 // Graph is the top-level data structure written to .gograph/graph.json.
 type Graph struct {
 	Version       string            `json:"version"`
@@ -42,6 +48,7 @@ type Graph struct {
 	Calls         []CallEdge        `json:"calls"`
 	EnvReads      []EnvRead         `json:"env_reads"`
 	Dependencies  []Dependency      `json:"dependencies"`
+	Modules       []ModuleNode      `json:"modules,omitempty"`
 	Routes        []HTTPRoute       `json:"routes,omitempty"`
 	SQLs          []SQLEdge         `json:"sqls,omitempty"`
 	Errors        []ErrorEdge       `json:"errors,omitempty"`
@@ -54,6 +61,16 @@ type Graph struct {
 	FlowFunctions []FlowFunction    `json:"flow_functions,omitempty"`
 	Baseline      *GraphBaseline    `json:"baseline,omitempty"`
 	Build         *BuildMetadata    `json:"build,omitempty"`
+}
+
+// ModuleNode records a Go module owned by the repository graph. Workspace
+// resolution uses this inventory instead of trusting module identities from a
+// workspace manifest. Dir is repository-relative and is "." for the root
+// module.
+type ModuleNode struct {
+	ID   string `json:"id"`
+	Path string `json:"path"`
+	Dir  string `json:"dir"`
 }
 
 // BuildMetadata records whether source selection completed without warnings,
@@ -72,6 +89,9 @@ type BuildMetadata struct {
 	// AnalysisCacheVersion guards reuse of serialized file-level analysis.
 	// Missing and non-current values force a complete parser rebuild.
 	AnalysisCacheVersion int `json:"analysis_cache_version,omitempty"`
+	// WorkspaceFactsVersion guards use as a member of a federated workspace.
+	// Repository-only queries do not require this marker.
+	WorkspaceFactsVersion int `json:"workspace_facts_version,omitempty"`
 	// ReusedFiles is the number of selected files restored from the previous
 	// graph without reparsing. RebuiltPackages counts package directories whose
 	// selected files were reparsed together.

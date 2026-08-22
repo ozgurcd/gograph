@@ -22,6 +22,8 @@ func TestValidateOutputModes(t *testing.T) {
 		{name: "bare json", json: true, wantError: "bare command does not support --json"},
 		{name: "version json", args: []string{"version"}, json: true},
 		{name: "validate json", args: []string{"validate"}, json: true},
+		{name: "workspace status json", args: []string{"workspace", "status"}, json: true},
+		{name: "workspace mcp json", args: []string{"workspace", "mcp"}, json: true, wantError: "workspace mcp does not support --json"},
 		{name: "session audit json", args: []string{"session", "audit"}, json: true},
 		{name: "session create json", args: []string{"session", "create"}, json: true, wantError: "session create does not support --json"},
 		{name: "boundaries create json", args: []string{"boundaries", "--create"}, json: true, wantError: "boundaries does not support --json"},

@@ -1,12 +1,91 @@
 package sourcefs
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+// AtomicReplaceRegularFile durably stages data beside name and atomically
+// renames it over an absent or regular, non-linked destination. Every path
+// operation remains anchored to the opened root.
+func (r *Reader) AtomicReplaceRegularFile(name string, data []byte, perm os.FileMode) error {
+	clean, expected, existed, err := r.prepareRegularWrite(name)
+	if err != nil {
+		return err
+	}
+	parent := filepath.Dir(clean)
+	var temporary string
+	for range 16 {
+		var token [12]byte
+		if _, err := rand.Read(token[:]); err != nil {
+			return fmt.Errorf("create random staging name for %q: %w", name, err)
+		}
+		temporary = filepath.Join(parent, ".gograph-"+hex.EncodeToString(token[:])+".tmp")
+		file, openErr := r.root.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+		if os.IsExist(openErr) {
+			continue
+		}
+		if openErr != nil {
+			return fmt.Errorf("stage repository file %q: %w", name, openErr)
+		}
+		cleanup := true
+		defer func() {
+			if cleanup {
+				_ = r.root.Remove(temporary)
+			}
+		}()
+		if err := file.Chmod(perm); err != nil {
+			_ = file.Close()
+			return fmt.Errorf("set staged repository file %q permissions: %w", name, err)
+		}
+		n, writeErr := file.Write(data)
+		if writeErr == nil && n != len(data) {
+			writeErr = errors.New("short write")
+		}
+		if writeErr != nil {
+			_ = file.Close()
+			return fmt.Errorf("write staged repository file %q: %w", name, writeErr)
+		}
+		if err := file.Sync(); err != nil {
+			_ = file.Close()
+			return fmt.Errorf("sync staged repository file %q: %w", name, err)
+		}
+		if err := file.Close(); err != nil {
+			return fmt.Errorf("close staged repository file %q: %w", name, err)
+		}
+
+		current, statErr := r.root.Lstat(clean)
+		if existed {
+			if statErr != nil || current.Mode()&os.ModeSymlink != 0 || !current.Mode().IsRegular() || !os.SameFile(expected, current) {
+				return fmt.Errorf("%w %q: destination changed before atomic replacement", ErrUnsafeSourcePath, name)
+			}
+		} else if !os.IsNotExist(statErr) {
+			if statErr == nil {
+				return fmt.Errorf("%w %q: destination appeared before atomic replacement", ErrUnsafeSourcePath, name)
+			}
+			return fmt.Errorf("inspect repository path %q before atomic replacement: %w", name, statErr)
+		}
+		if err := r.root.Rename(temporary, clean); err != nil {
+			return fmt.Errorf("commit repository file %q: %w", name, err)
+		}
+		cleanup = false
+		directory, err := r.root.Open(parent)
+		if err != nil {
+			return fmt.Errorf("open repository directory for %q sync: %w", name, err)
+		}
+		defer func() { _ = directory.Close() }()
+		if err := directory.Sync(); err != nil {
+			return fmt.Errorf("sync repository directory for %q: %w", name, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("stage repository file %q: exhausted random names", name)
+}
 
 // EnsureRealDirectory creates missing directory components beneath the opened
 // repository and rejects descendant symlinks or non-directory components.

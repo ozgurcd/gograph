@@ -377,3 +377,10 @@ Normalized the security-flow page link into the index's Schemas and Security sec
 
 - Replaced GoReleaser's deprecated formula publisher with `homebrew_casks`. Future release reconciliation publishes `Casks/gograph.rb`, adds the same-name formula-to-cask entry in `tap_migrations.json`, and removes the obsolete formula in one tap commit.
 - Full repository verification and a pinned GoReleaser snapshot passed; the snapshot generated the cask without deprecated-option warnings.
+
+- 2026-08-22 — Adopted and implemented federated workspace v1: authoritative per-repository graphs, deterministic scoped overlay, structured cross-repository resolution, HTTP contracts, explicit member-refresh mutation, and read-only workspace MCP queries.
+- 2026-08-22 — Hardened workspace v1 after full code review: actual go.mod ownership verification, repeated member confinement, rooted atomic overlay publication, scope-safe logical authorities, conservative Go/HTTP certainty propagation, virtual module imports, explicit root discovery, and failure-accurate refresh status.
+
+## 2026-08-23 — Workspace CLI/MCP parity contract
+
+Recorded that workspace status, query, path, and impact share one native result contract: CLI `--json` wraps it in `results`, while the read-only MCP tools return the exact value as JSON text. Workspace mutation remains CLI-only.

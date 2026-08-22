@@ -36,7 +36,7 @@ func snapshotPath(name string) string {
 
 func openSnapshotStore(root string) (*sourcefs.Reader, error) {
 	if root == "" {
-		root = rootfind.FindRoot()
+		root = rootfind.FindRepositoryRoot()
 	}
 	store, err := sourcefs.Open(root)
 	if err != nil {

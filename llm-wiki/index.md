@@ -6,6 +6,7 @@
 - `llm-wiki/` is the maintained knowledge layer.
 - `AGENTS.md` plus wiki workflow, schema, and security pages are the agent schema.
 - [project.md](project.md) — Project identity, correctness model, analysis modes, and MCP refresh/publication contract.
+- [workspace-v1.md](workspace-v1.md) — Federated workspace architecture, trust boundaries, resolution semantics, and P0 scope.
 - [agent-contract.md](agent-contract.md) — Workflow lifecycle, verification, CLI/MCP parity, context fidelity, and auditing.
 - [agent-rules.md](agent-rules.md) — Workflow guidelines and rules for development.
 - [scrinium-guide.md](scrinium-guide.md) — Conditional, token-conscious Scrinium usage and governance limits.
@@ -32,6 +33,7 @@
 
 - `drafts/rules.md` — Legacy proposed protected rules page awaiting review/promotion.
 - `drafts/lean-scrinium-agent-rules.md` — Proposed conditional, token-conscious replacement for protected agent rules.
+- `drafts/workspace-v1-hardening.md` — Reviewed proposal used to promote the workspace v1 trust and resolution hardening decision.
 
 ## Sources
 
