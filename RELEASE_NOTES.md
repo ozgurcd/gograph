@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+### Reverse test attribution and stable symbol references
+
+- Added CLI `coverage <TestFunc> [--exact-only] [--package name] [--json]` and MCP
+  `gograph_coverage`. They return the transitive production-symbol set for one
+  unambiguous test, with canonical IDs, representative paths, depth, and
+  conservative `exact`/`possible` propagation. Same-named tests are never
+  merged silently. Results are static attribution, not runtime or branch
+  coverage proof.
+- Added CLI `identity <symbol-or-stable-id> [--package name] [--json]` and MCP
+  `gograph_identity`. Canonical IDs survive line shifts and file moves within
+  one package; renames, receiver changes, and package/module moves change the
+  identity. Ambiguous spellings return all candidates; an exact package
+  qualifier disambiguates in-package and external-test symbols whose graph IDs
+  collide.
+- Added repeatable CLI `untested --exclude <repository-relative-glob>` and the
+  equivalent MCP `exclude` string array. Matching is lexical and never reads
+  excluded filesystem paths.
+- Added explicit JSON regression coverage for `callers`, `tests`, and
+  `untested`, plus CLI/MCP execution tests for the new contracts.
+- Kept CLI `doctor --json` in the documented session-start workflow so agents
+  detect an older PATH-resolved or shadowed installation before trusting MCP
+  results.
+- Deliberately did not add the proposed source-mutating `redprove` harness:
+  arbitrary test execution and temporary source rewriting are outside
+  gograph's structural-analysis trust boundary and cannot honestly provide a
+  transaction/restore guarantee across crashes or concurrent tools.
+
+### Complete CLI/MCP documentation contract
+
+- Added one complete transport matrix covering all 63 CLI-equivalent project
+  MCP capabilities, four session tools, and four separate workspace MCP tools.
+  Help, CLI capabilities, MCP capabilities, the README, agent guides, public
+  command reference, and contributor contracts now state the exact special
+  mappings and CLI-only process/host/artifact boundary.
+- Added registry-backed documentation tests so every live project MCP tool,
+  every workspace MCP tool, and every canonical CLI command must remain present
+  in the maintained reference surfaces.
+
 ### Typed test-call attribution and installation diagnostics
 
 - Precise builds now type-resolve calls made from compiling Go test packages in

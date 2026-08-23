@@ -38,7 +38,7 @@ The input fingerprint covers canonical manifest data, ordered exact member artif
 
 ## CLI and MCP parity
 
-Workspace status, query, path, and impact share one native implementation and result contract. CLI `--json` places the native value in its generic `results` envelope; the matching read-only MCP tool returns that exact value as JSON text. Scope selection, deterministic ordering, exact-only default traversal, and explicit possible-edge traversal therefore cannot diverge by transport. Workspace build, member refresh, and overlay publication remain CLI-only mutations; workspace MCP exposes no mutation tool.
+Workspace status, query, path, and impact share one native implementation and result contract with `gograph_workspace_status`, `gograph_workspace_query`, `gograph_workspace_path`, and `gograph_workspace_impact` on the separate read-only workspace server. CLI `--json` places the native value in its generic `results` envelope; the matching MCP tool returns that exact value as JSON text. Scope selection, deterministic ordering, exact-only default traversal, and explicit possible-edge traversal therefore cannot diverge by transport. Workspace build, member refresh, overlay publication, and workspace-server startup remain CLI-only lifecycle operations; workspace MCP exposes no mutation tool.
 
 ## P0 boundary
 

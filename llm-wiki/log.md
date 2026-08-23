@@ -397,3 +397,13 @@ Recorded that workspace status, query, path, and impact share one native result 
 - Released gograph v1.6.1 from tag commit `eeb7f68f3baf35665e21feae3c65411784a3db85`; implementation commit `2eae7f2` adds non-fatal typed test-call resolution, exact/possible test provenance in CLI and MCP results, and CLI-only `gograph doctor` installation diagnostics.
 - Reproduced the reported interface-dispatch case against the actual P0-CLIAUTH-1 subject: eight exact `resolved_static` tests now suppress only the intended method, while an unrelated same-name method remains untested.
 - Local and release gates passed uncached unit/race tests, vet, lint/static analysis, vulnerability and archive scans, MCPB verification/smoke, documentation rendering, and CLI/MCP `untested` parity. Release workflow run `32637303565` published and independently verified all 14 GitHub assets, Homebrew cask 1.6.1, and the active official MCP Registry 1.6.1 record.
+
+## [2026-08-23] documentation | Complete CLI/MCP transport coverage
+
+- Audited canonical CLI dispatch, the 65-tool project MCP registry, and the separate four-tool workspace MCP registry against maintained references.
+- Added a complete transport matrix, corrected the missing `validate` command reference, documented special mappings and the exact CLI-only lifecycle boundary, and added registry-backed tests so canonical CLI and MCP tools cannot disappear from the maintained references silently.
+
+## [2026-08-23] feature | Reverse test attribution and stable identity
+
+- Added matching CLI/MCP coverage and identity contracts with conservative exact/possible propagation, explicit ambiguity, structured package disambiguation for external-test ID collisions, and repository-relative untested exclusions.
+- Kept source-mutating red-proof execution outside gograph's structural-analysis trust boundary; static attribution remains distinct from runtime proof.

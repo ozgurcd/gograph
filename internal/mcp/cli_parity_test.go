@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -87,4 +88,68 @@ func TestCLIAndMCPQueryAnalysisParity(t *testing.T) {
 			t.Errorf("CLI query/analysis command %q has no MCP equivalent", command)
 		}
 	}
+
+	commandReference := readParityDoc(t, "..", "..", "docs-site", "content", "docs", "command-reference.md")
+	agentGuide := readParityDoc(t, "..", "..", "docs", "coding-agent-usage.md")
+	for name := range mcpTools {
+		for path, content := range map[string]string{
+			"docs-site/content/docs/command-reference.md": commandReference,
+			"docs/coding-agent-usage.md":                  agentGuide,
+		} {
+			if !strings.Contains(content, "`"+name+"`") {
+				t.Errorf("%s does not document registered MCP tool %q", path, name)
+			}
+		}
+	}
+
+	for command := range cliCommands {
+		switch command {
+		case "contract", "--session", "--help", "-h", "--version", "-v":
+			continue
+		case "workspace":
+			if !strings.Contains(commandReference, "gograph workspace") {
+				t.Error("command reference does not document the workspace CLI namespace")
+			}
+		case "help", "version":
+			if !strings.Contains(commandReference, "### version and help") {
+				t.Errorf("command reference does not document CLI command %q", command)
+			}
+		default:
+			if !strings.Contains(commandReference, "### "+command+"\n") {
+				t.Errorf("command reference does not document CLI command %q", command)
+			}
+		}
+	}
+
+	for _, name := range []string{
+		"gograph_workspace_status",
+		"gograph_workspace_query",
+		"gograph_workspace_path",
+		"gograph_workspace_impact",
+	} {
+		if !strings.Contains(commandReference, "`"+name+"`") {
+			t.Errorf("command reference does not document workspace MCP tool %q", name)
+		}
+		if !strings.Contains(agentGuide, "`"+name+"`") {
+			t.Errorf("coding-agent guide does not document workspace MCP tool %q", name)
+		}
+	}
+}
+
+func readParityDoc(t *testing.T, elems ...string) string {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(append([]string{filepath.Dir(parityTestFile(t))}, elems...)...))
+	if err != nil {
+		t.Fatalf("read parity documentation: %v", err)
+	}
+	return string(content)
+}
+
+func parityTestFile(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	return file
 }

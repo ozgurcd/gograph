@@ -26,6 +26,9 @@ A single command (`gograph build .`) emits `graph.json` plus nine focused Markdo
 
 And query commands the agent can invoke without re-parsing:
 
+Start an agent session with `gograph doctor --json` so an older PATH-resolved
+or shadowed installation is visible before any MCP result is trusted.
+
 ```sh
 gograph query <term>            # symbol/package/file/import/call substring search (works great for finding specific test names!)
 gograph focus <package>         # isolate context for a specific package
@@ -48,6 +51,8 @@ gograph public <pkg>            # list only the exported API surface of a packag
 gograph envs [term]             # list indexed environment reads
 gograph concurrency [term]      # map goroutines, channel sends, mutexes, waitgroups, sync.Once
 gograph tests [symbol]          # find which test functions exercise a named symbol
+gograph coverage <TestFunc> [--exact-only] [--package name] # transitive product symbols one test statically reaches
+gograph identity <symbol-or-stable-id> [--package name] # print or re-resolve canonical symbol identity
 gograph path <from> <to>        # shortest call chain between two symbols (BFS traversal)
 gograph stale                   # check selected files and build context vs graph.json
 gograph stats                   # compact index health summary: schema/build/production precision/test-resolution status and graph counts
@@ -104,7 +109,8 @@ gograph wiki [--output dir]      # generate llm-wiki/ — curated, machine-first
 gograph summary                  # single-call briefing: top 3 hotspots + worst instability + highest complexity +
                                  # orphan count + god-object count. Replaces 5 separate tool calls. [--json]
 gograph untested                 # called production symbols without exact/static test attribution. Precise interface
-                                 # candidates remain test_resolution=possible. Flags: [--pkg <name>] [--top N] [--json]
+                                 # candidates remain test_resolution=possible. Flags: [--pkg <name>] [--top N]
+                                 # [--exclude <repository-relative-glob>]... [--json]
 gograph doctor                   # diagnose duplicate/shadowed PATH installations without executing alternates [--json]
 gograph doc <pkg[.Symbol]>       # go doc wrapper: signature + doc comment for any stdlib or third-party symbol.
                                  # No graph required. Rejects filesystem-shaped queries and refuses unsafe
@@ -258,6 +264,15 @@ operations in indexed files. Filter: `gograph concurrency goroutine` or
 ### 7. Test coverage lookup
 `gograph tests ValidateToken` shows statically mapped `Test*` functions that
 reference `ValidateToken`. This is not a coverage or runtime-execution claim.
+
+For the inverse question, `gograph coverage TestValidateToken` returns the
+transitive product-symbol set attributed to that one test, with stable IDs and
+`exact`/`possible` propagation. Use `--exact-only` for claims that must exclude
+uncertain dispatch. `gograph identity <symbol>` prints or re-resolves a stable
+ID for cross-document references. The optional package qualifier disambiguates
+an in-package test from an external `foo_test` package when their graph IDs
+collide. These remain static graph claims, not proof that a test or branch
+executed.
 
 ### 8. Call chain pathfinding
 `gograph path CreateUser sql` performs BFS over the call graph to find the shortest path between two symbols. Example output:
@@ -805,11 +820,13 @@ architecture portably. Choose the matching asset filename, or use the manual
 configuration above. See [Official MCP Registry and MCPB
 Distribution](mcp-registry.md).
 
-`gograph` exposes its query, analysis, and workflow suite directly as MCP tools.
-Host/build operations that configure the integration, publish CI artifacts, or
-depend on process exit status intentionally remain CLI-only. The host-level
-`doctor` diagnostic is also CLI-only because it inspects the invoking machine's
-executable and `PATH`, not repository graph state.
+`gograph` exposes its repository query, analysis, and workflow suite directly
+as project MCP tools, with workspace status/query/path/impact on the separate
+workspace server. The complete CLI-only lifecycle surface is `build`,
+`validate`, `doctor`, `gate`, `snapshot`, plugin/hook installation,
+project/workspace MCP startup, workspace build/member refresh, help, and
+version. In particular, `doctor` inspects the invoking machine's executable and
+`PATH`, not repository graph state.
 
 MCP agents should call `gograph_capabilities` first when they need to discover available gograph tools and recommended workflows.
 
@@ -852,7 +869,7 @@ non-read-only because a request may publish artifacts.
 
 ### Registered MCP Tools
 
-The current suite registers 65 MCP endpoints: 61 query, analysis, and workflow tools plus four session lifecycle tools. The live `gograph_capabilities` payload is tested against the server registry. The optional `mermaid=true` parameter on `callers`, `callees`, `impact`, `endpoint`, `dependents`, `deps`, `path`, and `coupling` returns the same Markdown-fenced Mermaid presentation as CLI `--mermaid`; absent or false, each tool retains its normal response format.
+The current suite registers 67 MCP endpoints: 63 query, analysis, and workflow tools plus four session lifecycle tools. The live `gograph_capabilities` payload is tested against the server registry. The optional `mermaid=true` parameter on `callers`, `callees`, `impact`, `endpoint`, `dependents`, `deps`, `path`, and `coupling` returns the same Markdown-fenced Mermaid presentation as CLI `--mermaid`; absent or false, each tool retains its normal response format.
 - **`gograph_capabilities`**: Discover available tools and workflows.
 - **`gograph_stale`**: Check whether trusted persisted `.gograph/graph.json`, or the startup fallback when no usable artifact exists, is outdated relative to selected Go source content digests or the effective build context. The newest mtime fields are diagnostic only. Returns JSON with `is_stale`, `graph_age`, `newest_source_mtime`, `newest_source_file`, `changed_files[]`, and `build_context_changed`.
 - **`gograph_session_create`**: Start a telemetry audit session using a strictly validated ID and regular, repository-confined state under `.gograph/sessions/`; linked storage is refused.
@@ -890,6 +907,8 @@ The current suite registers 65 MCP endpoints: 61 query, analysis, and workflow t
 - **`gograph_interfaces`**: Interfaces satisfied by a named struct — inverse of `gograph_implementers`. Use before refactoring a method to know which contracts break.
 - **`gograph_mutate`**: Struct-field and package-global mutation sites. AST mode reports direct assignments; precise mode adds `++`/`+=`, pointer aliases, atomic/sync/wrapper calls, and channel evidence. Use before adding field validation or changing shared state.
 - **`gograph_tests`**: Test functions that exercise a named symbol. Omit symbol to list all test edges.
+- **`gograph_coverage`**: Transitive product symbols statically reachable from one unambiguous test, with stable-ID paths and exact/possible propagation. Parameters: required `test`; optional `exact_only` and exact `package` disambiguator. Equivalent to CLI `coverage`.
+- **`gograph_identity`**: Resolve an exact symbol spelling or stable ID. Returns exact, ambiguous, or not_found without silently choosing a candidate; optional `package` disambiguates an external-test collision. Equivalent to CLI `identity`.
 - **`gograph_sql`**: SQL literals mapped to their executing functions. Optional `term` filters by keyword or table-name substring.
 - **`gograph_errors`**: Error constructors, sentinels, and panic sites; supports a term filter and `no_tests`.
 - **`gograph_embeds`**
@@ -918,11 +937,20 @@ The current suite registers 65 MCP endpoints: 61 query, analysis, and workflow t
 - **`gograph_check`**: Run static policy checks (`boundaries`, `api_drift`, `require_tests_for_changed_routes`, `require_tests_for_changed_exported_symbols`, `test_coverage`, `no_orphans`, `new_globals`, `max_arity`, and `max_complexity`). Parameters: `since` (Git ref or saved graph path ending in `.json`), `uncommitted` (bool), `config` (path to checks.json). Default/relative config is confined to a regular non-linked project file; an absolute config explicitly selects a regular local file. Saved graphs must be regular non-linked files inside the selected project, require the exact current source-policy marker, and cannot supply the trusted root. CLI and MCP share one validated baseline builder. Changed-route checks map by handler identity and include body-only changes. Returns structured JSON with status, findings, and summary counts. For CI enforcement with non-zero exit codes, use CLI `gograph gate`, which reads only a regular non-linked project-root `.gograph.yml`.
 - **`gograph_wiki`**: Generate the `llm-wiki/` directory of machine-first markdown pages from the static graph. Pages: overview, architecture, hotspots, routes, env, errors, concurrency, api-surface, and one file per internal package. A relative `output` is anchored to the selected project and rejects linked ancestors; an absolute path is an explicit local destination whose final directory must be real. Generated descendants and writes remain rooted beneath the chosen output. Run once per session for zero-cost orientation. Returns a JSON manifest of written page filenames.
 - **`gograph_summary`**: Single-call codebase briefing: top 3 hotspots, worst instability package, highest complexity function, orphan count, and god-object count. Replaces 5 separate tool calls.
-- **`gograph_untested`**: Called production functions and methods without an exact/static attributed test edge. Precise test selectors and local method values bind exact symbol IDs; conservative interface targets stay visible with `test_resolution=possible` and `possible_test_count`. `typed_partial` stats mean the census remains an upper bound. Optional `pkg` filter. Replaces N `gograph_tests` calls.
+- **`gograph_untested`**: Called production functions and methods without an exact/static attributed test edge. Precise test selectors and local method values bind exact symbol IDs; conservative interface targets stay visible with `test_resolution=possible` and `possible_test_count`. `typed_partial` stats mean the census remains an upper bound. Optional `pkg`, `top`, and repository-relative `exclude[]` filters; CLI accepts repeatable `--exclude`. Replaces N `gograph_tests` calls.
 - **`gograph_doc`**: `go doc` wrapper — signature + doc comment for any stdlib or third-party package/symbol. The handler does not query the graph, though the project-scoped MCP server must already have started with a usable artifact or buildable Go source. Rejects filesystem-shaped queries and refuses source-tree links `cmd/go` may inspect across the selected root plus its effective module root, or the workspace root and member trees, special recognized Go build inputs, or linked/non-regular `go.mod`, `go.sum`, `go.work`, `go.work.sum`, and `vendor/modules.txt` metadata before invoking the toolchain; `.git` and `.gograph` are excluded from the source-tree walk. Applicable workspace members must remain beneath the workspace directory, with each directory, `go.mod`, and optional `go.sum` validated first; dependency resolution remains open-world. Returns a one-element JSON array with `query` and raw-text `output`. Use when a call chain leads outside the project. Examples: `fmt.Errorf`, `io.Reader`.
 - **`gograph_httpcalls`**: All outbound HTTP client calls via `net/http` (Get, Post, PostForm, Head) in the codebase. Filter by method or URL substring.
 
-> **CLI/MCP parity:** Every query, analysis, and workflow command, including boundary baseline creation, has an MCP equivalent. The intentional CLI-only surface is `build`, `doctor`, `gate`, `snapshot`, `add-claude-plugin`, `hook-guard`, `mcp`, `version`, and `help`; these publish artifacts, inspect/configure the host installation, enforce process exit status, or start the host integration. Session commands map to `gograph_session_*` endpoints. Presentation remains transport-specific: CLI output flags map to MCP parameters or structured content rather than byte-identical output.
+The separate workspace server started by `gograph workspace mcp` exposes four
+additional read-only tools, each backed by the same native implementation as
+its CLI operation:
+
+- **`gograph_workspace_status`** ↔ `gograph workspace status`
+- **`gograph_workspace_query`** ↔ `gograph workspace query`
+- **`gograph_workspace_path`** ↔ `gograph workspace path`
+- **`gograph_workspace_impact`** ↔ `gograph workspace impact`
+
+> **CLI/MCP parity:** Every repository query, analysis, and workflow command, including boundary baseline creation, has a project-MCP equivalent. The normal mapping is `<command>` → `gograph_<command>`; `contract`, `boundaries --create`, and session actions use the special mappings in the [complete transport matrix](../docs-site/content/docs/command-reference.md#cli--mcp-transport-matrix). The intentional CLI-only surface is `build`, `validate`, `doctor`, `gate`, `snapshot`, `add-claude-plugin`, `hook-guard`, project/workspace MCP startup, workspace build/member refresh, `version`, and `help`; these publish artifacts, inspect/configure the host installation, enforce process exit status, or start the host integration. Presentation remains transport-specific: CLI output flags map to MCP parameters or structured content rather than byte-identical output.
 
 ## Recommended project setup
 

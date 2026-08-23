@@ -223,6 +223,10 @@ func dispatch(args []string) int {
 		return runConcurrency(args[1:])
 	case "tests":
 		return runTests(args[1:])
+	case "coverage":
+		return runCoverage(args[1:])
+	case "identity":
+		return runIdentity(args[1:])
 	case "routes":
 		return runRoutes()
 	case "sql":
@@ -426,8 +430,23 @@ the CLI only adds its generic command envelope. Workspace changes are not part
 of workspace v1. Advisory Git status disables member-configured fsmonitor hooks
 and optional index writes.
 
+━━━ CLI / MCP TRANSPORT COVERAGE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Every repository query, analysis, and workflow capability has a project MCP
+equivalent. The normal mapping is CLI '<command>' → MCP 'gograph_<command>'.
+Special mappings are 'contract' → gograph_api, 'boundaries --create' →
+gograph_boundaries_create, and the four 'session' actions →
+gograph_session_create/end/audit/cleanup. That project server exposes 67 tools:
+63 CLI-equivalent capabilities plus four session lifecycle tools.
+
+Workspace status, query, path, and impact use the separate four-tool workspace
+MCP server described above. CLI-only process, host, CI, and artifact operations
+are build, validate, doctor, gate, snapshot, add-claude-plugin, hook-guard,
+project/workspace MCP startup, workspace build/member refresh, help, and version.
+These boundaries describe callable functionality; output presentation remains
+transport-specific (CLI flags/envelopes versus typed MCP arguments/content).
+
 ━━━ COMMON WORKFLOWS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Start of any session         → summary  (top hotspots + worst instability + highest complexity + orphan/god-obj counts in ONE call)
+  Start of any session         → doctor --json, stale, summary  (installation + graph health + briefing)
   Onboard to unfamiliar repo   → hotspot, skeleton, focus <pkg>
   Find where X is defined      → query <term>  then  source <sym> to read body
   Understand a symbol (raw)    → context <sym>  (callers+callees+source+tests in one call)
@@ -443,6 +462,8 @@ and optional index writes.
   Security source/sink scan    → flow [term] [--source kind] [--sink kind]
   Dead code sweep              → orphans
   Test coverage gaps (codebase) → untested  (exact/possible test attribution in one risk-sorted sweep)
+  Product reach of one test     → coverage <TestFunc>  (transitive exact/possible static attribution)
+  Durable symbol reference      → identity <sym>  (print or re-resolve a canonical stable ID)
   Diagnose install shadowing    → doctor --json  (running binary, PATH resolution, embedded versions)
   External symbol signature    → doc <pkg.Symbol>  (stdlib/third-party — no graph required)
   API breaking-change check    → api --since <ref>
@@ -680,7 +701,9 @@ doc <pkg[.Symbol]>  : "go doc <query>" — signature + doc comment for any stdli
 httpcalls [term]     : all outbound HTTP client calls via net/http (Get, Post, PostForm, Head).
                        Filter by method or URL substring.
 summary              : hotspots + worst instability + top complexity + reachability-orphan/god-object counts
-untested [--pkg <n>] [--top N] : called production functions without an exact/static attributed test edge.
+coverage <test> [--exact-only] [--package <name>] : transitive product symbols statically reached by one unambiguous test.
+identity <sym> [--package <name>] : print or re-resolve canonical stable symbol identity.
+untested [--pkg <n>] [--top N] [--exclude <glob>] : called production functions without an exact/static attributed test edge.
                        Typed precise builds bind direct test calls exactly; CHA interface targets remain
                        visible as test_resolution=possible instead of silently satisfying coverage.
                        Sorted by caller count. Replaces N 'tests <sym>' calls.
@@ -1458,6 +1481,106 @@ func runTests(args []string) int {
 		emptyMsg = fmt.Sprintf("No test functions found exercising '%s'.", term)
 	}
 	return printResults("tests", term, results, emptyMsg)
+}
+
+func runCoverage(args []string) int {
+	exactOnly := false
+	packageName := ""
+	var targets []string
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		switch argument {
+		case "--exact-only":
+			exactOnly = true
+		case "--package":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "-") {
+				return failCommand("coverage", "--package requires an exact Go package name")
+			}
+			packageName = args[index+1]
+			index++
+		default:
+			if strings.HasPrefix(argument, "-") {
+				return failCommandf("coverage", "unknown flag: %s", argument)
+			}
+			targets = append(targets, argument)
+		}
+	}
+	if !hasSingleTarget(targets) {
+		return failCommand("coverage", "usage: gograph coverage <test-function-or-stable-id> [--package name] [--exact-only]")
+	}
+	g, err := loadGraph(".")
+	if err != nil {
+		return failCommandf("coverage", "failed to load graph: %v", err)
+	}
+	report := search.CoverageInPackage(g, targets[0], packageName, exactOnly)
+	if jsonMode {
+		return PrintJSON(okEnvelope("coverage", targets[0], report, len(report.Symbols)))
+	}
+	switch report.Status {
+	case "not_found":
+		fmt.Printf("Test function %q was not found. Use gograph identity <name> to resolve its stable ID.\n", targets[0])
+		return 0
+	case "ambiguous":
+		fmt.Printf("Test function %q is ambiguous; retry with a stable ID and, when IDs collide across test packages, --package:\n", targets[0])
+		for _, match := range report.MatchedTests {
+			fmt.Printf("  %s  [package=%s] (%s:%d)\n", match.StableID, match.Package, match.File, match.Line)
+		}
+		return 0
+	}
+	if len(report.Symbols) == 0 {
+		fmt.Printf("No product symbols were statically attributed to %s.\n", report.MatchedTests[0].StableID)
+		return 0
+	}
+	fmt.Printf("Static product reachability for %s (%s, test calls: %s):\n\n", report.MatchedTests[0].StableID, report.AnalysisPrecision, report.TestCallResolution)
+	fmt.Printf("%-10s  %-5s  %-56s  %s\n", "RESOLUTION", "DEPTH", "STABLE ID", "LOCATION")
+	fmt.Println(strings.Repeat("-", 112))
+	for _, symbol := range report.Symbols {
+		fmt.Printf("%-10s  %-5d  %-56s  %s:%d\n", symbol.Resolution, symbol.Depth, symbol.StableID, symbol.File, symbol.Line)
+	}
+	fmt.Println("\nStatic attribution is not runtime or branch coverage proof.")
+	return 0
+}
+
+func runIdentity(args []string) int {
+	packageName := ""
+	var targets []string
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--package":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "-") {
+				return failCommand("identity", "--package requires an exact Go package name")
+			}
+			packageName = args[index+1]
+			index++
+		default:
+			if strings.HasPrefix(args[index], "-") {
+				return failCommandf("identity", "unknown flag: %s", args[index])
+			}
+			targets = append(targets, args[index])
+		}
+	}
+	if !hasSingleTarget(targets) {
+		return failCommand("identity", "usage: gograph identity <symbol-or-stable-id> [--package name]")
+	}
+	g, err := loadGraph(".")
+	if err != nil {
+		return failCommandf("identity", "failed to load graph: %v", err)
+	}
+	report := search.IdentityInPackage(g, targets[0], packageName)
+	if jsonMode {
+		return PrintJSON(okEnvelope("identity", targets[0], report, len(report.Matches)))
+	}
+	if report.Status == "not_found" {
+		fmt.Printf("Symbol %q was not found.\n", targets[0])
+		return 0
+	}
+	if report.Status == "ambiguous" {
+		fmt.Printf("Symbol %q is ambiguous; retry with a stable ID and, when IDs collide across test packages, --package:\n", targets[0])
+	}
+	for _, match := range report.Matches {
+		fmt.Printf("%s  [%s package=%s] %s:%d\n", match.StableID, match.Kind, match.Package, match.File, match.Line)
+	}
+	return 0
 }
 
 // graphRefresher keeps MCP analysis fresh without losing the analysis mode the
@@ -2267,6 +2390,20 @@ INSTALL DIAGNOSTICS
                              gograph.doctor.v1 with --json and never executes alternate
                              binaries. Warnings do not make the diagnostic fail.
 
+CLI / MCP TRANSPORT COVERAGE
+  Project server             Every repository query, analysis, and workflow command
+                             maps to gograph_<command>; contract maps to gograph_api,
+                             boundaries --create to gograph_boundaries_create, and
+                             session actions to gograph_session_create/end/audit/cleanup.
+                             Total: 63 CLI-equivalent capabilities + 4 session tools.
+  Workspace server           status, query, path, and impact map exactly to the four
+                             gograph_workspace_* tools listed under WORKSPACES.
+  CLI-only operations        build, validate, doctor, gate, snapshot,
+                             add-claude-plugin, hook-guard, project/workspace MCP
+                             startup, workspace build/member refresh, help, and version.
+                             CLI envelopes/flags and MCP typed content may differ, but
+                             paired operations share their functional implementation.
+
 AGENT WORKFLOW RULES (CRITICAL)
   1. BEFORE editing: ALWAYS run 'gograph plan <symbol>' to understand the impact,
      mapped tests, and execution risks (SQL/Env/Routes) of your target.
@@ -2409,8 +2546,19 @@ CODE QUALITY
                              Default: --top 10 with test-file call edges excluded.
   summary                    Single-call codebase briefing: hotspots, coupling,
                              complexity, reachability-orphan count, and god objects.
-  untested [--pkg name] [--top N]
+  coverage <test> [--exact-only] [--package name]
+                             Transitive product symbols statically attributed to one test.
+                             Exact paths contain only resolved static calls; any parser/CHA
+                             uncertainty degrades that symbol and its descendants to possible.
+                             Ambiguous same-named tests require a stable ID. This is not
+                             runtime or branch coverage proof.
+  identity <symbol-or-stable-id> [--package name]
+                             Print/re-resolve canonical module/package/receiver/name identity.
+                             Stable across line shifts and file moves inside one package;
+                             renames, receiver changes, and package/module moves change it.
+  untested [--pkg name] [--top N] [--exclude glob]...
                              Called production functions with no attributed test edge.
+                             Excludes match repository-relative paths; prefix/** matches descendants.
   endpoint <route>           Full vertical slice for one HTTP endpoint (depth 1-20; supports --mermaid).
                              Composes: route resolution + handler symbol +
                              full callee chain (BFS, default depth 5) + SQL
@@ -2476,6 +2624,10 @@ EXTRACTION
   tests [symbol]             Statically attributed test calls for a named symbol.
                              Precise direct calls carry exact IDs; interface targets
                              retain conservative CHA provenance.
+  coverage <test> [--exact-only] [--package name]
+                             Reverse test attribution with exact/possible transitive paths.
+  identity <symbol-or-stable-id> [--package name]
+                             Resolve canonical stable symbol identity and current location.
 
 AGENT INTEGRATION
   capabilities               Token-optimized cheat sheet for AI agents. Run this
@@ -4306,10 +4458,11 @@ func runSummary() int {
 // Conservative typed dispatch candidates remain visible rather than silently
 // satisfying the coverage signal.
 //
-// Usage: gograph untested [--pkg <name>] [--top N]
+// Usage: gograph untested [--pkg <name>] [--top N] [--exclude <glob>]...
 func runUntested(args []string) int {
 	pkg := ""
 	top := 0
+	var excludes []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--pkg":
@@ -4324,6 +4477,12 @@ func runUntested(args []string) int {
 				return failCommand("untested", err.Error())
 			}
 			top = value
+		case "--exclude":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return failCommand("untested", "--exclude requires a repository-relative glob")
+			}
+			excludes = append(excludes, args[i+1])
+			i++
 		default:
 			return failCommandf("untested", "unknown argument: %s", args[i])
 		}
@@ -4335,6 +4494,10 @@ func runUntested(args []string) int {
 	}
 
 	results := search.Untested(g)
+	results, err = search.FilterUntested(results, excludes)
+	if err != nil {
+		return failCommandf("untested", "invalid --exclude glob: %v", err)
+	}
 
 	// Filter by package if requested.
 	if pkg != "" {

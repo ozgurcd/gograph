@@ -365,6 +365,8 @@ func TestAllCommandsRegistered(t *testing.T) {
 		"envs",
 		"concurrency",
 		"tests",
+		"coverage",
+		"identity",
 		"constructors",
 		"literals",
 		"usages",
@@ -600,7 +602,7 @@ func TestHelpDocumentsEveryCanonicalCommand(t *testing.T) {
 		"deps", "dependents", "changes", "godobj", "plan", "review", "risk", "api",
 		"routes", "sql", "httpcalls", "errorflow", "flow", "errors", "envs", "concurrency", "tests",
 		"capabilities", "wiki", "doc", "mcp", "session", "add-claude-plugin", "hook-guard",
-		"version", "doctor", "help", "workspace",
+		"version", "validate", "doctor", "help", "workspace",
 	}
 	for _, name := range want {
 		if !documented[name] {
@@ -633,6 +635,12 @@ func TestHelpDocumentsImplementedModes(t *testing.T) {
 		"workspace path [--scope id] [--workspace path] [--include-possible] <from> <to>",
 		"gograph_workspace_status",
 		"CLI --json and MCP JSON have identical native values",
+		"CLI / MCP TRANSPORT COVERAGE",
+		"63 CLI-equivalent capabilities + 4 session tools",
+		"coverage <test> [--exact-only]",
+		"identity <symbol-or-stable-id>",
+		"untested [--pkg name] [--top N] [--exclude glob]...",
+		"build, validate, doctor, gate, snapshot",
 		"typed_partial",
 		"Precise direct calls carry exact IDs",
 	} {
@@ -682,6 +690,12 @@ func TestCapabilitiesDocumentsImplementedModes(t *testing.T) {
 		"gograph_workspace_path",
 		"gograph_workspace_impact",
 		"MCP JSON text is exactly the CLI results object",
+		"━━━ CLI / MCP TRANSPORT COVERAGE",
+		"63 CLI-equivalent capabilities plus four session lifecycle tools",
+		"coverage <test> [--exact-only]",
+		"identity <sym>",
+		"--exclude <glob>",
+		"build, validate, doctor, gate, snapshot",
 		"ambiguous/possible evidence",
 		"Workspace changes are not part",
 		"disables member-configured fsmonitor hooks",
@@ -722,7 +736,7 @@ func TestWorkspaceDocumentationSurfacesDescribeCLIAndMCPParity(t *testing.T) {
 		},
 		"../../llm-wiki/workspace-v1.md": {
 			"## CLI and MCP parity",
-			"Workspace build, member refresh, and overlay publication remain CLI-only mutations",
+			"Workspace build, member refresh, overlay publication, and workspace-server startup remain CLI-only lifecycle operations",
 		},
 	} {
 		content, err := os.ReadFile(path)

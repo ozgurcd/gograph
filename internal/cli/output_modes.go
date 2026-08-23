@@ -32,6 +32,8 @@ var commandOutputModes = map[string]outputModeSupport{
 	"interfaces":   outputJSON | outputFilesOnly,
 	"concurrency":  outputJSON | outputFilesOnly,
 	"tests":        outputJSON | outputFilesOnly,
+	"coverage":     outputJSON,
+	"identity":     outputJSON,
 	"routes":       outputJSON | outputFilesOnly,
 	"sql":          outputJSON | outputFilesOnly,
 	"errors":       outputJSON | outputFilesOnly,

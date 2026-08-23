@@ -1,7 +1,7 @@
 ---
 name: gograph
 version: "0.1.0"
-description: "Go repository intelligence for Claude Code. Use when reading, navigating, editing, reviewing, or refactoring a Go codebase. Adds AST-aware call graphs, blast-radius analysis, impact and security-flow candidates, and 61 query, analysis, and workflow capabilities through the local gograph MCP server."
+description: "Go repository intelligence for Claude Code. Use when reading, navigating, editing, reviewing, or refactoring a Go codebase. Adds AST-aware call graphs, blast-radius analysis, impact and security-flow candidates, and 63 query, analysis, and workflow capabilities through the local gograph MCP server."
 argument-hint: "gograph stats | gograph plan UserService.Login | gograph review --uncommitted"
 allowed-tools: Bash, Read
 homepage: https://gograph.identuum.ai
@@ -13,7 +13,7 @@ user-invocable: true
 
 # gograph: Go Repository Intelligence
 
-`gograph` is a local, AST-aware Go code intelligence engine that exposes 61 query, analysis, and workflow capabilities over the Model Context Protocol (65 endpoints including session lifecycle). It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) a structural view backed by a persisted or in-memory graph. `gograph_context` combines evidence that may otherwise require several navigation and source calls; actual savings depend on the task.
+`gograph` is a local, AST-aware Go code intelligence engine that exposes 63 query, analysis, and workflow capabilities over the Model Context Protocol (67 endpoints including session lifecycle). It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) a structural view backed by a persisted or in-memory graph. `gograph_context` combines evidence that may otherwise require several navigation and source calls; actual savings depend on the task.
 
 `gopls` provides live compiler-backed navigation, diagnostics, implementations,
 refactoring, and experimental MCP support. `gograph` complements it with a
@@ -41,14 +41,18 @@ The gograph binary must be installed and on `$PATH`:
 go install github.com/ozgurcd/gograph/cmd/gograph@latest
 ```
 
-Verify with `gograph --version`. The marketplace plugin supplies this workflow
+Verify the active installation with `gograph doctor --json`; it reports the
+running binary, PATH resolution, and shadowed copies without executing them.
+The marketplace plugin supplies this workflow
 guidance; it does not install the binary or register an MCP server. Register
 `gograph mcp <project-path>` for each project using the client's MCP setup.
 Packaged and generated registrations keep refresh persistence off by default.
 
 ## Mandatory workflow (enforced)
 
-1. **At the start of any Go coding session**, invoke `gograph_capabilities` to confirm what the connected server exposes.
+1. **At the start of any Go coding session**, run CLI `gograph doctor --json`
+   to detect installation shadowing, then invoke `gograph_capabilities` to
+   confirm what the connected server exposes.
 2. **Confirm graph health** before symbol queries. MCP creates an in-memory AST
    graph when the artifact is missing, unreadable, unsafe, or has an unsupported
    source-policy marker, and refreshes source analysis per call. Invoke
@@ -94,9 +98,11 @@ Packaged and generated registrations keep refresh persistence off by default.
 | `gograph_flow` | Potential HTTP/JSON/env paths to SQL, process, filesystem, and outbound HTTP sinks |
 | `gograph_changes` | Diff source against the trusted persisted graph, or MCP startup fallback when no usable artifact exists |
 | `gograph_tests` with optional `symbol=<symbol>` | Tests connected to a symbol |
+| `gograph_coverage` with `test=<TestFunc>` | Transitive product symbols one unambiguous test statically reaches; exact/possible paths; optional `package` disambiguation |
+| `gograph_identity` with `symbol=<symbol-or-stable-id>` | Print or re-resolve canonical symbol identity without silently choosing ambiguity; optional `package` disambiguation |
 | `gograph_check` | Policy checks, including changed-route tests, coverage, orphans, API drift, arity, and complexity |
 
-The live surface is 65 MCP endpoints; `gograph_capabilities` is the tested source of truth. `gograph_flow` is path-insensitive with bounded call-site matching; use it for security review leads, not exploitability proof.
+The live surface is 67 MCP endpoints; `gograph_capabilities` is the tested source of truth. `gograph_flow` is path-insensitive with bounded call-site matching; use it for security review leads, not exploitability proof.
 For `gograph_callers`, `gograph_callees`, `gograph_impact`,
 `gograph_endpoint`, `gograph_dependents`, `gograph_deps`, `gograph_path`, and
 `gograph_coupling`, set `mermaid=true` to request Markdown-fenced Mermaid

@@ -160,12 +160,30 @@ Eight graph-oriented MCP tools match the CLI's Mermaid surface. Set
 of the tool's normal response. `gograph_diagram` always returns Mermaid
 architecture text.
 
-The server exposes 65 endpoints: 61 tools corresponding to CLI query,
+The server exposes 67 endpoints: 63 tools corresponding to CLI query,
 analysis, and workflow commands plus four session lifecycle tools. Tool
 arguments and transport-level status presentation can differ from CLI flags
 and process exit codes. `gograph_flow` matches the CLI `flow` filters (`term`,
 `source`, `sink`, `config`, and `no_tests`) and returns structured source,
 sink, severity, confidence, and path data.
+`gograph_coverage` matches CLI `coverage` for reverse transitive test
+attribution, and `gograph_identity` matches CLI `identity` for durable symbol
+references. Both accept an optional exact `package` disambiguator for an
+in-package/external-test ID collision. `gograph_untested.exclude[]` is the typed
+equivalent of repeatable
+CLI `--exclude` globs.
+
+The normal mapping is CLI `<command>` to project-MCP
+`gograph_<command>`; aliases, boundary creation, and session actions are listed
+in the [complete CLI/MCP transport matrix](/docs/command-reference/#cli--mcp-transport-matrix).
+A separate server started with `gograph workspace mcp` exposes
+`gograph_workspace_status`, `gograph_workspace_query`,
+`gograph_workspace_path`, and `gograph_workspace_impact`, backed by the same
+native operations as their CLI counterparts. The matrix also identifies every
+process-, host-, CI-, and artifact-lifecycle command that remains CLI-only.
+At session start, run CLI `gograph doctor --json` before relying on the MCP
+connection; it detects an older PATH-resolved or shadowed installation without
+executing alternate binaries.
 
 ### Official Registry / MCPB installation
 

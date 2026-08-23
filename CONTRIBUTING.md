@@ -47,11 +47,14 @@ must use `make build` rather than a raw `go build` command.
 ## CLI, MCP, and Documentation Contracts
 
 Query, analysis, and workflow features must have semantically equivalent CLI
-and MCP entry points with tests for both. Host/build operations such as
-`build`, `gate`, `snapshot`, plugin/hook installation, MCP server startup,
-help, and version may remain CLI-only. Output presentation may differ by
-transport: CLI commands use flags such as `--json`, `--files-only`, and
-`--mermaid`, while MCP tools expose typed parameters and content payloads.
+and MCP entry points with tests for both. This includes the four workspace
+read operations on their separate MCP server. The complete CLI-only boundary
+is `build`, `validate`, `doctor`, `gate`, `snapshot`, plugin/hook installation,
+project/workspace MCP startup, workspace build/member refresh, help, and
+version. Output presentation may differ by transport: CLI commands use flags
+such as `--json`, `--files-only`, and `--mermaid`, while MCP tools expose typed
+parameters and content payloads. Keep the complete transport matrix and its
+registry-backed documentation test current whenever either surface changes.
 
 Document user-visible behavior in `README.md`,
 `docs/coding-agent-usage.md`, CLI help/capabilities, the public docs site,

@@ -35,6 +35,9 @@ as proof of unrelated behavior or global project correctness.
 brew install --cask ozgurcd/tap/gograph
 # or: go install github.com/ozgurcd/gograph/cmd/gograph@latest
 
+# Confirm which installation will run and detect PATH shadowing
+gograph doctor --json
+
 # Build a type-enriched precise graph, then verify it
 gograph build . --precise
 gograph stats
@@ -164,11 +167,11 @@ of evidence):*
 
 ## Key Features
 
-**Machine and Agent Workflows** — callers, callees, impact, context, plan, review, flow, errorflow, structural validation, orphans, hotspot, coupling, and more. The MCP server registers 65 endpoints including four session lifecycle tools. Full [command reference →](https://gograph.identuum.ai/docs/command-reference/)
+**Machine and Agent Workflows** — callers, callees, reverse test coverage, stable symbol identity, impact, context, plan, review, flow, errorflow, structural validation, orphans, hotspot, coupling, and more. The MCP server registers 67 endpoints including four session lifecycle tools. Full [command reference →](https://gograph.identuum.ai/docs/command-reference/)
 
 **Federated Workspaces** — model multiple checked-out repositories through independently fingerprinted repository graphs plus a small deterministic cross-repository overlay. Resolution scopes support alternative fleets such as OSS/CE without merging repository ownership. P0 resolves Go modules, ordinary cross-repository Go calls, and first-class HTTP contracts for workspace-wide status, query, path, and impact analysis. The four read-only workspace MCP tools return the same native result values as CLI `--json`; member refresh and overlay publication remain explicit CLI mutations. [Workspace guide →](docs/workspaces.md)
 
-**Native MCP Server** — query, analysis, and workflow capabilities have MCP equivalents for Claude, Cursor, Copilot, and other MCP clients. Host/build, installation diagnostics, and machine-validation operations (`build`, `doctor`, `validate`, `gate`, `snapshot`, plugin/hook installation, server startup, help, and version) intentionally remain CLI-only, and transport-specific presentation differs where appropriate.
+**Native MCP Server** — all 63 repository query, analysis, and workflow capabilities have project-MCP equivalents for Claude, Cursor, Copilot, and other MCP clients; four additional endpoints cover session lifecycle (67 project tools total). A separate workspace server provides status, query, path, and impact with the same native results as the corresponding CLI operations. The normal mapping is CLI `<command>` to MCP `gograph_<command>`; `contract`, `boundaries --create`, and session actions use the documented special mappings. CLI-only process/host/artifact operations are `build`, `validate`, `doctor`, `gate`, `snapshot`, plugin/hook installation, project/workspace MCP startup, workspace build/member refresh, help, and version. Transport presentation differs where appropriate, but paired operations share functional semantics. [Complete CLI/MCP matrix →](https://gograph.identuum.ai/docs/command-reference/#cli--mcp-transport-matrix)
 
 **Explicit Freshness Model** — CLI graph-backed analysis reads the last trusted persisted graph. `gograph stale` compares selected source content digests plus the effective build/module fingerprint; mtimes are diagnostic only for current indexes. It is a tri-state predicate in text and JSON modes: exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error; a missing or unsupported source-policy marker is an explicit status-1 rebuild requirement. MCP source-analysis tools check the same freshness per call, adopt a newer persisted precise graph, and incrementally rebuild changed package ASTs in memory using the latest requested analysis mode. MCP `stale`, default `changes`, and `stats` inspect the trusted persisted snapshot, or the startup auto-build fallback when no usable artifact exists. With `--persist-refresh`, that snapshot advances after a successful refresh, so default `changes` compares against the newly published state and normally no longer reports that refresh's source edits.
 
@@ -208,14 +211,16 @@ normal response format.
 | **Types & Structs** | `fields`, `implementers [--test-only]`, `interfaces`, `embeds`, `constructors`, `literals`, `usages`, `mutate`, `schema` | Struct fields, interface satisfaction, type usage. |
 | **Infrastructure** | `routes`, `sql`, `envs`, `errors`, `concurrency`, `globals`, `httpcalls`, `deps [--transitive]`, `dependents`, `imports` | HTTP routes (including constant nested Gin/Echo/Fiber groups and Chi Route closures), SQL, env vars, concurrency, outbound HTTP calls, imports. |
 | **Security** | `flow [term] [--source kind] [--sink kind] [--config path] [--no-tests]` | Potential untrusted-data paths to SQL, process, filesystem, and outbound HTTP sinks. |
-| **Testing** | `tests`, `untested [--pkg name] [--top N]`, `fixtures`, `mocks` | Exact/static and conservative possible test attribution, gap census, helpers, mock implementations. |
+| **Testing** | `tests`, `coverage <TestFunc> [--exact-only] [--package name]`, `untested [--pkg name] [--top N] [--exclude glob]`, `fixtures`, `mocks` | Forward and reverse exact/possible static test attribution, gap census, path exclusions, helpers, mock implementations. |
 | **Error Tracing** | `errorflow [--no-tests]`, `trace` | Reverse-BFS from error strings to HTTP entry points. |
 | **Diagnostics** | `doctor [--json]`, `hotspot`, `returnusage`, `skeleton`, `diagram`, `changes`, `public` | Install/PATH diagnostics, hotspots, return usage, API signatures, Mermaid diagrams. |
 | **CI/CD** | `check [--since\|--uncommitted]`, `gate`, `snapshot save\|diff\|list\|drop` | Policy checks, threshold enforcement, metric snapshots. |
 | **Telemetry** | `session create\|end\|audit\|cleanup` | Agent compliance tracking and grading (A–F). |
 | **LLM-Wiki** | `wiki [--output dir]` | Generate `llm-wiki/` — machine-first markdown pages for zero-cost agent orientation (overview, architecture, hotspots, routes, env, errors, concurrency, per-package, API surface). |
 | **Summary** | `summary [--json]` | Single-call codebase briefing: top 3 hotspots, worst instability package, highest complexity function, orphan count, god-object count. Replaces 5 separate calls. |
-| **Untested** | `untested [--pkg name] [--top N] [--json]` | Called production symbols without exact/static test attribution. Precise builds bind direct test calls exactly and retain interface candidates as `test_resolution=possible`; one sweep replaces N `tests <sym>` calls. |
+| **Stable IDs** | `identity <symbol-or-stable-id> [--package name] [--json]` | Print and re-resolve module/package/receiver/name identity that survives line shifts and file moves inside a package; package disambiguates external-test collisions. |
+| **Reverse Attribution** | `coverage <TestFunc> [--exact-only] [--package name] [--json]` | Transitive product-symbol set for one unambiguous test, with stable-ID paths and exact/possible propagation. Static evidence only—not runtime or branch coverage. |
+| **Untested** | `untested [--pkg name] [--top N] [--exclude glob] [--json]` | Called production symbols without exact/static test attribution. Precise builds bind direct test calls exactly and retain interface candidates as `test_resolution=possible`; repeatable excludes match repository-relative paths. |
 | **Doc** | `doc <pkg[.Symbol]> [--json]` | `go doc` wrapper — signature + doc comment for any stdlib or third-party symbol. No graph required. Closes the gap when call chains leave the project. |
 
 > Full command reference with examples: [gograph.identuum.ai/docs/command-reference](https://gograph.identuum.ai/docs/command-reference/)
@@ -279,7 +284,7 @@ This registers the Claude Desktop MCP server, injects shared `CLAUDE.md` steerin
 /plugin marketplace add ozgurcd/gograph
 /plugin install gograph@gograph
 ```
-Discovers gograph through Claude Code's plugin marketplace and ships a `SKILL.md` that auto-activates on Go work, teaching the agent the workflow (`capabilities` → `stats` → `plan` → `context` → edit → `review`), when a durable precise CLI build is useful, when to use structural queries, and when to verify with `gopls` or targeted text/source search.
+Discovers gograph through Claude Code's plugin marketplace and ships a `SKILL.md` that auto-activates on Go work, teaching the agent the workflow (`doctor --json` → `capabilities` → `stats` → `plan` → `context` → edit → `review`), when a durable precise CLI build is useful, when to use structural queries, and when to verify with `gopls` or targeted text/source search.
 
 You still need the `gograph` binary installed (`brew install --cask ozgurcd/tap/gograph` or `go install github.com/ozgurcd/gograph/cmd/gograph@latest`). Use `gograph add-claude-plugin` for Claude Desktop MCP wiring plus shared rules and the Claude Code hook; register the Claude Code MCP server with the printed `claude mcp add` command. Use the plugin marketplace when you prefer discovery from Claude Code's plugin UI.
 

@@ -63,6 +63,29 @@ func boolArg(args map[string]any, name string) bool {
 	return value
 }
 
+func stringSliceArg(args map[string]any, name string) ([]string, error) {
+	raw, exists := args[name]
+	if !exists {
+		return nil, nil
+	}
+	switch values := raw.(type) {
+	case []string:
+		return values, nil
+	case []any:
+		result := make([]string, 0, len(values))
+		for _, value := range values {
+			item, ok := value.(string)
+			if !ok {
+				return nil, fmt.Errorf("%s must contain only strings", name)
+			}
+			result = append(result, item)
+		}
+		return result, nil
+	default:
+		return nil, fmt.Errorf("%s must be an array of strings", name)
+	}
+}
+
 func integerArg(args map[string]any, name string, fallback int) (int, error) {
 	raw, exists := args[name]
 	if !exists {
@@ -294,6 +317,24 @@ func NewServer(
 		resp := map[string]any{
 			"summary":      "gograph MCP capabilities",
 			"prerequisite": "The MCP server loads only a regular, repository-confined .gograph/graph.json with the current source-policy marker and " + startupGraph + ". Its serialized root is ignored. Source-analysis tools compare selected-file content digests and the build/module fingerprint per call, then incrementally rebuild changed package ASTs after edits using the latest requested analysis mode; precise CHA/SSA enrichment remains repository-wide for correctness and separately attempts typed test-call attribution without making test compilation a prerequisite for production precision. gograph_stale, gograph_changes without git_ref, and gograph_stats inspect that trusted persisted index, or the startup auto-build fallback when no usable artifact exists. Descendant symlinks and special files recognized as Go build inputs are excluded, and linked/non-regular Go tool metadata (go.mod, go.sum, go.work, go.work.sum, and vendor/modules.txt) is rejected before toolchain use. Applicable workspace members must remain beneath the workspace directory, with each directory, go.mod, and optional go.sum validated before cmd/go. Use the current binary for untrusted repositories because older binaries do not enforce this contract. Run `gograph build . --precise` for type-checked CHA/SSA enrichment; MCP adopts a newer precise graph and re-runs precision after source changes instead of silently downgrading to AST-only analysis. Session lifecycle tools write local telemetry, gograph_session_cleanup deletes stale logs, gograph_boundaries_create writes configuration, and gograph_wiki writes documentation; their repository-controlled paths use rooted regular-file operations that reject descendant links. When an audit session is active, non-session MCP calls append observational command telemetry even when their analysis contract is read-only. Saved graph baselines must be regular files inside the project root, have no linked path component, and carry the exact current source-policy marker; their serialized root is ignored. gograph_doc rejects filesystem-shaped queries and source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees; .git and .gograph are excluded from that preflight. It invokes the local Go toolchain after repository source/metadata validation and is annotated open-world because dependency resolution follows the user's Go environment.",
+			"transport_contract": map[string]any{
+				"project_server_tools": 67,
+				"cli_equivalent_tools": 63,
+				"session_tools":        []string{"gograph_session_create", "gograph_session_end", "gograph_session_audit", "gograph_session_cleanup"},
+				"standard_mapping":     "CLI <command> maps to MCP gograph_<command>",
+				"special_mappings": map[string]string{
+					"contract":            "gograph_api",
+					"boundaries --create": "gograph_boundaries_create",
+					"session create":      "gograph_session_create",
+					"session end":         "gograph_session_end",
+					"session audit":       "gograph_session_audit",
+					"session cleanup":     "gograph_session_cleanup",
+				},
+				"workspace_server_tools": []string{"gograph_workspace_status", "gograph_workspace_query", "gograph_workspace_path", "gograph_workspace_impact"},
+				"workspace_server_note":  "The four workspace tools are exposed by `gograph workspace mcp`, not this project-scoped server; they share native result implementations with CLI workspace status/query/path/impact.",
+				"cli_only_operations":    []string{"build", "validate", "doctor", "gate", "snapshot", "add-claude-plugin", "hook-guard", "mcp startup", "workspace build/member refresh", "workspace mcp startup", "help", "version"},
+				"presentation":           "CLI flags/envelopes and typed MCP arguments/content may differ; paired operations share functional semantics.",
+			},
 			"refresh_persistence": map[string]any{
 				"enabled":            selectedOptions.PersistRefresh,
 				"artifact_directory": ".gograph",
@@ -341,6 +382,8 @@ func NewServer(
 				{"name": "gograph_deps", "purpose": "Import dependency tree of a package. transitive=true for full BFS closure."},
 				{"name": "gograph_envs", "purpose": "All os.Getenv/os.LookupEnv and supported Viper Get* reads in the codebase. Filter by key name substring."},
 				{"name": "gograph_tests", "purpose": "Statically attributed test calls. Precise direct calls carry exact symbol IDs; interface targets retain conservative CHA provenance. Omit symbol to list all test edges."},
+				{"name": "gograph_coverage", "purpose": "Transitive reverse test attribution: product symbols one unambiguous test statically reaches, with exact/possible propagation and stable-ID paths."},
+				{"name": "gograph_identity", "purpose": "Resolve exact symbol spellings or canonical stable IDs without silently choosing ambiguous matches."},
 				{"name": "gograph_hotspot", "purpose": "Functions ranked by fan-in (incoming call count). High fan-in = highest-risk change target."},
 				{"name": "gograph_httpcalls", "purpose": "All outbound HTTP client calls via net/http (Get, Post, PostForm, Head). Filter by method or URL."},
 				{"name": "gograph_changes", "purpose": "Symbols modified/added/deleted. Deleted includes files absent from the current safely selected inventory. Without git_ref: changes since trusted persisted graph or startup fallback. With git_ref: static diff vs that ref."},
@@ -370,12 +413,12 @@ func NewServer(
 				{"name": "gograph_diagram", "purpose": "Generate Mermaid architecture diagrams grouped by package, module, service, or file."},
 				{"name": "gograph_check", "purpose": "Run static policy checks; relative/default config is project-confined, and saved graph baselines use the same trust policy as gograph_api."},
 				{"name": "gograph_summary", "purpose": "Single-call codebase briefing: top 3 hotspots, worst instability package, highest complexity function, orphan count, and god-object count. Replaces 5 separate tool calls."},
-				{"name": "gograph_untested", "purpose": "Sweep the full graph for called production functions without an exact/static attributed test edge; typed precise test selectors bind exact symbols while CHA targets remain explicit test_resolution=possible candidates."},
+				{"name": "gograph_untested", "purpose": "Sweep the full graph for called production functions without an exact/static attributed test edge; typed precise test selectors bind exact symbols while CHA targets remain explicit test_resolution=possible candidates; exclude[] filters repository-relative paths."},
 				{"name": "gograph_doc", "purpose": "Fetch Go doc after rejecting source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees (.git/.gograph excluded), and validating Go tool metadata plus confined workspace members. Filesystem-shaped queries are rejected; dependency resolution is open-world. Returns a one-element JSON array with query and raw-text output."},
 				{"name": "gograph_wiki", "purpose": "Generate machine-first Markdown; relative output is project-rooted, while absolute output is an explicit real local destination."},
 			},
 			"recommended_workflows": map[string][]string{
-				"session_start":  {"READ llm-wiki/index.md", "READ llm-wiki/project.md", "READ llm-wiki/agent-rules.md", "READ llm-wiki/agent-contract.md", "gograph_summary", "gograph_stale"},
+				"session_start":  {"READ llm-wiki/index.md", "READ llm-wiki/project.md", "READ llm-wiki/agent-rules.md", "READ llm-wiki/agent-contract.md", "CLI gograph doctor --json", "gograph_summary", "gograph_stale"},
 				"before_edit":    {"gograph_context", "gograph_plan"},
 				"after_edit":     {"gograph_review", "gograph_risk", "gograph_api", "gograph_boundaries"},
 				"error_changes":  {"gograph_errorflow", "gograph_review"},
@@ -1676,6 +1719,65 @@ func initNewTools(
 		return formatResults(results), nil
 	})
 
+	// Tool: gograph_coverage
+	coverageTool := mcp.NewTool("gograph_coverage",
+		mcp.WithDescription("Return the transitive set of production functions and methods statically reachable from one test function. The MCP server refreshes the graph first. Exact results have an all-static path; any parser-only or CHA dispatch edge degrades that symbol and its descendants to possible. Same-named tests in multiple packages return status=ambiguous and are never merged; retry with the stable test ID from matched_tests or gograph_identity. The optional package qualifier resolves the uncommon in-package versus external foo_test ID collision. Set exact_only=true to omit possible results. This is static attribution, not runtime or branch coverage proof. Read-only; no side effects. WHEN TO USE: To map one test to the product symbols it structurally exercises. NOT TO USE: To claim execution or branch coverage. RETURNS: gograph.coverage.v1 JSON with analysis precision, test-call resolution, matched tests, symbols, resolution, depth, representative stable-ID paths, and limitations."),
+		mcp.WithString("test", mcp.Required(), mcp.Description("Exact test name or canonical stable test symbol ID")),
+		mcp.WithString("package", mcp.Description("Optional exact Go package name used only to disambiguate matching test symbols")),
+		mcp.WithBoolean("exact_only", mcp.Description("Return only symbols reached entirely through exact/static edges")),
+	)
+	addTool(coverageTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if newG, err := rebuild(); err == nil {
+			g = newG
+		} else {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
+		}
+		args, ok := request.Params.Arguments.(map[string]any)
+		if !ok {
+			return mcp.NewToolResultError("invalid arguments"), nil
+		}
+		testName, _ := args["test"].(string)
+		if strings.TrimSpace(testName) == "" {
+			return mcp.NewToolResultError("test must be a non-empty string"), nil
+		}
+		packageName, _ := args["package"].(string)
+		report := search.CoverageInPackage(g, testName, packageName, boolArg(args, "exact_only"))
+		data, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultText(string(data)), nil
+	})
+
+	// Tool: gograph_identity
+	identityTool := mcp.NewTool("gograph_identity",
+		mcp.WithDescription("Resolve an exact Go symbol spelling or canonical stable ID to location-independent symbol identity plus current source location. Canonical IDs are module import path + receiver/name and survive line shifts and file moves within the same package; package/module moves, receiver changes, and renames change the ID. Ambiguous short names return every candidate and never select one silently. An optional exact package qualifier disambiguates the uncommon in-package versus external foo_test ID collision. The MCP server refreshes the graph first. Read-only; no side effects. WHEN TO USE: Before persisting cross-document references or to re-resolve an existing stable ID. RETURNS: gograph.identity.v1 JSON with status exact, ambiguous, or not_found and deterministic matches."),
+		mcp.WithString("symbol", mcp.Required(), mcp.Description("Exact symbol name, package/receiver-qualified spelling, or canonical stable ID")),
+		mcp.WithString("package", mcp.Description("Optional exact Go package name used to disambiguate matching symbols")),
+	)
+	addTool(identityTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if newG, err := rebuild(); err == nil {
+			g = newG
+		} else {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
+		}
+		args, ok := request.Params.Arguments.(map[string]any)
+		if !ok {
+			return mcp.NewToolResultError("invalid arguments"), nil
+		}
+		symbol, _ := args["symbol"].(string)
+		if strings.TrimSpace(symbol) == "" {
+			return mcp.NewToolResultError("symbol must be a non-empty string"), nil
+		}
+		packageName, _ := args["package"].(string)
+		report := search.IdentityInPackage(g, symbol, packageName)
+		data, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultText(string(data)), nil
+	})
+
 	// Tool: gograph_hotspot
 	hotspotTool := mcp.NewTool("gograph_hotspot",
 		mcp.WithDescription("Rank functions by incoming call count (fan-in) to identify the most-depended-on symbols in the codebase. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. `top` controls result count (default: 10; 0 = all). Set include_tests=true to count test-file call edges — by default excluded so test helpers don't dominate rankings in test-heavy codebases. WHEN TO USE: When deciding where to invest refactoring effort or documentation — high fan-in functions are the highest-risk change targets. NOT TO USE: For single-package metrics (use gograph_focus or gograph_coupling); for complexity scores (use gograph_complexity). RETURNS: Ranked list of function names with fan-in count and package location."),
@@ -2433,9 +2535,10 @@ func initNewTools(
 
 	// Tool: gograph_untested
 	untestedTool := mcp.NewTool("gograph_untested",
-		mcp.WithDescription("Sweep the full graph in one pass and return called production functions and methods without an exact/static attributed test edge. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise graphs separately type-resolve compiling test packages. Exact direct selectors and local method values suppress only their resolved symbol, avoiding same-name receiver conflation. CHA interface targets remain visible with test_resolution=possible and possible_test_count instead of silently satisfying exact coverage; test_resolution=none means no attributed or bounded-possible test target was found. This is static attribution, not runtime coverage proof. Read-only; no side effects. WHEN TO USE: During test census or pre-release hardening. Distinct from gograph_orphans (zero production callers) and replaces N sequential gograph_tests calls. NOT TO USE: For running tests or proving branch execution. RETURNS: JSON array sorted by caller_count descending with name, kind, file, line, caller_count, package, test_resolution, and optional possible_test_count; empty when every called symbol has an exact/static or historical parser-attributed test edge."),
+		mcp.WithDescription("Sweep the full graph in one pass and return called production functions and methods without an exact/static attributed test edge. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise graphs separately type-resolve compiling test packages. Exact direct selectors and local method values suppress only their resolved symbol, avoiding same-name receiver conflation. CHA interface targets remain visible with test_resolution=possible and possible_test_count instead of silently satisfying exact coverage; test_resolution=none means no attributed or bounded-possible test target was found. Repeatable CLI --exclude globs map to the MCP exclude string array and match repository-relative source paths lexically without filesystem access. This is static attribution, not runtime coverage proof. Read-only; no side effects. WHEN TO USE: During test census or pre-release hardening. Distinct from gograph_orphans (zero production callers) and replaces N sequential gograph_tests calls. NOT TO USE: For running tests or proving branch execution. RETURNS: JSON array sorted by caller_count descending with name, kind, file, line, caller_count, package, test_resolution, and optional possible_test_count; empty when every called symbol has an exact/static or historical parser-attributed test edge."),
 		mcp.WithString("pkg", mcp.Description("Optional package name substring to filter results (e.g. 'cli', 'search')")),
 		mcp.WithInteger("top", mcp.Description("Limit results to top N by caller count (0 = all, default)")),
+		mcp.WithArray("exclude", mcp.WithStringItems(), mcp.Description("Repository-relative path globs to exclude; use prefix/** for all descendants")),
 	)
 	addTool(untestedTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -2456,6 +2559,14 @@ func initNewTools(
 			top, err = integerArg(args, "top", top)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
+			}
+			excludes, err := stringSliceArg(args, "exclude")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			results, err = search.FilterUntested(results, excludes)
+			if err != nil {
+				return mcp.NewToolResultError("invalid exclude glob: " + err.Error()), nil
 			}
 		}
 

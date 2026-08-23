@@ -117,6 +117,8 @@ func main() { _ = Work() }
 		"gograph_envs":              {"term": "AUDIT"},
 		"gograph_interfaces":        {"struct": "Service"},
 		"gograph_tests":             {"symbol": "Work"},
+		"gograph_coverage":          {"test": "TestWork", "exact_only": false},
+		"gograph_identity":          {"symbol": "Work"},
 		"gograph_hotspot":           {"top": float64(5), "include_tests": false},
 		"gograph_deps":              {"package": "sample", "transitive": true},
 		"gograph_path":              {"from": "main", "to": "Work"},
@@ -145,7 +147,7 @@ func main() { _ = Work() }
 		called++
 		callTool(t, handler, args[name])
 	}
-	if called != 61 {
-		t.Fatalf("executed %d non-session MCP tools, want 61", called)
+	if called != 63 {
+		t.Fatalf("executed %d non-session MCP tools, want 63", called)
 	}
 }

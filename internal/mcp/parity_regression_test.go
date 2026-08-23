@@ -203,6 +203,71 @@ func TestMCPArityAcceptsZeroThreshold(t *testing.T) {
 	}
 }
 
+func TestMCPReverseAttributionAndIdentityContracts(t *testing.T) {
+	g := parityRegressionGraph(t)
+	g.Build = &graph.BuildMetadata{Precision: graph.PrecisionPrecise, TestCallResolution: graph.TestCallResolutionTyped}
+	g.Symbols = append(g.Symbols,
+		graph.SymbolNode{ID: "example.com/parity/alpha::TestStart", Name: "TestStart", Kind: graph.KindFunction, PackageName: "alpha", File: "alpha/start_test.go", Line: 10},
+	)
+	g.TestEdges = []graph.TestEdge{{
+		TestFunc: "TestStart", Target: "Start", TargetSymbolID: "example.com/parity/alpha::Start",
+		Resolution: graph.CallResolutionStatic, File: "alpha/start_test.go", Line: 11,
+	}}
+	g.Calls[0].Resolution = graph.CallResolutionStatic
+	g.Calls[1].Resolution = graph.CallResolutionCHA
+	handlers := setupHandlers(t, g)
+
+	identityText := callTool(t, handlers["gograph_identity"], map[string]any{"symbol": "Start", "package": "alpha"})
+	var identity search.IdentityReport
+	if err := json.Unmarshal([]byte(identityText), &identity); err != nil {
+		t.Fatalf("identity JSON: %v\n%s", err, identityText)
+	}
+	if identity.Status != "exact" || len(identity.Matches) != 1 || identity.Matches[0].StableID != "example.com/parity/alpha::Start" {
+		t.Fatalf("identity = %#v", identity)
+	}
+
+	coverageText := callTool(t, handlers["gograph_coverage"], map[string]any{"test": "TestStart", "package": "alpha"})
+	var coverage search.CoverageReport
+	if err := json.Unmarshal([]byte(coverageText), &coverage); err != nil {
+		t.Fatalf("coverage JSON: %v\n%s", err, coverageText)
+	}
+	if coverage.Status != "exact" || len(coverage.Symbols) != 3 {
+		t.Fatalf("coverage = %#v", coverage)
+	}
+	if coverage.Symbols[0].Resolution != "exact" || coverage.Symbols[2].Resolution != "possible" {
+		t.Fatalf("coverage propagation = %#v", coverage.Symbols)
+	}
+
+	exactText := callTool(t, handlers["gograph_coverage"], map[string]any{"test": "TestStart", "exact_only": true})
+	if err := json.Unmarshal([]byte(exactText), &coverage); err != nil {
+		t.Fatal(err)
+	}
+	if len(coverage.Symbols) != 2 {
+		t.Fatalf("exact-only coverage = %#v", coverage.Symbols)
+	}
+}
+
+func TestMCPUntestedExcludeArrayMatchesCLIPathSemantics(t *testing.T) {
+	g := parityRegressionGraph(t)
+	text := callTool(t, setupHandlers(t, g)["gograph_untested"], map[string]any{"exclude": []any{"beta/**"}})
+	var results []search.UntestedResult
+	if err := json.Unmarshal([]byte(text), &results); err != nil {
+		t.Fatalf("untested JSON: %v\n%s", err, text)
+	}
+	for _, result := range results {
+		if strings.HasPrefix(result.File, "beta/") {
+			t.Fatalf("excluded result remained: %#v", result)
+		}
+	}
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"exclude": []any{float64(1)}}
+	response, err := setupHandlers(t, g)["gograph_untested"](context.Background(), req)
+	if err != nil || response == nil || !response.IsError {
+		t.Fatalf("non-string exclude accepted: response=%#v err=%v", response, err)
+	}
+}
+
 func TestMCPCountAndDepthArgumentsAreIntegers(t *testing.T) {
 	g := parityRegressionGraph(t)
 	handlers := setupHandlers(t, g)
@@ -272,6 +337,25 @@ func TestMCPCountAndDepthArgumentsAreIntegers(t *testing.T) {
 				t.Fatalf("unexpected integer validation error: %s", text)
 			}
 		})
+	}
+}
+
+func TestMCPUntestedExcludeSchemaIsStringArray(t *testing.T) {
+	g := parityRegressionGraph(t)
+	registered, ok := mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), mockBuildBaseline(), "dev").ListTools()["gograph_untested"]
+	if !ok {
+		t.Fatal("gograph_untested is not registered")
+	}
+	property, ok := registered.Tool.InputSchema.Properties["exclude"]
+	if !ok {
+		t.Fatal("gograph_untested does not advertise exclude")
+	}
+	encoded, err := json.Marshal(property)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"type":"array"`) || !strings.Contains(string(encoded), `"items":{"type":"string"}`) {
+		t.Fatalf("exclude schema = %s, want string array", encoded)
 	}
 }
 

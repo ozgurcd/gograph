@@ -121,6 +121,23 @@ Provides a source-parse-free index health summary derived from the persisted
     `rebuilt_pkgs`
   - `parse_failures`
 
+### validate
+
+```bash
+gograph validate --repo PATH --binding-json JSON --json
+```
+
+Evaluates one strict `gograph.binding.v1` structural predicate against the
+existing trusted repository graph and emits exactly one
+`gograph.validation.v1` document. It never builds or refreshes an artifact.
+Supported predicates are `symbol_exists`, `package_imports`,
+`call_edge_exists`, and `type_implements`. Exit status is `0` for pass, `1`
+for an evaluated fail, and `2` when the request cannot be evaluated or is
+invalid. This process-status machine-validation adapter is CLI-only; MCP
+callers use the corresponding query/evidence tools rather than a validation
+predicate endpoint. See the [Machine Validation Contract](https://github.com/ozgurcd/gograph/blob/main/docs/machine-validation-contract.md)
+for the schemas, freshness rules, and completeness requirements.
+
 ---
 
 ## Search & Navigation
@@ -411,13 +428,37 @@ Finds potential paths from untrusted inputs to security-sensitive operations. Te
 
 ### tests
 ```bash
-gograph tests [symbol]
+gograph tests [symbol] [--json]
 ```
 Lists attributed test edges, optionally filtered to one symbol. This is static
 attribution, not runtime coverage. On precise graphs, compiling test packages
 bind direct selectors and local method values to fully-qualified target IDs.
 Conservative interface targets are marked with CHA resolution rather than
 presented as exact calls.
+
+### coverage
+```bash
+gograph coverage <test-function-or-stable-id> [--exact-only] [--package name] [--json]
+```
+Returns the transitive product functions and methods statically reachable from
+one test. Every row carries a canonical stable ID, representative path, depth,
+and `exact` or `possible` resolution. Any uncertain parser/CHA edge degrades
+the remainder of that path to `possible`; `--exact-only` omits those rows.
+Same-named tests in multiple packages return an ambiguity instead of merging
+their results. When an in-package test and external `foo_test` package share the
+same graph ID, `--package` (MCP `package`) selects the exact Go package name.
+This is static attribution, not runtime or branch coverage.
+
+### identity
+```bash
+gograph identity <symbol-or-stable-id> [--package name] [--json]
+```
+Prints and re-resolves canonical symbol IDs. IDs use module import path plus
+receiver/name, so line shifts and file moves inside the same package do not
+change them. Package/module moves, receiver changes, and renames do. Ambiguous
+short names return every candidate and never select one silently. The optional
+package qualifier handles colliding in-package/external-test IDs without using
+file/line as identity.
 
 ---
 
@@ -508,7 +549,7 @@ Returns top hotspots, worst package instability, highest complexity, reachabilit
 
 ### untested
 ```bash
-gograph untested [--pkg name] [--top N]
+gograph untested [--pkg name] [--top N] [--exclude glob]... [--json]
 ```
 Ranks called production functions and methods without an exact/static
 attributed test edge. On a precise graph, direct selectors and local method
@@ -519,6 +560,9 @@ targets remain in the result with `test_resolution=possible` and
 target was found. `typed_partial` in `stats` means some tests could not be
 type-resolved, so the result remains an upper bound. This is static attribution,
 not runtime coverage.
+Each `--exclude` is matched lexically against the repository-relative source
+path; use `prefix/**` for all descendants. The MCP equivalent is the `exclude`
+string array on `gograph_untested`.
 
 ---
 
@@ -737,6 +781,47 @@ topics, and shared-schema resolution are outside workspace v1.
 
 ---
 
+## CLI / MCP Transport Matrix
+
+Every repository query, analysis, and workflow capability has a project-MCP
+equivalent. The standard mapping is CLI `<command>` to MCP
+`gograph_<command>`. The complete shipped inventory is listed here so neither
+transport has an undocumented analytical feature.
+
+| Capability group | CLI ↔ project MCP |
+|---|---|
+| Core | `capabilities` ↔ `gograph_capabilities`; `stale` ↔ `gograph_stale`; `stats` ↔ `gograph_stats` |
+| Search/navigation | `query` ↔ `gograph_query`; `focus` ↔ `gograph_focus`; `node` ↔ `gograph_node`; `source` ↔ `gograph_source`; `public` ↔ `gograph_public` |
+| Calls/reachability | `callers` ↔ `gograph_callers`; `callees` ↔ `gograph_callees`; `impact` ↔ `gograph_impact`; `path` ↔ `gograph_path`; `orphans` ↔ `gograph_orphans` |
+| Types/tests | `implementers` ↔ `gograph_implementers`; `interfaces` ↔ `gograph_interfaces`; `fields` ↔ `gograph_fields`; `embeds` ↔ `gograph_embeds`; `constructors` ↔ `gograph_constructors`; `literals` ↔ `gograph_literals`; `usages` ↔ `gograph_usages`; `returnusage` ↔ `gograph_returnusage`; `schema` ↔ `gograph_schema`; `globals` ↔ `gograph_globals`; `mocks` ↔ `gograph_mocks`; `fixtures` ↔ `gograph_fixtures`; `identity` ↔ `gograph_identity` |
+| Packages/changes | `imports` ↔ `gograph_imports`; `deps` ↔ `gograph_deps`; `dependents` ↔ `gograph_dependents`; `changes` ↔ `gograph_changes` |
+| Extraction | `routes` ↔ `gograph_routes`; `sql` ↔ `gograph_sql`; `errors` ↔ `gograph_errors`; `envs` ↔ `gograph_envs`; `concurrency` ↔ `gograph_concurrency`; `httpcalls` ↔ `gograph_httpcalls`; `flow` ↔ `gograph_flow`; `tests` ↔ `gograph_tests`; `coverage` ↔ `gograph_coverage` |
+| Composed workflows | `context` ↔ `gograph_context`; `plan` ↔ `gograph_plan`; `review` ↔ `gograph_review`; `risk` ↔ `gograph_risk`; `errorflow` ↔ `gograph_errorflow`; `trace` ↔ `gograph_trace`; `endpoint` ↔ `gograph_endpoint`; `explain` ↔ `gograph_explain`; `summary` ↔ `gograph_summary`; `untested` ↔ `gograph_untested` |
+| Quality/policy | `api`/`contract` ↔ `gograph_api`; `boundaries` ↔ `gograph_boundaries`; `boundaries --create` ↔ `gograph_boundaries_create`; `check` ↔ `gograph_check`; `complexity` ↔ `gograph_complexity`; `coupling` ↔ `gograph_coupling`; `diagram` ↔ `gograph_diagram`; `hotspot` ↔ `gograph_hotspot`; `godobj` ↔ `gograph_godobj`; `skeleton` ↔ `gograph_skeleton`; `mutate` ↔ `gograph_mutate`; `arity` ↔ `gograph_arity` |
+| Documentation/toolchain | `wiki` ↔ `gograph_wiki`; `doc` ↔ `gograph_doc` |
+| Session lifecycle | `session create` ↔ `gograph_session_create`; `session end` ↔ `gograph_session_end`; `session audit` ↔ `gograph_session_audit`; `session cleanup` ↔ `gograph_session_cleanup` |
+
+That is 63 CLI-equivalent project capabilities plus four session tools: 67
+tools on `gograph mcp`. The separate `gograph workspace mcp` server adds these
+four exact pairs:
+
+| Workspace CLI | Workspace MCP |
+|---|---|
+| `workspace status` | `gograph_workspace_status` |
+| `workspace query` | `gograph_workspace_query` |
+| `workspace path` | `gograph_workspace_path` |
+| `workspace impact` | `gograph_workspace_impact` |
+
+The only CLI operations without callable MCP equivalents are process-, host-,
+CI-, or artifact-lifecycle operations: `build`, `validate`, `doctor`, `gate`,
+`snapshot`, `add-claude-plugin`, `hook-guard`, project/workspace MCP startup,
+`workspace build`/member refresh, help, and version. CLI flags/envelopes and
+typed MCP arguments/content are transport-specific; paired operations share
+their functional implementation and documented filters, ordering, evidence,
+and result semantics.
+
+---
+
 ## Agent Integration
 
 ### doctor
@@ -784,8 +869,8 @@ AI clients (e.g., Claude Code, Cursor).
   `gograph_impact`, `gograph_endpoint`, `gograph_dependents`, `gograph_deps`,
   `gograph_path`, or `gograph_coupling`. The tool returns Mermaid flowchart
   text instead of its normal response.
-- **Parity**: 61 query, analysis, and workflow commands have corresponding MCP
-  endpoints; four additional endpoints manage sessions (65 endpoints total).
+- **Parity**: 63 query, analysis, and workflow commands have corresponding MCP
+  endpoints; four additional endpoints manage sessions (67 endpoints total).
   MCP uses typed tool arguments rather than CLI global flags, and some
   not-found and status results have different transport-level presentation.
 - **Audit telemetry**: Read-only annotations describe the functional analysis
