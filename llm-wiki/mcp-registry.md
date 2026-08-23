@@ -2,7 +2,7 @@
 title: Official MCP Registry Distribution
 type: decision
 status: current
-updated: 2026-08-21
+updated: 2026-08-23
 sources:
   - SRC-20260712-mcp-registry-spec
   - SRC-20260712-mcpb-spec
@@ -13,11 +13,11 @@ sources:
 
 ## Live publication
 
-The official Registry entry `io.github.ozgurcd/gograph` has active immutable versions 1.5.0 through 1.5.3. Registry discovery marks version `1.5.3` latest; its exact API record is `https://registry.modelcontextprotocol.io/v0.1/servers/io.github.ozgurcd%2Fgograph/versions/1.5.3`. GitHub release `v1.5.3`, published 2026-07-19, is at `https://github.com/ozgurcd/gograph/releases/tag/v1.5.3`. The checked-in `server.json`, local tag, GitHub release, and Registry package hashes agree on 1.5.3; the tag dereferences to `5a9f44f757846fa8a92d91abddbc25ba4ad71377`.
+The official Registry entry `io.github.ozgurcd/gograph` has active immutable versions 1.5.0 through 1.6.0. Registry discovery marks version `1.6.0` latest; its exact API record is `https://registry.modelcontextprotocol.io/v0.1/servers/io.github.ozgurcd%2Fgograph/versions/1.6.0`. GitHub release `v1.6.0`, published 2026-08-22, is at `https://github.com/ozgurcd/gograph/releases/tag/v1.6.0`. The checked-in `server.json`, local annotated tag, GitHub release, and Registry package hashes agree on 1.6.0; the tag dereferences to `ab5b43f9071bfa0f8181e6274c958a0ff9417da2`.
 
 The immutable tag `v1.5.0` dereferences to implementation commit `e4f96315ec4edb805dddbdd584fffbc022f18c6d`. Workflow recovery commit `4299e2806a87c43343584f941159a413ade156d3` added the release-test binary prerequisite and an explicit existing-tag dispatch path without moving that tag. Successful release and Registry publication run `29242849952` used GitHub OIDC. The initial tag-triggered run failed before creating any release or Registry state because existing CLI contract tests expected `bin/gograph`; this was corrected on `main`, and the original tag was reverified and published through the safe dispatch path.
 
-Post-publication verification downloaded all 14 release assets. All six ordinary archives and all six MCPBs matched `checksums.txt`; `server.json` and `checksums.txt` matched GitHub's asset digests. The downloaded native MCPB initialized as gograph 1.5.0 and returned 65 tools. The Homebrew tap formula is 1.5.0 and its four platform archive URLs and hashes match the published release.
+Post-publication recovery verification for v1.6.0 downloaded and checked all 14 release assets. All six ordinary archives and all six MCPBs match `checksums.txt`; `server.json` and `checksums.txt` match GitHub asset digests, and the native MCPB exposes 65 tools. The Homebrew tap cask is 1.6.0, its four platform archive URLs and hashes match the immutable published release, and `tap_migrations.json` carries the same-name formula-to-cask migration. Release workflow run `32606371099` reverified the tagged source, reconciled Homebrew from published checksums, published through GitHub OIDC, and confirmed the active Registry record.
 
 ## Identity and pinned formats
 

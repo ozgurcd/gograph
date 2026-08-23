@@ -384,3 +384,10 @@ Normalized the security-flow page link into the index's Schemas and Security sec
 ## 2026-08-23 — Workspace CLI/MCP parity contract
 
 Recorded that workspace status, query, path, and impact share one native result contract: CLI `--json` wraps it in `results`, while the read-only MCP tools return the exact value as JSON text. Workspace mutation remains CLI-only.
+
+## [2026-08-23] maintenance | Publish v1.6.0 federated workspace release
+
+- Released federated workspace v1 as gograph v1.6.0 from tag commit `ab5b43f9071bfa0f8181e6274c958a0ff9417da2`.
+- Verified all 14 immutable GitHub assets, Homebrew cask 1.6.0 and formula migration, and the active official MCP Registry 1.6.0 record.
+- Release workflow run `32606371099` passed the full candidate, archive security, MCPB, documentation, Homebrew, publication, and post-publication Registry checks.
+- Hardened recovery so generated Homebrew casks bind to immutable published archive checksums instead of runner-specific rebuilt archive bytes.
