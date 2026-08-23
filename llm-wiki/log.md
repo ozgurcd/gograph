@@ -391,3 +391,9 @@ Recorded that workspace status, query, path, and impact share one native result 
 - Verified all 14 immutable GitHub assets, Homebrew cask 1.6.0 and formula migration, and the active official MCP Registry 1.6.0 record.
 - Release workflow run `32606371099` passed the full candidate, archive security, MCPB, documentation, Homebrew, publication, and post-publication Registry checks.
 - Hardened recovery so generated Homebrew casks bind to immutable published archive checksums instead of runner-specific rebuilt archive bytes.
+
+## [2026-08-23] maintenance | Publish v1.6.1 test-attribution release
+
+- Released gograph v1.6.1 from tag commit `eeb7f68f3baf35665e21feae3c65411784a3db85`; implementation commit `2eae7f2` adds non-fatal typed test-call resolution, exact/possible test provenance in CLI and MCP results, and CLI-only `gograph doctor` installation diagnostics.
+- Reproduced the reported interface-dispatch case against the actual P0-CLIAUTH-1 subject: eight exact `resolved_static` tests now suppress only the intended method, while an unrelated same-name method remains untested.
+- Local and release gates passed uncached unit/race tests, vet, lint/static analysis, vulnerability and archive scans, MCPB verification/smoke, documentation rendering, and CLI/MCP `untested` parity. Release workflow run `32637303565` published and independently verified all 14 GitHub assets, Homebrew cask 1.6.1, and the active official MCP Registry 1.6.1 record.
