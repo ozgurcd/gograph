@@ -407,3 +407,9 @@ Recorded that workspace status, query, path, and impact share one native result 
 
 - Added matching CLI/MCP coverage and identity contracts with conservative exact/possible propagation, explicit ambiguity, structured package disambiguation for external-test ID collisions, and repository-relative untested exclusions.
 - Kept source-mutating red-proof execution outside gograph's structural-analysis trust boundary; static attribution remains distinct from runtime proof.
+
+## [2026-08-23] maintenance | Publish v1.6.2 reverse attribution release
+
+- Released gograph v1.6.2 from tag commit `ec4cfe0d1da576dfc644aaf6104baa43c39cd92f`; implementation commit `64c2943` adds matching CLI/MCP coverage and identity queries plus repository-relative untested exclusions.
+- Local and release gates passed uncached unit and race tests, vet, lint and static analysis, source/binary/archive vulnerability scans, deterministic MCPB verification and 67-tool smoke initialization, documentation rendering, transport-parity tests, and precise real-repository functional checks.
+- Release workflow run `32664068503` published and independently verified all 14 GitHub assets, Homebrew cask 1.6.2, and the active official MCP Registry 1.6.2 record.
