@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+No changes yet.
+
+## v1.6.2 — 2026-08-23
+
 ### Reverse test attribution and stable symbol references
 
 - Added CLI `coverage <TestFunc> [--exact-only] [--package name] [--json]` and MCP
