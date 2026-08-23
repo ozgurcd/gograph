@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Typed test-call attribution and installation diagnostics
+
+- Precise builds now type-resolve calls made from compiling Go test packages in
+  a separate, non-fatal pass. Direct selectors and local method values bind to
+  exact symbol IDs, while interface-dispatch candidates remain explicitly
+  conservative instead of hiding every same-named method from `untested`.
+- `untested` CLI and MCP results now distinguish `test_resolution=none` from
+  bounded `test_resolution=possible` candidates. Exact typed attribution
+  suppresses only the resolved symbol; parser-only graphs retain their existing
+  heuristic behavior for compatibility.
+- Graph metadata, `stats`, workspace member capabilities, generated test
+  reports, CLI help, and MCP capabilities now expose test-call resolution as
+  `ast_heuristic`, `typed_complete`, or `typed_partial`. Broken test packages do
+  not downgrade otherwise successful production precision and are reported as
+  partial test attribution.
+- Added `gograph doctor [--json]` and the `gograph.doctor.v1` result contract.
+  The command safely inspects the running binary and all distinct `gograph`
+  executables on `PATH` without executing alternates, warning about duplicate
+  installations, PATH shadowing, and comparable stable-version mismatches.
+  This host-install diagnostic is intentionally CLI-only.
+
 ### Federated cross-repository workspaces
 
 - Added a confined `gograph.workspace-manifest.v1` and deterministic

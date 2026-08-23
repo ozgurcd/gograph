@@ -24,6 +24,9 @@ func TestLegacyV2GraphDefaultsToASTPrecisionAndLineOnlyCalls(t *testing.T) {
 	if got := g.Build.EffectivePrecision(); got != PrecisionAST {
 		t.Fatalf("legacy precision = %q, want %q", got, PrecisionAST)
 	}
+	if got := g.Build.EffectiveTestCallResolution(); got != TestCallResolutionAST {
+		t.Fatalf("legacy test call resolution = %q, want %q", got, TestCallResolutionAST)
+	}
 	if g.Build.PreciseRequested() {
 		t.Fatal("legacy graph unexpectedly requests precise refresh")
 	}
@@ -37,8 +40,9 @@ func TestLegacyV2GraphDefaultsToASTPrecisionAndLineOnlyCalls(t *testing.T) {
 
 func TestOptionalPrecisionAndCallProvenanceMetadataRemainAdditive(t *testing.T) {
 	g := Graph{
-		Version: Version,
-		Build:   &BuildMetadata{Complete: true, Precision: PrecisionPrecise, BuildContextFingerprint: "selection-v1"},
+		Version:   Version,
+		Build:     &BuildMetadata{Complete: true, Precision: PrecisionPrecise, TestCallResolution: TestCallResolutionTyped, BuildContextFingerprint: "selection-v1"},
+		TestEdges: []TestEdge{{TestFunc: "TestRun", Target: "service.Run", TargetSymbolID: "example.com/app::(*Service).Run", Resolution: CallResolutionStatic, File: "run_test.go", Line: 12, Column: 9}},
 		Calls: []CallEdge{{
 			CallerName: "Run",
 			CalleeRaw:  "Delete",
@@ -53,7 +57,7 @@ func TestOptionalPrecisionAndCallProvenanceMetadataRemainAdditive(t *testing.T) 
 		t.Fatal(err)
 	}
 	text := string(encoded)
-	for _, field := range []string{`"precision":"precise"`, `"build_context_fingerprint":"selection-v1"`, `"column":21`, `"synthetic":true`} {
+	for _, field := range []string{`"precision":"precise"`, `"test_call_resolution":"typed_complete"`, `"build_context_fingerprint":"selection-v1"`, `"column":21`, `"synthetic":true`, `"target_symbol_id":"example.com/app::(*Service).Run"`, `"resolution":"resolved_static"`} {
 		if !strings.Contains(text, field) {
 			t.Fatalf("encoded graph missing %s: %s", field, text)
 		}

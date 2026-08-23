@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -41,6 +42,40 @@ func register(router *Router) {
 	mcpText := callTool(t, setupHandlers(t, g)["gograph_routes"], nil)
 	if !strings.Contains(mcpText, cliResults[0].Name) || !strings.Contains(mcpText, "UpdateUser") {
 		t.Fatalf("MCP route output does not match CLI route evidence:\n%s", mcpText)
+	}
+}
+
+func TestCLIAndMCPUntestedResolutionParity(t *testing.T) {
+	const (
+		exactID    = "example.com/parity::(*Exact).Run"
+		possibleID = "example.com/parity::(*Possible).Run"
+	)
+	g := &graph.Graph{
+		Symbols: []graph.SymbolNode{
+			{ID: exactID, Name: "Run", Receiver: "*Exact", Kind: graph.KindMethod, PackageName: "parity", File: "exact.go", Line: 10},
+			{ID: possibleID, Name: "Run", Receiver: "*Possible", Kind: graph.KindMethod, PackageName: "parity", File: "possible.go", Line: 20},
+		},
+		Calls: []graph.CallEdge{
+			{CalleeSymbolID: exactID, File: "caller.go", Line: 1},
+			{CalleeSymbolID: possibleID, File: "caller.go", Line: 2},
+		},
+		TestEdges: []graph.TestEdge{
+			{TestFunc: "TestExact", Target: "exact.Run", TargetSymbolID: exactID, Resolution: graph.CallResolutionStatic, File: "run_test.go", Line: 10},
+			{TestFunc: "TestPossible", Target: "runner.Run", TargetSymbolID: possibleID, Resolution: graph.CallResolutionCHA, File: "run_test.go", Line: 20},
+		},
+	}
+
+	want := search.Untested(g)
+	if len(want) != 1 || want[0].TestResolution != "possible" || want[0].PossibleTestCount != 1 {
+		t.Fatalf("CLI-native untested result = %#v", want)
+	}
+	text := callTool(t, setupHandlers(t, g)["gograph_untested"], nil)
+	var got []search.UntestedResult
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("decode MCP untested result: %v\n%s", err, text)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("MCP untested result = %#v, want CLI-native %#v", got, want)
 	}
 }
 
@@ -320,6 +355,8 @@ func TestMCPCapabilityPrerequisiteReflectsPersistenceMode(t *testing.T) {
 		"function, method, struct, interface, type, variable, or constant",
 		"UNKNOWN with score -1",
 		"Filesystem-shaped queries are rejected",
+		"typed_partial",
+		"static attribution never proves runtime coverage",
 	} {
 		if !strings.Contains(defaultText, phrase) {
 			t.Fatalf("capabilities omitted %q: %s", phrase, defaultText)

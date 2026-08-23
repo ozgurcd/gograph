@@ -113,6 +113,7 @@ func memberRecord(config RepositoryConfig, snapshot validation.Snapshot) Member 
 			PrecisionRequested: build.PreciseRequested(),
 			PreciseEnrichment:  precise,
 			CallResolution:     callResolution,
+			TestCallResolution: string(build.EffectiveTestCallResolution()),
 			HTTPExtraction:     "net_http_v1",
 			RPCExtraction:      "unavailable",
 			TopicExtraction:    "unavailable",

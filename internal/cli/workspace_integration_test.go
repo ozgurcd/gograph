@@ -191,11 +191,12 @@ scopes:
 				BuildContextFingerprint string `json:"build_context_fingerprint"`
 				AnalysisMode            string `json:"analysis_mode"`
 				Capabilities            struct {
-					ASTComplete     bool   `json:"ast_complete"`
-					CallResolution  string `json:"call_resolution"`
-					HTTPExtraction  string `json:"http_extraction"`
-					RPCExtraction   string `json:"rpc_extraction"`
-					TopicExtraction string `json:"topic_extraction"`
+					ASTComplete        bool   `json:"ast_complete"`
+					CallResolution     string `json:"call_resolution"`
+					TestCallResolution string `json:"test_call_resolution"`
+					HTTPExtraction     string `json:"http_extraction"`
+					RPCExtraction      string `json:"rpc_extraction"`
+					TopicExtraction    string `json:"topic_extraction"`
 				} `json:"capabilities"`
 			} `json:"members"`
 			Overlay struct {
@@ -213,7 +214,7 @@ scopes:
 		t.Fatalf("workspace overlay status omitted identity: %+v", statusEnvelope.Results.Overlay)
 	}
 	for _, member := range statusEnvelope.Results.Members {
-		if !member.Available || !member.Fresh || member.ArtifactFingerprint == "" || member.SourceFingerprint == "" || member.BuildContextFingerprint == "" || member.AnalysisMode != "ast" || !member.Capabilities.ASTComplete || member.Capabilities.CallResolution != "ast_heuristic" || member.Capabilities.HTTPExtraction != "net_http_v1" || member.Capabilities.RPCExtraction != "unavailable" || member.Capabilities.TopicExtraction != "unavailable" {
+		if !member.Available || !member.Fresh || member.ArtifactFingerprint == "" || member.SourceFingerprint == "" || member.BuildContextFingerprint == "" || member.AnalysisMode != "ast" || !member.Capabilities.ASTComplete || member.Capabilities.CallResolution != "ast_heuristic" || member.Capabilities.TestCallResolution != "ast_heuristic" || member.Capabilities.HTTPExtraction != "net_http_v1" || member.Capabilities.RPCExtraction != "unavailable" || member.Capabilities.TopicExtraction != "unavailable" {
 			t.Fatalf("workspace member status omitted capabilities or fingerprints: %+v", member)
 		}
 	}

@@ -84,6 +84,7 @@ type AnalysisCapabilities struct {
 	PrecisionRequested bool   `json:"precision_requested"`
 	PreciseEnrichment  string `json:"precise_enrichment"`
 	CallResolution     string `json:"call_resolution"`
+	TestCallResolution string `json:"test_call_resolution"`
 	HTTPExtraction     string `json:"http_extraction"`
 	RPCExtraction      string `json:"rpc_extraction"`
 	TopicExtraction    string `json:"topic_extraction"`

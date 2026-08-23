@@ -1605,18 +1605,25 @@ func Tests(g *graph.Graph, term string) []Result {
 	var results []Result
 	seen := make(map[string]bool)
 	for _, te := range g.TestEdges {
-		if matchTestTarget(te.Target, te.TestFunc, term) {
-			key := fmt.Sprintf("%s|%s", te.TestFunc, te.Target)
+		if matchTestTarget(te.Target, te.TestFunc, term) || te.TargetSymbolID != "" && matchTestTarget(te.TargetSymbolID, te.TestFunc, term) {
+			key := fmt.Sprintf("%s|%s|%s", te.TestFunc, te.Target, te.TargetSymbolID)
 			if seen[key] {
 				continue
 			}
 			seen[key] = true
+			target := te.Target
+			if te.TargetSymbolID != "" {
+				target = te.TargetSymbolID
+				if te.Resolution != "" {
+					target += " [" + string(te.Resolution) + "]"
+				}
+			}
 			results = append(results, Result{
 				Kind:   "test",
 				Name:   te.TestFunc,
 				File:   te.File,
 				Line:   te.Line,
-				Detail: fmt.Sprintf("exercises %s", te.Target),
+				Detail: fmt.Sprintf("exercises %s", target),
 				Score:  10,
 			})
 		}
@@ -1812,14 +1819,19 @@ func Fixtures(g *graph.Graph, pkgName string) []Result {
 	return results
 }
 
-// UntestedResult describes a function that has callers but no test coverage.
+// UntestedResult describes a called production function without an exact or
+// parser-attributed test edge. TestResolution is "possible" when precise CHA
+// found one or more conservative test dispatch targets; those remain visible
+// rather than silently satisfying an exact coverage claim.
 type UntestedResult struct {
-	Name        string `json:"name"`
-	Kind        string `json:"kind"`
-	File        string `json:"file"`
-	Line        int    `json:"line"`
-	CallerCount int    `json:"caller_count"`
-	PackageName string `json:"package"`
+	Name              string `json:"name"`
+	Kind              string `json:"kind"`
+	File              string `json:"file"`
+	Line              int    `json:"line"`
+	CallerCount       int    `json:"caller_count"`
+	PackageName       string `json:"package"`
+	TestResolution    string `json:"test_resolution"`
+	PossibleTestCount int    `json:"possible_test_count,omitempty"`
 }
 
 // Untested returns functions and methods that have at least one non-test caller
@@ -1828,10 +1840,25 @@ type UntestedResult struct {
 //
 // One full graph sweep — replaces N sequential 'gograph tests <sym>' calls.
 func Untested(g *graph.Graph) []UntestedResult {
-	// Build set of symbol names/IDs that appear as test targets.
+	// Build exact and bounded-possible typed target sets. Parser-only edges
+	// retain the historical name attribution fallback. Once a typed ID exists,
+	// never also apply its raw selector globally: doing so would let a test of
+	// one receiver hide every same-named method in the repository.
 	testedIDs := make(map[string]bool)
 	testedNames := make(map[string]bool)
+	possibleTests := make(map[string]map[string]struct{})
 	for _, te := range g.TestEdges {
+		if te.TargetSymbolID != "" {
+			if te.Resolution == graph.CallResolutionStatic || te.Resolution == graph.CallResolutionSynthetic {
+				testedIDs[te.TargetSymbolID] = true
+			} else {
+				if possibleTests[te.TargetSymbolID] == nil {
+					possibleTests[te.TargetSymbolID] = make(map[string]struct{})
+				}
+				possibleTests[te.TargetSymbolID][te.TestFunc] = struct{}{}
+			}
+			continue
+		}
 		testedIDs[te.Target] = true
 		// Target may be a fully-qualified ID or a short name — track both.
 		if idx := strings.LastIndex(te.Target, "::"); idx >= 0 {
@@ -1881,13 +1908,22 @@ func Untested(g *graph.Graph) []UntestedResult {
 			continue
 		}
 
+		resolution := "none"
+		possibleCount := 0
+		if tests := possibleTests[s.ID]; len(tests) > 0 {
+			resolution = "possible"
+			possibleCount = len(tests)
+		}
+
 		results = append(results, UntestedResult{
-			Name:        s.Name,
-			Kind:        string(s.Kind),
-			File:        s.File,
-			Line:        s.Line,
-			CallerCount: count,
-			PackageName: s.PackageName,
+			Name:              s.Name,
+			Kind:              string(s.Kind),
+			File:              s.File,
+			Line:              s.Line,
+			CallerCount:       count,
+			PackageName:       s.PackageName,
+			TestResolution:    resolution,
+			PossibleTestCount: possibleCount,
 		})
 	}
 

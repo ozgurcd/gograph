@@ -9,16 +9,17 @@ import (
 
 func TestStatsReportsPrecisionState(t *testing.T) {
 	tests := []struct {
-		name      string
-		metadata  *graph.BuildMetadata
-		precision graph.PrecisionMode
-		status    string
+		name           string
+		metadata       *graph.BuildMetadata
+		precision      graph.PrecisionMode
+		testResolution graph.TestCallResolutionMode
+		status         string
 	}{
-		{name: "legacy graph", precision: graph.PrecisionAST, status: "unknown"},
-		{name: "legacy build metadata", metadata: &graph.BuildMetadata{Complete: true}, precision: graph.PrecisionAST, status: "complete"},
-		{name: "explicit AST", metadata: &graph.BuildMetadata{Complete: true, Precision: graph.PrecisionAST}, precision: graph.PrecisionAST, status: "complete"},
-		{name: "precise", metadata: &graph.BuildMetadata{Complete: true, Precision: graph.PrecisionPrecise}, precision: graph.PrecisionPrecise, status: "complete"},
-		{name: "precise fallback", metadata: &graph.BuildMetadata{Complete: true, Precision: graph.PrecisionFallback}, precision: graph.PrecisionFallback, status: "complete"},
+		{name: "legacy graph", precision: graph.PrecisionAST, testResolution: graph.TestCallResolutionAST, status: "unknown"},
+		{name: "legacy build metadata", metadata: &graph.BuildMetadata{Complete: true}, precision: graph.PrecisionAST, testResolution: graph.TestCallResolutionAST, status: "complete"},
+		{name: "explicit AST", metadata: &graph.BuildMetadata{Complete: true, Precision: graph.PrecisionAST}, precision: graph.PrecisionAST, testResolution: graph.TestCallResolutionAST, status: "complete"},
+		{name: "precise", metadata: &graph.BuildMetadata{Complete: true, Precision: graph.PrecisionPrecise, TestCallResolution: graph.TestCallResolutionTyped}, precision: graph.PrecisionPrecise, testResolution: graph.TestCallResolutionTyped, status: "complete"},
+		{name: "precise fallback", metadata: &graph.BuildMetadata{Complete: true, Precision: graph.PrecisionFallback, TestCallResolution: graph.TestCallResolutionPartial}, precision: graph.PrecisionFallback, testResolution: graph.TestCallResolutionPartial, status: "complete"},
 	}
 
 	for _, tt := range tests {
@@ -26,6 +27,9 @@ func TestStatsReportsPrecisionState(t *testing.T) {
 			result := search.Stats(&graph.Graph{Build: tt.metadata})
 			if result.Precision != tt.precision {
 				t.Fatalf("precision = %q, want %q", result.Precision, tt.precision)
+			}
+			if result.TestCallResolution != tt.testResolution {
+				t.Fatalf("test resolution = %q, want %q", result.TestCallResolution, tt.testResolution)
 			}
 			if result.BuildStatus != tt.status {
 				t.Fatalf("build status = %q, want %q", result.BuildStatus, tt.status)

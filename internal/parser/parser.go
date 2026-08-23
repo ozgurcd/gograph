@@ -1156,6 +1156,7 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 					Target:   callee,
 					File:     relPath,
 					Line:     callPos.Line,
+					Column:   callPos.Column,
 				})
 			}
 

@@ -22,7 +22,7 @@ Global flags may appear before or after the command:
 - `-i <message>` / `--intention <message>`: Technical rationale recorded with
   CLI command telemetry. It is mandatory for analytical commands while an
   audit session is active; session, MCP startup, build, installation, help,
-  version, stale, stats, capabilities, wiki, and doc commands do not require it.
+  version, doctor, stale, stats, capabilities, wiki, and doc commands do not require it.
 
 Request only one of `--json`, `--files-only`, or `--mermaid`; unsupported or
 conflicting output flags fail instead of being silently ignored.
@@ -62,7 +62,7 @@ AST base, but type loading and CHA/SSA enrichment still run repository-wide so
 cross-package method sets and dispatch targets remain correct.
 - **Arguments**: `path` (optional, defaults to `.`)
 - **Flags**: 
-  - `--precise`: Attempts type-checked CHA/SSA enrichment after a repository preflight that rejects source-tree links `cmd/go` may inspect across the selected root plus its effective module root, or the workspace root and member trees; `.git` and `.gograph` are excluded from that walk. It also rejects special recognized build inputs, unsafe workspace members, and linked/non-regular module/workspace metadata entries. Enrichment needs compilable, build-selected packages; on unsafe input, failure, or an incomplete non-test package load gograph warns and publishes the unchanged AST graph unless a fresh successful precise artifact already covers the same safely selected sources. Graph metadata records `precise`, `precise_fallback`, or `ast`. Precise interface calls retain one parallel call edge per valid named in-repository target; promoted methods add an explicitly marked traversal-only forwarding edge.
+  - `--precise`: Attempts type-checked CHA/SSA enrichment after a repository preflight that rejects source-tree links `cmd/go` may inspect across the selected root plus its effective module root, or the workspace root and member trees; `.git` and `.gograph` are excluded from that walk. It also rejects special recognized build inputs, unsafe workspace members, and linked/non-regular module/workspace metadata entries. Enrichment needs compilable, build-selected production packages; on unsafe input, failure, or an incomplete non-test package load gograph warns and publishes the unchanged AST graph unless a fresh successful precise artifact already covers the same safely selected sources. Graph metadata records `precise`, `precise_fallback`, or `ast`. Precise interface calls retain one parallel call edge per valid named in-repository target; promoted methods add an explicitly marked traversal-only forwarding edge. A separate typed pass resolves compiling test packages without making test compilation a prerequisite for production precision. Broken or omitted test packages produce `typed_partial` test-call attribution rather than a production precision fallback.
   - **Graph v2 compatibility**: Precision/column/synthetic, content-digest,
     analysis-cache, parser/precise provenance, and reuse-count fields remain
     additive. Graphs without the exact current source-policy marker are
@@ -101,6 +101,8 @@ Provides a source-parse-free index health summary derived from the persisted
   - `schema_version`
   - `generated_at`
   - `precision` (`ast`, `precise`, or `precise_fallback`)
+  - `test_call_resolution` (`ast_heuristic`, `typed_complete`, or
+    `typed_partial`)
   - `packages`
   - `files`
   - `symbols`
@@ -411,7 +413,11 @@ Finds potential paths from untrusted inputs to security-sensitive operations. Te
 ```bash
 gograph tests [symbol]
 ```
-Lists attributed test edges, optionally filtered to one symbol. This is static attribution, not runtime coverage.
+Lists attributed test edges, optionally filtered to one symbol. This is static
+attribution, not runtime coverage. On precise graphs, compiling test packages
+bind direct selectors and local method values to fully-qualified target IDs.
+Conservative interface targets are marked with CHA resolution rather than
+presented as exact calls.
 
 ---
 
@@ -504,7 +510,15 @@ Returns top hotspots, worst package instability, highest complexity, reachabilit
 ```bash
 gograph untested [--pkg name] [--top N]
 ```
-Ranks called production functions that have no attributed test edge. This is distinct from unreachable-code detection and from runtime coverage.
+Ranks called production functions and methods without an exact/static
+attributed test edge. On a precise graph, direct selectors and local method
+values in compiling tests bind to exact symbol IDs, so testing one receiver no
+longer hides unrelated same-named methods. Conservative interface-dispatch
+targets remain in the result with `test_resolution=possible` and
+`possible_test_count`; `test_resolution=none` means no exact or bounded-possible
+target was found. `typed_partial` in `stats` means some tests could not be
+type-resolved, so the result remains an upper bound. This is static attribution,
+not runtime coverage.
 
 ---
 
@@ -664,7 +678,8 @@ gograph workspace status [path] [--json]
 
 Reports `complete`, `partial`, or `cannot_evaluate`, with each member's
 availability, freshness, exact artifact/source/build-context fingerprints,
-analysis mode, capabilities, advisory repository revision/dirty state, and
+analysis mode, capabilities (including independent
+`test_call_resolution`), advisory repository revision/dirty state, and
 diagnostics. Overlay status includes presence, freshness, input fingerprint,
 external exact-byte artifact fingerprint, resolver versions, and diagnostics.
 The advisory Git probes disable repository-configured filesystem monitors and
@@ -723,6 +738,18 @@ topics, and shared-schema resolution are outside workspace v1.
 ---
 
 ## Agent Integration
+
+### doctor
+```bash
+gograph doctor [--json]
+```
+Inspects the running executable and every distinct `gograph` executable found
+on `PATH`. It reports duplicate installations, a running/PATH mismatch, and
+older stable binaries when versions are safely comparable. Alternate binaries
+are read through Go build metadata and are never executed. `--json` emits the
+versioned `gograph.doctor.v1` document. Development, dirty, and prerelease
+builds are not ordered against stable releases. This host diagnostic is
+intentionally CLI-only.
 
 ### capabilities
 ```bash
@@ -867,7 +894,7 @@ Successful-result mode support is:
 | JSON, files, Mermaid | `callers`, `callees`, `impact`, `dependents` |
 | JSON, files | `query`, `focus`, `node`, `public`, `fields`, `embeds`, `imports`, `implementers`, `envs`, `interfaces`, `concurrency`, `tests`, `routes`, `sql`, `errors`, `flow`, `orphans`, `mutate`, `constructors`, `literals`, `usages`, `returnusage`, `schema`, `globals`, `mocks`, `fixtures`, `boundaries`, `httpcalls` |
 | JSON, Mermaid | `path`, `coupling`, `deps`, `endpoint` |
-| JSON | `source`, `errorflow`, `trace`, `stale`, `stats`, `summary`, `untested`, `doc`, `godobj`, `skeleton`, `arity`, `complexity`, `context`, `hotspot`, `changes`, `explain`, `plan`, `review`, `risk`, `api`, `check` |
+| JSON | `source`, `errorflow`, `trace`, `stale`, `stats`, `summary`, `untested`, `doc`, `doctor`, `godobj`, `skeleton`, `arity`, `complexity`, `context`, `hotspot`, `changes`, `explain`, `plan`, `review`, `risk`, `api`, `check` |
 | JSON | `workspace build`, `workspace status`, `workspace query`, `workspace path`, `workspace impact` |
 | Raw JSON | `session audit` |
 | Mermaid | `diagram`, or bare `gograph --mermaid` |

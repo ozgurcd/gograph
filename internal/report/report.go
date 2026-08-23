@@ -131,27 +131,38 @@ func GenerateTests(g *graph.Graph) string {
 		return sb.String()
 	}
 	// Deduplicate
-	type testKey struct{ test, target string }
+	type testKey struct{ test, target, targetID string }
 	seen := make(map[testKey]graph.TestEdge)
 	var keys []testKey
 	for _, te := range g.TestEdges {
-		k := testKey{te.TestFunc, te.Target}
+		k := testKey{te.TestFunc, te.Target, te.TargetSymbolID}
 		if _, ok := seen[k]; !ok {
 			seen[k] = te
 			keys = append(keys, k)
 		}
 	}
 	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].targetID != keys[j].targetID {
+			return keys[i].targetID < keys[j].targetID
+		}
 		if keys[i].target != keys[j].target {
 			return keys[i].target < keys[j].target
 		}
 		return keys[i].test < keys[j].test
 	})
 
-	sb.WriteString("| Target Symbol | Tested By | File | Line |\n|---------------|-----------|------|------|\n")
+	sb.WriteString("| Target Symbol | Resolution | Tested By | File | Line |\n|---------------|------------|-----------|------|------|\n")
 	for _, k := range keys {
 		te := seen[k]
-		fmt.Fprintf(&sb, "| `%s` | `%s` | `%s` | %d |\n", te.Target, te.TestFunc, te.File, te.Line)
+		target := te.Target
+		if te.TargetSymbolID != "" {
+			target = te.TargetSymbolID
+		}
+		resolution := string(te.Resolution)
+		if resolution == "" {
+			resolution = "ast_heuristic"
+		}
+		fmt.Fprintf(&sb, "| `%s` | `%s` | `%s` | `%s` | %d |\n", target, resolution, te.TestFunc, te.File, te.Line)
 	}
 	sb.WriteString("\n")
 	return sb.String()

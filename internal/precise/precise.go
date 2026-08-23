@@ -386,6 +386,18 @@ func enrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 		g.Calls = materializeInvokeCalls(g.Calls, invokeGroups)
 	}
 
+	// Test packages are loaded separately so their type errors cannot weaken
+	// production precision. Successful test packages still contribute exact
+	// selector identities and bounded CHA-possible interface/method-value
+	// targets to TestEdges and their corresponding call edges.
+	testResolution, testResolutionErr := enrichTypedTestCalls(analysisRoot, g, config)
+	if g.Build != nil {
+		g.Build.TestCallResolution = testResolution
+		if testResolutionErr != nil {
+			g.Build.Warnings = append(g.Build.Warnings, "typed test call resolution incomplete: "+testResolutionErr.Error())
+		}
+	}
+
 	// 3. Indirect mutations via mutating-method calls (Bug 17/28).
 	// First discover every method that writes to a receiver field
 	// directly; then walk caller bodies for calls into that set (plus the

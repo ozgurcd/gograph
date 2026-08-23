@@ -28,7 +28,7 @@ const CurrentSourcePolicyVersion = 1
 // CurrentAnalysisCacheVersion identifies graphs whose file-level records can
 // be decomposed back into parser output and safely reused by an incremental
 // build. Bump this whenever parser/precise provenance changes.
-const CurrentAnalysisCacheVersion = 1
+const CurrentAnalysisCacheVersion = 2
 
 // CurrentWorkspaceFactsVersion identifies repository graphs that carry the
 // local module and interaction facts required by workspace resolution. It is
@@ -103,9 +103,37 @@ type BuildMetadata struct {
 	BuildContextFingerprint string `json:"build_context_fingerprint,omitempty"`
 	// SourceFingerprint binds the graph to exact selected source and recognized
 	// build-selection metadata bytes without depending on repository location.
-	SourceFingerprint string         `json:"source_fingerprint,omitempty"`
-	Failures          []BuildFailure `json:"failures,omitempty"`
-	Warnings          []string       `json:"warnings,omitempty"`
+	SourceFingerprint string `json:"source_fingerprint,omitempty"`
+	// TestCallResolution records how test call targets were attributed. AST
+	// graphs retain parser-only selector spelling; precise graphs make a
+	// separate, non-fatal typed pass over test packages so a test selector can
+	// bind to an exact repository symbol without making test compilation a
+	// prerequisite for production precision.
+	TestCallResolution TestCallResolutionMode `json:"test_call_resolution,omitempty"`
+	Failures           []BuildFailure         `json:"failures,omitempty"`
+	Warnings           []string               `json:"warnings,omitempty"`
+}
+
+type TestCallResolutionMode string
+
+const (
+	TestCallResolutionAST     TestCallResolutionMode = "ast_heuristic"
+	TestCallResolutionTyped   TestCallResolutionMode = "typed_complete"
+	TestCallResolutionPartial TestCallResolutionMode = "typed_partial"
+)
+
+// EffectiveTestCallResolution normalizes legacy graph metadata to the
+// parser-only behavior those artifacts actually contain.
+func (m *BuildMetadata) EffectiveTestCallResolution() TestCallResolutionMode {
+	if m == nil {
+		return TestCallResolutionAST
+	}
+	switch m.TestCallResolution {
+	case TestCallResolutionTyped, TestCallResolutionPartial:
+		return m.TestCallResolution
+	default:
+		return TestCallResolutionAST
+	}
 }
 
 // UsesCurrentSourcePolicy reports whether a graph was built with the current
@@ -288,10 +316,13 @@ type ConcurrencyNode struct {
 
 // TestEdge links a *testing.T test function to the symbols it exercises.
 type TestEdge struct {
-	TestFunc string `json:"test_func"`
-	Target   string `json:"target"` // callee name that looks like a production symbol
-	File     string `json:"file"`
-	Line     int    `json:"line"`
+	TestFunc       string         `json:"test_func"`
+	Target         string         `json:"target"` // parser spelling of the callee expression
+	TargetSymbolID string         `json:"target_symbol_id,omitempty"`
+	Resolution     CallResolution `json:"resolution,omitempty"`
+	File           string         `json:"file"`
+	Line           int            `json:"line"`
+	Column         int            `json:"column,omitempty"`
 }
 
 // Dependency represents a go.mod dependency.

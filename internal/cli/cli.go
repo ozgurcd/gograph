@@ -132,6 +132,7 @@ func Run(args []string) int {
 		"add-claude-plugin": true,
 		"hook-guard":        true,
 		"version":           true,
+		"doctor":            true,
 		"validate":          true,
 		"help":              true,
 		"-h":                true,
@@ -188,6 +189,8 @@ func dispatch(args []string) int {
 		return runWorkspace(args[1:])
 	case "validate":
 		return runValidate(args[1:])
+	case "doctor":
+		return runDoctor(args[1:])
 	case "query":
 		return runQuery(args[1:])
 	case "focus":
@@ -353,7 +356,7 @@ If generated pages are missing: gograph build . --precise && gograph wiki
 
 ━━━ PREREQUISITE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Repository analysis commands read from .gograph/graph.json. Build it once before
-using them. The capabilities, help, version, and external 'doc' commands do not
+using them. The capabilities, help, version, doctor, and external 'doc' commands do not
 need an index:
 
   gograph build .            fast, tolerates broken code — use during development
@@ -439,7 +442,8 @@ and optional index writes.
   Error root-cause trace       → errorflow <err_str>
   Security source/sink scan    → flow [term] [--source kind] [--sink kind]
   Dead code sweep              → orphans
-  Test coverage gaps (codebase) → untested  (callers but zero test edges — one sweep, sorted by risk)
+  Test coverage gaps (codebase) → untested  (exact/possible test attribution in one risk-sorted sweep)
+  Diagnose install shadowing    → doctor --json  (running binary, PATH resolution, embedded versions)
   External symbol signature    → doc <pkg.Symbol>  (stdlib/third-party — no graph required)
   API breaking-change check    → api --since <ref>
   CI enforcement               → gate, check --since <ref>
@@ -513,7 +517,8 @@ the graph-oriented commands listed below. Request only one output mode at a time
 
 For supported commands, use --json for structured pipelines and --files-only
 when you only need involved file paths. Other mutation/administration commands
-remain text; session audit accepts --json and returns its native audit object.
+remain text; doctor accepts --json with its own versioned document, and session
+audit accepts --json and returns its native audit object.
 Workspace build, status, query, path, and impact also accept --json;
 workspace status/query/path/impact results are identical to their MCP JSON.
 Machine validation uses gograph.validation.v1 instead of the generic envelope.
@@ -527,6 +532,10 @@ Know these before trusting results:
                         Promoted methods use hidden traversal-only wrapper edges. Reflection,
                         unsafe, plugins, unresolved function values, test-only packages,
                         unnamed concrete types, and module-external implementations can remain incomplete.
+  Test attribution      AST graphs use selector-name heuristics. Precise builds separately
+                        type-resolve compiling tests: direct selectors and local method values
+                        are exact; interface targets remain possible. typed_partial means some
+                        tests stayed heuristic. Static attribution is not runtime coverage.
   errorflow             heuristic AST traversal — NOT SSA/data-flow. Useful for navigation,
                         not proof. Confidence rating (HIGH/MEDIUM) is a heuristic estimate.
   flow                  interprocedural, path-insensitive AST taint analysis with call/return
@@ -568,6 +577,7 @@ workspace <command>  : federated cross-repository overlay. Commands: build, stat
 stale                : check source selection, build context, and content digests
                        exit 0 = up to date, 1 = error, 2 = stale
 stats                : schema/build/precision health, parse failures, and symbol/call/route counts
+                       including ast_heuristic/typed_complete/typed_partial test resolution
 validate --repo PATH --binding-json JSON --json
                      : exact symbol/import/call/implementation predicate against one
                        current persisted graph; never builds or refreshes
@@ -605,7 +615,8 @@ routes               : all HTTP REST routes. Annotates unresolvable handlers.
 source <sym>         : confined exact source for function/method/struct/interface/
                        type/variable/constant — USE THIS instead of reading files
 sql [term]           : raw SQL queries mapped to their functions; optional keyword/table filter
-tests <sym>          : test functions exercising this symbol
+tests <sym>          : statically attributed test calls for this symbol; precise direct
+                       calls carry exact IDs and interface targets retain CHA provenance
 
 TOKEN SAVERS (COMPOSED COMMANDS — each replaces 3-8 separate calls):
 api --since <ref|graph.json>
@@ -669,8 +680,12 @@ doc <pkg[.Symbol]>  : "go doc <query>" — signature + doc comment for any stdli
 httpcalls [term]     : all outbound HTTP client calls via net/http (Get, Post, PostForm, Head).
                        Filter by method or URL substring.
 summary              : hotspots + worst instability + top complexity + reachability-orphan/god-object counts
-untested [--pkg <n>] [--top N] : production functions with callers but zero test edges — coverage gaps
-                       sorted by caller count (highest risk first). Replaces N 'tests <sym>' calls.
+untested [--pkg <n>] [--top N] : called production functions without an exact/static attributed test edge.
+                       Typed precise builds bind direct test calls exactly; CHA interface targets remain
+                       visible as test_resolution=possible instead of silently satisfying coverage.
+                       Sorted by caller count. Replaces N 'tests <sym>' calls.
+doctor [--json]      : inspect the running executable and every distinct gograph found on PATH
+                       without executing alternates; warns about shadowed/newer embedded versions.
 check [--config p] [--uncommitted] [--since ref|graph.json]
                      : static policy checks (boundaries, API drift, changed-route/export tests,
                        test coverage, orphans, globals, arity, and complexity);
@@ -777,6 +792,7 @@ func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr
 	buildMetadata := &graph.BuildMetadata{
 		ScannedFiles:            len(files),
 		Precision:               graph.PrecisionAST,
+		TestCallResolution:      graph.TestCallResolutionAST,
 		SourcePolicyVersion:     graph.CurrentSourcePolicyVersion,
 		AnalysisCacheVersion:    graph.CurrentAnalysisCacheVersion,
 		BuildContextFingerprint: selectionFingerprint,
@@ -1021,6 +1037,7 @@ func indexReusableFileAnalysis(previous *graph.Graph) map[string]*parser.FileRes
 		if result := lookup(edge.File); result != nil && !edge.Precise {
 			edge.CalleeSymbolID = ""
 			edge.Synthetic = false
+			edge.Resolution = ""
 			result.Calls = append(result.Calls, edge)
 		}
 	}
@@ -1051,6 +1068,8 @@ func indexReusableFileAnalysis(previous *graph.Graph) map[string]*parser.FileRes
 	}
 	for _, edge := range previous.TestEdges {
 		if result := lookup(edge.File); result != nil {
+			edge.TargetSymbolID = ""
+			edge.Resolution = ""
 			result.TestEdges = append(result.TestEdges, edge)
 		}
 	}
@@ -2048,10 +2067,19 @@ func sortGraph(g *graph.Graph) {
 		if g.TestEdges[i].Line != g.TestEdges[j].Line {
 			return g.TestEdges[i].Line < g.TestEdges[j].Line
 		}
+		if g.TestEdges[i].Column != g.TestEdges[j].Column {
+			return g.TestEdges[i].Column < g.TestEdges[j].Column
+		}
 		if g.TestEdges[i].TestFunc != g.TestEdges[j].TestFunc {
 			return g.TestEdges[i].TestFunc < g.TestEdges[j].TestFunc
 		}
-		return g.TestEdges[i].Target < g.TestEdges[j].Target
+		if g.TestEdges[i].Target != g.TestEdges[j].Target {
+			return g.TestEdges[i].Target < g.TestEdges[j].Target
+		}
+		if g.TestEdges[i].TargetSymbolID != g.TestEdges[j].TargetSymbolID {
+			return g.TestEdges[i].TargetSymbolID < g.TestEdges[j].TargetSymbolID
+		}
+		return g.TestEdges[i].Resolution < g.TestEdges[j].Resolution
 	})
 	sort.Slice(g.Implements, func(i, j int) bool {
 		if g.Implements[i].InterfaceID != g.Implements[j].InterfaceID {
@@ -2147,7 +2175,7 @@ USAGE
   gograph <command> [arguments] [output flags]
 
 OUTPUT FLAGS
-  --json                     Structured JSON for query, validation, version, and composed-analysis commands.
+  --json                     Structured JSON for query, validation, version, doctor, and composed-analysis commands.
                              Workspace build/status/query/path/impact also support it.
                              Other operational commands such as repository build, wiki,
                              gate, snapshot, plugin installation, and help remain text;
@@ -2176,6 +2204,8 @@ INDEXING
                              Hierarchy/SSA enrichment. If enrichment fails, warns,
                              publishes the AST graph and records precise_fallback, unless
                              a fresh precise artifact from the same sources is retained.
+                             Test packages are resolved separately; broken tests record
+                             typed_partial without downgrading production precision.
                              Inactive build-constrained files, cmd/go wildcard-excluded
                              directories, generated sources, go.mod ignore paths, AI
                              worktrees, and Git-ignored paths are automatically skipped.
@@ -2187,7 +2217,8 @@ INDEXING
                              timestamp, and counts of packages, files, symbols,
                              calls, imports, routes, SQL queries, env reads, and
                              test edges, flow functions, build completeness, analysis
-                             precision (ast/precise/precise_fallback), parser reuse,
+                             precision (ast/precise/precise_fallback), test-call resolution
+                             (ast_heuristic/typed_complete/typed_partial), parser reuse,
                              rebuilt-package count, and parse failures. Zero
                              re-parsing — reads graph.json only.
 
@@ -2228,6 +2259,13 @@ MACHINE VALIDATION
                              1=evaluated fail, or 2=cannot_evaluate/invalid request.
                              V1 predicates: symbol_exists, package_imports,
                              call_edge_exists, and type_implements.
+
+INSTALL DIAGNOSTICS
+  doctor [--json]            Report the running executable, PATH-resolved executable,
+                             every distinct gograph installation found on PATH, and
+                             versions read safely from Go build metadata. Emits
+                             gograph.doctor.v1 with --json and never executes alternate
+                             binaries. Warnings do not make the diagnostic fail.
 
 AGENT WORKFLOW RULES (CRITICAL)
   1. BEFORE editing: ALWAYS run 'gograph plan <symbol>' to understand the impact,
@@ -2435,7 +2473,9 @@ EXTRACTION
   envs [term]                Every os.Getenv / os.LookupEnv / supported Viper Get* read.
   concurrency [term]         Goroutine spawns, channel sends, and typed Mutex/RWMutex/
                              WaitGroup/Once calls (not receives or select statements).
-  tests [symbol]             Test functions that exercise a named symbol.
+  tests [symbol]             Statically attributed test calls for a named symbol.
+                             Precise direct calls carry exact IDs; interface targets
+                             retain conservative CHA provenance.
 
 AGENT INTEGRATION
   capabilities               Token-optimized cheat sheet for AI agents. Run this
@@ -2484,6 +2524,7 @@ AGENT INTEGRATION
                              for direct human use.
 
 OTHER
+  doctor [--json]            Diagnose duplicate or shadowed gograph installations.
   version, -v                Print version; add --json for gograph.version.v1.
   help, -h                   Show this help.
 
@@ -2698,6 +2739,7 @@ func runStats() int {
 	fmt.Printf("schema_version : %s\n", st.SchemaVersion)
 	fmt.Printf("generated_at   : %s\n", st.GeneratedAt)
 	fmt.Printf("precision      : %s\n", st.Precision)
+	fmt.Printf("test_resolution: %s\n", st.TestCallResolution)
 	fmt.Printf("packages       : %d\n", st.Packages)
 	fmt.Printf("files          : %d\n", st.Files)
 	fmt.Printf("symbols        : %d\n", st.Symbols)
@@ -4260,9 +4302,9 @@ func runSummary() int {
 }
 
 // runUntested finds production functions and methods that have at least one
-// non-test caller but zero test edges — the coverage gap that neither
-// 'orphans' (zero callers) nor 'tests <sym>' (per-symbol lookup) surfaces
-// efficiently at codebase scale.
+// non-test caller but no exact/static or legacy parser-attributed test edge.
+// Conservative typed dispatch candidates remain visible rather than silently
+// satisfying the coverage signal.
 //
 // Usage: gograph untested [--pkg <name>] [--top N]
 func runUntested(args []string) int {
@@ -4317,7 +4359,7 @@ func runUntested(args []string) int {
 	}
 
 	if len(results) == 0 {
-		fmt.Println("No untested functions found — all called symbols have test coverage.")
+		fmt.Println("No untested candidates found — every called symbol has an exact/static or parser-attributed test edge.")
 		return 0
 	}
 
@@ -4325,13 +4367,13 @@ func runUntested(args []string) int {
 	if top > 0 {
 		label = fmt.Sprintf("top %d", top)
 	}
-	fmt.Printf("Untested Functions (%s, sorted by caller count):\n\n", label)
-	fmt.Printf("%-40s  %-12s  %6s  %s\n", "FUNCTION", "PACKAGE", "CALLERS", "FILE")
-	fmt.Println(strings.Repeat("-", 90))
+	fmt.Printf("Untested Candidates (%s, sorted by caller count):\n\n", label)
+	fmt.Printf("%-38s  %-12s  %6s  %-12s  %s\n", "FUNCTION", "PACKAGE", "CALLERS", "TEST MATCH", "FILE")
+	fmt.Println(strings.Repeat("-", 104))
 	for _, r := range results {
 		name := r.Name
-		if len(name) > 38 {
-			name = name[:35] + "..."
+		if len(name) > 36 {
+			name = name[:33] + "..."
 		}
 		pkg := r.PackageName
 		if len(pkg) > 10 {
@@ -4340,7 +4382,11 @@ func runUntested(args []string) int {
 				pkg = pkg[i+1:]
 			}
 		}
-		fmt.Printf("%-40s  %-12s  %6d  %s:%d\n", name, pkg, r.CallerCount, r.File, r.Line)
+		testMatch := r.TestResolution
+		if r.PossibleTestCount > 0 {
+			testMatch = fmt.Sprintf("possible(%d)", r.PossibleTestCount)
+		}
+		fmt.Printf("%-38s  %-12s  %6d  %-12s  %s:%d\n", name, pkg, r.CallerCount, testMatch, r.File, r.Line)
 	}
 	return 0
 }

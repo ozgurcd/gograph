@@ -329,6 +329,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 		"build",
 		"workspace",
 		"validate",
+		"doctor",
 		"query",
 		"focus",
 		"node",
@@ -599,7 +600,7 @@ func TestHelpDocumentsEveryCanonicalCommand(t *testing.T) {
 		"deps", "dependents", "changes", "godobj", "plan", "review", "risk", "api",
 		"routes", "sql", "httpcalls", "errorflow", "flow", "errors", "envs", "concurrency", "tests",
 		"capabilities", "wiki", "doc", "mcp", "session", "add-claude-plugin", "hook-guard",
-		"version", "help", "workspace",
+		"version", "doctor", "help", "workspace",
 	}
 	for _, name := range want {
 		if !documented[name] {
@@ -632,6 +633,8 @@ func TestHelpDocumentsImplementedModes(t *testing.T) {
 		"workspace path [--scope id] [--workspace path] [--include-possible] <from> <to>",
 		"gograph_workspace_status",
 		"CLI --json and MCP JSON have identical native values",
+		"typed_partial",
+		"Precise direct calls carry exact IDs",
 	} {
 		if !strings.Contains(help, mode) {
 			t.Errorf("gograph --help does not document implemented mode %q", mode)
@@ -682,6 +685,10 @@ func TestCapabilitiesDocumentsImplementedModes(t *testing.T) {
 		"ambiguous/possible evidence",
 		"Workspace changes are not part",
 		"disables member-configured fsmonitor hooks",
+		"doctor --json",
+		"test_resolution=possible",
+		"typed_partial",
+		"Static attribution is not runtime coverage",
 	} {
 		if !strings.Contains(capabilities, want) {
 			t.Errorf("gograph capabilities does not document implemented mode %q", want)

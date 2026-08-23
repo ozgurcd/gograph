@@ -87,6 +87,121 @@ func TestEnrich_DoesNotError(t *testing.T) {
 	}
 }
 
+func TestEnrichResolvesDirectInterfaceAndMethodValueTestCalls(t *testing.T) {
+	production := `package testcalls
+
+type Runner interface { Run() }
+type Direct struct{}
+func (*Direct) Run() {}
+type Memory struct{}
+func (*Memory) Run() {}
+type SQL struct{}
+func (*SQL) Run() {}
+`
+	testSource := `package testcalls
+
+import "testing"
+
+func TestCalls(t *testing.T) {
+	direct := &Direct{}
+	direct.Run()
+	var runner Runner = &Memory{}
+	runner.Run()
+	run := direct.Run
+	run()
+}
+`
+	root := writePreciseFixture(t, "example.com/testcalls", "calls.go", production)
+	if err := os.WriteFile(filepath.Join(root, "calls_test.go"), []byte(testSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	directLine, directColumn := sourceCallLocation(t, testSource, "direct.Run", 0)
+	interfaceLine, interfaceColumn := sourceCallLocation(t, testSource, "runner.Run", 0)
+	valueLine, valueColumn := sourceCallLocation(t, testSource, "run", 0)
+	const (
+		directID = "example.com/testcalls::(*Direct).Run"
+		memoryID = "example.com/testcalls::(*Memory).Run"
+		sqlID    = "example.com/testcalls::(*SQL).Run"
+	)
+	g := &graph.Graph{
+		Version: graph.Version,
+		Build:   &graph.BuildMetadata{},
+		Files: []graph.FileNode{
+			{ID: "calls.go", Path: "calls.go", PackageName: "testcalls"},
+			{ID: "calls_test.go", Path: "calls_test.go", PackageName: "testcalls"},
+		},
+		Symbols: []graph.SymbolNode{
+			{ID: "example.com/testcalls::Runner", Kind: graph.KindInterface, Name: "Runner", PackageName: "testcalls", File: "calls.go"},
+			{ID: directID, Kind: graph.KindMethod, Name: "Run", Receiver: "*Direct", PackageName: "testcalls", File: "calls.go"},
+			{ID: memoryID, Kind: graph.KindMethod, Name: "Run", Receiver: "*Memory", PackageName: "testcalls", File: "calls.go"},
+			{ID: sqlID, Kind: graph.KindMethod, Name: "Run", Receiver: "*SQL", PackageName: "testcalls", File: "calls.go"},
+		},
+	}
+	for _, edge := range []graph.TestEdge{
+		{TestFunc: "TestCalls", Target: "direct.Run", File: "calls_test.go", Line: directLine, Column: directColumn},
+		{TestFunc: "TestCalls", Target: "runner.Run", File: "calls_test.go", Line: interfaceLine, Column: interfaceColumn},
+		{TestFunc: "TestCalls", Target: "run", File: "calls_test.go", Line: valueLine, Column: valueColumn},
+	} {
+		g.TestEdges = append(g.TestEdges, edge)
+		g.Calls = append(g.Calls, graph.CallEdge{CallerSymbolID: "example.com/testcalls::TestCalls", CallerName: "TestCalls", CalleeRaw: edge.Target, File: edge.File, Line: edge.Line, Column: edge.Column})
+	}
+
+	requirePreciseEnrich(t, Enrich(root, g))
+	if got := g.Build.EffectiveTestCallResolution(); got != graph.TestCallResolutionTyped {
+		t.Fatalf("test call resolution = %q, want %q; warnings=%v", got, graph.TestCallResolutionTyped, g.Build.Warnings)
+	}
+
+	targetsAt := func(line, column int) map[string]graph.CallResolution {
+		t.Helper()
+		got := make(map[string]graph.CallResolution)
+		for _, edge := range g.TestEdges {
+			if edge.Line == line && edge.Column == column {
+				got[edge.TargetSymbolID] = edge.Resolution
+			}
+		}
+		return got
+	}
+	if got := targetsAt(directLine, directColumn); !reflect.DeepEqual(got, map[string]graph.CallResolution{directID: graph.CallResolutionStatic}) {
+		t.Fatalf("direct test targets = %#v", got)
+	}
+	if got := targetsAt(interfaceLine, interfaceColumn); !reflect.DeepEqual(got, map[string]graph.CallResolution{directID: graph.CallResolutionCHA, memoryID: graph.CallResolutionCHA, sqlID: graph.CallResolutionCHA}) {
+		t.Fatalf("interface test targets = %#v", got)
+	}
+	if got := targetsAt(valueLine, valueColumn); !reflect.DeepEqual(got, map[string]graph.CallResolution{directID: graph.CallResolutionStatic}) {
+		t.Fatalf("method-value test targets = %#v", got)
+	}
+}
+
+func TestEnrichKeepsProductionPrecisionWhenTestPackageDoesNotCompile(t *testing.T) {
+	root := writePreciseFixture(t, "example.com/brokentest", "production.go", "package brokentest\n\nfunc Ready() {}\n")
+	brokenTest := "package brokentest\n\nimport \"testing\"\n\nfunc TestBroken(t *testing.T) { Missing() }\n"
+	if err := os.WriteFile(filepath.Join(root, "production_test.go"), []byte(brokenTest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	line, column := sourceCallLocation(t, brokenTest, "Missing", 0)
+	g := &graph.Graph{
+		Version: graph.Version,
+		Build:   &graph.BuildMetadata{},
+		Files: []graph.FileNode{
+			{ID: "production.go", Path: "production.go", PackageName: "brokentest"},
+			{ID: "production_test.go", Path: "production_test.go", PackageName: "brokentest"},
+		},
+		Symbols:   []graph.SymbolNode{{ID: "example.com/brokentest::Ready", Kind: graph.KindFunction, Name: "Ready", PackageName: "brokentest", File: "production.go"}},
+		TestEdges: []graph.TestEdge{{TestFunc: "TestBroken", Target: "Missing", File: "production_test.go", Line: line, Column: column}},
+		Calls:     []graph.CallEdge{{CallerSymbolID: "example.com/brokentest::TestBroken", CallerName: "TestBroken", CalleeRaw: "Missing", File: "production_test.go", Line: line, Column: column}},
+	}
+
+	if err := Enrich(root, g); err != nil {
+		t.Fatalf("test compilation must not downgrade production precision: %v", err)
+	}
+	if got := g.Build.EffectiveTestCallResolution(); got != graph.TestCallResolutionPartial {
+		t.Fatalf("test call resolution = %q, want partial", got)
+	}
+	if len(g.Build.Warnings) == 0 || !strings.Contains(g.Build.Warnings[0], "typed test call resolution incomplete") {
+		t.Fatalf("partial test resolution warning missing: %v", g.Build.Warnings)
+	}
+}
+
 // TestEnrich_PopulatesImplements verifies that Enrich discovers at least one
 // interface-satisfaction edge in the fixture project.
 func TestEnrich_PopulatesImplements(t *testing.T) {

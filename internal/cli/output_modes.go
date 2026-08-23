@@ -13,6 +13,7 @@ const (
 var commandOutputModes = map[string]outputModeSupport{
 	"validate":     outputJSON,
 	"version":      outputJSON,
+	"doctor":       outputJSON,
 	"--version":    outputJSON,
 	"-v":           outputJSON,
 	"query":        outputJSON | outputFilesOnly,

@@ -88,7 +88,10 @@ Overlay publication is deterministic for identical inputs and atomic. The
 persisted `input_fingerprint` binds the canonical manifest, ordered exact
 member graph artifact fingerprints, scope membership, and resolver versions.
 `workspace status` computes the workspace artifact fingerprint externally over
-the exact bytes. Repository revision and dirty state are advisory only; their
+the exact bytes. Member capabilities independently report production analysis
+and `test_call_resolution` (`ast_heuristic`, `typed_complete`, or
+`typed_partial`) for the exact graph artifact. Repository revision and dirty
+state are advisory only; their
 read-only Git probes disable repository-configured filesystem monitors and
 optional index locking.
 

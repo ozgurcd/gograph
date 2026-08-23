@@ -198,3 +198,48 @@ func TestUntestedShortNameFallback(t *testing.T) {
 		}
 	}
 }
+
+func TestUntestedUsesTypedTestIdentityWithoutConflatingReceivers(t *testing.T) {
+	const (
+		testedID   = "example.com/pkg::(*OAuthClientAuthService).Authenticate"
+		untestedID = "example.com/pkg::(*DCRService).Authenticate"
+	)
+	g := &graph.Graph{
+		Symbols: []graph.SymbolNode{
+			{ID: testedID, Name: "Authenticate", Kind: graph.KindMethod, Receiver: "*OAuthClientAuthService", PackageName: "pkg", File: "oauth.go"},
+			{ID: untestedID, Name: "Authenticate", Kind: graph.KindMethod, Receiver: "*DCRService", PackageName: "pkg", File: "dcr.go"},
+		},
+		Calls: []graph.CallEdge{
+			{File: "caller.go", CalleeSymbolID: testedID},
+			{File: "caller.go", CalleeSymbolID: untestedID},
+		},
+		TestEdges: []graph.TestEdge{{
+			TestFunc:       "TestClientAuth",
+			Target:         "auth.Authenticate",
+			TargetSymbolID: testedID,
+			Resolution:     graph.CallResolutionStatic,
+		}},
+	}
+
+	results := search.Untested(g)
+	if len(results) != 1 || results[0].File != "dcr.go" || results[0].TestResolution != "none" {
+		t.Fatalf("typed test identity did not isolate the tested receiver: %#v", results)
+	}
+}
+
+func TestUntestedRetainsPossibleDispatchWithExplicitResolution(t *testing.T) {
+	const targetID = "example.com/pkg::(*MemoryStore).Delete"
+	g := &graph.Graph{
+		Symbols: []graph.SymbolNode{{ID: targetID, Name: "Delete", Kind: graph.KindMethod, Receiver: "*MemoryStore", PackageName: "pkg", File: "store.go"}},
+		Calls:   []graph.CallEdge{{File: "caller.go", CalleeSymbolID: targetID}},
+		TestEdges: []graph.TestEdge{
+			{TestFunc: "TestDeleteA", Target: "store.Delete", TargetSymbolID: targetID, Resolution: graph.CallResolutionCHA},
+			{TestFunc: "TestDeleteB", Target: "store.Delete", TargetSymbolID: targetID, Resolution: graph.CallResolutionCHA},
+		},
+	}
+
+	results := search.Untested(g)
+	if len(results) != 1 || results[0].TestResolution != "possible" || results[0].PossibleTestCount != 2 {
+		t.Fatalf("possible dispatch must remain visible and qualified: %#v", results)
+	}
+}

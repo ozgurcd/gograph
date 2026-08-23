@@ -121,7 +121,7 @@ Here is how Claude Code behaves before and after `gograph`:
 
 ## 5. MCP Integration
 
-Registering `gograph` as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server exposes its query, analysis, and workflow capabilities as tools such as `gograph_query` and `gograph_impact`. Host/build operations (`build`, `gate`, `snapshot`, plugin/hook installation, MCP startup, help, and version) intentionally remain CLI-only. Presentation is transport-specific: MCP uses typed parameters and content payloads instead of CLI output flags. For `callers`, `callees`, `impact`, `endpoint`, `dependents`, `deps`, `path`, and `coupling`, set `mermaid=true` to receive the same Markdown-fenced Mermaid diagram produced by CLI `--mermaid`.
+Registering `gograph` as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server exposes its query, analysis, and workflow capabilities as tools such as `gograph_query` and `gograph_impact`. Host/build operations (`build`, `doctor`, `gate`, `snapshot`, plugin/hook installation, MCP startup, help, and version) intentionally remain CLI-only. Presentation is transport-specific: MCP uses typed parameters and content payloads instead of CLI output flags. For `callers`, `callees`, `impact`, `endpoint`, `dependents`, `deps`, `path`, and `coupling`, set `mermaid=true` to receive the same Markdown-fenced Mermaid diagram produced by CLI `--mermaid`.
 
 ### Claude Desktop Config + Shared Claude Rules/Hook
 
