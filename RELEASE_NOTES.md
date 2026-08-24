@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+No changes yet.
+
+## v1.6.3 — 2026-08-24
+
 ### Bounded precise-build recovery
 
 - Fixed an incremental precise-build amplification bug where typed interface
