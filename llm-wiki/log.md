@@ -432,3 +432,9 @@ Recorded that workspace status, query, path, and impact share one native result 
 - Release workflow run `32714317382` published and independently verified all 14 GitHub assets, Homebrew cask 1.6.3, and the active official MCP Registry 1.6.3 record.
 
 - 2026-08-24: Established the v1.6.4 low-memory build contract across repository CLI builds, explicit workspace member refreshes, and project MCP refreshes: optional soft Go runtime memory targeting, aggressive phase reclamation, preserved precision/failure atomicity, and CLI/MCP capability documentation parity.
+
+## [2026-08-24] maintenance | Publish v1.6.4 low-memory release
+
+- Released gograph v1.6.4 from tag commit `90667b6a86864ea7819eed8caa5b561450517b0e`; implementation commit `3987bbc` adds the optional correctness-preserving low-memory policy across repository builds, explicit workspace refreshes, and project MCP refreshes.
+- Local and release gates passed uncached unit and race tests, vet, lint and static analysis, source/binary/archive vulnerability scans, deterministic MCPB verification and 67-tool smoke initialization, documentation rendering, and standard/low graph-result equivalence checks.
+- Release workflow run `32733909391` published and independently verified all 14 GitHub assets, Homebrew cask 1.6.4, and the active official MCP Registry 1.6.4 record.
