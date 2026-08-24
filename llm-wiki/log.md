@@ -424,3 +424,9 @@ Recorded that workspace status, query, path, and impact share one native result 
 
 - Limited precise SSA bodies to selected repository packages while retaining imported type information and local external-call references.
 - Full-project comparison reduced peak RSS from about 3.56 GB to 2.66 GB and removed 64 source-less external synthetic wrapper edges; local dispatch, promoted forwarding, symbols, implementations, mutations, flow facts, and test attribution remained intact.
+
+## [2026-08-24] maintenance | Publish v1.6.3 precise-build recovery release
+
+- Released gograph v1.6.3 from tag commit `9b90bd81df3f2c7de6d6bcac658f520d1bbac942`; implementation commit `b75d265` fixes incremental typed-test edge amplification, bounds whole-artifact reads, and limits precise SSA bodies to selected repository packages.
+- Local and release gates passed uncached unit and race tests, vet, lint and static analysis, source/binary/archive vulnerability scans, deterministic MCPB verification and 67-tool smoke initialization, and documentation rendering.
+- Release workflow run `32714317382` published and independently verified all 14 GitHub assets, Homebrew cask 1.6.3, and the active official MCP Registry 1.6.3 record.
