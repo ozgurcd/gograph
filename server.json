@@ -3,7 +3,7 @@
   "name": "io.github.ozgurcd/gograph",
   "title": "gograph",
   "description": "Local Go repository call graphs and structural analysis for coding agents over stdio.",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "websiteUrl": "https://gograph.identuum.ai",
   "repository": {
     "url": "https://github.com/ozgurcd/gograph",
@@ -13,54 +13,54 @@
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/ozgurcd/gograph/releases/download/v1.6.2/gograph_1.6.2_darwin_amd64.mcpb",
-      "version": "1.6.2",
-      "fileSha256": "aec3978404819f01e6aa39a7aa1e37734b9961a116acb372b752beb2b0bf2480",
+      "identifier": "https://github.com/ozgurcd/gograph/releases/download/v1.6.3/gograph_1.6.3_darwin_amd64.mcpb",
+      "version": "1.6.3",
+      "fileSha256": "aded1b91561f4db05304a78d19b5dc70769125f88bafabd281f7fcd509a8cc26",
       "transport": {
         "type": "stdio"
       }
     },
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/ozgurcd/gograph/releases/download/v1.6.2/gograph_1.6.2_darwin_arm64.mcpb",
-      "version": "1.6.2",
-      "fileSha256": "52ca66b41fdde18bf752b7b4fc4330892efe3fc25021fa8aac6144a4a9704620",
+      "identifier": "https://github.com/ozgurcd/gograph/releases/download/v1.6.3/gograph_1.6.3_darwin_arm64.mcpb",
+      "version": "1.6.3",
+      "fileSha256": "61fbdbdc2709313a22c91e6d54c2c81682e44641094e2a791ed13c388b82abc2",
       "transport": {
         "type": "stdio"
       }
     },
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/ozgurcd/gograph/releases/download/v1.6.2/gograph_1.6.2_linux_amd64.mcpb",
-      "version": "1.6.2",
-      "fileSha256": "e7d0cece5cc206bc649a3faa60c4a374b9f01fcf6675ec28e5b6c0d7e65506ca",
+      "identifier": "https://github.com/ozgurcd/gograph/releases/download/v1.6.3/gograph_1.6.3_linux_amd64.mcpb",
+      "version": "1.6.3",
+      "fileSha256": "c641c5991a4fd57cf1e8fbb7a14c341d86936e422415566c4d22f25012b4f241",
       "transport": {
         "type": "stdio"
       }
     },
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/ozgurcd/gograph/releases/download/v1.6.2/gograph_1.6.2_linux_arm64.mcpb",
-      "version": "1.6.2",
-      "fileSha256": "63bf38d95e9a1cb051f7ea2c10fccaf875810aa256f6a923d60f0231bacaf847",
+      "identifier": "https://github.com/ozgurcd/gograph/releases/download/v1.6.3/gograph_1.6.3_linux_arm64.mcpb",
+      "version": "1.6.3",
+      "fileSha256": "a3a56f6518c9990e6f806fa3dd8c6801a54211b93ad9c0baa35a494d533dc30b",
       "transport": {
         "type": "stdio"
       }
     },
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/ozgurcd/gograph/releases/download/v1.6.2/gograph_1.6.2_windows_amd64.mcpb",
-      "version": "1.6.2",
-      "fileSha256": "c3489496fa5cdea2bc91c1eebc34de3e34ee69ee16b12f79f0fc1fb6fc1428c7",
+      "identifier": "https://github.com/ozgurcd/gograph/releases/download/v1.6.3/gograph_1.6.3_windows_amd64.mcpb",
+      "version": "1.6.3",
+      "fileSha256": "4d0b66bef0a15dcc660d17ca84adb5fe0af619d57829de89602f8fb8187c853f",
       "transport": {
         "type": "stdio"
       }
     },
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/ozgurcd/gograph/releases/download/v1.6.2/gograph_1.6.2_windows_arm64.mcpb",
-      "version": "1.6.2",
-      "fileSha256": "fe611b37fbacec574feed473b0f51f5a79495d36306a866207f9d775994758c8",
+      "identifier": "https://github.com/ozgurcd/gograph/releases/download/v1.6.3/gograph_1.6.3_windows_arm64.mcpb",
+      "version": "1.6.3",
+      "fileSha256": "6432f049d9c92b28741a30a7fd31a3cd0d0972a317170cbbd94fe241ffd6b4bc",
       "transport": {
         "type": "stdio"
       }
