@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,7 +11,30 @@ import (
 	"testing"
 
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
+
+func TestLoadArtifactRejectsOversizedJSONBeforeDecode(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, ArtifactFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o640)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(graph.MaxArtifactBytes + 1); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadArtifact(root); !errors.Is(err, sourcefs.ErrFileTooLarge) {
+		t.Fatalf("oversized workspace artifact error = %v, want ErrFileTooLarge", err)
+	}
+}
 
 func TestSelectScopeRequiresExplicitChoiceUnlessDefaultOrSingle(t *testing.T) {
 	scopes := []ScopeOverlay{{ID: "oss"}, {ID: "ce"}}

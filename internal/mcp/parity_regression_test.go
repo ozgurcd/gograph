@@ -441,6 +441,9 @@ func TestMCPCapabilityPrerequisiteReflectsPersistenceMode(t *testing.T) {
 		"Filesystem-shaped queries are rejected",
 		"typed_partial",
 		"static attribution never proves runtime coverage",
+		"reject artifacts larger than 512 MiB before allocation",
+		"Typed-only test targets are recomputed",
+		"does not build dependency SSA bodies",
 	} {
 		if !strings.Contains(defaultText, phrase) {
 			t.Fatalf("capabilities omitted %q: %s", phrase, defaultText)

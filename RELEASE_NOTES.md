@@ -2,7 +2,29 @@
 
 ## Unreleased
 
-No changes yet.
+### Bounded precise-build recovery
+
+- Fixed an incremental precise-build amplification bug where typed interface
+  targets in `test_edges` were restored as parser input and multiplied on every
+  unchanged rebuild. Typed-only test targets now carry explicit provenance,
+  parser reuse collapses legacy expanded sites, and analysis cache version 3
+  forces one clean rebuild of older artifacts.
+- Repository graphs, saved graph baselines, validation snapshots, MCP reloads,
+  workspace member fingerprints, and workspace overlays now reject artifacts
+  larger than 512 MiB before whole-file JSON allocation. A recovery build
+  treats an oversized previous graph as unusable and reconstructs it from
+  authoritative source instead of loading it into memory.
+- Added a four-build interface-dispatch regression, sparse oversized-artifact
+  recovery coverage, and a full-project stress reproduction. The reported
+  project stayed at 20,356 test edges across unchanged precise builds after an
+  affected v1.6.2 fixture had reproduced 4 → 10 → 28 → 82 edges.
+- Precise enrichment now builds SSA bodies only for selected repository
+  packages instead of the full transitive dependency closure. Imported types
+  and local call sites remain available, while source-less forwarding edges
+  from dependency wrappers are excluded. On the 696-file reproduction this
+  reduced peak RSS from about 3.56 GB to 2.66 GB and removed 64 external
+  synthetic wrapper edges without changing symbols, implementations,
+  mutations, flow facts, or test attribution.
 
 ## v1.6.2 — 2026-08-23
 

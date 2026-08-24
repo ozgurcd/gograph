@@ -15,6 +15,7 @@ import (
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/report"
 	"github.com/ozgurcd/gograph/internal/search"
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
 
 func writeTestModule(t *testing.T) string {
@@ -134,6 +135,40 @@ func TestPublishGraphArtifactsWritesCompleteBundleAndBaseline(t *testing.T) {
 	}
 	if gotMode := info.Mode().Perm(); runtime.GOOS != "windows" && gotMode != 0o640 {
 		t.Errorf("graph.json mode = %o, want 640", gotMode)
+	}
+}
+
+func TestOversizedPreviousGraphIsRejectedAndRecoverable(t *testing.T) {
+	root := writeTestModule(t)
+	artifact := filepath.Join(root, graphFile)
+	if err := os.MkdirAll(filepath.Dir(artifact), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(artifact, os.O_CREATE|os.O_WRONLY, 0o640)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(graph.MaxArtifactBytes + 1); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := loadGraph(root); err == nil || !errors.Is(err, sourcefs.ErrFileTooLarge) {
+		t.Fatalf("oversized load error = %v, want ErrFileTooLarge", err)
+	}
+	candidate := buildTestGraph(t, root)
+	publication, err := publishGraphArtifacts(root, candidate, manualArtifactPublication)
+	if err != nil {
+		t.Fatalf("recover oversized graph: %v", err)
+	}
+	if !publication.Published {
+		t.Fatal("recovery graph was not published")
+	}
+	if _, err := loadGraph(root); err != nil {
+		t.Fatalf("load recovered graph: %v", err)
 	}
 }
 

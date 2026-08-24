@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
 
@@ -31,6 +32,9 @@ func Publish(root string, artifact *Artifact) error {
 	data, err := EncodeArtifact(artifact)
 	if err != nil {
 		return err
+	}
+	if int64(len(data)) > graph.MaxArtifactBytes {
+		return fmt.Errorf("workspace artifact size %d bytes exceeds safety limit %d bytes", len(data), graph.MaxArtifactBytes)
 	}
 	reader, err := sourcefs.Open(root)
 	if err != nil {

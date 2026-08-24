@@ -73,6 +73,15 @@ cross-package method sets and dispatch targets remain correct.
     repository source confinement and may count or display synthetic forwarding
     records as ordinary calls; use the current binary for untrusted repositories
     and new graphs.
+  - **Artifact memory safety**: Whole graph, saved-baseline, validation, MCP
+    reload, and workspace-overlay JSON reads reject artifacts larger than 512
+    MiB before allocation. Query-only commands return rebuild guidance. A build
+    treats an oversized previous graph as unusable, reconstructs parser facts
+    from source, and recomputes typed-only test targets before publication.
+  - **SSA scope**: Precise production SSA bodies cover the selected repository
+    packages rather than the transitive dependency closure. Imported types and
+    local references to external calls remain available; dependency-body call
+    graphs and their source-less synthetic wrapper edges are not persisted.
 
 ### stale
 ```bash

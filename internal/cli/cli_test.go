@@ -643,6 +643,8 @@ func TestHelpDocumentsImplementedModes(t *testing.T) {
 		"build, validate, doctor, gate, snapshot",
 		"typed_partial",
 		"Precise direct calls carry exact IDs",
+		"Artifacts over 512 MiB are rejected before allocation",
+		"without dependency-body call graphs",
 	} {
 		if !strings.Contains(help, mode) {
 			t.Errorf("gograph --help does not document implemented mode %q", mode)
@@ -703,6 +705,8 @@ func TestCapabilitiesDocumentsImplementedModes(t *testing.T) {
 		"test_resolution=possible",
 		"typed_partial",
 		"Static attribution is not runtime coverage",
+		"reject artifacts larger than 512 MiB before allocation",
+		"not dependency bodies",
 	} {
 		if !strings.Contains(capabilities, want) {
 			t.Errorf("gograph capabilities does not document implemented mode %q", want)

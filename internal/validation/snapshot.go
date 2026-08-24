@@ -58,7 +58,7 @@ func (RepositoryLoader) Load(ctx context.Context, repositoryRoot string) (Snapsh
 		return Snapshot{Root: root}, snapshotError(ReasonInternalError, "repository_open_failed", err.Error(), "")
 	}
 	defer func() { _ = reader.Close() }()
-	graphBytes, err := reader.ReadRegularFile(graphPath)
+	graphBytes, err := reader.ReadRegularFileLimit(graphPath, graph.MaxArtifactBytes)
 	if err != nil {
 		reason := ReasonGraphInvalid
 		if errors.Is(err, fs.ErrNotExist) {

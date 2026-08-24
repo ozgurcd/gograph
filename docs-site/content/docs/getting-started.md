@@ -110,6 +110,13 @@ gograph build . --precise
 
 Attempts Go type loading plus CHA/SSA enrichment on top of the AST pass. Before its first `cmd/go` invocation, normal indexing validates Go tool metadata (`go.mod`, `go.sum`, `go.work`, `go.work.sum`, and `vendor/modules.txt`) and confines applicable workspace members to their workspace directory. The scanner then excludes linked or special recognized Go build inputs before build selection and AST reads. Before repository package type loading, the stronger preflight rejects source-tree links `cmd/go` may inspect across the selected root plus its effective module root, or the workspace root and member trees; `.git` and `.gograph` are excluded from that walk. Unsafe repository input makes enrichment fail closed while the safe AST graph remains available as `precise_fallback`. Compilable, build-selected production packages are required for precise data; if enrichment fails or omits an indexed non-test source file, gograph warns and retains the AST graph. Successful, fallback, and AST-only status is persisted as `precise`, `precise_fallback`, or `ast`, except that a failed retry keeps an existing fresh successful precise artifact covering the same sources. A separate non-fatal typed pass resolves direct and conservative interface test-call targets. Broken test packages yield `typed_partial` test attribution without downgrading successful production precision. A precise interface invocation retains every valid named in-repository CHA target, so `callers Repository.Delete` can resolve direct, embedded-interface, and promoted concrete methods without dropping alternative implementations. Promoted wrappers forward through traversal-only synthetic edges that do not appear as source call sites. CHA can still over-approximate runtime targets, while reflection, plugins, `unsafe`, test-only packages, unnamed concrete types, and module-external implementations remain incomplete. Go dependency/toolchain resolution follows the user's environment and remains open-world. Use before major refactors or blast-radius analysis.
 
+Typed-only test targets are recomputed during incremental precise builds rather
+than reused as parser facts. Persisted graph JSON larger than 512 MiB is
+rejected before allocation; rerun `gograph build` to reconstruct it from source.
+Production SSA bodies cover selected repository packages instead of the full
+dependency closure; imported types and local external-call references remain
+available without dependency-body call graphs and source-less wrapper noise.
+
 **When to use which:**
 
 | Mode | Speed | Requires compilable? | Interface dispatch |

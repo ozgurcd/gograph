@@ -12,6 +12,11 @@
 - [scrinium-guide.md](scrinium-guide.md) — Conditional, token-conscious Scrinium usage and governance limits.
 - [mcp-registry.md](mcp-registry.md) — Live v1.6.2 Registry identity, MCPB representation, release invariants, and preview limits.
 
+## Canonical Claims
+
+- [GOGRAPH-PRECISE-ARTIFACT-BOUNDS-1](claims/GOGRAPH-PRECISE-ARTIFACT-BOUNDS-1.json) — Parser-only incremental test-edge reuse and the 512 MiB whole-artifact read bound.
+- [GOGRAPH-PRECISE-SSA-SCOPE-1](claims/GOGRAPH-PRECISE-SSA-SCOPE-1.json) — Repository-scoped precise SSA bodies and exclusion of dependency-wrapper noise.
+
 ## Generated Reports (rebuilt dynamically)
 
 - [overview.md](overview.md) — Codebase statistics, hotspots, and package instability.

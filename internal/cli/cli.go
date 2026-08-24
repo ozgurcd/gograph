@@ -365,6 +365,7 @@ need an index:
 
   gograph build .            fast, tolerates broken code — use during development
   gograph build . --precise  type-checked CHA/SSA; records precise or precise_fallback
+                               using repository SSA bodies (not dependency bodies),
                                unless a failed retry can retain a fresh precise artifact
 
 After build: graph.json + Markdown reports are written to .gograph/.
@@ -394,6 +395,9 @@ across the selected root plus its effective module root, or the workspace root
 and member trees; .git and .gograph are excluded from that preflight;
 graph.json must be a regular file beneath a real .gograph directory, and
 graphs with a missing or unsupported source-policy marker are rebuild-required.
+Whole graph, saved-baseline, validation, MCP-reload, and workspace-overlay JSON
+reads reject artifacts larger than 512 MiB before allocation. A manual build
+treats oversized previous graph state as unusable and reconstructs it from source.
 Serialized graph roots are ignored. Use the current binary when analyzing
 untrusted repositories; older binaries do not enforce this source-confinement contract.
 
@@ -1089,10 +1093,26 @@ func indexReusableFileAnalysis(previous *graph.Graph) map[string]*parser.FileRes
 			result.Concurrency = append(result.Concurrency, edge)
 		}
 	}
+	type parserTestEdgeKey struct {
+		testFunc string
+		target   string
+		file     string
+		line     int
+		column   int
+	}
+	seenParserTestEdges := make(map[parserTestEdgeKey]struct{}, len(previous.TestEdges))
 	for _, edge := range previous.TestEdges {
-		if result := lookup(edge.File); result != nil {
+		if result := lookup(edge.File); result != nil && !edge.Precise {
 			edge.TargetSymbolID = ""
 			edge.Resolution = ""
+			key := parserTestEdgeKey{edge.TestFunc, edge.Target, filepath.Clean(edge.File), edge.Line, edge.Column}
+			if _, duplicate := seenParserTestEdges[key]; duplicate {
+				// Legacy precise graphs did not record typed-only test edge
+				// provenance. Collapse their expanded targets back to the one
+				// parser call site before precise enrichment is recomputed.
+				continue
+			}
+			seenParserTestEdges[key] = struct{}{}
 			result.TestEdges = append(result.TestEdges, edge)
 		}
 	}
@@ -1850,7 +1870,7 @@ func loadGraph(root string) (*graph.Graph, error) {
 		return nil, fmt.Errorf("cannot open repository root %s: %w", absRoot, err)
 	}
 	defer func() { _ = reader.Close() }()
-	data, err := reader.ReadRegularFile(graphFile)
+	data, err := reader.ReadRegularFileLimit(graphFile, graph.MaxArtifactBytes)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read %s — run `gograph build` first: %w", jsonPath, err)
 	}
@@ -2202,7 +2222,10 @@ func sortGraph(g *graph.Graph) {
 		if g.TestEdges[i].TargetSymbolID != g.TestEdges[j].TargetSymbolID {
 			return g.TestEdges[i].TargetSymbolID < g.TestEdges[j].TargetSymbolID
 		}
-		return g.TestEdges[i].Resolution < g.TestEdges[j].Resolution
+		if g.TestEdges[i].Resolution != g.TestEdges[j].Resolution {
+			return g.TestEdges[i].Resolution < g.TestEdges[j].Resolution
+		}
+		return !g.TestEdges[i].Precise && g.TestEdges[j].Precise
 	})
 	sort.Slice(g.Implements, func(i, j int) bool {
 		if g.Implements[i].InterfaceID != g.Implements[j].InterfaceID {
@@ -2324,11 +2347,15 @@ INDEXING
                              in graph.json build metadata and make status partial.
                              Run after any major code change. Default path: .
                              Supports --precise to perform type-checked Class
-                             Hierarchy/SSA enrichment. If enrichment fails, warns,
+                             Hierarchy/SSA enrichment over selected repository package
+                             bodies, without dependency-body call graphs. If enrichment fails, warns,
                              publishes the AST graph and records precise_fallback, unless
                              a fresh precise artifact from the same sources is retained.
                              Test packages are resolved separately; broken tests record
                              typed_partial without downgrading production precision.
+                             Typed-only test targets are recomputed during reuse.
+                             Artifacts over 512 MiB are rejected before allocation;
+                             build reconstructs oversized previous state from source.
                              Inactive build-constrained files, cmd/go wildcard-excluded
                              directories, generated sources, go.mod ignore paths, AI
                              worktrees, and Git-ignored paths are automatically skipped.

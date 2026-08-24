@@ -28,7 +28,14 @@ const CurrentSourcePolicyVersion = 1
 // CurrentAnalysisCacheVersion identifies graphs whose file-level records can
 // be decomposed back into parser output and safely reused by an incremental
 // build. Bump this whenever parser/precise provenance changes.
-const CurrentAnalysisCacheVersion = 2
+const CurrentAnalysisCacheVersion = 3
+
+// MaxArtifactBytes bounds whole-artifact JSON decoding. Repository graphs are
+// intentionally in-memory query artifacts; accepting an unbounded serialized
+// file would allow a corrupt or hostile graph to exhaust the process before a
+// recovery build can start. Builds treat an oversized previous graph as
+// unusable and reconstruct it from authoritative source.
+const MaxArtifactBytes int64 = 512 << 20
 
 // CurrentWorkspaceFactsVersion identifies repository graphs that carry the
 // local module and interaction facts required by workspace resolution. It is
@@ -323,6 +330,10 @@ type TestEdge struct {
 	File           string         `json:"file"`
 	Line           int            `json:"line"`
 	Column         int            `json:"column,omitempty"`
+	// Precise marks additional typed targets that do not correspond one-to-one
+	// with a parser-owned edge. Incremental builds must not restore these as AST
+	// input or interface dispatch targets multiply on every rebuild.
+	Precise bool `json:"precise,omitempty"`
 }
 
 // Dependency represents a go.mod dependency.

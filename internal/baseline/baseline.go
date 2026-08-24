@@ -80,7 +80,7 @@ func loadGraphFile(projectRoot, path string) (*graph.Graph, error) {
 		return nil, fmt.Errorf("open project root for baseline graph: %w", err)
 	}
 	defer func() { _ = reader.Close() }()
-	data, err := reader.ReadRegularFile(rel)
+	data, err := reader.ReadRegularFileLimit(rel, graph.MaxArtifactBytes)
 	if err != nil {
 		return nil, fmt.Errorf("load baseline graph %s: %w", candidate, err)
 	}

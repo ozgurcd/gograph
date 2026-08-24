@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/mcp"
 	"github.com/ozgurcd/gograph/internal/sourcefs"
 	workspacegraph "github.com/ozgurcd/gograph/internal/workspace"
@@ -193,7 +194,7 @@ func graphArtifactFingerprint(root string) string {
 		return ""
 	}
 	defer func() { _ = reader.Close() }()
-	data, err := reader.ReadRegularFile(".gograph/graph.json")
+	data, err := reader.ReadRegularFileLimit(".gograph/graph.json", graph.MaxArtifactBytes)
 	if err != nil {
 		return ""
 	}

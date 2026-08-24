@@ -94,7 +94,14 @@ func enrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 	// edges. With it, CHA emits one fully-resolved edge per instantiation,
 	// each carrying a real *ssa.CallCommon site we can position-match
 	// against the parser's AST edges.
-	prog, _ := ssautil.AllPackages(initial, ssa.InstantiateGenerics)
+	// Build SSA bodies only for the selected repository packages. Imported
+	// package types and callable references remain available to local SSA, but
+	// constructing every dependency body makes CHA retain an otherwise unused
+	// transitive program. It also creates source-less synthetic forwarding from
+	// dependency wrappers into unrelated same-signature repository methods.
+	// Local interface dispatch and promoted forwarding are protected by the
+	// precise call and promoted-wrapper integration tests below this package.
+	prog, _ := ssautil.Packages(initial, ssa.InstantiateGenerics)
 	prog.Build()
 
 	// 1. Precise Interface Satisfaction

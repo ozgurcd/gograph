@@ -152,7 +152,7 @@ func LoadArtifact(root string) (*Artifact, string, error) {
 		return nil, "", fmt.Errorf("open workspace root: %w", err)
 	}
 	defer func() { _ = reader.Close() }()
-	data, err := reader.ReadRegularFile(ArtifactFile)
+	data, err := reader.ReadRegularFileLimit(ArtifactFile, graph.MaxArtifactBytes)
 	if err != nil {
 		return nil, "", fmt.Errorf("read workspace artifact: %w", err)
 	}

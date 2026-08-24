@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/ozgurcd/gograph/internal/graph"
 )
 
 func TestBuildGraphReusesOnlyUnchangedPackagesByContentDigest(t *testing.T) {
@@ -127,5 +129,61 @@ func TestIncrementalASTReuseRecomputesPreciseEnrichment(t *testing.T) {
 	secondImplements, _ := json.Marshal(second.Implements)
 	if string(firstImplements) != string(secondImplements) {
 		t.Fatalf("precise implementations changed after AST reuse:\nfirst:  %s\nsecond: %s", firstImplements, secondImplements)
+	}
+}
+
+func TestIncrementalPreciseTestDispatchDoesNotMultiplyEdges(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/testreuse\n\ngo 1.23\n")
+	writeTestFile(t, filepath.Join(root, "runner.go"), `package testreuse
+
+type Runner interface { Run() }
+type A struct{}
+func (*A) Run() {}
+type B struct{}
+func (*B) Run() {}
+type C struct{}
+func (*C) Run() {}
+`)
+	writeTestFile(t, filepath.Join(root, "runner_test.go"), `package testreuse
+
+import "testing"
+
+func exercise(r Runner) { r.Run() }
+func TestDispatch(t *testing.T) {
+	var r Runner = &A{}
+	r.Run()
+	exercise(r)
+}
+`)
+
+	config, configErr := resolveBuildConfig(root)
+	var previous *graph.Graph
+	var expected []byte
+	for build := 1; build <= 4; build++ {
+		current, err := buildGraphWithConfig(root, config, configErr, previous)
+		if err != nil {
+			t.Fatalf("build %d AST: %v", build, err)
+		}
+		if build > 1 && len(current.TestEdges) != 2 {
+			t.Fatalf("build %d restored %d parser test edges, want 2", build, len(current.TestEdges))
+		}
+		if err := enrichGraphPreciselyWithConfig(root, current, config, configErr); err != nil {
+			t.Fatalf("build %d precise: %v", build, err)
+		}
+		sortGraph(current)
+		encoded, err := json.Marshal(current.TestEdges)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if build == 1 {
+			expected = encoded
+		} else if string(encoded) != string(expected) {
+			t.Fatalf("build %d test edges changed after reuse:\nfirst: %s\nnow:   %s", build, expected, encoded)
+		}
+		if len(current.TestEdges) != 4 {
+			t.Fatalf("build %d precise test edges = %d, want stable 4", build, len(current.TestEdges))
+		}
+		previous = current
 	}
 }

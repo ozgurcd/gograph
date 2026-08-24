@@ -95,6 +95,11 @@ state are advisory only; their
 read-only Git probes disable repository-configured filesystem monitors and
 optional index locking.
 
+Repository member graphs and the workspace overlay share the 512 MiB
+whole-artifact JSON read bound. Oversized member graphs are unavailable until
+rebuilt; `workspace build --refresh-members` may perform that explicit member
+recovery, while ordinary workspace queries remain read-only.
+
 ## Queries
 
 ```bash

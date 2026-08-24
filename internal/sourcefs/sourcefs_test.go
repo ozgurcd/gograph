@@ -100,6 +100,28 @@ func TestReaderReadsRegularRepositoryArtifact(t *testing.T) {
 	}
 }
 
+func TestReaderReadRegularFileLimitRejectsOversizedFileBeforeReading(t *testing.T) {
+	repository := t.TempDir()
+	path := filepath.Join(repository, "artifact.json")
+	mustWrite(t, path, "0123456789")
+	reader, err := Open(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close() }()
+
+	if _, err := reader.ReadRegularFileLimit("artifact.json", 9); !errors.Is(err, ErrFileTooLarge) {
+		t.Fatalf("oversized read error = %v, want ErrFileTooLarge", err)
+	}
+	data, err := reader.ReadRegularFileLimit("artifact.json", 10)
+	if err != nil || string(data) != "0123456789" {
+		t.Fatalf("bounded read = %q, %v", data, err)
+	}
+	if _, err := reader.ReadRegularFileLimit("artifact.json", 0); err == nil {
+		t.Fatal("zero read limit unexpectedly accepted")
+	}
+}
+
 func TestReaderValidatesRegularRepositoryMetadata(t *testing.T) {
 	base := t.TempDir()
 	repository := filepath.Join(base, "repository")

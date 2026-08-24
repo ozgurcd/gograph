@@ -1,0 +1,47 @@
+{
+  "schema_version": "scrinium.claim/v1",
+  "id": "GOGRAPH-PRECISE-ARTIFACT-BOUNDS-1",
+  "subject": "precise incremental artifact safety",
+  "statement": "Only parser-owned test call sites are reusable across incremental builds; typed-only targets are recomputed, incompatible caches are invalidated, and whole repository/workspace artifact JSON reads are bounded at 512 MiB so oversized prior state can be rejected before allocation and rebuilt from authoritative source.",
+  "lifecycle": {
+    "state": "active"
+  },
+  "authorship": {
+    "kind": "agent",
+    "origin": "codex:implementation",
+    "recorded_at": "2026-08-24T09:32:49.455343Z"
+  },
+  "evidence": [
+    {
+      "id": "EV-GRAPH-PROVENANCE",
+      "kind": "repository_reference",
+      "polarity": "supports",
+      "origin": {
+        "kind": "repository",
+        "reference": "gograph working tree"
+      },
+      "locator": "internal/graph/graph.go; internal/precise/test_calls.go; internal/cli/cli.go",
+      "scope": "TestEdge precise provenance, cache version 3, parser-only reuse, and 512 MiB artifact bound",
+      "availability": "available",
+      "captured_at": "2026-08-24T09:32:01Z",
+      "derived_from": []
+    },
+    {
+      "id": "EV-REGRESSION",
+      "kind": "repository_reference",
+      "polarity": "supports",
+      "origin": {
+        "kind": "repository",
+        "reference": "gograph working tree"
+      },
+      "locator": "internal/cli/incremental_build_test.go; internal/cli/artifacts_test.go; internal/sourcefs/sourcefs_test.go",
+      "scope": "Repeated interface-dispatch builds and oversized-artifact recovery regressions",
+      "availability": "available",
+      "captured_at": "2026-08-24T09:32:01Z",
+      "derived_from": []
+    }
+  ],
+  "validation_results": [],
+  "created_at": "2026-08-24T09:32:49.455343Z",
+  "updated_at": "2026-08-24T09:32:49.455343Z"
+}

@@ -309,10 +309,11 @@ func applyTypedTestTargets(g *graph.Graph, resolved map[testCallSite]map[string]
 			testEdges = append(testEdges, edge)
 			continue
 		}
-		for _, target := range targets {
+		for index, target := range targets {
 			resolvedEdge := edge
 			resolvedEdge.TargetSymbolID = target.id
 			resolvedEdge.Resolution = target.resolution
+			resolvedEdge.Precise = edge.Precise || index > 0
 			testEdges = append(testEdges, resolvedEdge)
 		}
 	}

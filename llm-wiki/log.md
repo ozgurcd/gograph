@@ -413,3 +413,14 @@ Recorded that workspace status, query, path, and impact share one native result 
 - Released gograph v1.6.2 from tag commit `ec4cfe0d1da576dfc644aaf6104baa43c39cd92f`; implementation commit `64c2943` adds matching CLI/MCP coverage and identity queries plus repository-relative untested exclusions.
 - Local and release gates passed uncached unit and race tests, vet, lint and static analysis, source/binary/archive vulnerability scans, deterministic MCPB verification and 67-tool smoke initialization, documentation rendering, transport-parity tests, and precise real-repository functional checks.
 - Release workflow run `32664068503` published and independently verified all 14 GitHub assets, Homebrew cask 1.6.2, and the active official MCP Registry 1.6.2 record.
+
+## [2026-08-24] maintenance | Bound precise-build artifact growth
+
+- Recorded the invariant that incremental reuse restores only parser-owned test call sites; typed-only interface targets are recomputed and cache version 3 invalidates older provenance.
+- Bounded whole repository/workspace artifact JSON reads at 512 MiB so oversized graph state is rejected before allocation and recoverable through a source rebuild.
+- Added repeated interface-dispatch and sparse oversized-artifact recovery regressions; a full 696-file project snapshot remained stable at 20,356 test edges across precise rebuilds.
+
+## [2026-08-24] maintenance | Scope precise SSA to repository packages
+
+- Limited precise SSA bodies to selected repository packages while retaining imported type information and local external-call references.
+- Full-project comparison reduced peak RSS from about 3.56 GB to 2.66 GB and removed 64 source-less external synthetic wrapper edges; local dispatch, promoted forwarding, symbols, implementations, mutations, flow facts, and test attribution remained intact.

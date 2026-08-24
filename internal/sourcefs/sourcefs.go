@@ -15,6 +15,11 @@ import (
 // may not contain symlink components.
 var ErrUnsafeSourcePath = errors.New("unsafe repository source path")
 
+// ErrFileTooLarge marks a regular file that exceeded a caller-supplied read
+// limit. The limit is checked both before and during the read so a concurrent
+// writer cannot turn a validated small file into an unbounded allocation.
+var ErrFileTooLarge = errors.New("repository file exceeds read limit")
+
 // Reader keeps repository reads and writes anchored to one directory handle.
 // OpenRoot follows an explicitly supplied symlink for the repository root, but
 // Root operations cannot follow descendant links outside that directory.
@@ -55,6 +60,19 @@ func (r *Reader) ReadFile(name string) ([]byte, error) {
 // check/open identity swap. Callers should use ReadFile for Go source so the
 // extension contract is enforced as well.
 func (r *Reader) ReadRegularFile(name string) ([]byte, error) {
+	return r.readRegularFile(name, 0)
+}
+
+// ReadRegularFileLimit reads a confined regular file while refusing content
+// larger than maxBytes. A positive limit is required.
+func (r *Reader) ReadRegularFileLimit(name string, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		return nil, fmt.Errorf("read repository file %q: invalid byte limit %d", name, maxBytes)
+	}
+	return r.readRegularFile(name, maxBytes)
+}
+
+func (r *Reader) readRegularFile(name string, maxBytes int64) ([]byte, error) {
 	if r == nil || r.root == nil {
 		return nil, errors.New("repository filesystem is closed")
 	}
@@ -99,9 +117,19 @@ func (r *Reader) ReadRegularFile(name string) ([]byte, error) {
 	if !opened.Mode().IsRegular() || expected == nil || !os.SameFile(expected, opened) {
 		return nil, fmt.Errorf("%w %q: repository entry changed during open", ErrUnsafeSourcePath, name)
 	}
-	data, err := io.ReadAll(file)
+	if maxBytes > 0 && opened.Size() > maxBytes {
+		return nil, fmt.Errorf("%w %q: size %d bytes exceeds %d bytes", ErrFileTooLarge, name, opened.Size(), maxBytes)
+	}
+	input := io.Reader(file)
+	if maxBytes > 0 {
+		input = io.LimitReader(file, maxBytes+1)
+	}
+	data, err := io.ReadAll(input)
 	if err != nil {
 		return nil, fmt.Errorf("read repository file %q: %w", name, err)
+	}
+	if maxBytes > 0 && int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("%w %q: content grew beyond %d bytes while reading", ErrFileTooLarge, name, maxBytes)
 	}
 	return data, nil
 }

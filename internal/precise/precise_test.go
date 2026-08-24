@@ -167,6 +167,20 @@ func TestCalls(t *testing.T) {
 	if got := targetsAt(interfaceLine, interfaceColumn); !reflect.DeepEqual(got, map[string]graph.CallResolution{directID: graph.CallResolutionCHA, memoryID: graph.CallResolutionCHA, sqlID: graph.CallResolutionCHA}) {
 		t.Fatalf("interface test targets = %#v", got)
 	}
+	var parserOwned, typedOnly int
+	for _, edge := range g.TestEdges {
+		if edge.Line != interfaceLine || edge.Column != interfaceColumn {
+			continue
+		}
+		if edge.Precise {
+			typedOnly++
+		} else {
+			parserOwned++
+		}
+	}
+	if parserOwned != 1 || typedOnly != 2 {
+		t.Fatalf("interface test provenance = parser-owned %d typed-only %d, want 1/2", parserOwned, typedOnly)
+	}
 	if got := targetsAt(valueLine, valueColumn); !reflect.DeepEqual(got, map[string]graph.CallResolution{directID: graph.CallResolutionStatic}) {
 		t.Fatalf("method-value test targets = %#v", got)
 	}
@@ -766,6 +780,9 @@ func Purge(value store.Store) error {
 	wrapperReachesDeclared := false
 	syntheticCount := 0
 	for _, edge := range g.Calls {
+		if edge.Synthetic && (!strings.HasPrefix(edge.CallerSymbolID, "example.com/promoted/") || !strings.HasPrefix(edge.CalleeSymbolID, "example.com/promoted/")) {
+			t.Errorf("synthetic forwarding escaped repository SSA scope: %+v", edge)
+		}
 		if edge.File == "api/api.go" && edge.Line == line && edge.Column == column {
 			invokeTargets = append(invokeTargets, edge.CalleeSymbolID)
 		}

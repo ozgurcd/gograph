@@ -105,6 +105,15 @@ sudo make install
 2. **Queries and refreshes** — graph-backed CLI analysis reads the last trusted, regular repository-confined `graph.json` with the current source-policy marker and replaces its serialized root with the selected project; commands whose contract reads source, Git, or other local state do so through their documented boundaries. MCP source-analysis tools check source-content digests, the build/module fingerprint, and newer usable persisted artifacts, adopt a newer compatible precise graph, and incrementally reparse changed packages after edits. Precise refreshes still recompute repository-wide CHA/SSA. When no usable artifact exists, persisted-index MCP tools use the startup fallback. Refreshes stay in memory by default. `gograph mcp [path] --persist-refresh` opts into publishing the latest successful refresh with the same graph-last protocol; a failed precise refresh is returned visibly.
 3. **`--precise` mode** — attempts type-checked CHA/SSA enrichment. It needs compilable, build-selected packages for precise data; if type/load analysis fails or omits an indexed non-test file, gograph warns and normally records `precise_fallback` on the retained AST graph. A failed retry keeps an existing fresh successful precise artifact covering the same selected sources instead of downgrading it (`ast` identifies an explicitly requested AST build).
 
+Incremental builds reuse only parser-owned test records; typed-only interface
+targets are recomputed so unchanged precise builds cannot multiply them.
+Whole-artifact JSON reads reject files larger than 512 MiB before allocation.
+Query-only operations request a rebuild, while `gograph build` reconstructs an
+oversized previous graph from authoritative source.
+Precise SSA body construction is also confined to selected repository packages;
+imported type information remains available without building the full dependency
+closure or persisting its source-less wrapper edges.
+
 ## What it captures
 
 | Signal | How extracted |

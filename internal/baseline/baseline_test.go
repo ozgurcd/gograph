@@ -2,6 +2,7 @@ package baseline_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,7 +11,31 @@ import (
 
 	"github.com/ozgurcd/gograph/internal/baseline"
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
+
+func TestBuildRejectsOversizedSavedGraphBeforeDecode(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "saved.json")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o640)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(graph.MaxArtifactBytes + 1); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = baseline.Build(context.Background(), root, "saved.json", func(string) (*graph.Graph, error) {
+		t.Fatal("saved graph should not invoke source builder")
+		return nil, nil
+	})
+	if !errors.Is(err, sourcefs.ErrFileTooLarge) {
+		t.Fatalf("oversized saved graph error = %v, want ErrFileTooLarge", err)
+	}
+}
 
 func TestBuildExtractsProjectSubtreeAtGitRef(t *testing.T) {
 	root := t.TempDir()

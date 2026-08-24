@@ -95,7 +95,7 @@ func hasValidGraph(dir string) bool {
 		return false
 	}
 	defer func() { _ = reader.Close() }()
-	data, err := reader.ReadRegularFile(filepath.Join(gographDir, graphFile))
+	data, err := reader.ReadRegularFileLimit(filepath.Join(gographDir, graphFile), graph.MaxArtifactBytes)
 	if err != nil {
 		return false
 	}

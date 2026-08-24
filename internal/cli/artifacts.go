@@ -241,6 +241,9 @@ func renderGraphArtifacts(g *graph.Graph) ([]artifactPayload, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encoding graph.json: %w", err)
 	}
+	if int64(len(graphJSON)) > graph.MaxArtifactBytes {
+		return nil, fmt.Errorf("encoding graph.json: artifact size %d bytes exceeds safety limit %d bytes", len(graphJSON), graph.MaxArtifactBytes)
+	}
 	// Keep graph.json last: consumers use it as the commit marker for the
 	// preceding derived reports.
 	return []artifactPayload{
