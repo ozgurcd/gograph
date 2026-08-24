@@ -101,8 +101,7 @@ func enrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 	// dependency wrappers into unrelated same-signature repository methods.
 	// Local interface dispatch and promoted forwarding are protected by the
 	// precise call and promoted-wrapper integration tests below this package.
-	prog, _ := ssautil.Packages(initial, ssa.InstantiateGenerics)
-	prog.Build()
+	prog := buildRepositorySSA(initial)
 
 	// 1. Precise Interface Satisfaction
 	var interfaces []*types.Interface
@@ -452,6 +451,17 @@ func enrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 	}
 
 	return nil
+}
+
+// buildRepositorySSA constructs bodies only for the packages selected from the
+// repository. Dependencies still have SSA package/type stubs so local calls can
+// refer to them, but their function bodies are deliberately absent. Building
+// dependency bodies increases precise-analysis memory and introduces
+// source-less dependency-wrapper edges that are not repository facts.
+func buildRepositorySSA(initial []*packages.Package) *ssa.Program {
+	prog, _ := ssautil.Packages(initial, ssa.InstantiateGenerics)
+	prog.Build()
+	return prog
 }
 
 func validateLoadedSourcePaths(root string, initial []*packages.Package) error {
