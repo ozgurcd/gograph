@@ -4,6 +4,32 @@
 
 No changes yet.
 
+## v1.6.4 — 2026-08-24
+
+### Optional low-memory precise builds
+
+- Added optional `--memory-mode=low --max-memory=1GiB` controls to precise
+  repository builds. Low mode preserves the precise graph contract while
+  using aggressive garbage collection, reclaiming completed production
+  type/SSA state before the separate typed-test load, and honoring an optional
+  soft Go-runtime memory target.
+- Added the same memory policy to project MCP startup/refresh and explicit
+  workspace member refreshes. `gograph_capabilities` reports the MCP server's
+  requested and effective byte targets. The CLI help, capabilities, README,
+  command reference, getting-started, workflow, and agent-integration guides
+  document both transports and the workspace refresh surface.
+- Clarified that `--max-memory` is neither a hard RSS ceiling nor a promise to
+  complete every repository within the requested amount. Mapped files,
+  cgo, the executable, and Go toolchain subprocesses may exceed it; low mode
+  never silently drops precise facts to meet the target.
+- Replaced precise enrichment's whole-graph JSON round trip with a selective
+  transactional copy of only mutable records. Failed enrichment still leaves
+  the authoritative AST graph untouched.
+- Added behavioral regression coverage for repository-only SSA bodies,
+  standard/low result equivalence, byte-size parsing, preservation of stricter
+  existing runtime limits, CLI precise builds, MCP option parsing, and MCP
+  capability disclosure.
+
 ## v1.6.3 — 2026-08-24
 
 ### Bounded precise-build recovery

@@ -33,7 +33,7 @@ conflicting output flags fail instead of being silently ignored.
 
 ### build
 ```bash
-gograph build [path] [--precise]
+gograph build [path] [--precise] [--memory-mode=low] [--max-memory=1GiB]
 ```
 Walks and parses a Go repository. Generates the structured graph at `.gograph/graph.json` and nine targeted Markdown reports in `.gograph/`.
 Adds `.gograph/` to the Git repository root `.gitignore` when available; outside Git, falls back to the build target `.gitignore`.
@@ -82,6 +82,14 @@ cross-package method sets and dispatch targets remain correct.
     packages rather than the transitive dependency closure. Imported types and
     local references to external calls remain available; dependency-body call
     graphs and their source-less synthetic wrapper edges are not persisted.
+  - `--memory-mode=low`: Preserves the same analysis and output semantics while
+    prioritizing lower heap use through aggressive garbage collection and phase-boundary memory
+    reclamation, and a selective transactional precise-enrichment copy.
+  - `--max-memory=<size>`: Adds a soft Go-runtime memory target and requires low
+    mode. Integer decimal and binary sizes such as `1GB`, `768MiB`, and `1GiB`
+    are accepted. This is not a hard RSS cap: mapped files, the binary,
+    cgo, and Go toolchain subprocesses are outside or may exceed the target.
+    Gograph does not silently reduce precision when the target is too small.
 
 ### stale
 ```bash
@@ -711,7 +719,7 @@ cross-repository ownership, resolution, and HTTP-contract facts.
 ### workspace build
 
 ```bash
-gograph workspace build [path] [--refresh-members] [--json]
+gograph workspace build [path] [--refresh-members] [--memory-mode=low] [--max-memory=1GiB] [--json]
 ```
 
 Without `--refresh-members`, reads member graphs and writes only the workspace
@@ -722,6 +730,8 @@ and is not transactional. Its JSON reports `refresh_plan`,
 `refresh_attempted`, `refresh_succeeded`, and `refresh_failed`, including
 before/after artifact fingerprints, so a failure after earlier successful
 member writes is visible.
+When member refresh is enabled, the repository build memory options apply
+sequentially to every refreshed member with the same soft-limit semantics.
 
 ### workspace status
 
@@ -853,7 +863,7 @@ Prints the token-optimized AI agent cheat sheet detailing common workflows and c
 
 ### mcp
 ```bash
-gograph mcp [path] [--persist-refresh]
+gograph mcp [path] [--persist-refresh] [--memory-mode=low] [--max-memory=1GiB]
 ```
 Starts a Model Context Protocol (MCP) server over `stdio`, exposing gograph's
 query, analysis, and workflow capabilities as native tools for integration with
@@ -871,6 +881,10 @@ AI clients (e.g., Claude Code, Cursor).
   is atomic on Unix-like systems but is not guaranteed atomic by Go on non-Unix
   platforms; the complete bundle is not one atomic transaction, and the lock
   file remains as separate operational state.
+- **Memory policy**: `--memory-mode=low` and `--max-memory` apply the same
+  correctness-preserving runtime policy to startup analysis and every later
+  MCP refresh. `gograph_capabilities` reports the requested and effective byte
+  targets plus the soft-limit caveat.
 - **Changes baseline**: Default `gograph_changes` compares against persisted
   `graph.json`. Successful refresh publication advances that baseline, so use
   `git_ref` when the comparison must remain anchored to a Git revision.

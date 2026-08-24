@@ -259,6 +259,8 @@ files change:
 ```bash
 gograph build .           # fast rebuild, tolerates broken code
 gograph build . --precise # type-checked rebuild (before big refactors)
+gograph build . --precise --memory-mode=low --max-memory=1GiB
+                           # same precision, lower heap priority, potentially more GC CPU
 ```
 
 You can check whether a rebuild is needed:
@@ -279,6 +281,10 @@ Publication failure is returned as a tool error and retried
 later without rebuilding the fresh graph; failure to publish a required
 startup auto-build prevents the server from starting. A successful publication
 advances the persisted baseline used by default `changes`.
+
+The same optional memory policy is available to MCP refreshes with
+`gograph mcp [path] --memory-mode=low --max-memory=1GiB`. The byte value is a
+soft Go-runtime memory target rather than a guaranteed RSS ceiling.
 
 For visual output through MCP, set `mermaid: true` on `gograph_callers`,
 `gograph_callees`, `gograph_impact`, `gograph_endpoint`,

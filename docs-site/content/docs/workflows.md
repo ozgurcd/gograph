@@ -60,6 +60,11 @@ Before changing the signature or behavior of any function, method, or struct, fo
    gograph build . --precise
    ```
    Attempts type/load analysis, computes type-checked interface implementers, and retains every valid named in-repository CHA target at interface call sites. Check both fields in `gograph stats`: `precision: precise` confirms enrichment succeeded, while `precise_fallback` means the published AST graph could not be enriched. A failed retry retains an existing fresh successful precise artifact for the same selected sources instead of downgrading it. `build_status` independently reports whether AST parsing and selection were complete; parse failures or selection/security warnings make it partial.
+
+   On a memory-constrained host, use `gograph build . --precise --memory-mode=low --max-memory=1GiB`.
+   This preserves analysis semantics but may use more GC CPU because of
+   aggressive reclamation. The value is a soft Go runtime memory target,
+   not a hard RSS ceiling.
 5. **Post-edit review**:
    ```bash
    gograph review --uncommitted

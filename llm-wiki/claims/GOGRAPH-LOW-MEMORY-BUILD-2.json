@@ -1,0 +1,47 @@
+{
+  "schema_version": "scrinium.claim/v1",
+  "id": "GOGRAPH-LOW-MEMORY-BUILD-2",
+  "subject": "low-memory graph build policy",
+  "statement": "Low-memory repository builds, workspace member refreshes, and project MCP refreshes preserve graph precision and result semantics while using aggressive garbage collection, selective transactional copying, and phase-boundary reclamation; max-memory is a soft Go-runtime memory target rather than an RSS or hard allocation cap, and existing stricter runtime limits are never relaxed.",
+  "lifecycle": {
+    "state": "active"
+  },
+  "authorship": {
+    "kind": "agent",
+    "origin": "codex:implementation",
+    "recorded_at": "2026-08-24T13:27:56.669395Z"
+  },
+  "evidence": [
+    {
+      "id": "EV-LOW-MEMORY-POLICY",
+      "kind": "repository_reference",
+      "polarity": "supports",
+      "origin": {
+        "kind": "repository",
+        "reference": "gograph working tree"
+      },
+      "locator": "internal/memorylimit/memorylimit.go; internal/cli/memory_options.go; internal/cli/cli.go; internal/cli/workspace.go",
+      "scope": "Soft runtime memory target parsing/application and CLI, workspace refresh, and MCP refresh wiring",
+      "availability": "available",
+      "captured_at": "2026-08-24T13:27:46Z",
+      "derived_from": []
+    },
+    {
+      "id": "EV-LOW-MEMORY-EQUIVALENCE",
+      "kind": "repository_reference",
+      "polarity": "supports",
+      "origin": {
+        "kind": "repository",
+        "reference": "gograph working tree"
+      },
+      "locator": "internal/precise/precise.go; internal/precise/memory_mode_test.go; internal/cli/memory_options_test.go; internal/mcp/server_test.go",
+      "scope": "Selective transactional enrichment, phase reclamation, result equivalence, CLI execution, and MCP capability regressions",
+      "availability": "available",
+      "captured_at": "2026-08-24T13:27:46Z",
+      "derived_from": []
+    }
+  ],
+  "validation_results": [],
+  "created_at": "2026-08-24T13:27:56.669395Z",
+  "updated_at": "2026-08-24T13:27:56.669395Z"
+}

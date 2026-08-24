@@ -22,6 +22,7 @@ import (
 	"github.com/ozgurcd/gograph/internal/buildctx"
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/mcp"
+	"github.com/ozgurcd/gograph/internal/memorylimit"
 	"github.com/ozgurcd/gograph/internal/moduleinventory"
 	"github.com/ozgurcd/gograph/internal/parser"
 	"github.com/ozgurcd/gograph/internal/precise"
@@ -367,6 +368,9 @@ need an index:
   gograph build . --precise  type-checked CHA/SSA; records precise or precise_fallback
                                using repository SSA bodies (not dependency bodies),
                                unless a failed retry can retain a fresh precise artifact
+  gograph build . --precise --memory-mode=low --max-memory=1GiB
+                             same graph semantics with aggressive reclamation and a
+                             soft Go runtime memory target; may use more GC CPU and is not a hard RSS cap
 
 After build: graph.json + Markdown reports are written to .gograph/.
 The .gograph/ ignore entry is appended to the Git repository root .gitignore
@@ -406,10 +410,11 @@ wiki destinations use rooted regular-file operations and refuse descendant
 links that could redirect reads, writes, or cleanup outside their selected root.
 
 MCP refreshes stay in memory by default. Starting
-  gograph mcp [path] --persist-refresh
+  gograph mcp [path] --persist-refresh [--memory-mode=low] [--max-memory=1GiB]
 publishes each confirmed-fresh startup build or refresh as graph.json plus nine
 reports. It keeps one latest state (not a branch cache), does not edit .gitignore,
-and returns publication failures to the triggering tool for a later retry.
+and returns publication failures to the triggering tool for a later retry. MCP
+refresh uses the same low-memory policy as CLI builds when those options are set.
 
 ━━━ FEDERATED WORKSPACES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 A regular .gograph-workspace.yml establishes a workspace root and confines
@@ -420,6 +425,7 @@ scope-specific cross-repository overlay rather than a merged fleet graph.
   gograph workspace build                 read members; write only the overlay
   gograph workspace build --refresh-members
                                             explicitly permit member graph writes
+                                            (accepts the same low-memory build options)
   gograph workspace status --json         member and overlay health/fingerprints
   gograph workspace query [--scope ID] TERM --json
   gograph workspace path [--scope ID] FROM TO --json
@@ -592,9 +598,12 @@ AGENT WORKFLOW RULES (CRITICAL):
 2. AFTER editing:  run 'gograph build . --precise' then 'gograph review --uncommitted'
 
 INDEXING:
-build . [--precise]  : parse AST, stage graph.json + reports, commit graph.json last
+build . [--precise] [--memory-mode=low] [--max-memory=1GiB]
+                     : parse AST, stage graph.json + reports, commit graph.json last
                        Honors Go build constraints and cmd/go package-directory rules;
                        skips generated, module-ignored, and Git-ignored sources.
+                       Low mode preserves precision while using aggressive GC/phase
+                       reclamation; it may use more CPU. max-memory is a soft Go runtime memory target, not RSS.
 workspace <command>  : federated cross-repository overlay. Commands: build, status,
                        query, path, impact, mcp. Member refresh is opt-in through
                        'workspace build --refresh-members'. CLI and MCP status,
@@ -724,8 +733,9 @@ gate                 : CI/CD enforcement against regular, non-linked project-roo
                        .gograph.yml; delta gates use the previous persisted graph
 gate init            : exclusively create a regular .gograph.yml; refuses links/overwrite
 snapshot <subcmd>    : confined architectural metric snapshots (save, diff, list, drop)
-mcp [path] [--persist-refresh] : start MCP server over stdio; refreshes stay in memory by default
-                                 opt-in publishes one latest graph/report set without editing .gitignore
+mcp [path] [--persist-refresh] [--memory-mode=low] [--max-memory=1GiB]
+                     : start MCP server over stdio; refreshes stay in memory by default;
+                       opt-in publishes one latest graph/report set without editing .gitignore
 gograph session <action>     : start/end audit sessions (create [word], end, audit, cleanup)
                                storage is confined to regular .gograph session entries
                                NOTE: MCP tool calls (gograph_plan, gograph_review) are
@@ -736,28 +746,72 @@ hook-guard           : PreToolUse hook — redirects indexed-repository Go symbo
 	return 0
 }
 
-func runBuild(args []string) int {
-	root := "."
-	preciseMode := false
-	var filteredArgs []string
-	for _, a := range args {
-		if a == "--precise" {
-			preciseMode = true
-		} else {
-			filteredArgs = append(filteredArgs, a)
-		}
-	}
-	if len(filteredArgs) > 0 {
-		root = filteredArgs[0]
-	}
+type buildOptions struct {
+	Root    string
+	Precise bool
+	Memory  memorylimit.Policy
+}
 
-	absRoot, err := filepath.Abs(root)
+func parseBuildArgs(args []string) (buildOptions, error) {
+	options := buildOptions{Root: ".", Memory: memorylimit.Standard()}
+	rootSet := false
+	positionalOnly := false
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		if !positionalOnly {
+			if argument == "--" {
+				positionalOnly = true
+				continue
+			}
+			if argument == "--precise" {
+				options.Precise = true
+				continue
+			}
+			handled, consumedThrough, err := parseMemoryOption(args, index, &options.Memory)
+			if err != nil {
+				return buildOptions{}, err
+			}
+			if handled {
+				index = consumedThrough
+				continue
+			}
+			if strings.HasPrefix(argument, "-") {
+				return buildOptions{}, fmt.Errorf("unknown build option %q", argument)
+			}
+		}
+		if rootSet {
+			return buildOptions{}, fmt.Errorf("build accepts at most one project path")
+		}
+		options.Root = argument
+		rootSet = true
+	}
+	if err := options.Memory.Validate(); err != nil {
+		return buildOptions{}, err
+	}
+	return options, nil
+}
+
+func runBuild(args []string) int {
+	options, err := parseBuildArgs(args)
+	if err != nil {
+		return failCommandf("build", "invalid build arguments: %v", err)
+	}
+	controller, err := memorylimit.Apply(options.Memory)
+	if err != nil {
+		return failCommandf("build", "invalid memory policy: %v", err)
+	}
+	defer controller.Restore()
+
+	absRoot, err := filepath.Abs(options.Root)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error resolving path: %v\n", err)
 		return 1
 	}
 
 	fmt.Printf("gograph build: scanning %s\n", absRoot)
+	if options.Memory.Mode == memorylimit.ModeLow {
+		fmt.Printf("  memory mode: %s\n", memoryPolicySummary(options.Memory))
+	}
 
 	buildConfig, configErr := resolveBuildConfig(absRoot)
 	previous, _ := loadGraph(absRoot)
@@ -766,11 +820,13 @@ func runBuild(args []string) int {
 		fmt.Fprintf(os.Stderr, "error building graph: %v\n", err)
 		return 1
 	}
-	if preciseMode {
+	if options.Precise {
+		controller.Reclaim()
 		fmt.Println("  running type-checked precision analysis (this may take a moment)...")
-		if err := enrichGraphPreciselyWithConfig(absRoot, g, buildConfig, configErr); err != nil {
+		if err := enrichGraphPreciselyWithMemory(absRoot, g, buildConfig, configErr, options.Memory); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: precise enrichment failed: %v\n", err)
 		}
+		controller.Reclaim()
 	}
 	sortGraph(g)
 
@@ -1155,6 +1211,10 @@ func cloneStringMap(source map[string]string) map[string]string {
 // fallback state makes that downgrade visible and preserves the request to
 // retry precise analysis after a future source edit.
 func enrichGraphPreciselyWithConfig(absRoot string, g *graph.Graph, buildConfig buildctx.Config, configErr error) error {
+	return enrichGraphPreciselyWithMemory(absRoot, g, buildConfig, configErr, memorylimit.Standard())
+}
+
+func enrichGraphPreciselyWithMemory(absRoot string, g *graph.Graph, buildConfig buildctx.Config, configErr error, policy memorylimit.Policy) error {
 	if g.Build == nil {
 		g.Build = &graph.BuildMetadata{}
 	}
@@ -1162,7 +1222,7 @@ func enrichGraphPreciselyWithConfig(absRoot string, g *graph.Graph, buildConfig 
 	if configErr != nil {
 		err = fmt.Errorf("build context resolution failed: %w", configErr)
 	} else {
-		err = precise.EnrichWithConfig(absRoot, g, buildConfig)
+		err = precise.EnrichWithOptions(absRoot, g, buildConfig, precise.Options{LowMemory: policy.Mode == memorylimit.ModeLow})
 	}
 	if err != nil {
 		g.Build.Precision = graph.PrecisionFallback
@@ -1178,13 +1238,17 @@ func enrichGraphPreciselyWithConfig(absRoot string, g *graph.Graph, buildConfig 
 // fallback graph for diagnostics but returns an error so MCP analysis cannot
 // silently serve AST-only results.
 func buildPreciseGraph(absRoot string) (*graph.Graph, error) {
+	return buildPreciseGraphWithMemory(absRoot, memorylimit.Standard())
+}
+
+func buildPreciseGraphWithMemory(absRoot string, policy memorylimit.Policy) (*graph.Graph, error) {
 	buildConfig, configErr := resolveBuildConfig(absRoot)
 	previous, _ := loadGraph(absRoot)
 	g, err := buildGraphWithConfig(absRoot, buildConfig, configErr, previous)
 	if err != nil {
 		return nil, err
 	}
-	if err := enrichGraphPreciselyWithConfig(absRoot, g, buildConfig, configErr); err != nil {
+	if err := enrichGraphPreciselyWithMemory(absRoot, g, buildConfig, configErr, policy); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: precise MCP refresh fell back to AST analysis: %v\n", err)
 		return g, fmt.Errorf("precise MCP refresh failed; graph is precise_fallback: %w", err)
 	}
@@ -1756,13 +1820,15 @@ func shouldAdoptPersistedGraph(current, persisted *graph.Graph) bool {
 type mcpOptions struct {
 	Root           string
 	PersistRefresh bool
+	Memory         memorylimit.Policy
 }
 
 func parseMCPArgs(args []string) (mcpOptions, error) {
-	options := mcpOptions{Root: "."}
+	options := mcpOptions{Root: ".", Memory: memorylimit.Standard()}
 	rootSet := false
 	positionalOnly := false
-	for _, argument := range args {
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
 		if !positionalOnly {
 			switch {
 			case argument == "--":
@@ -1779,7 +1845,16 @@ func parseMCPArgs(args []string) (mcpOptions, error) {
 				}
 				options.PersistRefresh = parsed
 				continue
-			case strings.HasPrefix(argument, "-"):
+			}
+			handled, consumedThrough, err := parseMemoryOption(args, index, &options.Memory)
+			if err != nil {
+				return mcpOptions{}, err
+			}
+			if handled {
+				index = consumedThrough
+				continue
+			}
+			if strings.HasPrefix(argument, "-") {
 				return mcpOptions{}, fmt.Errorf("unknown mcp option %q", argument)
 			}
 		}
@@ -1788,6 +1863,9 @@ func parseMCPArgs(args []string) (mcpOptions, error) {
 		}
 		options.Root = argument
 		rootSet = true
+	}
+	if err := options.Memory.Validate(); err != nil {
+		return mcpOptions{}, err
 	}
 	return options, nil
 }
@@ -1829,6 +1907,12 @@ func runMCP(args []string) int {
 		fmt.Fprintf(os.Stderr, "invalid mcp arguments: %v\n", err)
 		return 1
 	}
+	controller, err := memorylimit.Apply(options.Memory)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid MCP memory policy: %v\n", err)
+		return 1
+	}
+	defer controller.Restore()
 	g, absRoot, err := prepareMCPGraph(options)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to prepare MCP graph: %v\n", err)
@@ -1841,12 +1925,23 @@ func runMCP(args []string) int {
 			return publishGraphArtifacts(absRoot, candidate, refreshArtifactPublication)
 		})
 	}
-	rebuild := graphRefresher(g, absRoot, BuildGraph, buildPreciseGraph, publishers...)
+	preciseBuilder := func(root string) (*graph.Graph, error) {
+		controller.Reclaim()
+		built, buildErr := buildPreciseGraphWithMemory(root, options.Memory)
+		controller.Reclaim()
+		return built, buildErr
+	}
+	rebuild := graphRefresher(g, absRoot, BuildGraph, preciseBuilder, publishers...)
 	buildBaseline := func(ctx context.Context, ref string) (*graph.Graph, error) {
 		return baseline.Build(ctx, absRoot, ref, BuildGraph)
 	}
 
-	if err := mcp.Serve(g, rebuild, BuildGraph, buildBaseline, Version, mcp.ServerOptions{PersistRefresh: options.PersistRefresh}); err != nil {
+	if err := mcp.Serve(g, rebuild, BuildGraph, buildBaseline, Version, mcp.ServerOptions{
+		PersistRefresh:          options.PersistRefresh,
+		MemoryMode:              string(options.Memory.Mode),
+		RequestedMaxMemoryBytes: options.Memory.MaxBytes,
+		EffectiveMaxMemoryBytes: controller.BoundedEffectiveLimit(),
+	}); err != nil {
 		fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
 		return 1
 	}
@@ -2338,7 +2433,8 @@ OUTPUT FLAGS
                              MANDATORY for all analytical commands when a session is active.
 
 INDEXING
-  build [path]               Walk and parse a Go repository. Generates graph.json
+  build [path] [--precise] [--memory-mode=low] [--max-memory=<size>]
+                             Walk and parse a Go repository. Generates graph.json
                              and 9 targeted Markdown reports in .gograph/.
                              Adds .gograph/ to the Git repository root .gitignore
                              when available; outside Git, uses the target .gitignore.
@@ -2354,6 +2450,11 @@ INDEXING
                              Test packages are resolved separately; broken tests record
                              typed_partial without downgrading production precision.
                              Typed-only test targets are recomputed during reuse.
+                             --memory-mode=low prioritizes lower heap use through aggressive GC and
+                             phase-boundary reclamation without changing precision.
+                             --max-memory=<size> (for example 1GiB) adds a
+                             soft Go runtime memory target in low mode. It is not a hard RSS cap;
+                             mapped files and toolchain subprocesses can exceed it.
                              Artifacts over 512 MiB are rejected before allocation;
                              build reconstructs oversized previous state from source.
                              Inactive build-constrained files, cmd/go wildcard-excluded
@@ -2373,13 +2474,15 @@ INDEXING
                              re-parsing — reads graph.json only.
 
 WORKSPACES
-  workspace build [path] [--refresh-members]
+  workspace build [path] [--refresh-members] [--memory-mode=low] [--max-memory=<size>]
                              Build the deterministic cross-repository overlay. By
                              default member repositories are read-only and must
                              already have complete, current graphs. The explicit
                              --refresh-members option may update member artifacts;
                              JSON reports planned, attempted, succeeded, and failed
                              mutations without implying cross-repository rollback.
+                             Memory options match repository build and apply to each
+                             refreshed member; max-memory remains a soft runtime memory target.
   workspace status [path]   Report member availability/freshness/capabilities and
                              overlay input/artifact fingerprints.
   workspace query [--scope id] [--workspace path] <term...>
@@ -2675,12 +2778,14 @@ AGENT INTEGRATION
                              validates regular Go tool metadata and workspace members confined
                              beneath the workspace; dependency
                              resolution follows the user's Go environment.
-  mcp [path] [--persist-refresh]
+  mcp [path] [--persist-refresh] [--memory-mode=low] [--max-memory=<size>]
                              Start a Model Context Protocol server over stdio.
                              Exposes graph queries as native tools for AI clients;
                              adopts newer precise graphs and preserves precision on refresh.
                              --persist-refresh is opt-in and publishes the latest successful
                              refresh to .gograph; it is not a multi-branch graph cache.
+                             Memory options apply the same low-memory policy to startup
+                             analysis and later MCP refreshes; capabilities reports it.
   session <action> [word]    Manage telemetry & audit sessions. Actions:
                              - create [unique_word]: Starts an audit session.
                              - end: Ends the active session.

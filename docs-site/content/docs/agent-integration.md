@@ -114,7 +114,7 @@ your host rather than assuming identical behavior across every MCP client.
 
 To start the MCP JSON-RPC server over standard I/O:
 ```bash
-gograph mcp [path] [--persist-refresh]
+gograph mcp [path] [--persist-refresh] [--memory-mode=low] [--max-memory=1GiB]
 ```
 By default, if `.gograph/graph.json` is missing, unreadable, unsafe, or has a
 missing/unsupported source-policy marker, startup creates an in-memory AST
@@ -128,6 +128,11 @@ exists and otherwise inspect the startup in-memory fallback. Precise and
 precise-fallback sessions still re-run repository-wide CHA/SSA, and a failed precise refresh is
 returned visibly. A failed precise publication retry cannot replace an
 existing fresh successful precise artifact covering the same selected sources.
+
+On constrained hosts, low-memory mode applies aggressive GC and phase
+reclamation to startup analysis and every later refresh without changing graph
+precision. `--max-memory` is a soft Go runtime memory target, not a hard RSS cap;
+`gograph_capabilities` reports both requested and effective byte targets.
 
 Refresh publication is opt-in. `--persist-refresh` writes or overwrites
 `.gograph/graph.json` and the nine reports after a successful refresh, without

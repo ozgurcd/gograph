@@ -67,6 +67,9 @@ asset filename, or use Homebrew/`go install` plus manual registration. See
 The Registry bundle and installer-generated MCP registrations leave refresh
 persistence off. A custom local registration can add `--persist-refresh` when
 you explicitly want successful refreshes to overwrite `.gograph` artifacts.
+For constrained hosts, that custom registration may also add
+`--memory-mode=low --max-memory=1GiB`; MCP startup and refresh then use the same
+correctness-preserving soft heap policy as CLI builds.
 
 ## 3. Project Instructions Setup
 

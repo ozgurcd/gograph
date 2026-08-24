@@ -22,7 +22,7 @@ A single command (`gograph build .`) emits `graph.json` plus nine focused Markdo
 | `GRAPH_REPORT.md` + split reports | Human + agent readable summaries for symbols, dependencies, routes, SQL, errors, configuration, concurrency, and tests. |
 | `graph.json` | Machine-readable full graph — dependencies, packages, files, structs, interfaces, funcs, methods, imports, call edges, env reads, SQL queries, errors, concurrency primitives, test edges. |
 
-*Note: Use `gograph build . --precise` for type-checked interface, CHA, and SSA enrichment. SSA bodies are limited to selected repository packages rather than the transitive dependency closure; imported types and local external-call references remain available. That production enrichment requires compilable, build-selected packages; if type/load analysis fails or omits an indexed non-test file, gograph warns, retains the AST graph, and records `precise_fallback`, unless a fresh successful precise artifact already covers the same sources. Test packages are resolved separately: broken tests produce `typed_partial` test attribution without downgrading successful production precision. Typed-only test targets are recomputed on incremental builds rather than restored as parser facts. Persisted graph JSON over 512 MiB is rejected before allocation; rerun `gograph build` to reconstruct it from source.*
+*Note: Use `gograph build . --precise` for type-checked interface, CHA, and SSA enrichment. SSA bodies are limited to selected repository packages rather than the transitive dependency closure; imported types and local external-call references remain available. That production enrichment requires compilable, build-selected packages; if type/load analysis fails or omits an indexed non-test file, gograph warns, retains the AST graph, and records `precise_fallback`, unless a fresh successful precise artifact already covers the same sources. Test packages are resolved separately: broken tests produce `typed_partial` test attribution without downgrading successful production precision. Typed-only test targets are recomputed on incremental builds rather than restored as parser facts. Persisted graph JSON over 512 MiB is rejected before allocation; rerun `gograph build` to reconstruct it from source. On constrained hosts, `gograph build . --precise --memory-mode=low --max-memory=1GiB` preserves precision while prioritizing lower heap use through aggressive reclamation and a soft Go runtime memory target; it is not a hard RSS cap and may use more GC CPU.*
 
 And query commands the agent can invoke without re-parsing:
 
@@ -119,8 +119,9 @@ gograph doc <pkg[.Symbol]>       # go doc wrapper: signature + doc comment for a
                                  # Use when following call chains outside the project.
                                  # Examples: gograph doc fmt.Errorf   gograph doc io.Reader
                                  #           gograph doc net/http.HandleFunc  [--json]
-gograph mcp [path] [--persist-refresh]
+gograph mcp [path] [--persist-refresh] [--memory-mode=low] [--max-memory=1GiB]
                                  # stdio MCP server; optional successful-refresh publication
+                                 # memory options match CLI build/refresh semantics
 gograph httpcalls [term]         # all outbound net/http calls (Get, Post, PostForm, Head); filter by method or URL substring
 gograph add-claude-plugin        # install MCP server + CLAUDE.md rules + PreToolUse hook (Claude Desktop & Claude Code)
 gograph hook-guard               # PreToolUse hook binary — blocks indexed-repository Go symbol greps (invoked automatically by Claude Code)
@@ -848,6 +849,11 @@ but is not guaranteed atomic by Go on non-Unix platforms; the complete
 ten-file bundle is not a single atomic filesystem transaction. The lock file
 remains as separate operational state.
 
+For constrained hosts, add `--memory-mode=low --max-memory=1GiB` to the MCP
+startup command. The policy applies to startup analysis and every later
+refresh, and `gograph_capabilities` reports its requested/effective byte
+targets. The limit is a soft Go runtime memory target rather than a hard process/RSS cap.
+
 Default `gograph_changes` compares source with the persisted graph. With
 persistence enabled, a successful refresh advances that baseline, so the edits
 just published normally disappear from the default changes result. Use
@@ -1075,6 +1081,10 @@ gograph session cleanup
   project's `.gograph/` directory but deliberately does not modify
   `.gitignore`. Writers coordinate through `.gograph/.artifacts.lock`. It is
   disabled in generated and bundled configurations.
+- **Optional low-memory execution** — CLI builds, explicit workspace member
+  refreshes, and project MCP refreshes accept `--memory-mode=low` with an
+  optional `--max-memory=<size>`. This changes GC and phase scheduling only;
+  it never silently removes precise analysis facts to satisfy the soft target.
 
 The agent gains a local structural view without a hosted gograph dependency; normal filesystem and local toolchain permissions still apply.
 

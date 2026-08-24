@@ -74,6 +74,9 @@ gograph workspace build
 
 # Explicitly permits writes to stale or missing member .gograph artifacts.
 gograph workspace build --refresh-members
+
+# Apply the repository-build low-memory policy to each sequential refresh.
+gograph workspace build --refresh-members --memory-mode=low --max-memory=1GiB
 ```
 
 An ordinary workspace build refuses missing, stale, incompatible, or
@@ -83,6 +86,9 @@ multi-repository mutation, not a transaction. JSON reports `refresh_plan`,
 before/after member artifact fingerprints. If a later member fails, earlier
 successful member publications remain, while the workspace overlay is not
 replaced.
+Low-memory options preserve member graph precision while applying aggressive
+reclamation and an optional soft Go runtime memory target; the target is not a hard RSS
+or cross-repository transaction limit.
 
 Overlay publication is deterministic for identical inputs and atomic. The
 persisted `input_fingerprint` binds the canonical manifest, ordered exact

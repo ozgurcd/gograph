@@ -2,7 +2,7 @@
 title: Project Identity and Architecture
 type: project
 status: current
-updated: 2026-08-23
+updated: 2026-08-24
 sources:
   - SRC-20260614-gograph-legacy-project
 ---
@@ -26,6 +26,8 @@ The reusable 1280×640 social card is `docs-site/static/images/gograph-social-pr
 ## Analysis modes and health
 
 Default builds produce an AST graph and tolerate partial parsing when at least one Go file succeeds. `BuildMetadata.Precision` records `ast`, `precise`, or `precise_fallback`; this is independent of complete/partial AST build health. Each successfully parsed source file stores a SHA-256 digest. A later build reparses every selected file in each changed package directory and reuses parser-owned records for unchanged packages; stats expose `reused_files` and `rebuilt_packages`. Precise builds reuse that AST base but still run repository-wide go/packages type loading plus CHA/SSA so cross-package method sets and dispatch remain correct. Missing indexed production files or type/load errors normally retain the AST graph and record a visible fallback instead of claiming precise success. A failed precise retry preserves an existing fresh successful precise artifact covering the same selected sources. `gograph stats` and MCP stats expose precision, build health, and reuse counts. `gate` fails closed for stale source, but it does not currently reject a fresh graph whose build metadata is incomplete; CI workflows that require complete coverage must check build health explicitly.
+
+Low-memory execution is an operational policy, not a weaker analysis mode. Repository builds, explicit workspace member refreshes, and project MCP startup/refresh accept `--memory-mode=low` with an optional `--max-memory` byte size. Low mode uses aggressive garbage collection, selective transactional precise-enrichment copies, and phase-boundary reclamation while preserving graph precision and failure atomicity. The configured value is a soft Go-runtime memory target, not an RSS or hard allocation cap; existing stricter runtime limits are preserved, and Gograph never silently omits precise facts to meet the target.
 
 Test-call resolution is an independent capability bound to the exact graph artifact. AST graphs report `ast_heuristic` and retain selector-name attribution for compatibility. Precise builds run a separate non-fatal typed pass over compiling test packages: direct selectors and local method values bind exact repository symbol IDs, while interface-dispatch candidates retain CHA/possible provenance. Broken or omitted test packages report `typed_partial` without downgrading otherwise successful production precision; a fully loaded typed test pass reports `typed_complete`. `untested` suppresses only exact/static typed targets, leaves possible targets visible with an explicit count, and remains an upper bound whenever attribution is partial. Static attribution never proves runtime coverage.
 

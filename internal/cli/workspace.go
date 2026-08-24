@@ -10,6 +10,7 @@ import (
 
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/mcp"
+	"github.com/ozgurcd/gograph/internal/memorylimit"
 	"github.com/ozgurcd/gograph/internal/sourcefs"
 	workspacegraph "github.com/ozgurcd/gograph/internal/workspace"
 )
@@ -60,7 +61,17 @@ func runWorkspaceBuild(args []string) int {
 	start := "."
 	startSet := false
 	refreshMembers := false
-	for _, argument := range args {
+	memoryPolicy := memorylimit.Standard()
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		handled, consumedThrough, memoryErr := parseMemoryOption(args, index, &memoryPolicy)
+		if memoryErr != nil {
+			return failCommandf("workspace build", "invalid memory policy: %v", memoryErr)
+		}
+		if handled {
+			index = consumedThrough
+			continue
+		}
 		switch {
 		case argument == "--refresh-members":
 			refreshMembers = true
@@ -70,9 +81,17 @@ func runWorkspaceBuild(args []string) int {
 			start = argument
 			startSet = true
 		default:
-			return failCommand("workspace build", "usage: gograph workspace build [path] [--refresh-members]")
+			return failCommand("workspace build", "usage: gograph workspace build [path] [--refresh-members] [--memory-mode=low] [--max-memory=1GiB]")
 		}
 	}
+	if err := memoryPolicy.Validate(); err != nil {
+		return failCommandf("workspace build", "invalid memory policy: %v", err)
+	}
+	controller, err := memorylimit.Apply(memoryPolicy)
+	if err != nil {
+		return failCommandf("workspace build", "invalid memory policy: %v", err)
+	}
+	defer controller.Restore()
 	root, err := workspacegraph.FindRoot(start)
 	if err != nil {
 		return failCommand("workspace build", err.Error())
@@ -104,7 +123,8 @@ func runWorkspaceBuild(args []string) int {
 				result.RefreshFailed = append(result.RefreshFailed, attempt)
 				return writeWorkspaceBuildFailure(result, fmt.Sprintf("refresh repository %q: %v", config.ID, rootErr))
 			}
-			if err := refreshWorkspaceMember(memberRoot, config.Precision == "precise"); err != nil {
+			controller.Reclaim()
+			if err := refreshWorkspaceMember(memberRoot, config.Precision == "precise", memoryPolicy); err != nil {
 				attempt.Error = err.Error()
 				attempt.AfterFingerprint = graphArtifactFingerprint(memberRoot)
 				result.RefreshFailed = append(result.RefreshFailed, attempt)
@@ -168,7 +188,7 @@ func writeWorkspaceBuildFailure(result workspaceBuildResult, message string) int
 	return 1
 }
 
-func refreshWorkspaceMember(root string, preciseMode bool) error {
+func refreshWorkspaceMember(root string, preciseMode bool, memoryPolicy memorylimit.Policy) error {
 	buildConfig, configErr := resolveBuildConfig(root)
 	previous, _ := loadGraph(root)
 	g, err := buildGraphWithConfig(root, buildConfig, configErr, previous)
@@ -176,7 +196,7 @@ func refreshWorkspaceMember(root string, preciseMode bool) error {
 		return err
 	}
 	if preciseMode {
-		if err := enrichGraphPreciselyWithConfig(root, g, buildConfig, configErr); err != nil {
+		if err := enrichGraphPreciselyWithMemory(root, g, buildConfig, configErr, memoryPolicy); err != nil {
 			return fmt.Errorf("precise enrichment failed: %w", err)
 		}
 	}

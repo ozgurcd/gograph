@@ -42,6 +42,9 @@ gograph doctor --json
 gograph build . --precise
 gograph stats
 
+# Optional: prioritize lower heap use on constrained hosts
+gograph build . --precise --memory-mode=low --max-memory=1GiB
+
 # Start with repository-wide results that require no guessed symbol
 gograph summary
 gograph hotspot --top 5
@@ -95,6 +98,16 @@ unchanged packages; `stats` reports `reused_files` and `rebuilt_packages`.
 Precise builds reuse that AST work but still recompute repository-wide
 type/CHA/SSA enrichment so cross-package dispatch remains correct.
 
+Low-memory mode preserves those graph semantics while using more aggressive
+garbage collection, reclaiming memory between production and test analysis,
+and avoiding a full JSON copy of the AST graph. `--max-memory` accepts integer
+byte sizes such as `1GB` or `1GiB` and requires `--memory-mode=low`. It is a
+soft Go-runtime memory target—not a hard RSS cap—so memory-mapped files,
+the executable, and Go toolchain subprocesses can make process memory exceed
+the requested value. Aggressive GC can increase CPU time, and a target that is
+too low may make the build much slower or fail; Gograph never silently reduces
+precision to meet it.
+
 ## Machine-readable structural validation
 
 External consumers can validate one closed structural predicate without
@@ -134,6 +147,8 @@ for CLI consumers and later server processes, start the server explicitly with:
 
 ```bash
 gograph mcp . --persist-refresh
+# Optional low-memory policy for startup analysis and later refreshes:
+gograph mcp . --memory-mode=low --max-memory=1GiB
 ```
 
 This opt-in mode writes or overwrites `.gograph/graph.json` and the nine
@@ -202,7 +217,7 @@ normal response format.
 
 | Category | Commands | What it does |
 |---|---|---|
-| **Indexing** | `build . [--precise]`, `stale`, `stats` | Parse AST, write graph. Check freshness. Index health. |
+| **Indexing** | `build . [--precise] [--memory-mode=low] [--max-memory=1GiB]`, `stale`, `stats` | Parse AST, optionally prioritize lower heap use, write graph, check freshness and health. |
 | **Machine Validation** | `version --json`, `validate --repo PATH --binding-json JSON --json` | Versioned exact structural predicates with tri-state outcomes. |
 | **Navigation** | `query`, `callers [--depth N]`, `callees [--depth N]`, `path`, `source`, `node` | Find symbols, trace call chains, extract source. |
 | **Context** | `context`, `explain`, `focus`, `endpoint` | Bundled structural data in one call. Token savers. |
@@ -292,6 +307,7 @@ You still need the `gograph` binary installed (`brew install --cask ozgurcd/tap/
 ```bash
 gograph mcp .                     # stdio server; refreshes stay in memory
 gograph mcp . --persist-refresh   # opt in to publishing refreshed artifacts
+gograph mcp . --memory-mode=low --max-memory=1GiB  # same low-memory refresh policy as CLI builds
 ```
 Add to your `.cursorrules` or AI system prompt:
 > Before answering architecture or repository questions, inspect the available
@@ -369,6 +385,7 @@ drop-in replacement for another.
 - **Default mode** uses Go AST parsing and best-effort heuristics. Tolerates incomplete or non-compiling repositories.
 - **Repository source boundary** excludes descendant links and special files for recognized Go build inputs before build selection, supplies confined bytes to the AST parser, and confines later `source`, caller/callee snippet, complexity, and changed-file reads to regular repository files. Linked/non-regular `go.mod`, `go.sum`, `go.work`, `go.work.sum`, and `vendor/modules.txt` metadata is rejected before gograph or the Go toolchain reads it. Applicable `go.work use` paths must stay beneath their workspace directory; member directories, `go.mod`, and optional `go.sum` are validated before `cmd/go`. Precise loading and `doc` preflight the selected root plus its effective module root, or the workspace root and every member tree; `.git` and `.gograph` are excluded from that source-tree walk. Persisted `graph.json` is also read through this boundary, `.gograph` must be a real directory, and an explicitly symlinked repository root is allowed. Missing or unsupported source-policy markers and artifacts larger than 512 MiB are rebuild-required, and serialized graph roots are never trusted. Saved baseline graphs must be regular non-linked files inside the selected project with the exact marker and size bound. Default/relative check and flow configs, boundaries, gate config, and repository-controlled session/snapshot/wiki mutations reject linked path components; documented absolute config/wiki locations are explicit operator selections. Use the current binary for untrusted repositories.
 - **Precise mode** attempts type-checked production enrichment and needs compilable, build-selected packages for CHA/SSA results. SSA bodies are built for selected repository packages, not the full transitive dependency closure; imported types and local external-call references remain available without dependency-body call graphs or their source-less wrapper noise. If enrichment fails or omits an indexed non-test source file, the command warns, publishes the AST graph, and records `precise_fallback`; if a fresh successful precise artifact already covers the same sources, a failed retry keeps that artifact instead. Successful and AST-only builds record `precise` and `ast` respectively. Test packages are loaded in a separate non-fatal typed pass: broken tests yield `typed_partial` test-call attribution without downgrading successful production precision. Typed-only test targets are recomputed rather than reused as parser facts, preventing edge multiplication across unchanged precise builds.
+- **Low-memory mode** changes execution policy, not analysis meaning. It uses aggressive GC, releases completed production type/SSA state before typed-test loading, and honors an optional soft Go runtime memory target. The target is neither an RSS ceiling nor a guarantee that all repositories can complete within that amount; Gograph reports fallback/failure normally rather than silently omitting precise facts.
 - Each precise interface invocation is represented by one call edge per valid named in-repository CHA target. `callers Interface.Method` (including methods inherited from embedded interfaces and concrete methods promoted from embedded fields) expands through the interface's implementers and reports a shared source expression once; concrete receiver notation and fully-qualified method IDs remain available for disambiguation. Compiler-generated promoted-method forwarding is stored as a traversal-only synthetic edge and is hidden from call-site output.
 - CHA is conservative rather than points-to precise: it may retain implementations that cannot occur in one runtime configuration. Reflection, `unsafe`, plugins, unresolved function values, test-only implementations, unnamed concrete types, and module-external implementations can still be incomplete. Precise test-call attribution binds direct selectors and local method values exactly; interface targets remain explicitly possible, and `typed_partial` means some tests stayed on parser heuristics.
 - Callback references are retained only when they resolve to repository callables, and exact call edges are deduplicated before serialization.

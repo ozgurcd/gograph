@@ -2,12 +2,12 @@ package precise
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"go/token"
 	"go/types"
 	"maps"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 
@@ -35,33 +35,88 @@ func Enrich(absRoot string, g *graph.Graph) error {
 // EnrichWithConfig applies type-checked precision using the same effective Go
 // build configuration that selected files for the AST graph.
 func EnrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) error {
+	return EnrichWithOptions(absRoot, g, config, Options{})
+}
+
+// Options controls operational precise-analysis behavior without changing the
+// graph semantics.
+type Options struct {
+	LowMemory bool
+}
+
+// EnrichWithOptions applies precise enrichment transactionally. The selective
+// copy duplicates only records that precise analysis may mutate; all other AST
+// records remain shared and read-only until enrichment succeeds.
+func EnrichWithOptions(absRoot string, g *graph.Graph, config buildctx.Config, options Options) error {
 	if g == nil {
 		return fmt.Errorf("cannot enrich a nil graph")
 	}
-	payload, err := json.Marshal(g)
-	if err != nil {
-		return fmt.Errorf("copy AST graph for precise analysis: %w", err)
-	}
-	var enriched graph.Graph
-	if err := json.Unmarshal(payload, &enriched); err != nil {
-		return fmt.Errorf("copy AST graph for precise analysis: %w", err)
-	}
-	if err := enrichWithConfig(absRoot, &enriched, config); err != nil {
+	enriched := cloneForPreciseEnrichment(g)
+	if err := enrichWithConfig(absRoot, &enriched, config, options); err != nil {
 		return err
 	}
 	*g = enriched
 	return nil
 }
 
-func enrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) error {
-	if err := scanner.ValidateToolchainSourceInputs(absRoot); err != nil {
-		return fmt.Errorf("refusing precise analysis of unsafe repository or Go tool input: %w", err)
+func cloneForPreciseEnrichment(g *graph.Graph) graph.Graph {
+	enriched := *g
+	enriched.Symbols = append([]graph.SymbolNode(nil), g.Symbols...)
+	enriched.Calls = append([]graph.CallEdge(nil), g.Calls...)
+	enriched.TestEdges = append([]graph.TestEdge(nil), g.TestEdges...)
+	enriched.Implements = append([]graph.ImplementsEdge(nil), g.Implements...)
+	enriched.Mutations = append([]graph.MutationEdge(nil), g.Mutations...)
+	if g.Build != nil {
+		build := *g.Build
+		build.Failures = append([]graph.BuildFailure(nil), g.Build.Failures...)
+		build.Warnings = append([]string(nil), g.Build.Warnings...)
+		enriched.Build = &build
 	}
+	return enriched
+}
+
+func enrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config, options Options) error {
+	analysisRoot := preciseAnalysisRoot(absRoot, config)
+	if err := enrichProductionWithConfig(absRoot, analysisRoot, g, config); err != nil {
+		return err
+	}
+	// The production package/type/SSA graph is now out of scope. In low-memory
+	// mode, reclaim it before the separate test-package type load so their peak
+	// heaps do not overlap unnecessarily.
+	if options.LowMemory {
+		debug.FreeOSMemory()
+	}
+
+	// Test packages are loaded separately so their type errors cannot weaken
+	// production precision. Successful test packages still contribute exact
+	// selector identities and bounded CHA-possible interface/method-value
+	// targets to TestEdges and their corresponding call edges.
+	testResolution, testResolutionErr := enrichTypedTestCalls(analysisRoot, g, config)
+	if g.Build != nil {
+		g.Build.TestCallResolution = testResolution
+		if testResolutionErr != nil {
+			g.Build.Warnings = append(g.Build.Warnings, "typed test call resolution incomplete: "+testResolutionErr.Error())
+		}
+	}
+	if err := scanner.ValidateNoSourceLinks(absRoot); err != nil {
+		return fmt.Errorf("repository source became unsafe during precise test analysis: %w", err)
+	}
+	return nil
+}
+
+func preciseAnalysisRoot(absRoot string, config buildctx.Config) string {
 	analysisRoot := absRoot
 	if config.ModuleRoot() != "" {
 		if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
 			analysisRoot = resolved
 		}
+	}
+	return analysisRoot
+}
+
+func enrichProductionWithConfig(absRoot, analysisRoot string, g *graph.Graph, config buildctx.Config) error {
+	if err := scanner.ValidateToolchainSourceInputs(absRoot); err != nil {
+		return fmt.Errorf("refusing precise analysis of unsafe repository or Go tool input: %w", err)
 	}
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
@@ -390,18 +445,6 @@ func enrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 			}
 		}
 		g.Calls = materializeInvokeCalls(g.Calls, invokeGroups)
-	}
-
-	// Test packages are loaded separately so their type errors cannot weaken
-	// production precision. Successful test packages still contribute exact
-	// selector identities and bounded CHA-possible interface/method-value
-	// targets to TestEdges and their corresponding call edges.
-	testResolution, testResolutionErr := enrichTypedTestCalls(analysisRoot, g, config)
-	if g.Build != nil {
-		g.Build.TestCallResolution = testResolution
-		if testResolutionErr != nil {
-			g.Build.Warnings = append(g.Build.Warnings, "typed test call resolution incomplete: "+testResolutionErr.Error())
-		}
 	}
 
 	// 3. Indirect mutations via mutating-method calls (Bug 17/28).

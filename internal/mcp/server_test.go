@@ -716,6 +716,43 @@ func TestCapabilitiesReportRefreshPersistenceMode(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesReportAnalysisMemoryPolicy(t *testing.T) {
+	previous := mcppkg.ExposeToolsForTesting
+	handlers := make(map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error))
+	mcppkg.ExposeToolsForTesting = handlers
+	t.Cleanup(func() { mcppkg.ExposeToolsForTesting = previous })
+
+	mcppkg.NewServer(
+		&graph.Graph{},
+		mockRebuild(&graph.Graph{}),
+		mockBuildGraph(),
+		mockBuildBaseline(),
+		"dev",
+		mcppkg.ServerOptions{
+			MemoryMode:              "low",
+			RequestedMaxMemoryBytes: 1 << 30,
+			EffectiveMaxMemoryBytes: 768 << 20,
+		},
+	)
+	text := callTool(t, handlers["gograph_capabilities"], nil)
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	memory, ok := payload["analysis_memory"].(map[string]any)
+	if !ok {
+		t.Fatalf("analysis_memory = %#v, want object", payload["analysis_memory"])
+	}
+	if memory["mode"] != "low" || memory["requested_max_memory_bytes"] != float64(1<<30) || memory["effective_max_memory_bytes"] != float64(768<<20) {
+		t.Fatalf("analysis_memory = %#v", memory)
+	}
+	for _, field := range []string{"limit_semantics", "result_semantics"} {
+		if value, _ := memory[field].(string); value == "" {
+			t.Errorf("analysis_memory.%s is empty", field)
+		}
+	}
+}
+
 func TestToolDescriptionsUsePrecisionAwareRefreshContract(t *testing.T) {
 	g := &graph.Graph{}
 	s := mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), mockBuildBaseline(), "dev")
