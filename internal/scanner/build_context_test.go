@@ -180,17 +180,21 @@ func TestValidateNoSourceLinksRejectsDescendantDirectorySymlink(t *testing.T) {
 	}
 }
 
-func TestValidateNoSourceLinksRejectsUnrecognizedFileSymlinkWithoutFollowingIt(t *testing.T) {
+func TestValidateNoSourceLinksAllowsUnrelatedRegularAndDanglingFileSymlinks(t *testing.T) {
 	base := t.TempDir()
 	root := filepath.Join(base, "repository")
 	mustWrite(t, filepath.Join(root, "main.go"), "package main\n")
-	// A dangling non-Go link proves validation relies only on the repository
-	// entry itself and does not need to stat or open its target.
+	target := filepath.Join(base, "shared-config.yaml")
+	mustWrite(t, target, "enabled: true\n")
+	if err := os.Symlink(target, filepath.Join(root, "config.yaml")); err != nil {
+		t.Skipf("create unrelated regular-file symlink: %v", err)
+	}
+	// A dangling non-Go link is also irrelevant to cmd/go package discovery.
 	if err := os.Symlink(filepath.Join(base, "missing-target"), filepath.Join(root, "notes.txt")); err != nil {
 		t.Skipf("create unrelated file symlink: %v", err)
 	}
-	if err := scanner.ValidateNoSourceLinks(root); err == nil || !scanner.IsUnsafeSourceFileError(err) {
-		t.Fatalf("ValidateNoSourceLinks unrelated link error = %v, want unsafe source", err)
+	if err := scanner.ValidateNoSourceLinks(root); err != nil {
+		t.Fatalf("ValidateNoSourceLinks unrelated links = %v, want nil", err)
 	}
 }
 

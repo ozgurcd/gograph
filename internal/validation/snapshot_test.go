@@ -168,6 +168,43 @@ func TestRepositoryLoaderRejectsUnsafeMetadata(t *testing.T) {
 	}
 }
 
+func TestCaptureSourceStateKeepsExplicitValidationBoundary(t *testing.T) {
+	base := t.TempDir()
+	repository := filepath.Join(base, "repository")
+	root := filepath.Join(repository, "app")
+	sibling := filepath.Join(repository, "shared")
+	for _, directory := range []string{filepath.Join(repository, ".git"), root, sibling} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, content := range map[string]string{
+		filepath.Join(root, "go.mod"):       "module example.com/app\n\ngo 1.24\n",
+		filepath.Join(root, "main.go"):      "package app\n",
+		filepath.Join(root, "go.work"):      "go 1.24\n\nuse (\n\t.\n\t../shared\n)\n",
+		filepath.Join(sibling, "go.mod"):    "module example.com/shared\n\ngo 1.24\n",
+		filepath.Join(sibling, "shared.go"): "package shared\n",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("GOWORK", "auto")
+	t.Setenv("GO111MODULE", "")
+
+	if _, err := captureSourceState(context.Background(), root, nil, false); err == nil {
+		t.Fatal("captureSourceState explicit validation authority accepted sibling module")
+	} else {
+		var snapshotErr *SnapshotError
+		if !errors.As(err, &snapshotErr) || snapshotErr.Diagnostic.Code != "build_context_escape" {
+			t.Fatalf("captureSourceState strict error = %v", err)
+		}
+	}
+	if _, err := captureSourceState(context.Background(), root, nil, true); err != nil {
+		t.Fatalf("captureSourceState checkout authority = %v", err)
+	}
+}
+
 func writeRepositoryFixture(t *testing.T) (string, []byte) {
 	t.Helper()
 	root := writeGoRepository(t)

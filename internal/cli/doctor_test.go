@@ -82,3 +82,20 @@ func TestDoctorJSONContract(t *testing.T) {
 		t.Fatalf("doctor emitted more than one JSON document: %q", stdout)
 	}
 }
+
+func TestDoctorReportsMissingRepositoryGraph(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/doctor\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repository, findings := inspectDoctorRepository(root, nil)
+	if repository == nil || repository.Root != root || repository.GraphAvailable || repository.Freshness != "unavailable" {
+		t.Fatalf("repository health = %+v", repository)
+	}
+	if repository.DiagnosticCode != "graph_missing" || repository.Diagnostic == "" {
+		t.Fatalf("repository diagnostic = %+v", repository)
+	}
+	if !hasDoctorFinding(findings, "repository_graph_unavailable") {
+		t.Fatalf("findings = %+v", findings)
+	}
+}

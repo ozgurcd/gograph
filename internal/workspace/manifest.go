@@ -46,7 +46,7 @@ func FindRoot(start string) (string, error) {
 		}
 		parent := filepath.Dir(abs)
 		if parent == abs {
-			return "", fmt.Errorf("no %s found from %s", ManifestFile, start)
+			return "", fmt.Errorf("no %s found from %s; create a regular manifest beneath the workspace root (run 'gograph workspace --help' for an example)", ManifestFile, start)
 		}
 		abs = parent
 	}

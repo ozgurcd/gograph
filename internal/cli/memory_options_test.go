@@ -10,15 +10,16 @@ import (
 )
 
 func TestParseBuildMemoryOptions(t *testing.T) {
-	options, err := parseBuildArgs([]string{".", "--precise", "--memory-mode=low", "--max-memory=1GiB"})
+	options, err := parseBuildArgs([]string{".", "--precise", "--strict", "--memory-mode=low", "--max-memory=1GiB"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if options.Root != "." || !options.Precise || options.Memory.Mode != memorylimit.ModeLow || options.Memory.MaxBytes != 1<<30 {
+	if options.Root != "." || !options.Precise || !options.Strict || options.Memory.Mode != memorylimit.ModeLow || options.Memory.MaxBytes != 1<<30 {
 		t.Fatalf("parsed build options = %+v", options)
 	}
 
 	for _, args := range [][]string{
+		{".", "--strict"},
 		{".", "--max-memory=1GiB"},
 		{".", "--memory-mode=fast"},
 		{".", "--memory-mode=low", "--max-memory=0"},

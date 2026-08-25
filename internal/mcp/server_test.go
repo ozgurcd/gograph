@@ -786,7 +786,7 @@ func TestCapabilitiesReportBuildTagSelection(t *testing.T) {
 			t.Errorf("analysis_build_context.%s = %#v", field, selection[field])
 		}
 	}
-	for _, field := range []string{"selection_semantics", "refresh_semantics"} {
+	for _, field := range []string{"selection_semantics", "refresh_semantics", "artifact_semantics"} {
 		if value, _ := selection[field].(string); value == "" {
 			t.Errorf("analysis_build_context.%s is empty", field)
 		}

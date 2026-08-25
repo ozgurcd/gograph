@@ -33,13 +33,13 @@ conflicting output flags fail instead of being silently ignored.
 
 ### build
 ```bash
-gograph build [path] [--precise] [--tags=integration[,tag...]] [--memory-mode=low] [--max-memory=1GiB]
+gograph build [path] [--precise] [--strict] [--tags=integration[,tag...]] [--memory-mode=low] [--max-memory=1GiB]
 ```
 Walks and parses a Go repository. Generates the structured graph at `.gograph/graph.json` and nine targeted Markdown reports in `.gograph/`.
 Adds `.gograph/` to the Git repository root `.gitignore` when available; outside Git, falls back to the build target `.gitignore`.
 The update accepts only an absent or regular `.gitignore`; a symlink or special
 file is refused without modifying its target.
-The scanner honors the effective Go build context, including build tags, platform filenames, cgo, test-file constraints, cmd/go package-directory rules, and module ignore directives. Git-ignored files and directories use the same exclusion policy in `build`, `stale`, and `changes`. Descendant symlinks and special files for extensions recognized by `go/build` are reported and excluded, while an explicitly symlinked repository root remains supported. Linked/non-regular `go.mod`, `go.sum`, `go.work`, `go.work.sum`, and `vendor/modules.txt` metadata is rejected before toolchain use. Applicable `go.work use` members must remain beneath the workspace directory; their directories, `go.mod`, and optional `go.sum` are validated before `cmd/go`. AST parsing uses repository-confined source bytes. If no Go files are found or none parse successfully, exits without replacing existing artifacts. Partial status includes parse failures and selection/security warnings recorded in `graph.json`.
+The scanner honors the effective Go build context, including build tags, platform filenames, cgo, test-file constraints, cmd/go package-directory rules, and module ignore directives. Git-ignored files and directories use the same exclusion policy in `build`, `stale`, and `changes`. Linked directories plus linked/special files for extensions recognized by `go/build` are reported and excluded, while an explicitly symlinked repository root remains supported. Unrelated regular-file or dangling links with non-Go extensions, such as YAML configuration and TSV fixtures, are not Go tool inputs and do not block precise analysis. Linked/non-regular `go.mod`, `go.sum`, `go.work`, `go.work.sum`, and `vendor/modules.txt` metadata is rejected before toolchain use. Applicable `go.work use` members may be sibling modules beneath the nearest real Git checkout; without that boundary they remain confined beneath the workspace directory. Nested Git boundaries are not crossed, and member directories, `go.mod`, and optional `go.sum` are validated before `cmd/go`. AST parsing uses repository-confined source bytes. If no Go files are found or none parse successfully, exits without replacing existing artifacts. Partial status includes parse failures and selection/security warnings recorded in `graph.json`.
 
 Graph/report publication waits up to 30 seconds for
 `.gograph/.artifacts.lock`, then stages and syncs all ten files. The nine
@@ -69,6 +69,9 @@ cross-package method sets and dispatch targets remain correct.
     `cmd/go` precedence. Without this option, existing `GOFLAGS` behavior is
     unchanged. The selected context is part of the graph fingerprint.
   - `--precise`: Attempts type-checked CHA/SSA enrichment after a repository preflight that rejects source-tree links `cmd/go` may inspect across the selected root plus its effective module root, or the workspace root and member trees; `.git` and `.gograph` are excluded from that walk. It also rejects special recognized build inputs, unsafe workspace members, and linked/non-regular module/workspace metadata entries. Enrichment needs compilable, build-selected production packages; on unsafe input, failure, or an incomplete non-test package load gograph warns and publishes the unchanged AST graph unless a fresh successful precise artifact already covers the same safely selected sources. Graph metadata records `precise`, `precise_fallback`, or `ast`. Precise interface calls retain one parallel call edge per valid named in-repository target; promoted methods add an explicitly marked traversal-only forwarding edge. A separate typed pass resolves compiling test packages without making test compilation a prerequisite for production precision. Broken or omitted test packages produce `typed_partial` test-call attribution rather than a production precision fallback.
+  - `--strict`: Requires `--precise`. Precise enrichment failure keeps the same
+    publication/retention behavior and diagnostic metadata, then exits non-zero.
+    Without this flag, precise fallback keeps its compatible exit-zero behavior.
   - **Graph v2 compatibility**: Precision/column/synthetic, content-digest,
     analysis-cache, parser/precise provenance, and reuse-count fields remain
     additive. Graphs without the exact current source-policy marker are
@@ -725,6 +728,9 @@ must be a unique relative descendant without symlink traversal. Each member's
 `.gograph/graph.json` remains authoritative and independently fingerprinted;
 the deterministic `.gograph/workspace.json` contains only scoped
 cross-repository ownership, resolution, and HTTP-contract facts.
+`gograph workspace --help` lists the complete command family and prints a
+minimal valid manifest. Repository-local `go.work` sibling-module authority
+inside a Git checkout does not widen this manifest's member-path boundary.
 
 ### workspace build
 
@@ -865,9 +871,12 @@ Inspects the running executable and every distinct `gograph` executable found
 on `PATH`. It reports duplicate installations, a running/PATH mismatch, and
 older stable binaries when versions are safely comparable. Alternate binaries
 are read through Go build metadata and are never executed. `--json` emits the
-versioned `gograph.doctor.v1` document. Development, dirty, and prerelease
-builds are not ordered against stable releases. This host diagnostic is
-intentionally CLI-only.
+versioned `gograph.doctor.v1` document. When run inside a Go repository it also
+reports graph availability/freshness, analysis mode, AST/precision/call
+resolution capabilities, artifact fingerprint, and the exact freshness or
+build-context diagnostic. Development, dirty, and prerelease builds are not
+ordered against stable releases. Doctor remains intentionally CLI-only because
+it diagnoses the host process and installation selected before MCP startup.
 
 ### capabilities
 ```bash
@@ -888,6 +897,11 @@ AI clients (e.g., Claude Code, Cursor).
   temporary Git baselines, and optional artifact publication all retain that
   selection. `gograph_capabilities.analysis_build_context` reports requested
   and effective tags.
+- **Environment binding**: A persisted graph is valid only under its recorded
+  effective source/build selection. Start MCP with the same `GOWORK`,
+  `GOFLAGS`, and explicit `--tags`; a mismatch is stale and must refresh
+  successfully or return a diagnostic rather than serving incompatible facts.
+  `gograph doctor --json` reports the same diagnostic before server startup.
 - **Persistence**: Refreshes remain in memory by default. `--persist-refresh`
   writes or overwrites `.gograph/graph.json` and the nine Markdown reports only
   after a successful, confirmed-fresh refresh. It does not update `.gitignore`
@@ -930,7 +944,10 @@ rooted at the analyzed project and may not traverse or follow a linked
 descendant; an absolute output explicitly selects another local root. The
 selected output must be a real directory. Generated directories and regular
 page writes are confined beneath it, links/special entries are refused, and
-existing regular pages may be overwritten.
+existing regular pages may be overwritten. After successful generation,
+obsolete `packages/*.md` files are removed only when they carry Gograph's
+generated package-page signature. Custom files, `packages/README.md`, links,
+special entries, and oversized unknown pages are preserved.
 
 ### doc
 ```bash
@@ -945,9 +962,11 @@ rejects absolute/relative filesystem-shaped queries and flags, then refuses
 root plus its effective module root, or the workspace root and member trees;
 `.git` and `.gograph` are excluded from that walk. It also refuses when
 `go.mod`, `go.sum`, `go.work`, `go.work.sum`, `vendor/modules.txt`, or a
-recognized Go build input is non-regular. Applicable workspace members must
-remain beneath the workspace directory, with each directory, `go.mod`, and
-optional `go.sum` validated first.
+recognized Go build input is non-regular. Applicable `go.work` members may be
+sibling modules beneath the nearest real Git checkout; without that boundary
+they remain confined beneath the workspace directory. Each directory,
+`go.mod`, and optional `go.sum` is validated first. Unrelated non-Go
+regular-file or dangling links do not block the Go-tool preflight.
 Package/symbol queries such as `fmt.Errorf`,
 `net/http.HandleFunc`, and `github.com/jackc/pgx/v5.Conn.QueryRow` remain valid.
 The local Go toolchain and dependency resolution follow the user's

@@ -164,7 +164,7 @@ func validateToolchainMetadataAndRoots(root, rootAlias string) ([]string, error)
 			return nil, fmt.Errorf("open explicit workspace root: %w", err)
 		}
 		primary := filepath.Base(goWork)
-		found, sourceRoots, validateErr := validateWorkspaceSet(files, workspaceRoot, workspaceAlias, primary)
+		found, sourceRoots, validateErr := validateWorkspaceSet(files, workspaceRoot, workspaceAlias, primary, workspaceRoot)
 		_ = files.Close()
 		if validateErr != nil {
 			return nil, validateErr
@@ -185,7 +185,7 @@ func validateToolchainMetadataAndRoots(root, rootAlias string) ([]string, error)
 			return nil, fmt.Errorf("open Go metadata directory %s: %w", dir, err)
 		}
 		if workspacePending {
-			found, sourceRoots, validateErr := validateWorkspaceSet(files, dir, aliasDir, "go.work")
+			found, sourceRoots, validateErr := validateWorkspaceSet(files, dir, aliasDir, "go.work", root)
 			if validateErr != nil {
 				_ = files.Close()
 				return nil, validateErr
@@ -223,7 +223,7 @@ func validateToolchainMetadataAndRoots(root, rootAlias string) ([]string, error)
 // reads each member's go.mod and optional go.sum, and may inspect workspace
 // vendor/modules.txt before handling the requested package. Those local paths
 // must therefore be validated before the first cmd/go invocation.
-func validateWorkspaceSet(files *sourcefs.Reader, directory, directoryAlias, primary string) (bool, []string, error) {
+func validateWorkspaceSet(files *sourcefs.Reader, directory, directoryAlias, primary, analysisRoot string) (bool, []string, error) {
 	data, err := files.ReadRegularFile(primary)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -242,24 +242,33 @@ func validateWorkspaceSet(files *sourcefs.Reader, directory, directoryAlias, pri
 	if err != nil {
 		return true, nil, fmt.Errorf("parse %s: %w", workFilePath, err)
 	}
+	confinementRoot, err := workspaceConfinementRoot(analysisRoot, directory)
+	if err != nil {
+		return true, nil, err
+	}
+	workspaceFiles, err := sourcefs.Open(confinementRoot)
+	if err != nil {
+		return true, nil, fmt.Errorf("open workspace source authority %s: %w", confinementRoot, err)
+	}
+	defer func() { _ = workspaceFiles.Close() }()
 	memberRoots := make([]string, 0, len(workFile.Use))
 	for _, use := range workFile.Use {
-		member, err := workspaceMemberName(directory, directoryAlias, use.Path)
+		member, memberRoot, err := workspaceMemberName(directory, directoryAlias, confinementRoot, use.Path)
 		if err != nil {
 			return true, nil, err
 		}
-		if err := files.ValidateDirectory(member); err != nil {
-			return true, nil, fmt.Errorf("inspect workspace member %s: %w", filepath.Join(directory, member), err)
+		if err := workspaceFiles.ValidateDirectory(member); err != nil {
+			return true, nil, fmt.Errorf("inspect workspace member %s: %w", memberRoot, err)
 		}
 		moduleFile := filepath.Join(member, "go.mod")
-		if err := files.ValidateRegularFile(moduleFile); err != nil {
-			return true, nil, fmt.Errorf("inspect workspace member metadata %s: %w", filepath.Join(directory, moduleFile), err)
+		if err := workspaceFiles.ValidateRegularFile(moduleFile); err != nil {
+			return true, nil, fmt.Errorf("inspect workspace member metadata %s: %w", filepath.Join(memberRoot, "go.mod"), err)
 		}
 		sumFile := filepath.Join(member, "go.sum")
-		if err := files.ValidateRegularFile(sumFile); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return true, nil, fmt.Errorf("inspect workspace member metadata %s: %w", filepath.Join(directory, sumFile), err)
+		if err := workspaceFiles.ValidateRegularFile(sumFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return true, nil, fmt.Errorf("inspect workspace member metadata %s: %w", filepath.Join(memberRoot, "go.sum"), err)
 		}
-		memberRoots = append(memberRoots, filepath.Clean(filepath.Join(directory, member)))
+		memberRoots = append(memberRoots, memberRoot)
 	}
 	// Workspace vendoring is rooted beside go.work, so cmd/go may inspect
 	// source below directory/vendor even when analysis starts in one member.
@@ -268,29 +277,103 @@ func validateWorkspaceSet(files *sourcefs.Reader, directory, directoryAlias, pri
 	return true, uniquePaths(sourceRoots), nil
 }
 
-func workspaceMemberName(directory, directoryAlias, usePath string) (string, error) {
+func workspaceMemberName(directory, directoryAlias, confinementRoot, usePath string) (string, string, error) {
 	member := filepath.Clean(filepath.FromSlash(usePath))
-	if filepath.IsAbs(member) {
-		bases := []string{directory}
-		if sameDirectory(directory, directoryAlias) {
-			bases = append(bases, directoryAlias)
-		}
-		for _, base := range uniquePaths(bases) {
-			relative, err := filepath.Rel(base, member)
-			if err != nil {
-				continue
-			}
-			relative = filepath.Clean(relative)
-			if filepath.IsLocal(relative) {
-				return relative, nil
-			}
-		}
-		return "", fmt.Errorf("%w %q: workspace use path must stay beneath %s", sourcefs.ErrUnsafeSourcePath, usePath, directory)
+	candidate := member
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(directory, candidate)
 	}
-	if !filepath.IsLocal(member) {
-		return "", fmt.Errorf("%w %q: workspace use path must stay beneath %s", sourcefs.ErrUnsafeSourcePath, usePath, directory)
+	candidate = filepath.Clean(candidate)
+
+	bases := []string{confinementRoot}
+	if aliasRoot, ok := confinementAlias(directory, directoryAlias, confinementRoot); ok {
+		bases = append(bases, aliasRoot)
 	}
-	return member, nil
+	for _, base := range uniquePaths(bases) {
+		relative, err := filepath.Rel(base, candidate)
+		if err != nil {
+			continue
+		}
+		relative = filepath.Clean(relative)
+		if !filepath.IsLocal(relative) {
+			continue
+		}
+		memberRoot := filepath.Clean(filepath.Join(confinementRoot, relative))
+		return relative, memberRoot, nil
+	}
+	return "", "", fmt.Errorf("%w %q: workspace use path must stay beneath %s", sourcefs.ErrUnsafeSourcePath, usePath, confinementRoot)
+}
+
+func workspaceConfinementRoot(analysisRoot, workspaceRoot string) (string, error) {
+	trustRoot, hasGitAuthority, err := sourceTrustRoot(analysisRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve repository source authority: %w", err)
+	}
+	if hasGitAuthority {
+		if pathWithin(trustRoot, workspaceRoot) {
+			return trustRoot, nil
+		}
+		return "", fmt.Errorf("%w %q: workspace file must stay beneath repository source authority %s", sourcefs.ErrUnsafeSourcePath, workspaceRoot, trustRoot)
+	}
+	return filepath.Clean(workspaceRoot), nil
+}
+
+// SourceTrustRoot returns the canonical repository authority for local Go
+// workspace paths. A real Git boundary is an operator-selected checkout
+// boundary, so ordinary sibling modules beneath it may participate in one
+// go.work. Without such a boundary the explicit analysis root remains the
+// authority, preserving the existing confinement rule for arbitrary trees.
+func SourceTrustRoot(root string) (string, error) {
+	trustRoot, _, err := sourceTrustRoot(root)
+	return trustRoot, err
+}
+
+func sourceTrustRoot(root string) (string, bool, error) {
+	canonicalRoot, err := canonicalDirectory(root)
+	if err != nil {
+		return "", false, err
+	}
+	for directory := canonicalRoot; ; directory = filepath.Dir(directory) {
+		entry, statErr := os.Lstat(filepath.Join(directory, ".git"))
+		switch {
+		case statErr == nil && entry.Mode()&os.ModeSymlink == 0 && (entry.IsDir() || entry.Mode().IsRegular()):
+			return directory, true, nil
+		case statErr == nil:
+			return canonicalRoot, false, nil
+		case !os.IsNotExist(statErr):
+			return "", false, fmt.Errorf("inspect Git boundary at %s: %w", directory, statErr)
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			return canonicalRoot, false, nil
+		}
+	}
+}
+
+func confinementAlias(directory, directoryAlias, confinementRoot string) (string, bool) {
+	if !sameDirectory(directory, directoryAlias) {
+		return "", false
+	}
+	relative, err := filepath.Rel(confinementRoot, directory)
+	if err != nil || !filepath.IsLocal(relative) {
+		return "", false
+	}
+	aliasRoot := filepath.Clean(directoryAlias)
+	for range strings.Split(filepath.ToSlash(relative), "/") {
+		if relative == "." {
+			break
+		}
+		aliasRoot = filepath.Dir(aliasRoot)
+	}
+	if !sameDirectory(aliasRoot, confinementRoot) {
+		return "", false
+	}
+	return aliasRoot, true
+}
+
+func pathWithin(root, candidate string) bool {
+	relative, err := filepath.Rel(filepath.Clean(root), filepath.Clean(candidate))
+	return err == nil && filepath.IsLocal(filepath.Clean(relative))
 }
 
 func sameDirectory(left, right string) bool {

@@ -103,18 +103,23 @@ An MCPB installation does not turn gograph into a hosted service:
   `.gograph/sessions/` directory; raw query results are not logged there.
 - Default indexing parses source locally and does not execute the target
   repository's binaries or tests.
-- Descendant symlinks and special files for recognized Go build inputs are
-  excluded, and graph-directed source reads are confined to regular files
+- Linked directories and linked/special files for recognized Go build inputs
+  are excluded, while unrelated non-Go regular-file/dangling links do not block
+  precise analysis. Graph-directed source reads are confined to regular files
   beneath the selected project.
   Linked/non-regular `go.mod`, `go.sum`, `go.work`, `go.work.sum`, and
   `vendor/modules.txt` metadata is rejected before gograph or the Go toolchain
-  reads it. Applicable workspace members must remain beneath the workspace
-  directory; their directories, `go.mod`, and optional `go.sum` are validated
-  before `cmd/go`.
+  reads it. Applicable `go.work` members may be siblings beneath the nearest
+  real Git checkout; without one they remain beneath the workspace directory.
+  Nested Git boundaries are not crossed, and their directories, `go.mod`, and
+  optional `go.sum` are validated before `cmd/go`.
 - Persisted `graph.json` must be a regular repository-confined file, and
   publication refuses a linked or non-directory `.gograph`. An unusable
   artifact is replaced by a safe in-memory startup graph unless durable MCP
   refresh publication is explicitly enabled.
+- A persisted graph built under a different effective `GOWORK`, `GOFLAGS`, or
+  tag selection is stale and not silently served. Run `gograph doctor --json`
+  from the project to inspect the repository diagnostic.
 - Saved `.json` baselines must be regular, non-linked files inside the selected
   project with the exact current source-policy marker. Persisted and baseline
   graph roots are metadata; the selected project root remains authoritative.

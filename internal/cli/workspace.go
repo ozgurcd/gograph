@@ -59,6 +59,38 @@ func runWorkspace(args []string) int {
 	}
 }
 
+func printWorkspaceHelp() {
+	fmt.Print(`USAGE
+  gograph workspace <build|status|query|path|impact|mcp> [arguments]
+
+COMMANDS
+  build [path] [--refresh-members] [--tags=<tags>] [memory flags]
+  status [path] [--tags=<tags>]
+  query [--scope id] [--workspace path] [--tags=<tags>] <term...>
+  path [--scope id] [--workspace path] [--tags=<tags>] [--include-possible] <from> <to>
+  impact [--scope id] [--workspace path] [--tags=<tags>] [--include-possible] <target>
+  mcp [path] [--tags=<tags>]
+
+MANIFEST
+  The checked-in .gograph-workspace.yml establishes the workspace root.
+  Member paths must be unique, relative, non-linked directories confined beneath it.
+
+  schema_version: gograph.workspace-manifest.v1
+  name: my-workspace
+  default_scope: oss
+  repositories:
+    - id: api
+      path: services/api
+      precision: precise
+  scopes:
+    - id: oss
+      repositories: [api]
+
+  See docs/workspaces.md in the source tree, or:
+  https://gograph.identuum.ai/docs/command-reference/#federated-workspaces
+`)
+}
+
 func runWorkspaceBuild(args []string) int {
 	start := "."
 	startSet := false

@@ -23,7 +23,7 @@ const Version = "2"
 // without the exact current marker may contain data derived from files outside
 // the indexed repository or use an unknown future policy and must be rebuilt
 // before they are queried.
-const CurrentSourcePolicyVersion = 1
+const CurrentSourcePolicyVersion = 2
 
 // CurrentAnalysisCacheVersion identifies graphs whose file-level records can
 // be decomposed back into parser output and safely reused by an incremental

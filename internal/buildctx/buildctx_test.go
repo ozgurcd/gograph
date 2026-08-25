@@ -396,6 +396,107 @@ func TestValidateToolchainMetadataAcceptsConfinedWorkspaceMembers(t *testing.T) 
 	}
 }
 
+func TestToolchainSourceRootsAllowsSiblingWorkspaceMemberWithinGitAuthority(t *testing.T) {
+	base := t.TempDir()
+	repository := filepath.Join(base, "repository")
+	analysisRoot := filepath.Join(repository, "cust", "app")
+	siblingRoot := filepath.Join(repository, "mesa2", "core")
+	for _, directory := range []string{filepath.Join(repository, ".git"), analysisRoot, siblingRoot} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for directory, module := range map[string]string{
+		analysisRoot: "example.com/app",
+		siblingRoot:  "example.com/mesa",
+	} {
+		if err := os.WriteFile(filepath.Join(directory, "go.mod"), []byte("module "+module+"\n\ngo 1.26\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(analysisRoot, "go.work"), []byte("go 1.26\n\nuse (\n\t.\n\t../../mesa2/core\n)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOWORK", "auto")
+	t.Setenv("GO111MODULE", "")
+
+	sourceRoots, err := ToolchainSourceRoots(analysisRoot)
+	if err != nil {
+		t.Fatalf("ToolchainSourceRoots same-checkout sibling = %v", err)
+	}
+	wantRoots := []string{analysisRoot, siblingRoot}
+	for index := range wantRoots {
+		wantRoots[index], err = filepath.EvalSymlinks(wantRoots[index])
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	sort.Strings(sourceRoots)
+	sort.Strings(wantRoots)
+	if !reflect.DeepEqual(sourceRoots, wantRoots) {
+		t.Fatalf("ToolchainSourceRoots = %v, want %v", sourceRoots, wantRoots)
+	}
+}
+
+func TestToolchainSourceRootsUsesNearestGitAuthority(t *testing.T) {
+	base := t.TempDir()
+	outer := filepath.Join(base, "outer")
+	nested := filepath.Join(outer, "nested")
+	analysisRoot := filepath.Join(nested, "app")
+	outsideNestedCheckout := filepath.Join(outer, "sibling")
+	for _, directory := range []string{
+		filepath.Join(outer, ".git"),
+		filepath.Join(nested, ".git"),
+		analysisRoot,
+		outsideNestedCheckout,
+	} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for directory, module := range map[string]string{
+		analysisRoot:          "example.com/app",
+		outsideNestedCheckout: "example.com/sibling",
+	} {
+		if err := os.WriteFile(filepath.Join(directory, "go.mod"), []byte("module "+module+"\n\ngo 1.26\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(analysisRoot, "go.work"), []byte("go 1.26\n\nuse (\n\t.\n\t../../sibling\n)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOWORK", "auto")
+	t.Setenv("GO111MODULE", "")
+
+	if _, err := ToolchainSourceRoots(analysisRoot); err == nil || !strings.Contains(err.Error(), "workspace use path must stay beneath") {
+		t.Fatalf("ToolchainSourceRoots nested checkout error = %v, want nearest-boundary rejection", err)
+	}
+}
+
+func TestToolchainSourceRootsRejectsWorkspaceAboveNearestGitAuthority(t *testing.T) {
+	base := t.TempDir()
+	outer := filepath.Join(base, "outer")
+	nested := filepath.Join(outer, "nested")
+	analysisRoot := filepath.Join(nested, "app")
+	for _, directory := range []string{filepath.Join(nested, ".git"), analysisRoot} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(analysisRoot, "go.mod"), []byte("module example.com/app\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outer, "go.work"), []byte("go 1.26\n\nuse ./nested/app\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOWORK", "auto")
+	t.Setenv("GO111MODULE", "")
+
+	if _, err := ToolchainSourceRoots(analysisRoot); err == nil || !strings.Contains(err.Error(), "workspace file must stay beneath repository source authority") {
+		t.Fatalf("ToolchainSourceRoots parent workspace error = %v, want nearest-boundary rejection", err)
+	}
+}
+
 func TestToolchainSourceRootsDoesNotTrustUnrelatedAliasParent(t *testing.T) {
 	base := t.TempDir()
 	workspace := filepath.Join(base, "real", "workspace")

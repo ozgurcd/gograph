@@ -87,12 +87,15 @@ Partial status retains parse failures and selection/security warnings in
 `graph.json` build metadata. Each successfully parsed source stores a SHA-256
 digest. Subsequent builds reparse changed packages and reuse parser records for
 unchanged packages; precise builds still recompute repository-wide CHA/SSA.
-Descendant symlinks and special files for
-extensions recognized by `go/build` are reported and excluded;
+Linked directories and linked/special files for extensions recognized by
+`go/build` are reported and excluded. Unrelated regular-file or dangling links
+with non-Go extensions do not block precision;
 linked/non-regular `go.mod`, `go.sum`, `go.work`, `go.work.sum`, and
 `vendor/modules.txt` metadata is rejected before toolchain use. Applicable
-`go.work use` members must remain beneath the workspace directory; their
-directories, `go.mod`, and optional `go.sum` are validated before `cmd/go`. An explicitly
+`go.work use` members may be siblings beneath the nearest real Git checkout;
+without one they remain beneath the workspace directory. Nested Git boundaries
+are not crossed, and their directories, `go.mod`, and optional `go.sum` are
+validated before `cmd/go`. An explicitly
 symlinked repository root remains supported. AST and
 query-time source reads are confined to regular files beneath that root.
 
@@ -106,6 +109,8 @@ boundary and should not be used for untrusted repositories.
 
 ```bash
 gograph build . --precise
+# Fail CI if production precision falls back (artifact remains inspectable):
+gograph build . --precise --strict
 # Include files and tests guarded by //go:build integration:
 gograph build . --precise --tags=integration
 ```
@@ -116,7 +121,7 @@ context; it does not union multiple builds. An explicit value replaces
 The selection is fingerprinted. Start MCP with the same option
 (`gograph mcp . --tags=integration`) so all later refreshes retain it.
 
-Attempts Go type loading plus CHA/SSA enrichment on top of the AST pass. Before its first `cmd/go` invocation, normal indexing validates Go tool metadata (`go.mod`, `go.sum`, `go.work`, `go.work.sum`, and `vendor/modules.txt`) and confines applicable workspace members to their workspace directory. The scanner then excludes linked or special recognized Go build inputs before build selection and AST reads. Before repository package type loading, the stronger preflight rejects source-tree links `cmd/go` may inspect across the selected root plus its effective module root, or the workspace root and member trees; `.git` and `.gograph` are excluded from that walk. Unsafe repository input makes enrichment fail closed while the safe AST graph remains available as `precise_fallback`. Compilable, build-selected production packages are required for precise data; if enrichment fails or omits an indexed non-test source file, gograph warns and retains the AST graph. Successful, fallback, and AST-only status is persisted as `precise`, `precise_fallback`, or `ast`, except that a failed retry keeps an existing fresh successful precise artifact covering the same sources. A separate non-fatal typed pass resolves direct and conservative interface test-call targets. Broken test packages yield `typed_partial` test attribution without downgrading successful production precision. A precise interface invocation retains every valid named in-repository CHA target, so `callers Repository.Delete` can resolve direct, embedded-interface, and promoted concrete methods without dropping alternative implementations. Promoted wrappers forward through traversal-only synthetic edges that do not appear as source call sites. CHA can still over-approximate runtime targets, while reflection, plugins, `unsafe`, test-only packages, unnamed concrete types, and module-external implementations remain incomplete. Go dependency/toolchain resolution follows the user's environment and remains open-world. Use before major refactors or blast-radius analysis.
+Attempts Go type loading plus CHA/SSA enrichment on top of the AST pass. Before its first `cmd/go` invocation, normal indexing validates Go tool metadata (`go.mod`, `go.sum`, `go.work`, `go.work.sum`, and `vendor/modules.txt`) and confines applicable workspace members to the nearest real Git checkout or, without one, their workspace directory. The scanner then excludes linked directories and linked/special recognized Go build inputs before build selection and AST reads, while ignoring unrelated non-Go file links. Before repository package type loading, the stronger preflight rejects source-tree links `cmd/go` may inspect across the selected root plus its effective module root, or the workspace root and member trees; `.git` and `.gograph` are excluded from that walk. Unsafe repository input makes enrichment fail closed while the safe AST graph remains available as `precise_fallback`. Compilable, build-selected production packages are required for precise data; if enrichment fails or omits an indexed non-test source file, gograph warns and retains the AST graph. Successful, fallback, and AST-only status is persisted as `precise`, `precise_fallback`, or `ast`, except that a failed retry keeps an existing fresh successful precise artifact covering the same sources. Default fallback exits zero for compatibility; `--strict` requires `--precise` and exits non-zero after artifact publication or retention. A separate non-fatal typed pass resolves direct and conservative interface test-call targets. Broken test packages yield `typed_partial` test attribution without downgrading successful production precision. A precise interface invocation retains every valid named in-repository CHA target, so `callers Repository.Delete` can resolve direct, embedded-interface, and promoted concrete methods without dropping alternative implementations. Promoted wrappers forward through traversal-only synthetic edges that do not appear as source call sites. CHA can still over-approximate runtime targets, while reflection, plugins, `unsafe`, test-only packages, unnamed concrete types, and module-external implementations remain incomplete. Go dependency/toolchain resolution follows the user's environment and remains open-world. Use before major refactors or blast-radius analysis.
 
 Typed-only test targets are recomputed during incremental precise builds rather
 than reused as parser facts. Persisted graph JSON larger than 512 MiB is
@@ -131,6 +136,7 @@ available without dependency-body call graphs and source-less wrapper noise.
 |---|---|---|---|
 | `build .` | Fast | No | Heuristic (duck-typing) |
 | `build . --precise` | Slower | Yes | Type-checked CHA |
+| `build . --precise --strict` | Slower; CI-visible fallback | Yes | Type-checked CHA or non-zero |
 
 ## Step 2 — Check the index
 

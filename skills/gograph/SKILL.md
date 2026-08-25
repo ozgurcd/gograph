@@ -42,7 +42,9 @@ go install github.com/ozgurcd/gograph/cmd/gograph@latest
 ```
 
 Verify the active installation with `gograph doctor --json`; it reports the
-running binary, PATH resolution, and shadowed copies without executing them.
+running binary, PATH resolution, shadowed copies, and—inside a repository—the
+current graph's freshness, analysis capabilities, and diagnostic without
+executing alternate binaries.
 The marketplace plugin supplies this workflow
 guidance; it does not install the binary or register an MCP server. Register
 `gograph mcp <project-path>` for each project using the client's MCP setup.
@@ -59,8 +61,10 @@ Packaged and generated registrations keep refresh persistence off by default.
    `gograph_stats` with no parameters and require `build_status=complete`; a
    build with zero successful parses never replaces the previous graph, while
    partial failures are reported explicitly. When durable precise enrichment
-   is needed, run CLI `gograph build . --precise`; if compilation prevents it,
-   use CLI `gograph build .` and explain the fallback.
+   is needed, run CLI `gograph build . --precise`; use
+   `gograph build . --precise --strict` when CI must fail on fallback. If
+   compilation prevents precision during exploratory work, use CLI
+   `gograph build .` and explain the fallback.
 3. **For structural symbol / type / function discovery, use `gograph_query` instead of `grep`, `rg`, `find`, or glob.** Text search also matches comments and string literals; `gograph_query` returns AST-derived matches. Continue to use text search for literal strings, documentation, ordinary non-sensitive configuration, and non-Go files.
 4. **Before editing any Go symbol**, invoke `gograph_plan` with
    `symbol=<symbol>`. The plan returns callers, tests connected to the symbol,
@@ -119,17 +123,19 @@ source and ordinary project/gograph metadata; it does not intentionally scan
 `.gitignore` and skips AI-agent worktree directories automatically. See
 `PRIVACY.md` in the gograph repo for details.
 
-Descendant symlinks and special files for recognized Go build inputs are
-excluded. AST and graph-directed source reads are confined to regular files beneath the analyzed repository;
+Linked directories and linked/special files for recognized Go build inputs are
+excluded; unrelated regular-file or dangling non-Go links do not block
+precision. AST and graph-directed source reads are confined to regular files beneath the analyzed repository;
 an explicitly symlinked repository root remains supported. Persisted
 `graph.json` must also be a regular repository-confined file, and publication
 refuses a linked or non-directory `.gograph` and linked/non-regular lock files.
 The automatic `.gitignore` update rejects links rather than modifying their
 targets. Linked/non-regular `go.mod`, `go.sum`, `go.work`, `go.work.sum`, and
 `vendor/modules.txt` metadata is rejected before gograph or the Go toolchain
-reads it. Applicable `go.work use` members must remain beneath the workspace
-directory, and each member directory, `go.mod`, and optional `go.sum` is
-validated before `cmd/go`. A persisted graph with a missing
+reads it. Applicable `go.work use` members may be sibling modules beneath the
+nearest real Git checkout; without one they remain beneath the workspace
+directory. Nested Git boundaries are not crossed, and each member directory,
+`go.mod`, and optional `go.sum` is validated before `cmd/go`. A persisted graph with a missing
 or unsupported source-policy marker must be rebuilt before graph-backed tools
 use it, and its serialized root is ignored. Saved `.json` baselines for
 `gograph_api` and `gograph_check` must be regular, non-linked files inside the
@@ -147,7 +153,9 @@ create/end mutate telemetry, session cleanup deletes stale logs, and
 effects. Repository-controlled session, snapshot, boundary, gate-init, and
 relative wiki paths use rooted regular-file operations and reject linked path
 components. Absolute wiki output is an explicit local destination whose
-generated descendants remain confined beneath its real directory.
+generated descendants remain confined beneath its real directory. Wiki
+regeneration prunes obsolete generator-owned package pages while preserving
+custom pages and `packages/README.md`.
 
 An operator can opt into durable MCP refreshes with
 `gograph mcp [path] --persist-refresh`. After a successful refresh this writes
@@ -165,6 +173,10 @@ replaced first and `graph.json` is replaced last as the publication marker.
 Same-directory replacement is atomic on Unix-like systems but is not guaranteed
 atomic by Go on non-Unix platforms; the complete ten-file bundle is not one
 atomic transaction, and `.artifacts.lock` remains as separate operational state.
+The server must start under the same effective `GOWORK`, `GOFLAGS`, and tag
+selection used by the persisted graph; a mismatch is stale and must refresh
+successfully or return a diagnostic rather than silently serving incompatible
+facts.
 
 ## Anti-patterns
 

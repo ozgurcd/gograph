@@ -14,6 +14,8 @@ workspace overlay.
 A workspace root is established only by a regular, non-linked
 `.gograph-workspace.yml` manifest. Derived `workspace.json` state cannot
 establish a trusted workspace root by itself.
+Run `gograph workspace --help` for the command family and a minimal valid
+manifest; the complete schema and semantics are documented here.
 
 ```yaml
 schema_version: gograph.workspace-manifest.v1
@@ -50,6 +52,12 @@ rechecked when a graph is loaded or refreshed. As with the rest of Gograph's
 Go-tool preflight, workspace v1 assumes a static checkout while a command is
 running; it is not a sandbox against a same-user process concurrently replacing
 directories or mount points.
+
+This manifest rule is intentionally separate from repository-local Go
+workspace resolution. During one member's precise build, its `go.work` may
+select sibling modules beneath that member's nearest real Git checkout (and is
+otherwise confined beneath the Go workspace directory). That does not permit a
+`.gograph-workspace.yml` member path to escape this manifest root.
 
 Repository IDs, scope IDs, and service IDs use letters, digits, `.`, `_`, and
 `-`. Multiple scopes may be configured. `default_scope` is explicit and

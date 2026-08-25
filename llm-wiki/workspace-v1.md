@@ -2,7 +2,7 @@
 title: Federated workspace v1
 type: decision
 status: current
-updated: 2026-08-23
+updated: 2026-08-25
 sources: []
 ---
 
@@ -14,7 +14,7 @@ Gograph models a Go system as independently generated repository graphs plus a d
 
 ## Trust and scopes
 
-The checked-in `.gograph-workspace.yml` establishes the workspace root; derived `.gograph/workspace.json` does not. Member paths and symlink traversal must remain below the root. Configured paths are authoritative: serialized graph roots are ignored, confinement is rechecked immediately before member load or refresh, source/build freshness is recomputed at that path, serialized module ownership is verified against actual `go.mod` directives, and input identity binds exact member artifact bytes. Workspace root discovery and repository root discovery are separate; workspace-only derived state cannot establish repository authority.
+The checked-in `.gograph-workspace.yml` establishes the workspace root; derived `.gograph/workspace.json` does not. Manifest member paths and symlink traversal must remain below that root. Configured paths are authoritative: serialized graph roots are ignored, confinement is rechecked immediately before member load or refresh, source/build freshness is recomputed at that path, serialized module ownership is verified against actual `go.mod` directives, and input identity binds exact member artifact bytes. A member repository's own `go.work` may reference sibling modules outside that member path only when they remain inside the nearest real Git checkout boundary; this repository-analysis allowance does not widen manifest membership. Workspace root discovery and repository root discovery are separate; workspace-only derived state cannot establish repository authority.
 
 The confinement and Go-tool preflight model assumes a static checkout during a command. It rejects static descendant links and path escapes but is not a sandbox against a same-user process concurrently replacing directories or mount points.
 

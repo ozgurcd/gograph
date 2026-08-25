@@ -4,6 +4,50 @@
 
 No changes yet.
 
+## v1.6.6 — 2026-08-25
+
+### Safe monorepo precision and visible fallback
+
+- `go.work` may now select ordinary sibling modules beneath the nearest real
+  Git checkout boundary. Non-Git layouts retain the existing workspace-root
+  confinement, nested Git boundaries are not crossed, and every member
+  directory plus `go.mod`/optional `go.sum` remains link-checked before
+  `cmd/go` runs.
+- Precise preflight now ignores unrelated regular-file or dangling symlinks
+  with non-Go extensions, such as YAML configuration and TSV fixtures. Linked
+  directories, recognized Go build inputs, and Go tool metadata remain
+  rejected. Source-policy version 2 makes older artifacts rebuild-required.
+- The broader checkout authority applies only to repository build/freshness and
+  workspace-member inspection. Machine validation keeps its existing explicit
+  `--repo` toolchain boundary and still returns `cannot_evaluate` for a build
+  context that escapes it.
+- Added `gograph build . --precise --strict`. Default precise fallback still
+  exits zero for compatibility; strict mode publishes or retains the same
+  diagnostic artifact and then exits non-zero so CI cannot miss enrichment
+  failure.
+- Project MCP refresh succeeds for the same authorized monorepo layout. Graphs
+  remain bound to their effective Go environment: a different `GOWORK` or build
+  selection makes the artifact stale, requiring a successful refresh or a
+  visible diagnostic instead of silently serving mismatched facts.
+
+### Diagnostics, wiki hygiene, and discoverability
+
+- `gograph doctor [--json]` now adds current repository graph availability,
+  freshness, analysis mode, AST/precision/call-resolution capabilities,
+  artifact fingerprint, and the machine-readable freshness diagnostic while
+  preserving its installation/PATH checks and `gograph.doctor.v1` schema.
+- Wiki generation removes obsolete generator-owned `packages/*.md` pages so
+  prior package output cannot linger as current. Custom pages,
+  `packages/README.md`, links, special entries, and oversized unknown pages are
+  preserved.
+- `gograph workspace --help` now lists every workspace command and includes a
+  valid manifest example. Missing-manifest errors point directly to that help
+  and the maintained workspace guide.
+- CLI help, CLI capabilities, MCP capabilities, README, coding-agent guidance,
+  workspace documentation, public command reference, and security guidance now
+  describe the same source-authority, strict-build, MCP, doctor, and wiki
+  contracts.
+
 ## v1.6.5 — 2026-08-25
 
 ### Proof-backed test attribution

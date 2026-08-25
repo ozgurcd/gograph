@@ -44,6 +44,11 @@ func (e *SnapshotError) Error() string { return e.Diagnostic.Message }
 
 type RepositoryLoader struct {
 	BuildTags []string
+	// AllowCheckoutSourceAuthority permits go.work members outside a nested
+	// module root when ToolchainSourceRoots has confined them beneath the
+	// nearest real Git checkout. Machine validation leaves this false so its
+	// explicit --repo path remains the complete toolchain authority.
+	AllowCheckoutSourceAuthority bool
 }
 
 func (loader RepositoryLoader) Load(ctx context.Context, repositoryRoot string) (Snapshot, error) {
@@ -93,7 +98,7 @@ func (loader RepositoryLoader) Load(ctx context.Context, repositoryRoot string) 
 		Freshness:        "unknown",
 	}
 
-	current, err := captureSourceState(ctx, root, loader.BuildTags)
+	current, err := captureSourceState(ctx, root, loader.BuildTags, loader.AllowCheckoutSourceAuthority)
 	if err != nil {
 		return snapshot, err
 	}
@@ -118,7 +123,7 @@ func (loader RepositoryLoader) Load(ctx context.Context, repositoryRoot string) 
 }
 
 func (loader RepositoryLoader) VerifyCurrent(ctx context.Context, snapshot Snapshot) error {
-	current, err := captureSourceState(ctx, snapshot.Root, loader.BuildTags)
+	current, err := captureSourceState(ctx, snapshot.Root, loader.BuildTags, loader.AllowCheckoutSourceAuthority)
 	if err != nil {
 		return err
 	}
@@ -134,7 +139,7 @@ type sourceState struct {
 	Files                map[string]string
 }
 
-func captureSourceState(ctx context.Context, root string, buildTags []string) (sourceState, error) {
+func captureSourceState(ctx context.Context, root string, buildTags []string, allowCheckoutSourceAuthority bool) (sourceState, error) {
 	if err := ctx.Err(); err != nil {
 		return sourceState{}, snapshotError(ReasonInternalError, "context_done", err.Error(), "")
 	}
@@ -146,9 +151,11 @@ func captureSourceState(ctx context.Context, root string, buildTags []string) (s
 	if err != nil {
 		return sourceState{}, snapshotError(ReasonAnalysisIncomplete, "toolchain_roots_unavailable", err.Error(), "")
 	}
-	for _, toolchainRoot := range toolchainRoots {
-		if err := requireCanonicalConfinement(root, toolchainRoot); err != nil {
-			return sourceState{}, snapshotError(ReasonRepositoryMismatch, "build_context_escape", "validation build context includes a module or workspace tree outside the explicit repository root", "")
+	if !allowCheckoutSourceAuthority {
+		for _, toolchainRoot := range toolchainRoots {
+			if err := requireCanonicalConfinement(root, toolchainRoot); err != nil {
+				return sourceState{}, snapshotError(ReasonRepositoryMismatch, "build_context_escape", "validation build context includes a module or workspace tree outside the explicit repository root", "")
+			}
 		}
 	}
 	paths, selectionFingerprint, selectionErrors := scanner.WalkWithConfigAndFingerprint(root, config)

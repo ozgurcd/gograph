@@ -77,7 +77,11 @@ func Run(args []string) int {
 		switch a {
 		case "--help", "-h":
 			if len(args) > 1 && args[0] != "--help" && args[0] != "-h" {
-				printCommandHelp(args[0])
+				if args[0] == "workspace" {
+					printWorkspaceHelp()
+				} else {
+					printCommandHelp(args[0])
+				}
 			} else {
 				printHelp()
 			}
@@ -358,6 +362,8 @@ writing code or running analysis:
   llm-wiki/agent-contract.md → session lifecycle and tool selection contract
 
 If generated pages are missing: gograph build . --precise && gograph wiki
+Wiki regeneration removes obsolete generator-owned packages/*.md pages while
+preserving custom pages and packages/README.md.
 
 ━━━ PREREQUISITE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Repository analysis commands read from .gograph/graph.json. Build it once before
@@ -368,6 +374,9 @@ need an index:
   gograph build . --precise  type-checked CHA/SSA; records precise or precise_fallback
                                using repository SSA bodies (not dependency bodies),
                                unless a failed retry can retain a fresh precise artifact
+  gograph build . --precise --strict
+                             same publication semantics, but exits non-zero when precise
+                             enrichment fails so CI cannot miss a fallback
   gograph build . --precise --memory-mode=low --max-memory=1GiB
                              same graph semantics with aggressive reclamation and a
                              soft Go runtime memory target; may use more GC CPU and is not a hard RSS cap
@@ -390,10 +399,13 @@ persisted graphs per call. After edits it rebuilds in the current requested
 mode, so precise analysis is recomputed.
 
 Repository source and persisted-index reads are confined beneath the selected
-root: linked or special recognized Go build inputs are excluded, linked or
+authority: linked directories and linked or special recognized Go build inputs are excluded, linked or
 non-regular go.mod/go.sum/go.work/go.work.sum/vendor/modules.txt metadata is
-rejected before toolchain use, and applicable workspace members must stay
-beneath the workspace directory with their directory and metadata validated.
+rejected before toolchain use. Unrelated regular-file or dangling links with
+non-Go extensions are not cmd/go inputs and do not block precision. Applicable
+go.work members may be sibling modules beneath the nearest real Git checkout;
+without that boundary they remain confined beneath the workspace directory.
+Every member directory and metadata file is validated before toolchain use.
 Precise analysis and doc reject source-tree links the Go toolchain may inspect
 across the selected root plus its effective module root, or the workspace root
 and member trees; .git and .gograph are excluded from that preflight;
@@ -418,6 +430,10 @@ refresh uses the same low-memory policy as CLI builds when those options are set
 An explicit --tags selection replaces GOFLAGS -tags and is retained by startup,
 incremental/precise refreshes, and baselines; gograph_capabilities reports both
 requested and effective build tags under analysis_build_context.
+The persisted graph is bound to that effective Go environment and selection;
+starting MCP under a different GOWORK/build context treats it as stale and must
+refresh successfully or return a diagnostic instead of serving mismatched facts.
+Run doctor --json for the diagnostic.
 
 ━━━ FEDERATED WORKSPACES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 A regular .gograph-workspace.yml establishes a workspace root and confines
@@ -478,7 +494,7 @@ transport-specific (CLI flags/envelopes versus typed MCP arguments/content).
   Product reach of one test     → coverage <TestFunc>  (transitive exact/possible static attribution)
   Tests reaching one product    → tests <sym> --transitive  (reverse exact/possible paths in one call)
   Durable symbol reference      → identity <sym>  (print or re-resolve a canonical stable ID)
-  Diagnose install shadowing    → doctor --json  (running binary, PATH resolution, embedded versions)
+  Diagnose install/graph health → doctor --json  (PATH, freshness, analysis capabilities, diagnostic)
   External symbol signature    → doc <pkg.Symbol>  (stdlib/third-party — no graph required)
   API breaking-change check    → api --since <ref>
   CI enforcement               → gate, check --since <ref>
@@ -603,12 +619,14 @@ AGENT WORKFLOW RULES (CRITICAL):
 2. AFTER editing:  run 'gograph build . --precise' then 'gograph review --uncommitted'
 
 INDEXING:
-build . [--precise] [--tags=integration] [--memory-mode=low] [--max-memory=1GiB]
+build . [--precise] [--strict] [--tags=integration] [--memory-mode=low] [--max-memory=1GiB]
                      : parse AST, stage graph.json + reports, commit graph.json last
                        Honors Go build constraints and cmd/go package-directory rules;
                        skips generated, module-ignored, and Git-ignored sources.
                        --tags selects a comma-separated tagged build context and
                        overrides any GOFLAGS -tags value. Without it, GOFLAGS applies.
+                       --strict requires --precise and makes enrichment fallback
+                       non-zero after the diagnostic artifact is published/retained.
                        Low mode preserves precision while using aggressive GC/phase
                        reclamation; it may use more CPU. max-memory is a soft Go runtime memory target, not RSS.
 workspace <command>  : federated cross-repository overlay. Commands: build, status,
@@ -730,8 +748,8 @@ untested [--pkg <n>] [--top N] [--exclude <glob>] [--wide]
                        Proven concrete interface receivers are exact; open CHA dispatch remains
                        visible as test_resolution=possible. --wide prints full stable symbol IDs.
                        Sorted by caller count. Replaces N 'tests <sym>' calls.
-doctor [--json]      : inspect the running executable and every distinct gograph found on PATH
-                       without executing alternates; warns about shadowed/newer embedded versions.
+doctor [--json]      : inspect installations plus the current repository graph's
+                       freshness, analysis mode/capabilities, and build-context diagnostic.
 check [--config p] [--uncommitted] [--since ref|graph.json]
                      : static policy checks (boundaries, API drift, changed-route/export tests,
                        test coverage, orphans, globals, arity, and complexity);
@@ -745,7 +763,8 @@ gate init            : exclusively create a regular .gograph.yml; refuses links/
 snapshot <subcmd>    : confined architectural metric snapshots (save, diff, list, drop)
 mcp [path] [--persist-refresh] [--tags=integration] [--memory-mode=low] [--max-memory=1GiB]
                      : start MCP server over stdio; refreshes stay in memory by default;
-                       opt-in publishes one latest graph/report set without editing .gitignore
+                       opt-in publishes one latest graph/report set without editing .gitignore;
+                       a different startup Go context makes the artifact stale, not silently trusted
 gograph session <action>     : start/end audit sessions (create [word], end, audit, cleanup)
                                storage is confined to regular .gograph session entries
                                NOTE: MCP tool calls (gograph_plan, gograph_review) are
@@ -759,6 +778,7 @@ hook-guard           : PreToolUse hook — redirects indexed-repository Go symbo
 type buildOptions struct {
 	Root    string
 	Precise bool
+	Strict  bool
 	Tags    []string
 	Memory  memorylimit.Policy
 }
@@ -797,6 +817,10 @@ func parseBuildArgs(args []string) (buildOptions, error) {
 				options.Precise = true
 				continue
 			}
+			if argument == "--strict" {
+				options.Strict = true
+				continue
+			}
 			handled, consumedThrough, err := parseBuildTagsOption(args, index, &options.Tags)
 			if err != nil {
 				return buildOptions{}, err
@@ -825,6 +849,9 @@ func parseBuildArgs(args []string) (buildOptions, error) {
 	}
 	if err := options.Memory.Validate(); err != nil {
 		return buildOptions{}, err
+	}
+	if options.Strict && !options.Precise {
+		return buildOptions{}, fmt.Errorf("--strict requires --precise")
 	}
 	normalizedTags, err := buildctx.NormalizeBuildTags(options.Tags)
 	if err != nil {
@@ -866,11 +893,12 @@ func runBuild(args []string) int {
 		fmt.Fprintf(os.Stderr, "error building graph: %v\n", err)
 		return 1
 	}
+	var preciseErr error
 	if options.Precise {
 		controller.Reclaim()
 		fmt.Println("  running type-checked precision analysis (this may take a moment)...")
-		if err := enrichGraphPreciselyWithMemory(absRoot, g, buildConfig, configErr, options.Memory); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: precise enrichment failed: %v\n", err)
+		if preciseErr = enrichGraphPreciselyWithMemory(absRoot, g, buildConfig, configErr, options.Memory); preciseErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: precise enrichment failed: %v\n", preciseErr)
 		}
 		controller.Reclaim()
 	}
@@ -901,6 +929,10 @@ func runBuild(args []string) int {
 		fmt.Printf("  wrote %d markdown reports to %s/\n", graphReportCount, outputDir)
 	} else {
 		fmt.Printf("  kept existing richer artifact %s\n", jsonPath)
+	}
+	if options.Strict && preciseErr != nil {
+		fmt.Fprintln(os.Stderr, "error: strict precise build failed; the published or retained diagnostic artifact remains available")
+		return 1
 	}
 	return 0
 }
@@ -2587,7 +2619,7 @@ OUTPUT FLAGS
                              MANDATORY for all analytical commands when a session is active.
 
 INDEXING
-  build [path] [--precise] [--tags=<tag[,tag...]>] [--memory-mode=low] [--max-memory=<size>]
+  build [path] [--precise] [--strict] [--tags=<tag[,tag...]>] [--memory-mode=low] [--max-memory=<size>]
                              Walk and parse a Go repository. Generates graph.json
                              and 9 targeted Markdown reports in .gograph/.
                              Adds .gograph/ to the Git repository root .gitignore
@@ -2604,6 +2636,9 @@ INDEXING
                              Test packages are resolved separately; broken tests record
                              typed_partial without downgrading production precision.
                              Typed-only test targets are recomputed during reuse.
+                             --strict requires --precise and exits non-zero when
+                             enrichment fails, after safely publishing or retaining
+                             the diagnostic artifact for inspection.
                              --tags selects a comma-separated tagged build context,
                              replacing GOFLAGS -tags; omission preserves GOFLAGS.
                              --memory-mode=low prioritizes lower heap use through aggressive GC and
@@ -2673,9 +2708,9 @@ MACHINE VALIDATION
                              call_edge_exists, and type_implements.
 
 INSTALL DIAGNOSTICS
-  doctor [--json]            Report the running executable, PATH-resolved executable,
-                             every distinct gograph installation found on PATH, and
-                             versions read safely from Go build metadata. Emits
+  doctor [--json]            Report installations plus the current repository graph's
+                             freshness, analysis mode, capabilities, and diagnostic.
+                             Executable versions are read safely from Go build metadata. Emits
                              gograph.doctor.v1 with --json and never executes alternate
                              binaries. Warnings do not make the diagnostic fail.
 
@@ -2932,6 +2967,8 @@ AGENT INTEGRATION
                              linked components. Absolute output explicitly selects a
                              real local directory; generated paths stay beneath it.
                              Add llm-wiki/ to .gitignore.
+                             Obsolete generator-owned package pages are removed;
+                             custom pages and packages/README.md are preserved.
   doc <pkg[.Symbol]>         Run 'go doc' for a stdlib or third-party package/symbol.
                              No graph required. Rejects filesystem-shaped queries and
                              source-tree links across the selected root plus its effective module
@@ -2947,6 +2984,9 @@ AGENT INTEGRATION
                              refresh to .gograph; it is not a multi-branch graph cache.
                              Memory options apply the same low-memory policy to startup
                              analysis and later MCP refreshes; capabilities reports it.
+                             Refresh remains bound to the startup Go environment;
+                             a graph built under a different GOWORK/build context is
+                             diagnosed as stale instead of silently served.
   session <action> [word]    Manage telemetry & audit sessions. Actions:
                              - create [unique_word]: Starts an audit session.
                              - end: Ends the active session.

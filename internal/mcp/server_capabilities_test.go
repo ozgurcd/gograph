@@ -132,6 +132,17 @@ func TestGographCapabilities(t *testing.T) {
 	if !hasSSA {
 		t.Errorf("expected SSA limitation text")
 	}
+	for _, want := range []string{
+		"nearest real Git checkout",
+		"unrelated regular-file or dangling links",
+		"different effective GOWORK",
+		"gograph doctor --json",
+		"obsolete generator-owned package pages",
+	} {
+		if !strings.Contains(toolsStr, want) {
+			t.Errorf("capabilities prerequisite omits %q", want)
+		}
+	}
 }
 
 func jsonArrayContains(raw any, want string) bool {

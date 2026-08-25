@@ -47,7 +47,7 @@ func InspectMemberWithBuildTags(ctx context.Context, root string, config Reposit
 		inspection.Error = rootErr
 		return inspection
 	}
-	snapshot, err := (validation.RepositoryLoader{BuildTags: buildTags}).Load(ctx, memberRoot)
+	snapshot, err := (validation.RepositoryLoader{BuildTags: buildTags, AllowCheckoutSourceAuthority: true}).Load(ctx, memberRoot)
 	if err != nil {
 		inspection.Error = err
 		return inspection

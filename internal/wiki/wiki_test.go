@@ -84,6 +84,43 @@ func TestGenerateConfinesRelativeOutputToGraphRoot(t *testing.T) {
 	}
 }
 
+func TestGeneratePrunesOnlyObsoleteGeneratedPackagePages(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/wiki\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	generated := New(&graph.Graph{
+		Root: root,
+		Symbols: []graph.SymbolNode{{
+			ID: "example.com/wiki/old::Old", Kind: graph.KindFunction, Name: "Old",
+		}},
+	})
+	if _, err := generated.Generate("llm-wiki"); err != nil {
+		t.Fatalf("first Generate: %v", err)
+	}
+	packageDirectory := filepath.Join(root, "llm-wiki", "packages")
+	customPath := filepath.Join(packageDirectory, "custom.md")
+	readmePath := filepath.Join(packageDirectory, "README.md")
+	if err := os.WriteFile(customPath, []byte("# Maintained by a person\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(readmePath, []byte("# Package notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := New(&graph.Graph{Root: root}).Generate("llm-wiki"); err != nil {
+		t.Fatalf("second Generate: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(packageDirectory, "old.md")); !os.IsNotExist(err) {
+		t.Fatalf("obsolete generated page still exists: %v", err)
+	}
+	for _, path := range []string{customPath, readmePath} {
+		if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+			t.Fatalf("maintained package file %s = %v, %v", path, info, err)
+		}
+	}
+}
+
 func TestValidPageFilenameRejectsCrossPlatformTraversal(t *testing.T) {
 	for _, name := range []string{"", ".", "../outside.md", "packages/../outside.md", "/outside.md", `packages\..\outside.md`, `C:\outside.md`} {
 		if validPageFilename(name) {

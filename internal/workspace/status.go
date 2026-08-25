@@ -61,7 +61,7 @@ func InspectStatus(ctx context.Context, root string, manifest Manifest) Status {
 
 func InspectStatusWithBuildTags(ctx context.Context, root string, manifest Manifest, buildTags []string) Status {
 	status := Status{SchemaVersion: StatusSchemaVersion, WorkspaceName: manifest.Name, AggregateState: StateComplete, DefaultScope: manifest.DefaultScope, Overlay: OverlayStatus{Diagnostics: []string{}}}
-	loader := validation.RepositoryLoader{BuildTags: buildTags}
+	loader := validation.RepositoryLoader{BuildTags: buildTags, AllowCheckoutSourceAuthority: true}
 	var loaded []LoadedMember
 	availableMembers := 0
 	for _, config := range manifest.Repositories {

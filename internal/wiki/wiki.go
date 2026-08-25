@@ -6,6 +6,7 @@
 package wiki
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -103,8 +104,53 @@ func writePages(output *sourcefs.Reader, prefix string, pages []WikiPage) ([]Wik
 			return nil, fmt.Errorf("wiki: write %s: %w", p.Filename, err)
 		}
 	}
+	if err := pruneStalePackagePages(output, prefix, pages); err != nil {
+		return nil, err
+	}
 
 	return pages, nil
+}
+
+func pruneStalePackagePages(output *sourcefs.Reader, prefix string, pages []WikiPage) error {
+	current := make(map[string]struct{})
+	for _, page := range pages {
+		if page.Content != "" && strings.HasPrefix(page.Filename, "packages/") {
+			current[filepath.Base(page.Filename)] = struct{}{}
+		}
+	}
+	packageDirectory := filepath.Join(prefix, "packages")
+	entries, err := output.ReadDirectory(packageDirectory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("wiki: inspect generated package pages: %w", err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == "README.md" || filepath.Ext(name) != ".md" || !entry.Type().IsRegular() {
+			continue
+		}
+		if _, exists := current[name]; exists {
+			continue
+		}
+		pagePath := filepath.Join(packageDirectory, name)
+		data, readErr := output.ReadRegularFileLimit(pagePath, 1<<20)
+		if errors.Is(readErr, sourcefs.ErrFileTooLarge) {
+			continue
+		}
+		if readErr != nil {
+			return fmt.Errorf("wiki: inspect obsolete package page %s: %w", name, readErr)
+		}
+		content := string(data)
+		if !strings.HasPrefix(content, "# Package: `") || !strings.Contains(content, "\n**Import path:** `") {
+			continue
+		}
+		if err := output.RemoveRegularFile(pagePath); err != nil {
+			return fmt.Errorf("wiki: remove obsolete package page %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func validPageFilename(name string) bool {

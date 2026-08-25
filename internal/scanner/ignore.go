@@ -145,7 +145,20 @@ func ValidateNoSourceLinks(root string) error {
 			return nil
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return &UnsafeSourceFileError{Path: path, Mode: info.Mode()}
+			// Cmd/go never opens unrelated data-file links during package
+			// discovery or type loading. Keep rejecting every linked recognized
+			// build input and metadata entry, plus links that currently name a
+			// directory or another special file.
+			// Dangling and regular-file links with unrelated extensions are not
+			// Go tool inputs and must not make precise analysis unusable.
+			target, statErr := os.Stat(path)
+			if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+				return fmt.Errorf("inspect linked repository input %s: %w", path, statErr)
+			}
+			if isGoBuildInput(info.Name()) || isGoToolMetadata(path) || statErr == nil && !target.Mode().IsRegular() {
+				return &UnsafeSourceFileError{Path: path, Mode: info.Mode()}
+			}
+			return nil
 		}
 		if (isGoBuildInput(info.Name()) || isGoToolMetadata(path)) && !info.Mode().IsRegular() {
 			return &UnsafeSourceFileError{Path: path, Mode: info.Mode()}

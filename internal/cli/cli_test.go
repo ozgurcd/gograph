@@ -632,7 +632,8 @@ func TestHelpDocumentsImplementedModes(t *testing.T) {
 		"Sinks: sql_query, process_execution, filesystem, outbound_http.",
 		"Tests are included by default; --no-tests excludes them.",
 		"workspace build [path] [--refresh-members] [--tags=<tag[,tag...]>] [--memory-mode=low]",
-		"build [path] [--precise] [--tags=<tag[,tag...]>] [--memory-mode=low] [--max-memory=<size>]",
+		"build [path] [--precise] [--strict] [--tags=<tag[,tag...]>] [--memory-mode=low] [--max-memory=<size>]",
+		"--strict requires --precise",
 		"mcp [path] [--persist-refresh] [--tags=<tag[,tag...]>] [--memory-mode=low] [--max-memory=<size>]",
 		"--tags selects a comma-separated tagged build context",
 		"soft Go runtime memory target",
@@ -650,10 +651,45 @@ func TestHelpDocumentsImplementedModes(t *testing.T) {
 		"--transitive requires",
 		"Artifacts over 512 MiB are rejected before allocation",
 		"without dependency-body call graphs",
+		"current repository graph's",
+		"Obsolete generator-owned package pages are removed",
 	} {
 		if !strings.Contains(help, mode) {
 			t.Errorf("gograph --help does not document implemented mode %q", mode)
 		}
+	}
+}
+
+func TestWorkspaceHelpIncludesManifestSchemaAndMissingManifestGuidance(t *testing.T) {
+	binary := buildTestBinary(t)
+	command := exec.Command(binary, "workspace", "--help")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("gograph workspace --help: %v\n%s", err, output)
+	}
+	for _, want := range []string{
+		"gograph workspace <build|status|query|path|impact|mcp>",
+		"schema_version: gograph.workspace-manifest.v1",
+		"default_scope: oss",
+		"scopes:",
+		"repositories: [api]",
+		"docs/workspaces.md",
+		"https://gograph.identuum.ai/docs/command-reference/#federated-workspaces",
+	} {
+		if !strings.Contains(string(output), want) {
+			t.Errorf("workspace help omits %q\n%s", want, output)
+		}
+	}
+
+	missingRoot := t.TempDir()
+	command = exec.Command(binary, "workspace", "status", ".")
+	command.Dir = missingRoot
+	output, err = command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("workspace status without manifest unexpectedly succeeded\n%s", output)
+	}
+	if !strings.Contains(string(output), "gograph workspace --help") || !strings.Contains(string(output), ".gograph-workspace.yml") {
+		t.Fatalf("missing-manifest diagnostic lacks schema guidance\n%s", output)
 	}
 }
 
@@ -693,7 +729,14 @@ func TestCapabilitiesDocumentsImplementedModes(t *testing.T) {
 		"━━━ FEDERATED WORKSPACES",
 		"gograph workspace build --refresh-members [--tags=integration]",
 		"gograph build . --precise --memory-mode=low --max-memory=1GiB",
+		"gograph build . --precise --strict",
 		"gograph mcp [path] --persist-refresh [--tags=integration] [--memory-mode=low] [--max-memory=1GiB]",
+		"Unrelated regular-file or dangling links",
+		"non-Go extensions",
+		"nearest real Git checkout",
+		"different GOWORK/build context",
+		"freshness, analysis mode/capabilities, and build-context diagnostic",
+		"obsolete generator-owned packages/*.md pages",
 		"soft Go runtime memory target",
 		"analysis_build_context",
 		"gograph_workspace_status",

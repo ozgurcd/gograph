@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"context"
 	"debug/buildinfo"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +12,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ozgurcd/gograph/internal/rootfind"
+	"github.com/ozgurcd/gograph/internal/validation"
 	"golang.org/x/mod/semver"
 )
 
@@ -21,7 +25,23 @@ type doctorDocument struct {
 	Running       doctorExecutable   `json:"running"`
 	PATHResolved  string             `json:"path_resolved,omitempty"`
 	Candidates    []doctorExecutable `json:"candidates"`
+	Repository    *doctorRepository  `json:"repository,omitempty"`
 	Findings      []doctorFinding    `json:"findings"`
+}
+
+type doctorRepository struct {
+	Root                string `json:"root"`
+	GraphAvailable      bool   `json:"graph_available"`
+	Freshness           string `json:"freshness"`
+	AnalysisMode        string `json:"analysis_mode,omitempty"`
+	ASTComplete         bool   `json:"ast_complete"`
+	PrecisionRequested  bool   `json:"precision_requested"`
+	PreciseEnrichment   string `json:"precise_enrichment,omitempty"`
+	CallResolution      string `json:"call_resolution,omitempty"`
+	TestCallResolution  string `json:"test_call_resolution,omitempty"`
+	ArtifactFingerprint string `json:"artifact_fingerprint,omitempty"`
+	DiagnosticCode      string `json:"diagnostic_code,omitempty"`
+	Diagnostic          string `json:"diagnostic,omitempty"`
 }
 
 type doctorExecutable struct {
@@ -86,6 +106,15 @@ func runDoctor(args []string) int {
 			marker = " [" + strings.Join(markers, ", ") + "]"
 		}
 		fmt.Printf("    - %s  v%s%s\n", candidate.Path, displayDoctorVersion(candidate.Version), marker)
+	}
+	if document.Repository != nil {
+		repository := document.Repository
+		fmt.Printf("  repository: %s\n", repository.Root)
+		fmt.Printf("    graph: available=%t freshness=%s analysis=%s ast_complete=%t\n",
+			repository.GraphAvailable, repository.Freshness, repository.AnalysisMode, repository.ASTComplete)
+		if repository.Diagnostic != "" {
+			fmt.Printf("    diagnostic: %s\n", repository.Diagnostic)
+		}
 	}
 	for _, finding := range document.Findings {
 		fmt.Printf("  %s %s: %s\n", strings.ToUpper(finding.Severity), finding.Code, finding.Message)
@@ -176,10 +205,88 @@ func inspectDoctorState() (doctorDocument, error) {
 		})
 	}
 	appendDoctorVersionFindings(&document)
+	workingDirectory, cwdErr := os.Getwd()
+	if cwdErr != nil {
+		document.Findings = append(document.Findings, doctorFinding{
+			Code: "working_directory_unavailable", Severity: "warning",
+			Message: fmt.Sprintf("cannot inspect repository health: %v", cwdErr),
+		})
+	} else {
+		document.Repository, document.Findings = inspectDoctorRepository(workingDirectory, document.Findings)
+	}
 	if len(document.Findings) > 0 {
 		document.Status = "warning"
 	}
 	return document, nil
+}
+
+func inspectDoctorRepository(start string, findings []doctorFinding) (*doctorRepository, []doctorFinding) {
+	root, found := rootfind.FindRepositoryRootFrom(start)
+	if !found {
+		return nil, findings
+	}
+	repository := &doctorRepository{Root: root, Freshness: "unavailable"}
+	snapshot, err := (validation.RepositoryLoader{AllowCheckoutSourceAuthority: true}).Load(context.Background(), root)
+	repository.GraphAvailable = snapshot.Graph != nil
+	if snapshot.Freshness != "" {
+		repository.Freshness = snapshot.Freshness
+	}
+	repository.ArtifactFingerprint = snapshot.GraphFingerprint
+	if snapshot.Graph != nil && snapshot.Graph.Build != nil {
+		build := snapshot.Graph.Build
+		repository.AnalysisMode = string(build.EffectivePrecision())
+		repository.ASTComplete = build.Complete
+		repository.PrecisionRequested = build.PreciseRequested()
+		repository.PreciseEnrichment = "not_requested"
+		repository.CallResolution = "ast_heuristic"
+		if build.PreciseRequested() {
+			repository.PreciseEnrichment = "fallback"
+		}
+		if build.EffectivePrecision() == "precise" {
+			repository.PreciseEnrichment = "complete"
+			repository.CallResolution = "typed_cha"
+		}
+		repository.TestCallResolution = string(build.EffectiveTestCallResolution())
+	}
+	if err != nil {
+		repository.Diagnostic = err.Error()
+		var snapshotErr *validation.SnapshotError
+		if errors.As(err, &snapshotErr) {
+			repository.DiagnosticCode = snapshotErr.Diagnostic.Code
+		}
+		code := "repository_graph_unavailable"
+		if repository.GraphAvailable {
+			code = "repository_graph_not_current"
+		}
+		findings = append(findings, doctorFinding{
+			Code: code, Severity: "warning",
+			Message: "the repository graph cannot be used in the current source and build context: " + err.Error(),
+			Paths:   []string{root},
+		})
+		return repository, findings
+	}
+	if snapshot.Graph == nil || snapshot.Graph.Build == nil {
+		return repository, append(findings, doctorFinding{
+			Code: "repository_graph_unavailable", Severity: "warning",
+			Message: "the repository graph has no usable build metadata",
+			Paths:   []string{root},
+		})
+	}
+	if !snapshot.Graph.Build.Complete {
+		findings = append(findings, doctorFinding{
+			Code: "repository_graph_incomplete", Severity: "warning",
+			Message: "the repository graph is incomplete; inspect build warnings and failures",
+			Paths:   []string{root},
+		})
+	}
+	if snapshot.Graph.Build.PreciseRequested() && snapshot.Graph.Build.EffectivePrecision() != "precise" {
+		findings = append(findings, doctorFinding{
+			Code: "repository_precise_fallback", Severity: "warning",
+			Message: "precise analysis was requested but the persisted graph contains AST fallback results",
+			Paths:   []string{root},
+		})
+	}
+	return repository, findings
 }
 
 func executablePathsFromPATH() []string {
