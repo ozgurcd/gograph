@@ -454,12 +454,15 @@ Finds potential paths from untrusted inputs to security-sensitive operations. Te
 ### tests
 ```bash
 gograph tests [symbol] [--json]
+gograph tests <symbol> --transitive [--exact-only] [--package name] [--json]
 ```
-Lists attributed test edges, optionally filtered to one symbol. This is static
-attribution, not runtime coverage. On precise graphs, compiling test packages
-bind direct selectors and local method values to fully-qualified target IDs.
-Conservative interface targets are marked with CHA resolution rather than
-presented as exact calls.
+Default mode lists direct attributed test edges for compatibility. Transitive
+mode requires one product symbol and returns `gograph.tests.v1`: every test with
+a representative stable-ID path to that symbol, path depth, and `exact` or
+`possible` resolution. `--exact-only` removes paths containing parser/CHA
+uncertainty, and `--package` disambiguates a same-named product symbol. The MCP
+equivalent uses `transitive`, `exact_only`, and `package`. Static attribution is
+not runtime or branch coverage proof.
 
 ### coverage
 ```bash
@@ -574,17 +577,16 @@ Returns top hotspots, worst package instability, highest complexity, reachabilit
 
 ### untested
 ```bash
-gograph untested [--pkg name] [--top N] [--exclude glob]... [--json]
+gograph untested [--pkg name] [--top N] [--exclude glob]... [--wide] [--json]
 ```
-Ranks called production functions and methods without an exact/static
-attributed test edge. On a precise graph, direct selectors and local method
-values in compiling tests bind to exact symbol IDs, so testing one receiver no
-longer hides unrelated same-named methods. Conservative interface-dispatch
-targets remain in the result with `test_resolution=possible` and
-`possible_test_count`; `test_resolution=none` means no exact or bounded-possible
-target was found. `typed_partial` in `stats` means some tests could not be
-type-resolved, so the result remains an upper bound. This is static attribution,
-not runtime coverage.
+Ranks called production functions and methods without an exact transitive path
+from any test. Direct selectors, local method values, and proof-backed concrete
+interface receivers can be exact. Open CHA/parser paths propagate `possible` to
+their descendants, which remain in the result with `test_resolution=possible`
+and `possible_test_count`; `test_resolution=none` means no bounded path was
+found. JSON and MCP rows include canonical `stable_id`. `--wide` prints that
+identity without truncation. `typed_partial` means the result remains an upper
+bound. This is static attribution, not runtime coverage.
 Each `--exclude` is matched lexically against the repository-relative source
 path; use `prefix/**` for all descendants. The MCP equivalent is the `exclude`
 string array on `gograph_untested`.

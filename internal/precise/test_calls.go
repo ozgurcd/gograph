@@ -3,6 +3,7 @@ package precise
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	"go/types"
 	"path/filepath"
 	"sort"
@@ -125,6 +126,7 @@ func repositoryTestPath(root, path string) (string, bool) {
 
 func resolveTestFileCalls(pkg *packages.Package, file *ast.File, rel string, symbolIDs map[string]struct{}, g *graph.Graph, resolved map[testCallSite]map[string]graph.CallResolution) {
 	bindings := make(map[types.Object][]typedTestTarget)
+	exactReceivers := exactInterfaceReceiverTypes(pkg.TypesInfo, file)
 	ast.Inspect(file, func(node ast.Node) bool {
 		switch value := node.(type) {
 		case *ast.AssignStmt:
@@ -143,7 +145,7 @@ func resolveTestFileCalls(pkg *packages.Package, file *ast.File, rel string, sym
 				if object == nil {
 					continue
 				}
-				targets := resolveTypedTestExpr(pkg.TypesInfo, value.Rhs[index], bindings, symbolIDs, g)
+				targets := resolveTypedTestExpr(pkg.TypesInfo, value.Rhs[index], bindings, exactReceivers, symbolIDs, g)
 				bindings[object] = mergeTypedTestTargets(bindings[object], targets)
 			}
 		case *ast.ValueSpec:
@@ -155,7 +157,7 @@ func resolveTestFileCalls(pkg *packages.Package, file *ast.File, rel string, sym
 				if object == nil {
 					continue
 				}
-				targets := resolveTypedTestExpr(pkg.TypesInfo, value.Values[index], bindings, symbolIDs, g)
+				targets := resolveTypedTestExpr(pkg.TypesInfo, value.Values[index], bindings, exactReceivers, symbolIDs, g)
 				bindings[object] = mergeTypedTestTargets(bindings[object], targets)
 			}
 		}
@@ -171,7 +173,7 @@ func resolveTestFileCalls(pkg *packages.Package, file *ast.File, rel string, sym
 		if position.Line <= 0 || position.Column <= 0 {
 			return true
 		}
-		targets := resolveTypedTestExpr(pkg.TypesInfo, call.Fun, bindings, symbolIDs, g)
+		targets := resolveTypedTestExpr(pkg.TypesInfo, call.Fun, bindings, exactReceivers, symbolIDs, g)
 		if len(targets) == 0 {
 			return true
 		}
@@ -189,14 +191,14 @@ func resolveTestFileCalls(pkg *packages.Package, file *ast.File, rel string, sym
 	})
 }
 
-func resolveTypedTestExpr(info *types.Info, expression ast.Expr, bindings map[types.Object][]typedTestTarget, symbolIDs map[string]struct{}, g *graph.Graph) []typedTestTarget {
+func resolveTypedTestExpr(info *types.Info, expression ast.Expr, bindings map[types.Object][]typedTestTarget, exactReceivers map[types.Object]types.Type, symbolIDs map[string]struct{}, g *graph.Graph) []typedTestTarget {
 	switch value := expression.(type) {
 	case *ast.ParenExpr:
-		return resolveTypedTestExpr(info, value.X, bindings, symbolIDs, g)
+		return resolveTypedTestExpr(info, value.X, bindings, exactReceivers, symbolIDs, g)
 	case *ast.IndexExpr:
-		return resolveTypedTestExpr(info, value.X, bindings, symbolIDs, g)
+		return resolveTypedTestExpr(info, value.X, bindings, exactReceivers, symbolIDs, g)
 	case *ast.IndexListExpr:
-		return resolveTypedTestExpr(info, value.X, bindings, symbolIDs, g)
+		return resolveTypedTestExpr(info, value.X, bindings, exactReceivers, symbolIDs, g)
 	case *ast.Ident:
 		object := info.Uses[value]
 		if function, ok := object.(*types.Func); ok {
@@ -210,6 +212,9 @@ func resolveTypedTestExpr(info *types.Info, expression ast.Expr, bindings map[ty
 				return nil
 			}
 			if interfaceID := namedInterfaceID(selection.Recv()); interfaceID != "" {
+				if dynamicType, ok := exactReceiverType(info, value.X, exactReceivers); ok {
+					return concreteMethodTarget(dynamicType, function, symbolIDs)
+				}
 				return interfaceMethodTargets(interfaceID, function.Name(), g)
 			}
 			return repositoryFunctionTarget(function, symbolIDs)
@@ -219,6 +224,145 @@ func resolveTypedTestExpr(info *types.Info, expression ast.Expr, bindings map[ty
 		}
 	}
 	return nil
+}
+
+type interfaceAssignment struct {
+	rhs          ast.Expr
+	count        int
+	addressTaken bool
+}
+
+// exactInterfaceReceiverTypes proves the dynamic type of an interface local
+// only when the variable has one syntactic assignment and its address never
+// escapes. Conditional execution may leave the interface nil, but any method
+// invocation that executes still has the one proven concrete receiver type.
+func exactInterfaceReceiverTypes(info *types.Info, file *ast.File) map[types.Object]types.Type {
+	assignments := make(map[types.Object]*interfaceAssignment)
+	record := func(identifier *ast.Ident, rhs ast.Expr) {
+		if identifier == nil || identifier.Name == "_" {
+			return
+		}
+		object := info.Defs[identifier]
+		if object == nil {
+			object = info.Uses[identifier]
+		}
+		if object == nil || !isInterfaceType(object.Type()) {
+			return
+		}
+		assignment := assignments[object]
+		if assignment == nil {
+			assignment = &interfaceAssignment{}
+			assignments[object] = assignment
+		}
+		assignment.count++
+		assignment.rhs = rhs
+	}
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch value := node.(type) {
+		case *ast.AssignStmt:
+			if len(value.Lhs) == len(value.Rhs) {
+				for index, lhs := range value.Lhs {
+					identifier, _ := lhs.(*ast.Ident)
+					record(identifier, value.Rhs[index])
+				}
+			}
+		case *ast.ValueSpec:
+			if len(value.Names) == len(value.Values) {
+				for index, identifier := range value.Names {
+					record(identifier, value.Values[index])
+				}
+			}
+		case *ast.RangeStmt:
+			for _, expression := range []ast.Expr{value.Key, value.Value} {
+				if identifier, ok := expression.(*ast.Ident); ok {
+					record(identifier, nil)
+				}
+			}
+		case *ast.UnaryExpr:
+			if value.Op != token.AND {
+				break
+			}
+			identifier, ok := ast.Unparen(value.X).(*ast.Ident)
+			if !ok {
+				break
+			}
+			object := info.Uses[identifier]
+			if assignment := assignments[object]; assignment != nil {
+				assignment.addressTaken = true
+			} else if object != nil && isInterfaceType(object.Type()) {
+				assignments[object] = &interfaceAssignment{addressTaken: true}
+			}
+		}
+		return true
+	})
+
+	resolved := make(map[types.Object]types.Type)
+	for changed := true; changed; {
+		changed = false
+		for object, assignment := range assignments {
+			if assignment.count != 1 || assignment.addressTaken || resolved[object] != nil {
+				continue
+			}
+			if dynamicType, ok := exactDynamicTypeOfExpr(info, assignment.rhs, resolved); ok {
+				resolved[object] = dynamicType
+				changed = true
+			}
+		}
+	}
+	return resolved
+}
+
+func exactDynamicTypeOfExpr(info *types.Info, expression ast.Expr, resolved map[types.Object]types.Type) (types.Type, bool) {
+	if expression == nil {
+		return nil, false
+	}
+	switch value := expression.(type) {
+	case *ast.ParenExpr:
+		return exactDynamicTypeOfExpr(info, value.X, resolved)
+	case *ast.Ident:
+		if dynamicType := resolved[info.Uses[value]]; dynamicType != nil {
+			return dynamicType, true
+		}
+	case *ast.CallExpr:
+		if len(value.Args) == 1 {
+			if typeValue, ok := info.Types[value.Fun]; ok && typeValue.IsType() && isInterfaceType(typeValue.Type) {
+				return exactDynamicTypeOfExpr(info, value.Args[0], resolved)
+			}
+		}
+	}
+	staticType := info.TypeOf(expression)
+	if staticType == nil || isInterfaceType(staticType) {
+		return nil, false
+	}
+	return staticType, true
+}
+
+func exactReceiverType(info *types.Info, expression ast.Expr, exactReceivers map[types.Object]types.Type) (types.Type, bool) {
+	for {
+		parenthesized, ok := expression.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		expression = parenthesized.X
+	}
+	identifier, ok := expression.(*ast.Ident)
+	if !ok {
+		return nil, false
+	}
+	dynamicType := exactReceivers[info.Uses[identifier]]
+	return dynamicType, dynamicType != nil
+}
+
+func concreteMethodTarget(dynamicType types.Type, interfaceMethod *types.Func, symbolIDs map[string]struct{}) []typedTestTarget {
+	if dynamicType == nil || interfaceMethod == nil {
+		return nil
+	}
+	selection := types.NewMethodSet(dynamicType).Lookup(interfaceMethod.Pkg(), interfaceMethod.Name())
+	if selection == nil {
+		return nil
+	}
+	function, _ := selection.Obj().(*types.Func)
+	return repositoryFunctionTarget(function, symbolIDs)
 }
 
 func repositoryFunctionTarget(function *types.Func, symbolIDs map[string]struct{}) []typedTestTarget {

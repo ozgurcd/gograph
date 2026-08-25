@@ -476,6 +476,7 @@ transport-specific (CLI flags/envelopes versus typed MCP arguments/content).
   Dead code sweep              → orphans
   Test coverage gaps (codebase) → untested  (exact/possible test attribution in one risk-sorted sweep)
   Product reach of one test     → coverage <TestFunc>  (transitive exact/possible static attribution)
+  Tests reaching one product    → tests <sym> --transitive  (reverse exact/possible paths in one call)
   Durable symbol reference      → identity <sym>  (print or re-resolve a canonical stable ID)
   Diagnose install shadowing    → doctor --json  (running binary, PATH resolution, embedded versions)
   External symbol signature    → doc <pkg.Symbol>  (stdlib/third-party — no graph required)
@@ -560,16 +561,17 @@ Machine validation uses gograph.validation.v1 instead of the generic envelope.
 ━━━ STATIC ANALYSIS LIMITATIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Know these before trusting results:
 
-  Interface dispatch    default AST graphs may miss dynamic targets. Precise CHA keeps every
-                        valid named in-repository implementation as a possible target and accepts
-                        callers Interface.Method, but can over-approximate runtime reachability.
-                        Promoted methods use hidden traversal-only wrapper edges. Reflection,
-                        unsafe, plugins, unresolved function values, test-only packages,
-                        unnamed concrete types, and module-external implementations can remain incomplete.
-  Test attribution      AST graphs use selector-name heuristics. Precise builds separately
-                        type-resolve compiling tests: direct selectors and local method values
-                        are exact; interface targets remain possible. typed_partial means some
-                        tests stayed heuristic. Static attribution is not runtime coverage.
+  Interface dispatch    default AST graphs may miss dynamic targets. Precise SSA devirtualizes
+                        only receivers proven to contain one concrete dynamic type; a single
+                        visible implementation is not proof. Open invokes retain every named
+                        in-repository CHA target as possible and can over-approximate runtime
+                        reachability. Reflection, unsafe, plugins, unresolved function values,
+                        test-only packages, unnamed types, and external implementations can remain incomplete.
+  Test attribution      AST graphs use selector-name heuristics. Precise builds type-resolve
+                        compiling tests: direct calls, local method values, and single-assignment
+                        non-escaping concrete interface locals can be exact. Open interface paths
+                        remain possible and propagate through transitive tests/untested results.
+                        typed_partial means some tests stayed heuristic. Static attribution is not runtime coverage.
   errorflow             heuristic AST traversal — NOT SSA/data-flow. Useful for navigation,
                         not proof. Confidence rating (HIGH/MEDIUM) is a heuristic estimate.
   flow                  interprocedural, path-insensitive AST taint analysis with call/return
@@ -655,8 +657,9 @@ routes               : all HTTP REST routes. Annotates unresolvable handlers.
 source <sym>         : confined exact source for function/method/struct/interface/
                        type/variable/constant — USE THIS instead of reading files
 sql [term]           : raw SQL queries mapped to their functions; optional keyword/table filter
-tests <sym>          : statically attributed test calls for this symbol; precise direct
-                       calls carry exact IDs and interface targets retain CHA provenance
+tests [sym] [--transitive] [--exact-only] [--package <name>]
+                     : direct attributed test calls by default. --transitive returns every
+                       test with an exact/possible stable-ID path to one product symbol.
 
 TOKEN SAVERS (COMPOSED COMMANDS — each replaces 3-8 separate calls):
 api --since <ref|graph.json>
@@ -722,9 +725,10 @@ httpcalls [term]     : all outbound HTTP client calls via net/http (Get, Post, P
 summary              : hotspots + worst instability + top complexity + reachability-orphan/god-object counts
 coverage <test> [--exact-only] [--package <name>] : transitive product symbols statically reached by one unambiguous test.
 identity <sym> [--package <name>] : print or re-resolve canonical stable symbol identity.
-untested [--pkg <n>] [--top N] [--exclude <glob>] : called production functions without an exact/static attributed test edge.
-                       Typed precise builds bind direct test calls exactly; CHA interface targets remain
-                       visible as test_resolution=possible instead of silently satisfying coverage.
+untested [--pkg <n>] [--top N] [--exclude <glob>] [--wide]
+                     : called production functions without an exact transitive test path.
+                       Proven concrete interface receivers are exact; open CHA dispatch remains
+                       visible as test_resolution=possible. --wide prints full stable symbol IDs.
                        Sorted by caller count. Replaces N 'tests <sym>' calls.
 doctor [--json]      : inspect the running executable and every distinct gograph found on PATH
                        without executing alternates; warns about shadowed/newer embedded versions.
@@ -1604,16 +1608,69 @@ func runConcurrency(args []string) int {
 }
 
 func runTests(args []string) int {
-	if !hasOptionalTarget(args) {
-		return failCommand("tests", "usage: gograph tests [symbol]")
+	transitive := false
+	exactOnly := false
+	packageName := ""
+	var targets []string
+	for index := 0; index < len(args); index++ {
+		switch argument := args[index]; argument {
+		case "--transitive":
+			transitive = true
+		case "--exact-only":
+			exactOnly = true
+		case "--package":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "-") {
+				return failCommand("tests", "--package requires an exact Go package name")
+			}
+			packageName = args[index+1]
+			index++
+		default:
+			if strings.HasPrefix(argument, "-") {
+				return failCommandf("tests", "unknown flag: %s", argument)
+			}
+			targets = append(targets, argument)
+		}
+	}
+	if len(targets) > 1 || transitive && len(targets) != 1 {
+		return failCommand("tests", "usage: gograph tests [symbol] [--transitive [--package name] [--exact-only]]")
+	}
+	if !transitive && (exactOnly || packageName != "") {
+		return failCommand("tests", "--package and --exact-only require --transitive")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
 		return failCommandf("tests", "failed to load graph: %v", err)
 	}
 	term := ""
-	if len(args) > 0 {
-		term = args[0]
+	if len(targets) > 0 {
+		term = targets[0]
+	}
+	if transitive {
+		report := search.TransitiveTestsInPackage(g, term, packageName, exactOnly)
+		if jsonMode {
+			return PrintJSON(okEnvelope("tests", term, report, len(report.Tests)))
+		}
+		switch report.Status {
+		case "not_found":
+			fmt.Printf("Product symbol %q was not found. Use gograph identity <name> to resolve its stable ID.\n", term)
+			return 0
+		case "ambiguous":
+			fmt.Printf("Product symbol %q is ambiguous; retry with a stable ID and, when IDs collide, --package:\n", term)
+			for _, match := range report.MatchedSymbols {
+				fmt.Printf("  %s  [%s package=%s] %s:%d\n", match.StableID, match.Kind, match.Package, match.File, match.Line)
+			}
+			return 0
+		}
+		if len(report.Tests) == 0 {
+			fmt.Printf("No test function statically reaches %q.\n", term)
+			return 0
+		}
+		fmt.Printf("Tests statically reaching %s:\n", report.MatchedSymbols[0].StableID)
+		for _, test := range report.Tests {
+			fmt.Printf("  [%s d%d] %s  (%s:%d)\n", test.Resolution, test.Depth, test.StableID, test.File, test.Line)
+			fmt.Printf("    path: %s\n", strings.Join(test.Path, " -> "))
+		}
+		return 0
 	}
 	results := search.Tests(g, term)
 	emptyMsg := "No test edges found."
@@ -2788,9 +2845,10 @@ CODE QUALITY
                              Print/re-resolve canonical module/package/receiver/name identity.
                              Stable across line shifts and file moves inside one package;
                              renames, receiver changes, and package/module moves change it.
-  untested [--pkg name] [--top N] [--exclude glob]...
-                             Called production functions with no attributed test edge.
+  untested [--pkg name] [--top N] [--exclude glob]... [--wide]
+                             Called production functions with no exact transitive test path.
                              Excludes match repository-relative paths; prefix/** matches descendants.
+                             --wide prints complete canonical stable IDs instead of truncating names.
   endpoint <route>           Full vertical slice for one HTTP endpoint (depth 1-20; supports --mermaid).
                              Composes: route resolution + handler symbol +
                              full callee chain (BFS, default depth 5) + SQL
@@ -2853,9 +2911,10 @@ EXTRACTION
   envs [term]                Every os.Getenv / os.LookupEnv / supported Viper Get* read.
   concurrency [term]         Goroutine spawns, channel sends, and typed Mutex/RWMutex/
                              WaitGroup/Once calls (not receives or select statements).
-  tests [symbol]             Statically attributed test calls for a named symbol.
-                             Precise direct calls carry exact IDs; interface targets
-                             retain conservative CHA provenance.
+  tests [symbol] [--transitive] [--exact-only] [--package name]
+                             Direct attributed test calls by default. --transitive requires
+                             one product symbol and returns gograph.tests.v1 with every
+                             reaching test, exact/possible propagation, depth, and stable-ID path.
   coverage <test> [--exact-only] [--package name]
                              Reverse test attribution with exact/possible transitive paths.
   identity <symbol-or-stable-id> [--package name]
@@ -4707,14 +4766,15 @@ func runSummary() int {
 }
 
 // runUntested finds production functions and methods that have at least one
-// non-test caller but no exact/static or legacy parser-attributed test edge.
-// Conservative typed dispatch candidates remain visible rather than silently
-// satisfying the coverage signal.
+// non-test caller but no exact transitive static path from any test.
+// Conservative parser/CHA paths remain visible rather than silently satisfying
+// the coverage signal.
 //
-// Usage: gograph untested [--pkg <name>] [--top N] [--exclude <glob>]...
+// Usage: gograph untested [--pkg <name>] [--top N] [--exclude <glob>]... [--wide]
 func runUntested(args []string) int {
 	pkg := ""
 	top := 0
+	wide := false
 	var excludes []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -4736,6 +4796,8 @@ func runUntested(args []string) int {
 			}
 			excludes = append(excludes, args[i+1])
 			i++
+		case "--wide":
+			wide = true
 		default:
 			return failCommandf("untested", "unknown argument: %s", args[i])
 		}
@@ -4784,11 +4846,19 @@ func runUntested(args []string) int {
 		label = fmt.Sprintf("top %d", top)
 	}
 	fmt.Printf("Untested Candidates (%s, sorted by caller count):\n\n", label)
-	fmt.Printf("%-38s  %-12s  %6s  %-12s  %s\n", "FUNCTION", "PACKAGE", "CALLERS", "TEST MATCH", "FILE")
-	fmt.Println(strings.Repeat("-", 104))
+	nameHeader := "FUNCTION"
+	nameWidth := 38
+	if wide {
+		nameHeader = "STABLE SYMBOL ID"
+		nameWidth = 72
+	}
+	fmt.Printf("%-*s  %-12s  %6s  %-12s  %s\n", nameWidth, nameHeader, "PACKAGE", "CALLERS", "TEST MATCH", "FILE")
+	fmt.Println(strings.Repeat("-", nameWidth+66))
 	for _, r := range results {
 		name := r.Name
-		if len(name) > 36 {
+		if wide && r.StableID != "" {
+			name = r.StableID
+		} else if len(name) > 36 {
 			name = name[:33] + "..."
 		}
 		pkg := r.PackageName
@@ -4802,7 +4872,7 @@ func runUntested(args []string) int {
 		if r.PossibleTestCount > 0 {
 			testMatch = fmt.Sprintf("possible(%d)", r.PossibleTestCount)
 		}
-		fmt.Printf("%-38s  %-12s  %6d  %-12s  %s:%d\n", name, pkg, r.CallerCount, testMatch, r.File, r.Line)
+		fmt.Printf("%-*s  %-12s  %6d  %-12s  %s:%d\n", nameWidth, name, pkg, r.CallerCount, testMatch, r.File, r.Line)
 	}
 	return 0
 }

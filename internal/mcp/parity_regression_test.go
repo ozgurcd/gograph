@@ -79,6 +79,40 @@ func TestCLIAndMCPUntestedResolutionParity(t *testing.T) {
 	}
 }
 
+func TestCLIAndMCPTransitiveTestsParity(t *testing.T) {
+	g := attributionParityGraph()
+	want := search.TransitiveTests(g, "example.com/parity::HandleRevoke", false)
+	text := callTool(t, setupHandlers(t, g)["gograph_tests"], map[string]any{
+		"symbol":     "example.com/parity::HandleRevoke",
+		"transitive": true,
+	})
+	var got search.TestsReport
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("decode MCP transitive tests result: %v\n%s", err, text)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("MCP transitive tests result = %#v, want CLI-native %#v", got, want)
+	}
+}
+
+func attributionParityGraph() *graph.Graph {
+	const (
+		testID    = "example.com/parity::TestRouter"
+		routerID  = "example.com/parity::Router"
+		handlerID = "example.com/parity::HandleRevoke"
+	)
+	return &graph.Graph{
+		Build: &graph.BuildMetadata{Precision: graph.PrecisionPrecise, TestCallResolution: graph.TestCallResolutionTyped},
+		Symbols: []graph.SymbolNode{
+			{ID: testID, Name: "TestRouter", Kind: graph.KindFunction, PackageName: "parity", File: "router_test.go", Line: 10},
+			{ID: routerID, Name: "Router", Kind: graph.KindFunction, PackageName: "parity", File: "router.go", Line: 20},
+			{ID: handlerID, Name: "HandleRevoke", Kind: graph.KindFunction, PackageName: "parity", File: "handler.go", Line: 30},
+		},
+		TestEdges: []graph.TestEdge{{TestFunc: "TestRouter", File: "router_test.go", TargetSymbolID: routerID, Resolution: graph.CallResolutionStatic}},
+		Calls:     []graph.CallEdge{{CallerSymbolID: routerID, CalleeSymbolID: handlerID, Resolution: graph.CallResolutionStatic}},
+	}
+}
+
 func parityRegressionGraph(t *testing.T) *graph.Graph {
 	t.Helper()
 
@@ -359,6 +393,19 @@ func TestMCPUntestedExcludeSchemaIsStringArray(t *testing.T) {
 	}
 }
 
+func TestMCPTestsAdvertisesTransitiveParityParameters(t *testing.T) {
+	g := parityRegressionGraph(t)
+	registered, ok := mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), mockBuildBaseline(), "dev").ListTools()["gograph_tests"]
+	if !ok {
+		t.Fatal("gograph_tests is not registered")
+	}
+	for _, property := range []string{"symbol", "transitive", "exact_only", "package"} {
+		if _, ok := registered.Tool.InputSchema.Properties[property]; !ok {
+			t.Errorf("gograph_tests does not advertise %s", property)
+		}
+	}
+}
+
 func TestMCPContextPreservesAmbiguityRoleAndSourceError(t *testing.T) {
 	g := parityRegressionGraph(t)
 	handlers := setupHandlers(t, g)
@@ -440,6 +487,8 @@ func TestMCPCapabilityPrerequisiteReflectsPersistenceMode(t *testing.T) {
 		"UNKNOWN with score -1",
 		"Filesystem-shaped queries are rejected",
 		"typed_partial",
+		"single visible implementation is never enough",
+		"gograph.tests.v1 reverse attribution",
 		"static attribution never proves runtime coverage",
 		"reject artifacts larger than 512 MiB before allocation",
 		"Typed-only test targets are recomputed",

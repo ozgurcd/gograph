@@ -97,7 +97,7 @@ Packaged and generated registrations keep refresh persistence off by default.
 | `gograph_errorflow` with `query=<term>` | Error propagation paths |
 | `gograph_flow` | Potential HTTP/JSON/env paths to SQL, process, filesystem, and outbound HTTP sinks |
 | `gograph_changes` | Diff source against the trusted persisted graph, or MCP startup fallback when no usable artifact exists |
-| `gograph_tests` with optional `symbol=<symbol>` | Tests connected to a symbol |
+| `gograph_tests` with `symbol=<symbol>, transitive=true` | Every test statically reaching a symbol, with exact/possible path and depth; omit `transitive` for direct edges |
 | `gograph_coverage` with `test=<TestFunc>` | Transitive product symbols one unambiguous test statically reaches; exact/possible paths; optional `package` disambiguation |
 | `gograph_identity` with `symbol=<symbol-or-stable-id>` | Print or re-resolve canonical symbol identity without silently choosing ambiguity; optional `package` disambiguation |
 | `gograph_check` | Policy checks, including changed-route tests, coverage, orphans, API drift, arity, and complexity |

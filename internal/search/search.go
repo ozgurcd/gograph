@@ -1819,11 +1819,12 @@ func Fixtures(g *graph.Graph, pkgName string) []Result {
 	return results
 }
 
-// UntestedResult describes a called production function without an exact or
-// parser-attributed test edge. TestResolution is "possible" when precise CHA
-// found one or more conservative test dispatch targets; those remain visible
+// UntestedResult describes a called production function without an exact
+// transitive test path. TestResolution is "possible" when one or more static
+// test paths contain conservative parser or CHA edges; those remain visible
 // rather than silently satisfying an exact coverage claim.
 type UntestedResult struct {
+	StableID          string `json:"stable_id"`
 	Name              string `json:"name"`
 	Kind              string `json:"kind"`
 	File              string `json:"file"`
@@ -1835,18 +1836,26 @@ type UntestedResult struct {
 }
 
 // Untested returns functions and methods that have at least one non-test caller
-// but zero attributed test edges. This is distinct from Orphans (zero callers):
-// untested symbols ARE used in production code but have no test coverage.
+// but no exact transitive path from a test. This is distinct from Orphans (zero
+// callers): untested symbols ARE used in production code but have no exact
+// static test attribution.
 //
 // One full graph sweep — replaces N sequential 'gograph tests <sym>' calls.
 func Untested(g *graph.Graph) []UntestedResult {
 	// Build exact and bounded-possible typed target sets. Parser-only edges
-	// retain the historical name attribution fallback. Once a typed ID exists,
-	// never also apply its raw selector globally: doing so would let a test of
-	// one receiver hide every same-named method in the repository.
+	// retain the historical name attribution fallback only when the name has one
+	// production owner. Once a typed ID exists, never also apply its raw selector
+	// globally: doing so would let a test of one receiver hide every same-named
+	// method in the repository.
 	testedIDs := make(map[string]bool)
 	testedNames := make(map[string]bool)
 	possibleTests := make(map[string]map[string]struct{})
+	productNameCounts := make(map[string]int)
+	for _, symbol := range g.Symbols {
+		if (symbol.Kind == graph.KindFunction || symbol.Kind == graph.KindMethod) && !isTestFile(symbol.File) {
+			productNameCounts[symbol.Name]++
+		}
+	}
 	for _, te := range g.TestEdges {
 		if te.TargetSymbolID != "" {
 			if te.Resolution == graph.CallResolutionStatic || te.Resolution == graph.CallResolutionSynthetic {
@@ -1863,10 +1872,11 @@ func Untested(g *graph.Graph) []UntestedResult {
 		// Target may be a fully-qualified ID or a short name — track both.
 		if idx := strings.LastIndex(te.Target, "::"); idx >= 0 {
 			testedNames[te.Target[idx+2:]] = true
-		} else {
+		} else if productNameCounts[te.Target] == 1 {
 			testedNames[te.Target] = true
 		}
 	}
+	transitiveTests := allTestReachability(g)
 
 	// Count distinct production source-target pairs. Synthetic promoted-method
 	// wrappers forward the real source call to the declared method body.
@@ -1904,7 +1914,7 @@ func Untested(g *graph.Graph) []UntestedResult {
 		}
 
 		// Must NOT appear in test edges.
-		if testedIDs[s.ID] || testedNames[s.Name] {
+		if testedIDs[s.ID] || testedNames[s.Name] || transitiveTests[s.ID].exactCount > 0 {
 			continue
 		}
 
@@ -1914,8 +1924,13 @@ func Untested(g *graph.Graph) []UntestedResult {
 			resolution = "possible"
 			possibleCount = len(tests)
 		}
+		if tests := transitiveTests[s.ID].possibleCount; tests > possibleCount {
+			resolution = "possible"
+			possibleCount = tests
+		}
 
 		results = append(results, UntestedResult{
+			StableID:          s.ID,
 			Name:              s.Name,
 			Kind:              string(s.Kind),
 			File:              s.File,

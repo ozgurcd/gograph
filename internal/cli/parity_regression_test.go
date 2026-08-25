@@ -401,6 +401,45 @@ func TestCLIPathAndSkeletonHonorJSONOutput(t *testing.T) {
 	}
 }
 
+func TestCLITransitiveTestsReturnsVersionedReverseAttribution(t *testing.T) {
+	const (
+		testID    = "example.com/parity::TestRouter"
+		routerID  = "example.com/parity::Router"
+		handlerID = "example.com/parity::HandleRevoke"
+	)
+	g := &graph.Graph{
+		Build: &graph.BuildMetadata{Precision: graph.PrecisionPrecise, TestCallResolution: graph.TestCallResolutionTyped},
+		Symbols: []graph.SymbolNode{
+			{ID: testID, Name: "TestRouter", Kind: graph.KindFunction, PackageName: "parity", File: "router_test.go", Line: 10},
+			{ID: routerID, Name: "Router", Kind: graph.KindFunction, PackageName: "parity", File: "router.go", Line: 20},
+			{ID: handlerID, Name: "HandleRevoke", Kind: graph.KindFunction, PackageName: "parity", File: "handler.go", Line: 30},
+		},
+		TestEdges: []graph.TestEdge{{TestFunc: "TestRouter", File: "router_test.go", TargetSymbolID: routerID, Resolution: graph.CallResolutionStatic}},
+		Calls:     []graph.CallEdge{{CallerSymbolID: routerID, CalleeSymbolID: handlerID, Resolution: graph.CallResolutionStatic}},
+	}
+	root := writeCLIParityGraph(t, g)
+	stdout, stderr, code := runCLIParityInDir(t, root, func() int {
+		return Run([]string{"tests", handlerID, "--transitive", "--json"})
+	})
+	if code != 0 {
+		t.Fatalf("transitive tests exited %d: %s", code, stderr)
+	}
+	var envelope struct {
+		Command string             `json:"command"`
+		Count   int                `json:"count"`
+		Results search.TestsReport `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+		t.Fatalf("decode transitive tests JSON: %v\n%s", err, stdout)
+	}
+	if envelope.Command != "tests" || envelope.Count != 1 || envelope.Results.SchemaVersion != search.TestsSchemaVersion || len(envelope.Results.Tests) != 1 {
+		t.Fatalf("transitive tests envelope = %#v", envelope)
+	}
+	if got := envelope.Results.Tests[0]; got.StableID != testID || got.Resolution != "exact" || got.Depth != 2 {
+		t.Fatalf("transitive test = %#v", got)
+	}
+}
+
 func TestCLICallersExactMermaidAvoidsSubstringCollisions(t *testing.T) {
 	g := &graph.Graph{
 		Symbols: []graph.SymbolNode{

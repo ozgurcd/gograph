@@ -227,6 +227,36 @@ func TestUntestedUsesTypedTestIdentityWithoutConflatingReceivers(t *testing.T) {
 	}
 }
 
+func TestUntestedDoesNotTreatAmbiguousParserNameAsExact(t *testing.T) {
+	const (
+		firstID  = "example.com/pkg::(*First).Authenticate"
+		secondID = "example.com/pkg::(*Second).Authenticate"
+		testID   = "example.com/pkg::TestClientAuth"
+	)
+	g := &graph.Graph{
+		Symbols: []graph.SymbolNode{
+			{ID: firstID, Name: "Authenticate", Kind: graph.KindMethod, Receiver: "*First", PackageName: "pkg", File: "first.go"},
+			{ID: secondID, Name: "Authenticate", Kind: graph.KindMethod, Receiver: "*Second", PackageName: "pkg", File: "second.go"},
+			{ID: testID, Name: "TestClientAuth", Kind: graph.KindFunction, PackageName: "pkg", File: "auth_test.go"},
+		},
+		Calls: []graph.CallEdge{
+			{File: "caller.go", CalleeSymbolID: firstID},
+			{File: "caller.go", CalleeSymbolID: secondID},
+		},
+		TestEdges: []graph.TestEdge{{TestFunc: "TestClientAuth", Target: "Authenticate", File: "auth_test.go"}},
+	}
+
+	results := search.Untested(g)
+	if len(results) != 2 {
+		t.Fatalf("ambiguous parser target hid same-named symbols: %#v", results)
+	}
+	for _, result := range results {
+		if result.TestResolution != "possible" || result.PossibleTestCount != 1 {
+			t.Fatalf("ambiguous parser target = %#v, want one possible test", result)
+		}
+	}
+}
+
 func TestUntestedRetainsPossibleDispatchWithExplicitResolution(t *testing.T) {
 	const targetID = "example.com/pkg::(*MemoryStore).Delete"
 	g := &graph.Graph{
@@ -241,5 +271,43 @@ func TestUntestedRetainsPossibleDispatchWithExplicitResolution(t *testing.T) {
 	results := search.Untested(g)
 	if len(results) != 1 || results[0].TestResolution != "possible" || results[0].PossibleTestCount != 2 {
 		t.Fatalf("possible dispatch must remain visible and qualified: %#v", results)
+	}
+}
+
+func TestUntestedUsesTransitiveExactAttributionAndKeepsPossiblePaths(t *testing.T) {
+	const (
+		testID     = "example.com/pkg::TestRouter"
+		routerID   = "example.com/pkg::Router"
+		handlerID  = "example.com/pkg::HandleRevoke"
+		possibleID = "example.com/pkg::PossibleHandler"
+	)
+	g := &graph.Graph{
+		Build: &graph.BuildMetadata{Precision: graph.PrecisionPrecise, TestCallResolution: graph.TestCallResolutionTyped},
+		Symbols: []graph.SymbolNode{
+			{ID: testID, Name: "TestRouter", Kind: graph.KindFunction, PackageName: "pkg", File: "router_test.go"},
+			{ID: routerID, Name: "Router", Kind: graph.KindFunction, PackageName: "pkg", File: "router.go"},
+			{ID: handlerID, Name: "HandleRevoke", Kind: graph.KindFunction, PackageName: "pkg", File: "handler.go"},
+			{ID: possibleID, Name: "PossibleHandler", Kind: graph.KindFunction, PackageName: "pkg", File: "possible.go"},
+		},
+		TestEdges: []graph.TestEdge{{TestFunc: "TestRouter", File: "router_test.go", TargetSymbolID: routerID, Resolution: graph.CallResolutionStatic}},
+		Calls: []graph.CallEdge{
+			{CallerSymbolID: routerID, CalleeSymbolID: handlerID, File: "router.go", Resolution: graph.CallResolutionStatic},
+			{CallerSymbolID: routerID, CalleeSymbolID: possibleID, File: "router.go", Resolution: graph.CallResolutionCHA},
+			{CallerSymbolID: "example.com/pkg::Production", CalleeSymbolID: handlerID, File: "production.go", Resolution: graph.CallResolutionStatic},
+			{CallerSymbolID: "example.com/pkg::Production", CalleeSymbolID: possibleID, File: "production.go", Resolution: graph.CallResolutionStatic},
+		},
+	}
+	results := search.Untested(g)
+	if len(results) != 1 || results[0].StableID != possibleID || results[0].TestResolution != "possible" || results[0].PossibleTestCount != 1 {
+		t.Fatalf("transitive untested results = %#v", results)
+	}
+}
+
+func TestUntestedIncludesStableIdentity(t *testing.T) {
+	results := search.Untested(buildUntestedGraph())
+	for _, result := range results {
+		if result.Name == "foo" && result.StableID != "pkg::foo" {
+			t.Fatalf("foo stable ID = %q", result.StableID)
+		}
 	}
 }

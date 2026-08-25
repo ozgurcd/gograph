@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+No changes yet.
+
+## v1.6.5 — 2026-08-25
+
+### Proof-backed test attribution
+
+- Precise production analysis now devirtualizes interface calls only when SSA
+  proves that the receiver contains one concrete dynamic type. Merely finding
+  one implementation in the repository never upgrades an open-world CHA edge.
+  Open interface parameters, factory-returned interfaces, and mixed Phi values
+  remain `cha_possible_target`.
+- Typed test analysis applies the same rule to single-assignment, non-escaping
+  interface locals. A test-local `var runner Runner = &Memory{}` binds exactly
+  to `(*Memory).Run`; interface values returned by a factory retain every
+  bounded possible implementation.
+- Added CLI `tests <symbol> --transitive [--exact-only] [--package name]` and
+  matching `gograph_tests` parameters. The opt-in `gograph.tests.v1` report
+  lists every test with exact/possible resolution, depth, and a representative
+  stable-ID path while preserving the existing direct `tests` result contract.
+- `untested` now performs the same multi-source transitive attribution in one
+  sweep. Exact router/callback-mediated paths suppress false gaps; possible
+  paths and their test counts remain visible. Results add canonical
+  `stable_id`, and CLI `--wide` prints complete identities without truncation.
+  Ambiguous parser-only short names no longer hide same-named product symbols,
+  and Go test, benchmark, fuzz, and example entry-name rules seed traversal.
+- Reverse attribution keeps in-package and external-test declarations distinct
+  even when graph-v2 gives them the same module-rooted test symbol ID. CLI/MCP
+  parity, ambiguity, possible-propagation, incremental-reuse, and stable-output
+  regressions cover the new behavior.
+
 ### Explicit Go build tags
 
 - Added repeatable, validated `--tags=<tag[,tag...]>` selection to repository

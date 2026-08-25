@@ -150,8 +150,12 @@ func (*C) Run() {}
 import "testing"
 
 func exercise(r Runner) { r.Run() }
+func selected(t *testing.T) Runner {
+	if t.Name() == "A" { return &A{} }
+	return &B{}
+}
 func TestDispatch(t *testing.T) {
-	var r Runner = &A{}
+	r := selected(t)
 	r.Run()
 	exercise(r)
 }
@@ -165,8 +169,8 @@ func TestDispatch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("build %d AST: %v", build, err)
 		}
-		if build > 1 && len(current.TestEdges) != 2 {
-			t.Fatalf("build %d restored %d parser test edges, want 2", build, len(current.TestEdges))
+		if build > 1 && len(current.TestEdges) != 3 {
+			t.Fatalf("build %d restored %d parser test edges, want 3", build, len(current.TestEdges))
 		}
 		if err := enrichGraphPreciselyWithConfig(root, current, config, configErr); err != nil {
 			t.Fatalf("build %d precise: %v", build, err)
@@ -181,8 +185,8 @@ func TestDispatch(t *testing.T) {
 		} else if string(encoded) != string(expected) {
 			t.Fatalf("build %d test edges changed after reuse:\nfirst: %s\nnow:   %s", build, expected, encoded)
 		}
-		if len(current.TestEdges) != 4 {
-			t.Fatalf("build %d precise test edges = %d, want stable 4", build, len(current.TestEdges))
+		if len(current.TestEdges) != 5 {
+			t.Fatalf("build %d precise test edges = %d, want stable 5", build, len(current.TestEdges))
 		}
 		previous = current
 	}

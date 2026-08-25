@@ -53,7 +53,9 @@ func setupUntestedFixture(t *testing.T) string {
 	t.Helper()
 	root := writeIsolatedModule(t, `package cli
 
-func Entry() string { return UntestedLeaf() }
+func Entry() string { return ThisFunctionNameIsIntentionallyLongEnoughToNeedWideOutput() }
+
+func ThisFunctionNameIsIntentionallyLongEnoughToNeedWideOutput() string { return UntestedLeaf() }
 
 func UntestedLeaf() string { return "ok" }
 `)
@@ -246,7 +248,7 @@ func TestUntestedJSONMode(t *testing.T) {
 			t.Errorf("results[%d] is not an object", i)
 			continue
 		}
-		for _, field := range []string{"name", "kind", "file", "line", "caller_count", "package"} {
+		for _, field := range []string{"stable_id", "name", "kind", "file", "line", "caller_count", "package"} {
 			if _, exists := r[field]; !exists {
 				t.Errorf("results[%d] missing field %q", i, field)
 			}
@@ -260,6 +262,18 @@ func TestUntestedJSONMode(t *testing.T) {
 		if kind != "function" && kind != "method" {
 			t.Errorf("results[%d] kind=%q, expected 'function' or 'method'", i, kind)
 		}
+	}
+}
+
+func TestUntestedWideModePrintsFullStableIdentity(t *testing.T) {
+	root := setupUntestedFixture(t)
+	stdout, stderr, code := runBinaryAt(t, root, "untested", "--wide")
+	if code != 0 {
+		t.Fatalf("gograph untested --wide exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	const stableID = "example.com/cli-fixture::ThisFunctionNameIsIntentionallyLongEnoughToNeedWideOutput"
+	if !strings.Contains(stdout, stableID) || strings.Contains(stdout, "ThisFunctionNameIsIntentionally...") {
+		t.Fatalf("wide output did not preserve stable identity:\n%s", stdout)
 	}
 }
 

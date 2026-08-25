@@ -18,6 +18,7 @@
 - [GOGRAPH-PRECISE-SSA-SCOPE-1](claims/GOGRAPH-PRECISE-SSA-SCOPE-1.json) — Repository-scoped precise SSA bodies and exclusion of dependency-wrapper noise.
 - [GOGRAPH-LOW-MEMORY-BUILD-2](claims/GOGRAPH-LOW-MEMORY-BUILD-2.json) — Correctness-preserving low-memory CLI, workspace-refresh, and MCP analysis policy.
 - [GOGRAPH-BUILD-TAGS-1](claims/GOGRAPH-BUILD-TAGS-1.json) — One fingerprinted explicit Go build-tag context across repository and workspace CLI/MCP analysis.
+- [GOGRAPH-TEST-ATTRIBUTION-1](claims/GOGRAPH-TEST-ATTRIBUTION-1.json) — Proof-backed interface dispatch and exact/possible transitive test attribution with CLI/MCP parity.
 
 ## Generated Reports (rebuilt dynamically)
 

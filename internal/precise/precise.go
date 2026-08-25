@@ -353,9 +353,29 @@ func enrichProductionWithConfig(absRoot, analysisRoot string, g *graph.Graph, co
 					// that can satisfy an interface invoke. Keep every in-repository
 					// target: collapsing this set into the first edge makes exact
 					// caller queries depend on nondeterministic map iteration order.
-					calleePos := ssaFunctionOwnerPosition(prog.Fset, calleeFn)
-					if calleeSymID == "" || !pathWithinRoot(calleePos.Filename, analysisRoot) {
-						continue
+					targetID := calleeSymID
+					resolution := graph.CallResolutionCHA
+					if exactTarget, ok := devirtualizedInvokeTarget(prog, edge.Site.Common()); ok {
+						exactFn := exactTarget
+						if origin := exactFn.Origin(); origin != nil {
+							exactFn = origin
+						}
+						exactID := ssaFuncToSymbolID(exactFn)
+						exactPos := ssaFunctionOwnerPosition(prog.Fset, exactFn)
+						if exactID == "" || !pathWithinRoot(exactPos.Filename, analysisRoot) {
+							// The receiver's concrete dynamic type is proven, but its
+							// implementation is outside this repository. Preserve the
+							// parser-owned unresolved call instead of retaining impossible
+							// in-repository CHA alternatives.
+							continue
+						}
+						targetID = exactID
+						resolution = graph.CallResolutionStatic
+					} else {
+						calleePos := ssaFunctionOwnerPosition(prog.Fset, calleeFn)
+						if targetID == "" || !pathWithinRoot(calleePos.Filename, analysisRoot) {
+							continue
+						}
 					}
 					// The exact source coordinate is the stable identity of the
 					// invocation. SSA gives closures synthetic caller names (Run$1),
@@ -373,7 +393,7 @@ func enrichProductionWithConfig(absRoot, analysisRoot string, g *graph.Graph, co
 								Line:           pos.Line,
 								Column:         pos.Column,
 							},
-							targets: make(map[string]struct{}),
+							targets: make(map[string]graph.CallResolution),
 						}
 						indices := astEdgeIndices[key]
 						if len(indices) == 0 {
@@ -389,7 +409,10 @@ func enrichProductionWithConfig(absRoot, analysisRoot string, g *graph.Graph, co
 						}
 						invokeGroups[siteKey] = group
 					}
-					group.targets[calleeSymID] = struct{}{}
+					currentResolution := group.targets[targetID]
+					if currentResolution == "" || currentResolution == graph.CallResolutionCHA && resolution == graph.CallResolutionStatic {
+						group.targets[targetID] = resolution
+					}
 					continue
 				}
 				if existingIdx, dup := astEdgeIdx[key]; dup {
@@ -758,7 +781,7 @@ func packageLoadError(initial []*packages.Package) error {
 type invokeCallGroup struct {
 	prototype       graph.CallEdge
 	existingIndices []int
-	targets         map[string]struct{}
+	targets         map[string]graph.CallResolution
 }
 
 // materializeInvokeCalls replaces the unresolved AST edge for each interface
@@ -795,7 +818,7 @@ func materializeInvokeCalls(calls []graph.CallEdge, groups map[string]*invokeCal
 		for targetIndex, targetID := range targetIDs {
 			edge := group.prototype
 			edge.CalleeSymbolID = targetID
-			edge.Resolution = graph.CallResolutionCHA
+			edge.Resolution = group.targets[targetID]
 			// Preserve one parser-owned edge when an unresolved AST edge existed;
 			// additional concrete targets are precise-only enrichment records.
 			edge.Precise = len(group.existingIndices) == 0 || targetIndex > 0
@@ -827,6 +850,69 @@ func materializeInvokeCalls(calls []graph.CallEdge, groups map[string]*invokeCal
 		result = append(result, edges...)
 	}
 	return result
+}
+
+// devirtualizedInvokeTarget proves a concrete interface receiver only when the
+// SSA value is constructed from one concrete dynamic type. A single visible
+// CHA implementation is deliberately insufficient because repository graphs
+// are open to module-external implementations and alternate runtime flows.
+func devirtualizedInvokeTarget(prog *ssa.Program, common *ssa.CallCommon) (*ssa.Function, bool) {
+	if prog == nil || common == nil || !common.IsInvoke() || common.Method == nil {
+		return nil, false
+	}
+	dynamicType, ok := exactInterfaceDynamicType(common.Value, make(map[ssa.Value]bool))
+	if !ok {
+		return nil, false
+	}
+	selection := prog.MethodSets.MethodSet(dynamicType).Lookup(common.Method.Pkg(), common.Method.Name())
+	if selection == nil {
+		return nil, false
+	}
+	target := prog.MethodValue(selection)
+	return target, target != nil
+}
+
+func exactInterfaceDynamicType(value ssa.Value, seen map[ssa.Value]bool) (types.Type, bool) {
+	if value == nil || seen[value] {
+		return nil, false
+	}
+	seen[value] = true
+	defer delete(seen, value)
+	switch typed := value.(type) {
+	case *ssa.MakeInterface:
+		if typed.X == nil || isInterfaceType(typed.X.Type()) {
+			return nil, false
+		}
+		return typed.X.Type(), true
+	case *ssa.ChangeInterface:
+		return exactInterfaceDynamicType(typed.X, seen)
+	case *ssa.Phi:
+		var result types.Type
+		for _, edge := range typed.Edges {
+			candidate, ok := exactInterfaceDynamicType(edge, seen)
+			if !ok {
+				return nil, false
+			}
+			if result == nil {
+				result = candidate
+				continue
+			}
+			if !types.Identical(result, candidate) {
+				return nil, false
+			}
+		}
+		return result, result != nil
+	default:
+		return nil, false
+	}
+}
+
+func isInterfaceType(value types.Type) bool {
+	if value == nil {
+		return false
+	}
+	_, ok := value.Underlying().(*types.Interface)
+	return ok
 }
 
 func typeObjectID(typeName *types.TypeName) string {

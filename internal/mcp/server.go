@@ -408,7 +408,7 @@ func NewServer(
 				{"name": "gograph_dependents", "purpose": "All packages that import the named package (inverse of gograph_deps). Essential before package-level refactors."},
 				{"name": "gograph_deps", "purpose": "Import dependency tree of a package. transitive=true for full BFS closure."},
 				{"name": "gograph_envs", "purpose": "All os.Getenv/os.LookupEnv and supported Viper Get* reads in the codebase. Filter by key name substring."},
-				{"name": "gograph_tests", "purpose": "Statically attributed test calls. Precise direct calls carry exact symbol IDs; interface targets retain conservative CHA provenance. Omit symbol to list all test edges."},
+				{"name": "gograph_tests", "purpose": "Direct attributed test calls by default. transitive=true returns gograph.tests.v1 reverse attribution with every reaching test, exact/possible propagation, depth, and stable-ID paths."},
 				{"name": "gograph_coverage", "purpose": "Transitive reverse test attribution: product symbols one unambiguous test statically reaches, with exact/possible propagation and stable-ID paths."},
 				{"name": "gograph_identity", "purpose": "Resolve exact symbol spellings or canonical stable IDs without silently choosing ambiguous matches."},
 				{"name": "gograph_hotspot", "purpose": "Functions ranked by fan-in (incoming call count). High fan-in = highest-risk change target."},
@@ -440,7 +440,7 @@ func NewServer(
 				{"name": "gograph_diagram", "purpose": "Generate Mermaid architecture diagrams grouped by package, module, service, or file."},
 				{"name": "gograph_check", "purpose": "Run static policy checks; relative/default config is project-confined, and saved graph baselines use the same trust policy as gograph_api."},
 				{"name": "gograph_summary", "purpose": "Single-call codebase briefing: top 3 hotspots, worst instability package, highest complexity function, orphan count, and god-object count. Replaces 5 separate tool calls."},
-				{"name": "gograph_untested", "purpose": "Sweep the full graph for called production functions without an exact/static attributed test edge; typed precise test selectors bind exact symbols while CHA targets remain explicit test_resolution=possible candidates; exclude[] filters repository-relative paths."},
+				{"name": "gograph_untested", "purpose": "One-sweep census of called production symbols without an exact transitive test path. Results include stable_id; open CHA paths remain test_resolution=possible and exclude[] filters repository-relative paths."},
 				{"name": "gograph_doc", "purpose": "Fetch Go doc after rejecting source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees (.git/.gograph excluded), and validating Go tool metadata plus confined workspace members. Filesystem-shaped queries are rejected; dependency resolution is open-world. Returns a one-element JSON array with query and raw-text output."},
 				{"name": "gograph_wiki", "purpose": "Generate machine-first Markdown; relative output is project-rooted, while absolute output is an explicit real local destination."},
 			},
@@ -460,8 +460,8 @@ func NewServer(
 				"Errorflow uses heuristic static call-graph and AST reference analysis. It does not perform SSA or full data-flow tracking.",
 				"Security flow analysis is interprocedural and path-insensitive, with call/return matching across at most 16 nested repository calls. Findings are review leads, not proof; unresolved external calls lower confidence.",
 				"Ambiguous short names can be disambiguated in MCP tools whose symbol argument advertises standard Go dot-separated package qualification or fully-qualified IDs. gograph_callers additionally supports Interface.Method and expands every recorded precise implementation.",
-				"Precise interface dispatch uses conservative CHA. It retains every valid named in-repository implementation, including promoted methods through hidden traversal-only wrapper edges, and may therefore include targets that are not instantiated in one runtime configuration; reflection, unsafe, plugins, unresolved function values, test-only packages, unnamed concrete types, and module-external implementations can remain incomplete.",
-				"Test-call attribution is independent from production precision. AST graphs use selector-name heuristics; precise builds separately bind compiling direct test calls exactly while retaining interface candidates as possible. typed_partial means some tests stayed heuristic, and static attribution never proves runtime coverage.",
+				"Precise interface dispatch uses conservative CHA unless SSA proves one concrete dynamic receiver type at the call site. A single visible implementation is never enough to claim exactness. Open invokes retain every valid named in-repository implementation, including promoted methods through hidden traversal-only wrapper edges; reflection, unsafe, plugins, unresolved function values, test-only packages, unnamed concrete types, and module-external implementations can remain incomplete.",
+				"Test-call attribution is independent from production precision. AST graphs use selector-name heuristics; precise builds bind direct calls and single-assignment non-escaping concrete interface locals exactly while retaining open interface candidates as possible. typed_partial means some tests stayed heuristic. Transitive tests/untested propagate uncertainty, and static attribution never proves runtime coverage.",
 				"Constant Gin/Echo/Fiber Group prefixes and Chi Route closure prefixes are composed statically, including nested groups. Dynamically computed prefixes remain unresolved; search those routes by their known suffix or handler symbol.",
 			},
 		}
@@ -1728,8 +1728,11 @@ func initNewTools(
 
 	// Tool: gograph_tests
 	testsTool := mcp.NewTool("gograph_tests",
-		mcp.WithDescription("Find test functions in *_test.go files that statically exercise a named symbol, or list all attributed test edges when no symbol is given. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise graphs separately type-resolve compiling test packages. Direct selectors and local method values can bind exact symbol IDs; interface dispatch remains bounded CHA-possible evidence, and test-package failures are reported through test_call_resolution=typed_partial rather than weakening production precision. Read-only; no side effects. WHEN TO USE: Before editing a function — check what tests are statically attributed so you know what to run; or to audit test coverage candidates across the codebase. NOT TO USE: For test helper infrastructure (use gograph_fixtures); for running the tests or proving runtime coverage (use `go test` and coverage evidence). RETURNS: Test function names, attributed targets, and file locations; returns all test edges when symbol is omitted; empty when no test edge matches the symbol."),
+		mcp.WithDescription("Find test functions in *_test.go files that statically exercise a named symbol, or list all attributed test edges when no symbol is given. By default this preserves the direct-edge result contract. Set transitive=true with a required symbol to return gograph.tests.v1 reverse attribution, including exact/possible resolution, depth, and a representative stable-ID path from every reaching test; exact_only omits uncertain paths and package disambiguates the selected product symbol. The MCP server checks freshness before this call and refreshes in the current requested analysis mode. Read-only; no side effects. WHEN TO USE: Before editing a function — use transitive=true for router/callback-mediated coverage and direct mode for concrete test call sites. NOT TO USE: For test helper infrastructure (use gograph_fixtures); for running tests or proving runtime coverage. RETURNS: Direct result rows by default, or a versioned reverse-transitive report when requested."),
 		mcp.WithString("symbol", mcp.Description("The symbol name to find tests for (optional)")),
+		mcp.WithBoolean("transitive", mcp.Description("Return reverse-transitive test attribution; requires symbol")),
+		mcp.WithBoolean("exact_only", mcp.Description("With transitive=true, omit paths containing possible edges")),
+		mcp.WithString("package", mcp.Description("With transitive=true, optional exact Go package name used to disambiguate the selected symbol")),
 	)
 	addTool(testsTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -1738,10 +1741,30 @@ func initNewTools(
 			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
 		}
 		term := ""
+		transitive := false
+		exactOnly := false
+		packageName := ""
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if s, ok := args["symbol"].(string); ok {
 				term = s
 			}
+			transitive = boolArg(args, "transitive")
+			exactOnly = boolArg(args, "exact_only")
+			packageName, _ = args["package"].(string)
+		}
+		if transitive {
+			if strings.TrimSpace(term) == "" {
+				return mcp.NewToolResultError("symbol must be a non-empty string when transitive=true"), nil
+			}
+			report := search.TransitiveTestsInPackage(g, term, packageName, exactOnly)
+			data, err := json.MarshalIndent(report, "", "  ")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(string(data)), nil
+		}
+		if exactOnly || packageName != "" {
+			return mcp.NewToolResultError("exact_only and package require transitive=true"), nil
 		}
 		results := search.Tests(g, term)
 		return formatResults(results), nil
@@ -2567,7 +2590,7 @@ func initNewTools(
 
 	// Tool: gograph_untested
 	untestedTool := mcp.NewTool("gograph_untested",
-		mcp.WithDescription("Sweep the full graph in one pass and return called production functions and methods without an exact/static attributed test edge. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise graphs separately type-resolve compiling test packages. Exact direct selectors and local method values suppress only their resolved symbol, avoiding same-name receiver conflation. CHA interface targets remain visible with test_resolution=possible and possible_test_count instead of silently satisfying exact coverage; test_resolution=none means no attributed or bounded-possible test target was found. Repeatable CLI --exclude globs map to the MCP exclude string array and match repository-relative source paths lexically without filesystem access. This is static attribution, not runtime coverage proof. Read-only; no side effects. WHEN TO USE: During test census or pre-release hardening. Distinct from gograph_orphans (zero production callers) and replaces N sequential gograph_tests calls. NOT TO USE: For running tests or proving branch execution. RETURNS: JSON array sorted by caller_count descending with name, kind, file, line, caller_count, package, test_resolution, and optional possible_test_count; empty when every called symbol has an exact/static or historical parser-attributed test edge."),
+		mcp.WithDescription("Sweep the full graph in one pass and return called production functions and methods without an exact transitive static path from any test. The MCP server checks freshness first. Precise direct calls and proof-backed concrete interface receivers are exact; open CHA or parser-only paths propagate possible to descendants, which remain visible with test_resolution=possible and possible_test_count. Repeatable CLI --exclude globs map to the MCP exclude string array and match repository-relative source paths lexically. This is static attribution, not runtime coverage proof. Read-only; no side effects. WHEN TO USE: During test census or pre-release hardening; it replaces N forward coverage or direct gograph_tests probes. NOT TO USE: For running tests or proving branch execution. RETURNS: JSON rows sorted by caller_count with stable_id, name, kind, file, line, caller_count, package, test_resolution, and optional possible_test_count."),
 		mcp.WithString("pkg", mcp.Description("Optional package name substring to filter results (e.g. 'cli', 'search')")),
 		mcp.WithInteger("top", mcp.Description("Limit results to top N by caller count (0 = all, default)")),
 		mcp.WithArray("exclude", mcp.WithStringItems(), mcp.Description("Repository-relative path globs to exclude; use prefix/** for all descendants")),

@@ -102,11 +102,26 @@ func (*SQL) Run() {}
 
 import "testing"
 
+func selectedRunner(t *testing.T) Runner {
+	if t.Name() == "memory" { return &Memory{} }
+	return &SQL{}
+}
+
+func replaceRunner(r *Runner) { *r = &SQL{} }
+
 func TestCalls(t *testing.T) {
 	direct := &Direct{}
 	direct.Run()
 	var runner Runner = &Memory{}
 	runner.Run()
+	unknown := selectedRunner(t)
+	unknown.Run()
+	var escaped Runner = &Memory{}
+	replaceRunner(&escaped)
+	escaped.Run()
+	var parenthesized Runner = &Memory{}
+	replaceRunner(&(parenthesized))
+	parenthesized.Run()
 	run := direct.Run
 	run()
 }
@@ -117,6 +132,9 @@ func TestCalls(t *testing.T) {
 	}
 	directLine, directColumn := sourceCallLocation(t, testSource, "direct.Run", 0)
 	interfaceLine, interfaceColumn := sourceCallLocation(t, testSource, "runner.Run", 0)
+	unknownLine, unknownColumn := sourceCallLocation(t, testSource, "unknown.Run", 0)
+	escapedLine, escapedColumn := sourceCallLocation(t, testSource, "escaped.Run", 0)
+	parenthesizedLine, parenthesizedColumn := sourceCallLocation(t, testSource, "parenthesized.Run", 0)
 	valueLine, valueColumn := sourceCallLocation(t, testSource, "run", 0)
 	const (
 		directID = "example.com/testcalls::(*Direct).Run"
@@ -140,6 +158,9 @@ func TestCalls(t *testing.T) {
 	for _, edge := range []graph.TestEdge{
 		{TestFunc: "TestCalls", Target: "direct.Run", File: "calls_test.go", Line: directLine, Column: directColumn},
 		{TestFunc: "TestCalls", Target: "runner.Run", File: "calls_test.go", Line: interfaceLine, Column: interfaceColumn},
+		{TestFunc: "TestCalls", Target: "unknown.Run", File: "calls_test.go", Line: unknownLine, Column: unknownColumn},
+		{TestFunc: "TestCalls", Target: "escaped.Run", File: "calls_test.go", Line: escapedLine, Column: escapedColumn},
+		{TestFunc: "TestCalls", Target: "parenthesized.Run", File: "calls_test.go", Line: parenthesizedLine, Column: parenthesizedColumn},
 		{TestFunc: "TestCalls", Target: "run", File: "calls_test.go", Line: valueLine, Column: valueColumn},
 	} {
 		g.TestEdges = append(g.TestEdges, edge)
@@ -164,7 +185,7 @@ func TestCalls(t *testing.T) {
 	if got := targetsAt(directLine, directColumn); !reflect.DeepEqual(got, map[string]graph.CallResolution{directID: graph.CallResolutionStatic}) {
 		t.Fatalf("direct test targets = %#v", got)
 	}
-	if got := targetsAt(interfaceLine, interfaceColumn); !reflect.DeepEqual(got, map[string]graph.CallResolution{directID: graph.CallResolutionCHA, memoryID: graph.CallResolutionCHA, sqlID: graph.CallResolutionCHA}) {
+	if got := targetsAt(interfaceLine, interfaceColumn); !reflect.DeepEqual(got, map[string]graph.CallResolution{memoryID: graph.CallResolutionStatic}) {
 		t.Fatalf("interface test targets = %#v", got)
 	}
 	var parserOwned, typedOnly int
@@ -178,8 +199,17 @@ func TestCalls(t *testing.T) {
 			parserOwned++
 		}
 	}
-	if parserOwned != 1 || typedOnly != 2 {
-		t.Fatalf("interface test provenance = parser-owned %d typed-only %d, want 1/2", parserOwned, typedOnly)
+	if parserOwned != 1 || typedOnly != 0 {
+		t.Fatalf("interface test provenance = parser-owned %d typed-only %d, want 1/0", parserOwned, typedOnly)
+	}
+	if got := targetsAt(unknownLine, unknownColumn); !reflect.DeepEqual(got, map[string]graph.CallResolution{directID: graph.CallResolutionCHA, memoryID: graph.CallResolutionCHA, sqlID: graph.CallResolutionCHA}) {
+		t.Fatalf("open interface test targets = %#v", got)
+	}
+	if got := targetsAt(escapedLine, escapedColumn); !reflect.DeepEqual(got, map[string]graph.CallResolution{directID: graph.CallResolutionCHA, memoryID: graph.CallResolutionCHA, sqlID: graph.CallResolutionCHA}) {
+		t.Fatalf("escaped interface test targets = %#v", got)
+	}
+	if got := targetsAt(parenthesizedLine, parenthesizedColumn); !reflect.DeepEqual(got, map[string]graph.CallResolution{directID: graph.CallResolutionCHA, memoryID: graph.CallResolutionCHA, sqlID: graph.CallResolutionCHA}) {
+		t.Fatalf("parenthesized escaped interface test targets = %#v", got)
 	}
 	if got := targetsAt(valueLine, valueColumn); !reflect.DeepEqual(got, map[string]graph.CallResolution{directID: graph.CallResolutionStatic}) {
 		t.Fatalf("method-value test targets = %#v", got)
@@ -501,6 +531,70 @@ func Purge(store Store) error {
 	third := assertTargets(t, g2)
 	if !reflect.DeepEqual(first, third) {
 		t.Fatalf("fresh Enrich changed interface target ordering:\nfirst: %+v\nthird: %+v", first, third)
+	}
+}
+
+func TestEnrichDevirtualizesOnlyProvenConcreteInterfaceReceiver(t *testing.T) {
+	source := `package invokeexact
+
+type Store interface { Delete(string) error }
+type MemoryStore struct{}
+func (*MemoryStore) Delete(string) error { return nil }
+type SQLStore struct{}
+func (*SQLStore) Delete(string) error { return nil }
+
+func Concrete() error {
+	var store Store = &MemoryStore{}
+	return store.Delete("key")
+}
+
+func Open(store Store) error {
+	return store.Delete("key")
+}
+
+func Mixed(useSQL bool) error {
+	var store Store = &MemoryStore{}
+	if useSQL { store = &SQLStore{} }
+	return store.Delete("key")
+}
+`
+	root := writePreciseFixture(t, "example.com/invokeexact", "store.go", source)
+	concreteLine, concreteColumn := sourceCallLocation(t, source, "store.Delete", 0)
+	openLine, openColumn := sourceCallLocation(t, source, "store.Delete", 1)
+	mixedLine, mixedColumn := sourceCallLocation(t, source, "store.Delete", 2)
+	newCall := func(caller string, line, column int) graph.CallEdge {
+		return graph.CallEdge{CallerSymbolID: "example.com/invokeexact::" + caller, CallerName: caller, CalleeRaw: "store.Delete", File: "store.go", Line: line, Column: column, ReturnUsage: "returned"}
+	}
+	g := &graph.Graph{Version: graph.Version, Calls: []graph.CallEdge{
+		newCall("Concrete", concreteLine, concreteColumn),
+		newCall("Open", openLine, openColumn),
+		newCall("Mixed", mixedLine, mixedColumn),
+	}}
+	requirePreciseEnrich(t, Enrich(root, g))
+
+	targetsAt := func(line, column int) map[string]graph.CallResolution {
+		t.Helper()
+		result := make(map[string]graph.CallResolution)
+		for _, edge := range g.Calls {
+			if edge.File == "store.go" && edge.Line == line && edge.Column == column {
+				result[edge.CalleeSymbolID] = edge.Resolution
+			}
+		}
+		return result
+	}
+	const memoryID = "example.com/invokeexact::(*MemoryStore).Delete"
+	if got := targetsAt(concreteLine, concreteColumn); !reflect.DeepEqual(got, map[string]graph.CallResolution{memoryID: graph.CallResolutionStatic}) {
+		t.Fatalf("proven concrete invoke targets = %#v", got)
+	}
+	wantOpen := map[string]graph.CallResolution{
+		memoryID: graph.CallResolutionCHA,
+		"example.com/invokeexact::(*SQLStore).Delete": graph.CallResolutionCHA,
+	}
+	if got := targetsAt(openLine, openColumn); !reflect.DeepEqual(got, wantOpen) {
+		t.Fatalf("open interface invoke targets = %#v, want %#v", got, wantOpen)
+	}
+	if got := targetsAt(mixedLine, mixedColumn); !reflect.DeepEqual(got, wantOpen) {
+		t.Fatalf("mixed interface invoke targets = %#v, want %#v", got, wantOpen)
 	}
 }
 

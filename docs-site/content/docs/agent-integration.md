@@ -178,9 +178,11 @@ sink, severity, confidence, and path data.
 `gograph_coverage` matches CLI `coverage` for reverse transitive test
 attribution, and `gograph_identity` matches CLI `identity` for durable symbol
 references. Both accept an optional exact `package` disambiguator for an
-in-package/external-test ID collision. `gograph_untested.exclude[]` is the typed
-equivalent of repeatable
-CLI `--exclude` globs.
+in-package/external-test ID collision. `gograph_tests` preserves direct results
+by default; `transitive=true` maps to CLI `tests --transitive` and returns the
+same `gograph.tests.v1` exact/possible paths. `gograph_untested.exclude[]` is the
+typed equivalent of repeatable CLI `--exclude` globs; its rows include full
+stable IDs, corresponding to CLI `untested --wide` presentation.
 
 The normal mapping is CLI `<command>` to project-MCP
 `gograph_<command>`; aliases, boundary creation, and session actions are listed
