@@ -16,6 +16,11 @@ import (
 var ExposeWorkspaceToolsForTesting map[string]func(context.Context, protocol.CallToolRequest) (*protocol.CallToolResult, error)
 
 func NewWorkspaceServer(root, version string) *server.MCPServer {
+	return NewWorkspaceServerWithBuildTags(root, version, nil)
+}
+
+func NewWorkspaceServerWithBuildTags(root, version string, buildTags []string) *server.MCPServer {
+	buildTags = append([]string(nil), buildTags...)
 	s := server.NewMCPServer("gograph-workspace", version, server.WithToolCapabilities(true))
 	add := func(tool protocol.Tool, handler func(context.Context, protocol.CallToolRequest) (*protocol.CallToolResult, error)) {
 		readOnly, destructive, idempotent, openWorld := true, false, true, false
@@ -37,7 +42,7 @@ func NewWorkspaceServer(root, version string) *server.MCPServer {
 		if err != nil {
 			return protocol.NewToolResultError(err.Error()), nil
 		}
-		return workspaceJSONResult(workspacegraph.InspectStatus(ctx, root, manifest))
+		return workspaceJSONResult(workspacegraph.InspectStatusWithBuildTags(ctx, root, manifest, buildTags))
 	})
 
 	queryTool := protocol.NewTool("gograph_workspace_query",
@@ -46,7 +51,7 @@ func NewWorkspaceServer(root, version string) *server.MCPServer {
 		protocol.WithString("scope", protocol.Description("Resolution scope; required when multiple scopes exist and no default_scope is configured")),
 	)
 	add(queryTool, func(ctx context.Context, request protocol.CallToolRequest) (*protocol.CallToolResult, error) {
-		loaded, scope, args, err := loadWorkspaceMCPRequest(ctx, root, request)
+		loaded, scope, args, err := loadWorkspaceMCPRequest(ctx, root, buildTags, request)
 		if err != nil {
 			return protocol.NewToolResultError(err.Error()), nil
 		}
@@ -66,7 +71,7 @@ func NewWorkspaceServer(root, version string) *server.MCPServer {
 		protocol.WithBoolean("include_possible", protocol.Description("Include ambiguous and possible edges for exploratory traversal")),
 	)
 	add(pathTool, func(ctx context.Context, request protocol.CallToolRequest) (*protocol.CallToolResult, error) {
-		loaded, scope, args, err := loadWorkspaceMCPRequest(ctx, root, request)
+		loaded, scope, args, err := loadWorkspaceMCPRequest(ctx, root, buildTags, request)
 		if err != nil {
 			return protocol.NewToolResultError(err.Error()), nil
 		}
@@ -89,7 +94,7 @@ func NewWorkspaceServer(root, version string) *server.MCPServer {
 		protocol.WithBoolean("include_possible", protocol.Description("Include ambiguous and possible edges for exploratory traversal")),
 	)
 	add(impactTool, func(ctx context.Context, request protocol.CallToolRequest) (*protocol.CallToolResult, error) {
-		loaded, scope, args, err := loadWorkspaceMCPRequest(ctx, root, request)
+		loaded, scope, args, err := loadWorkspaceMCPRequest(ctx, root, buildTags, request)
 		if err != nil {
 			return protocol.NewToolResultError(err.Error()), nil
 		}
@@ -107,15 +112,19 @@ func NewWorkspaceServer(root, version string) *server.MCPServer {
 }
 
 func ServeWorkspace(root, version string) error {
-	return server.ServeStdio(NewWorkspaceServer(root, version))
+	return ServeWorkspaceWithBuildTags(root, version, nil)
 }
 
-func loadWorkspaceMCPRequest(ctx context.Context, root string, request protocol.CallToolRequest) (*workspacegraph.LoadedWorkspace, workspacegraph.ScopeOverlay, map[string]any, error) {
+func ServeWorkspaceWithBuildTags(root, version string, buildTags []string) error {
+	return server.ServeStdio(NewWorkspaceServerWithBuildTags(root, version, buildTags))
+}
+
+func loadWorkspaceMCPRequest(ctx context.Context, root string, buildTags []string, request protocol.CallToolRequest) (*workspacegraph.LoadedWorkspace, workspacegraph.ScopeOverlay, map[string]any, error) {
 	args, ok := request.Params.Arguments.(map[string]any)
 	if !ok {
 		return nil, workspacegraph.ScopeOverlay{}, nil, fmt.Errorf("invalid arguments")
 	}
-	loaded, err := workspacegraph.Load(ctx, root)
+	loaded, err := workspacegraph.LoadWithBuildTags(ctx, root, buildTags)
 	if err != nil {
 		return nil, workspacegraph.ScopeOverlay{}, nil, err
 	}

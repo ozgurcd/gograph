@@ -83,7 +83,7 @@ This project is indexed using `gograph`. **DO NOT use `grep` or `cat` for struct
 
 1. Before answering architecture or repository questions, inspect the available `gograph_*` MCP tools for the current project and use the server registered for that repository.
 2. The MCP server builds and refreshes an in-memory AST graph automatically. If MCP tools are unavailable, run `gograph build .` in the terminal, then use CLI commands such as `gograph implementers <InterfaceName>`.
-3. For compilable, build-selected packages, `gograph build . --precise` adds type-checked CHA/SSA enrichment. CHA is conservative, and a failed retry retains an already-fresh successful precise artifact for the same sources instead of replacing it with a fallback.
+3. For compilable, build-selected packages, `gograph build . --precise` adds type-checked CHA/SSA enrichment. Add `--tags=integration` when tagged files/tests belong to the graph, and use the same option on `gograph mcp` startup so refreshes retain the selection. CHA is conservative, and a failed retry retains an already-fresh successful precise artifact for the same sources instead of replacing it with a fallback.
 4. To extract a function body or mock stub without reading the whole file, use the source tool.
 5. Use targeted text search for string literals, ordinary non-sensitive configuration, generated or non-indexed files, and documentation. Do not inspect `.env`, key, certificate, kubeconfig, tfstate, or credential files unless the user explicitly places them in scope.
 ```

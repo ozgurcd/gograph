@@ -65,6 +65,11 @@ Before changing the signature or behavior of any function, method, or struct, fo
    This preserves analysis semantics but may use more GC CPU because of
    aggressive reclamation. The value is a soft Go runtime memory target,
    not a hard RSS ceiling.
+
+   When integration- or platform-tagged files/tests are part of the change,
+   use `gograph build . --precise --tags=integration`. This selects one
+   fingerprinted context rather than unioning builds; start MCP with the same
+   `--tags` value so refreshes remain comparable.
 5. **Post-edit review**:
    ```bash
    gograph review --uncommitted

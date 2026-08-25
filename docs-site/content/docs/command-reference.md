@@ -33,7 +33,7 @@ conflicting output flags fail instead of being silently ignored.
 
 ### build
 ```bash
-gograph build [path] [--precise] [--memory-mode=low] [--max-memory=1GiB]
+gograph build [path] [--precise] [--tags=integration[,tag...]] [--memory-mode=low] [--max-memory=1GiB]
 ```
 Walks and parses a Go repository. Generates the structured graph at `.gograph/graph.json` and nine targeted Markdown reports in `.gograph/`.
 Adds `.gograph/` to the Git repository root `.gitignore` when available; outside Git, falls back to the build target `.gitignore`.
@@ -62,6 +62,12 @@ AST base, but type loading and CHA/SSA enrichment still run repository-wide so
 cross-package method sets and dispatch targets remain correct.
 - **Arguments**: `path` (optional, defaults to `.`)
 - **Flags**: 
+	- `--tags=<tag[,tag...]>`: Selects additional Go build tags for the whole
+    graph, including test files and precise package loading. The flag is
+    repeatable; values are validated, deduplicated, and canonicalized. An
+    explicit value replaces any `-tags` inherited from `GOFLAGS`, matching
+    `cmd/go` precedence. Without this option, existing `GOFLAGS` behavior is
+    unchanged. The selected context is part of the graph fingerprint.
   - `--precise`: Attempts type-checked CHA/SSA enrichment after a repository preflight that rejects source-tree links `cmd/go` may inspect across the selected root plus its effective module root, or the workspace root and member trees; `.git` and `.gograph` are excluded from that walk. It also rejects special recognized build inputs, unsafe workspace members, and linked/non-regular module/workspace metadata entries. Enrichment needs compilable, build-selected production packages; on unsafe input, failure, or an incomplete non-test package load gograph warns and publishes the unchanged AST graph unless a fresh successful precise artifact already covers the same safely selected sources. Graph metadata records `precise`, `precise_fallback`, or `ast`. Precise interface calls retain one parallel call edge per valid named in-repository target; promoted methods add an explicitly marked traversal-only forwarding edge. A separate typed pass resolves compiling test packages without making test compilation a prerequisite for production precision. Broken or omitted test packages produce `typed_partial` test-call attribution rather than a production precision fallback.
   - **Graph v2 compatibility**: Precision/column/synthetic, content-digest,
     analysis-cache, parser/precise provenance, and reuse-count fields remain
@@ -93,9 +99,11 @@ cross-package method sets and dispatch targets remain correct.
 
 ### stale
 ```bash
-gograph stale [--json]
+gograph stale [--tags=integration[,tag...]] [--json]
 ```
 Compares the selected-file inventory, effective Go build context, and SHA-256 source-content digests with `.gograph/graph.json`. Modification times remain diagnostic fields only. It reports added, deleted, newly active, newly inactive, and byte-modified selected files plus build-context changes.
+Use the same `--tags` value supplied to `build` when checking an explicitly
+tagged artifact. Without it, `stale` continues to resolve inherited `GOFLAGS`.
 
 Text and JSON modes use the same exit contract:
 
@@ -719,7 +727,7 @@ cross-repository ownership, resolution, and HTTP-contract facts.
 ### workspace build
 
 ```bash
-gograph workspace build [path] [--refresh-members] [--memory-mode=low] [--max-memory=1GiB] [--json]
+gograph workspace build [path] [--refresh-members] [--tags=integration[,tag...]] [--memory-mode=low] [--max-memory=1GiB] [--json]
 ```
 
 Without `--refresh-members`, reads member graphs and writes only the workspace
@@ -732,11 +740,15 @@ before/after artifact fingerprints, so a failure after earlier successful
 member writes is visible.
 When member refresh is enabled, the repository build memory options apply
 sequentially to every refreshed member with the same soft-limit semantics.
+`--tags` selects the same member build context for validation and every
+explicit refresh. Use the same tag selection for subsequent workspace status,
+query, path, impact, and MCP startup; a different selection is correctly
+reported as stale rather than silently mixing graphs.
 
 ### workspace status
 
 ```bash
-gograph workspace status [path] [--json]
+gograph workspace status [path] [--tags=integration[,tag...]] [--json]
 ```
 
 Reports `complete`, `partial`, or `cannot_evaluate`, with each member's
@@ -751,7 +763,7 @@ optional index locking.
 ### workspace query
 
 ```bash
-gograph workspace query [--scope id] [--workspace path] <term...> [--json]
+gograph workspace query [--scope id] [--workspace path] [--tags=integration[,tag...]] <term...> [--json]
 ```
 
 Searches symbols, packages, modules, and first-class HTTP contracts in the
@@ -761,7 +773,7 @@ persisted identities are structured.
 ### workspace path
 
 ```bash
-gograph workspace path [--scope id] [--workspace path] [--include-possible] <from> <to> [--json]
+gograph workspace path [--scope id] [--workspace path] [--tags=integration[,tag...]] [--include-possible] <from> <to> [--json]
 ```
 
 Finds a shortest path over the selected member graphs plus the workspace
@@ -772,7 +784,7 @@ HTTP clients and handlers connect through a contract as `calls_http` then
 ### workspace impact
 
 ```bash
-gograph workspace impact [--scope id] [--workspace path] [--include-possible] <target> [--json]
+gograph workspace impact [--scope id] [--workspace path] [--tags=integration[,tag...]] [--include-possible] <target> [--json]
 ```
 
 Finds transitive incoming dependencies in the same virtual graph. Path and
@@ -782,7 +794,7 @@ into both `ambiguous` and `possible` evidence for exploration.
 ### workspace mcp
 
 ```bash
-gograph workspace mcp [path]
+gograph workspace mcp [path] [--tags=integration[,tag...]]
 ```
 
 Starts a separate read-only workspace MCP server with exactly four tools:
@@ -863,12 +875,17 @@ Prints the token-optimized AI agent cheat sheet detailing common workflows and c
 
 ### mcp
 ```bash
-gograph mcp [path] [--persist-refresh] [--memory-mode=low] [--max-memory=1GiB]
+gograph mcp [path] [--persist-refresh] [--tags=integration[,tag...]] [--memory-mode=low] [--max-memory=1GiB]
 ```
 Starts a Model Context Protocol (MCP) server over `stdio`, exposing gograph's
 query, analysis, and workflow capabilities as native tools for integration with
 AI clients (e.g., Claude Code, Cursor).
 - **Freshness**: If `graph.json` is missing, unreadable, linked through a descendant path, or has a missing/unsupported source-policy marker, startup builds a safe in-memory AST graph. Source-analysis tools compare selected source digests plus the build/module fingerprint and newer persisted artifacts per call, then reparse changed packages while reusing unchanged package AST records. MCP `stale`, default `changes`, and `stats` inspect the trusted persisted snapshot, or the startup in-memory fallback when no usable artifact exists. Precise and precise-fallback sessions still re-run repository-wide CHA/SSA, and a failed precise refresh is returned visibly.
+- **Build tags**: `--tags` uses the same validated selection and precedence as
+  CLI `build`. Startup analysis, incremental AST rebuilds, precise refreshes,
+  temporary Git baselines, and optional artifact publication all retain that
+  selection. `gograph_capabilities.analysis_build_context` reports requested
+  and effective tags.
 - **Persistence**: Refreshes remain in memory by default. `--persist-refresh`
   writes or overwrites `.gograph/graph.json` and the nine Markdown reports only
   after a successful, confirmed-fresh refresh. It does not update `.gitignore`

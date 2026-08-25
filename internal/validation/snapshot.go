@@ -42,9 +42,11 @@ type SnapshotError struct {
 
 func (e *SnapshotError) Error() string { return e.Diagnostic.Message }
 
-type RepositoryLoader struct{}
+type RepositoryLoader struct {
+	BuildTags []string
+}
 
-func (RepositoryLoader) Load(ctx context.Context, repositoryRoot string) (Snapshot, error) {
+func (loader RepositoryLoader) Load(ctx context.Context, repositoryRoot string) (Snapshot, error) {
 	root, err := canonicalRoot(repositoryRoot)
 	if err != nil {
 		return Snapshot{}, snapshotError(ReasonInvalidRequest, "invalid_repository", err.Error(), "")
@@ -91,7 +93,7 @@ func (RepositoryLoader) Load(ctx context.Context, repositoryRoot string) (Snapsh
 		Freshness:        "unknown",
 	}
 
-	current, err := captureSourceState(ctx, root)
+	current, err := captureSourceState(ctx, root, loader.BuildTags)
 	if err != nil {
 		return snapshot, err
 	}
@@ -115,8 +117,8 @@ func (RepositoryLoader) Load(ctx context.Context, repositoryRoot string) (Snapsh
 	return snapshot, nil
 }
 
-func (RepositoryLoader) VerifyCurrent(ctx context.Context, snapshot Snapshot) error {
-	current, err := captureSourceState(ctx, snapshot.Root)
+func (loader RepositoryLoader) VerifyCurrent(ctx context.Context, snapshot Snapshot) error {
+	current, err := captureSourceState(ctx, snapshot.Root, loader.BuildTags)
 	if err != nil {
 		return err
 	}
@@ -132,11 +134,11 @@ type sourceState struct {
 	Files                map[string]string
 }
 
-func captureSourceState(ctx context.Context, root string) (sourceState, error) {
+func captureSourceState(ctx context.Context, root string, buildTags []string) (sourceState, error) {
 	if err := ctx.Err(); err != nil {
 		return sourceState{}, snapshotError(ReasonInternalError, "context_done", err.Error(), "")
 	}
-	config, err := buildctx.Resolve(ctx, root)
+	config, err := buildctx.ResolveWithOptions(ctx, root, buildctx.ResolveOptions{BuildTags: buildTags})
 	if err != nil {
 		return sourceState{}, snapshotError(ReasonAnalysisIncomplete, "build_context_unavailable", err.Error(), "")
 	}

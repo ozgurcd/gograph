@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ozgurcd/gograph/internal/buildctx"
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/scanner"
 	"github.com/ozgurcd/gograph/internal/sourcefs"
@@ -456,12 +457,25 @@ type GodObjectCandidate struct {
 //     from the active build selection (stale case only).
 //   - build_context_changed: true when source-selection inputs changed.
 func Stale(g *graph.Graph, root string) StaleResult {
+	files, buildContextFingerprint, _ := scanner.WalkWithFingerprint(root)
+	return staleWithSelection(g, root, files, buildContextFingerprint)
+}
+
+// StaleWithConfig compares a graph with source selected by an already-resolved
+// build configuration. Servers that were started with explicit build tags use
+// this variant so refreshes remain in the selected context instead of falling
+// back to the process's ambient GOFLAGS.
+func StaleWithConfig(g *graph.Graph, root string, config buildctx.Config) StaleResult {
+	files, buildContextFingerprint, _ := scanner.WalkWithConfigAndFingerprint(root, config)
+	return staleWithSelection(g, root, files, buildContextFingerprint)
+}
+
+func staleWithSelection(g *graph.Graph, root string, files []string, buildContextFingerprint string) StaleResult {
 	graphTime := g.GeneratedAt
 	staleFiles := make(map[string]struct{})
 	var newestMtime time.Time
 	var newestPath string
 
-	files, buildContextFingerprint, _ := scanner.WalkWithFingerprint(root)
 	currentFiles := make(map[string]struct{}, len(files))
 	previousDigests := make(map[string]string, len(g.Files))
 	for _, file := range g.Files {

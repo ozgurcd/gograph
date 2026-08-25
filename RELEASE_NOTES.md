@@ -2,7 +2,19 @@
 
 ## Unreleased
 
-No changes yet.
+### Explicit Go build tags
+
+- Added repeatable, validated `--tags=<tag[,tag...]>` selection to repository
+  AST/precise builds and project MCP startup. Tagged files and tests now enter
+  the same scanner, typed test-attribution, freshness, and baseline context;
+  MCP refreshes retain the startup selection and capabilities report requested
+  and effective tags.
+- Added the same selection to explicit workspace member refresh, workspace
+  status/query/path/impact, and workspace MCP startup so member validation and
+  virtual queries cannot silently mix build contexts.
+- Preserved existing behavior when `--tags` is absent. Explicit tags follow
+  `cmd/go` precedence and replace only an inherited `GOFLAGS -tags` value;
+  other Go environment settings continue to be resolved by the toolchain.
 
 ## v1.6.4 — 2026-08-24
 

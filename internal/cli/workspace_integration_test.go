@@ -521,6 +521,63 @@ repositories:
 	}
 }
 
+func TestWorkspaceTaggedRefreshAndQueryUseSameBuildContext(t *testing.T) {
+	root := t.TempDir()
+	repository := filepath.Join(root, "service")
+	if err := os.MkdirAll(repository, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeWorkspaceTestFile(t, filepath.Join(repository, "go.mod"), "module example.com/tagged-service\n\ngo 1.27.0\n")
+	writeWorkspaceTestFile(t, filepath.Join(repository, "regular.go"), "package service\n\nfunc Regular() {}\n")
+	writeWorkspaceTestFile(t, filepath.Join(repository, "integration.go"), "//go:build integration\n\npackage service\n\nfunc IntegrationOnly() {}\n")
+	writeWorkspaceTestFile(t, filepath.Join(root, ".gograph-workspace.yml"), `schema_version: gograph.workspace-manifest.v1
+name: tagged
+repositories:
+  - id: service
+    path: service
+`)
+
+	bin := buildTestBinary(t)
+	build := exec.Command(bin, "workspace", "build", "--refresh-members", "--tags=integration")
+	build.Dir = root
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("tagged workspace build: %v\n%s", err, output)
+	}
+	query := exec.Command(bin, "workspace", "query", "--tags", "integration", "IntegrationOnly", "--json")
+	query.Dir = root
+	output, err := query.Output()
+	if err != nil {
+		t.Fatalf("tagged workspace query: %v\n%s", err, output)
+	}
+	if !bytes.Contains(output, []byte("IntegrationOnly")) {
+		t.Fatalf("tagged workspace query omitted tagged symbol:\n%s", output)
+	}
+	handlers := make(map[string]func(context.Context, protocol.CallToolRequest) (*protocol.CallToolResult, error))
+	previous := mcppkg.ExposeWorkspaceToolsForTesting
+	mcppkg.ExposeWorkspaceToolsForTesting = handlers
+	t.Cleanup(func() { mcppkg.ExposeWorkspaceToolsForTesting = previous })
+	mcppkg.NewWorkspaceServerWithBuildTags(root, "test", []string{"integration"})
+	request := protocol.CallToolRequest{}
+	request.Params.Arguments = map[string]any{"term": "IntegrationOnly"}
+	result, err := handlers["gograph_workspace_query"](context.Background(), request)
+	if err != nil || result == nil || result.IsError || len(result.Content) != 1 {
+		t.Fatalf("tagged workspace MCP query = %+v, %v", result, err)
+	}
+	if content, ok := result.Content[0].(protocol.TextContent); !ok || !strings.Contains(content.Text, "IntegrationOnly") {
+		t.Fatalf("tagged workspace MCP query omitted tagged symbol: %+v", result.Content)
+	}
+
+	untaggedStatus := exec.Command(bin, "workspace", "status", "--json")
+	untaggedStatus.Dir = root
+	output, err = untaggedStatus.Output()
+	if err != nil {
+		t.Fatalf("untagged workspace status: %v\n%s", err, output)
+	}
+	if !bytes.Contains(output, []byte(`"aggregate_state": "partial"`)) || !bytes.Contains(output, []byte("build selection differs")) {
+		t.Fatalf("untagged status did not expose context mismatch:\n%s", output)
+	}
+}
+
 func writeWorkspaceTestFile(t *testing.T, path, data string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {

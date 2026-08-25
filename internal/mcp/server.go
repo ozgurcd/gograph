@@ -16,6 +16,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/ozgurcd/gograph/internal/buildctx"
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/projectfile"
 	"github.com/ozgurcd/gograph/internal/scanner"
@@ -175,6 +176,8 @@ type ServerOptions struct {
 	MemoryMode              string
 	RequestedMaxMemoryBytes int64
 	EffectiveMaxMemoryBytes int64
+	RequestedBuildTags      []string
+	EffectiveBuildTags      []string
 }
 
 func resolveServerOptions(options []ServerOptions) ServerOptions {
@@ -183,6 +186,8 @@ func resolveServerOptions(options []ServerOptions) ServerOptions {
 		return selected
 	}
 	selected = options[len(options)-1]
+	selected.RequestedBuildTags = append([]string(nil), selected.RequestedBuildTags...)
+	selected.EffectiveBuildTags = append([]string(nil), selected.EffectiveBuildTags...)
 	if selected.MemoryMode == "" {
 		selected.MemoryMode = "standard"
 	}
@@ -325,7 +330,7 @@ func NewServer(
 		}
 		resp := map[string]any{
 			"summary":      "gograph MCP capabilities",
-			"prerequisite": "The MCP server loads only a regular, repository-confined .gograph/graph.json with the current source-policy marker and " + startupGraph + ". Whole graph, saved-baseline, validation, MCP-reload, and workspace-overlay JSON reads reject artifacts larger than 512 MiB before allocation; startup recovery rebuilds an oversized graph from source. Its serialized root is ignored. Source-analysis tools compare selected-file content digests and the build/module fingerprint per call, then incrementally rebuild changed package ASTs after edits using the latest requested analysis mode; precise CHA/SSA enrichment remains repository-wide for selected project packages but does not build dependency SSA bodies, and separately attempts typed test-call attribution without making test compilation a prerequisite for production precision. Typed-only test targets are recomputed rather than restored as parser facts. gograph_stale, gograph_changes without git_ref, and gograph_stats inspect that trusted persisted index, or the startup auto-build fallback when no usable artifact exists. Descendant symlinks and special files recognized as Go build inputs are excluded, and linked/non-regular Go tool metadata (go.mod, go.sum, go.work, go.work.sum, and vendor/modules.txt) is rejected before toolchain use. Applicable workspace members must remain beneath the workspace directory, with each directory, go.mod, and optional go.sum validated before cmd/go. Use the current binary for untrusted repositories because older binaries do not enforce this contract. Run `gograph build . --precise` for type-checked CHA/SSA enrichment; MCP adopts a newer precise graph and re-runs precision after source changes instead of silently downgrading to AST-only analysis. On constrained hosts, project MCP startup accepts `--memory-mode=low --max-memory=1GiB`; analysis_memory reports the requested/effective soft Go runtime memory target, which is not a hard RSS cap. Session lifecycle tools write local telemetry, gograph_session_cleanup deletes stale logs, gograph_boundaries_create writes configuration, and gograph_wiki writes documentation; their repository-controlled paths use rooted regular-file operations that reject descendant links. When an audit session is active, non-session MCP calls append observational command telemetry even when their analysis contract is read-only. Saved graph baselines must be regular files inside the project root, have no linked path component, and carry the exact current source-policy marker; their serialized root is ignored. gograph_doc rejects filesystem-shaped queries and source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees; .git and .gograph are excluded from that preflight. It invokes the local Go toolchain after repository source/metadata validation and is annotated open-world because dependency resolution follows the user's Go environment.",
+			"prerequisite": "The MCP server loads only a regular, repository-confined .gograph/graph.json with the current source-policy marker and " + startupGraph + ". Whole graph, saved-baseline, validation, MCP-reload, and workspace-overlay JSON reads reject artifacts larger than 512 MiB before allocation; startup recovery rebuilds an oversized graph from source. Its serialized root is ignored. Source-analysis tools compare selected-file content digests and the build/module fingerprint per call, then incrementally rebuild changed package ASTs after edits using the latest requested analysis mode and build tags selected at MCP startup; precise CHA/SSA enrichment remains repository-wide for selected project packages but does not build dependency SSA bodies, and separately attempts typed test-call attribution without making test compilation a prerequisite for production precision. Typed-only test targets are recomputed rather than restored as parser facts. gograph_stale, gograph_changes without git_ref, and gograph_stats inspect that trusted persisted index, or the startup auto-build fallback when no usable artifact exists. Descendant symlinks and special files recognized as Go build inputs are excluded, and linked/non-regular Go tool metadata (go.mod, go.sum, go.work, go.work.sum, and vendor/modules.txt) is rejected before toolchain use. Applicable workspace members must remain beneath the workspace directory, with each directory, go.mod, and optional go.sum validated before cmd/go. Use the current binary for untrusted repositories because older binaries do not enforce this contract. Run `gograph build . --precise --tags=integration` for type-checked CHA/SSA enrichment of an explicitly tagged selection; MCP accepts the same --tags selector, adopts a newer precise graph, and re-runs precision after source changes without silently changing that context or downgrading to AST-only analysis. On constrained hosts, project MCP startup accepts `--memory-mode=low --max-memory=1GiB`; analysis_memory reports the requested/effective soft Go runtime memory target, which is not a hard RSS cap. Session lifecycle tools write local telemetry, gograph_session_cleanup deletes stale logs, gograph_boundaries_create writes configuration, and gograph_wiki writes documentation; their repository-controlled paths use rooted regular-file operations that reject descendant links. When an audit session is active, non-session MCP calls append observational command telemetry even when their analysis contract is read-only. Saved graph baselines must be regular files inside the project root, have no linked path component, and carry the exact current source-policy marker; their serialized root is ignored. gograph_doc rejects filesystem-shaped queries and source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees; .git and .gograph are excluded from that preflight. It invokes the local Go toolchain after repository source/metadata validation and is annotated open-world because dependency resolution follows the user's Go environment.",
 			"transport_contract": map[string]any{
 				"project_server_tools": 67,
 				"cli_equivalent_tools": 63,
@@ -359,6 +364,12 @@ func NewServer(
 				"effective_max_memory_bytes": selectedOptions.EffectiveMaxMemoryBytes,
 				"limit_semantics":            "soft Go runtime memory target; RSS, toolchain subprocesses, and memory-mapped files can exceed it",
 				"result_semantics":           "low mode changes GC and phase scheduling only; it does not reduce graph precision",
+			},
+			"analysis_build_context": map[string]any{
+				"requested_build_tags": append([]string{}, selectedOptions.RequestedBuildTags...),
+				"effective_build_tags": append([]string{}, selectedOptions.EffectiveBuildTags...),
+				"selection_semantics":  "explicit --tags replaces GOFLAGS -tags; without --tags, cmd/go resolves inherited GOFLAGS normally",
+				"refresh_semantics":    "all MCP in-memory and persisted refreshes retain this startup build-tag selection",
 			},
 			"mermaid": map[string]any{
 				"parameter": "set mermaid=true to return Markdown-fenced Mermaid instead of structured JSON",
@@ -1436,7 +1447,7 @@ func NewServer(
 		return formatResults(results), nil
 	})
 
-	initNewTools(g, rebuild, buildGraph, buildBaseline, addTool)
+	initNewTools(g, rebuild, buildGraph, buildBaseline, selectedOptions, addTool)
 
 	// Start stdio server
 	return s
@@ -1474,6 +1485,7 @@ func initNewTools(
 	rebuild func() (*graph.Graph, error),
 	buildGraph func(string) (*graph.Graph, error),
 	buildBaseline func(context.Context, string) (*graph.Graph, error),
+	selectedOptions ServerOptions,
 	addTool func(tool mcp.Tool, handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)),
 ) {
 	indexedGraph := g
@@ -1948,9 +1960,13 @@ func initNewTools(
 	staleTool := mcp.NewTool("gograph_stale",
 		mcp.WithDescription("Check whether the trusted persisted graph index loaded from a regular, repository-confined .gograph/graph.json differs from the current selected-file inventory, effective Go build context, or selected source content digests. Modification times are returned only as diagnostics; legacy indexes without digests temporarily use the former mtime fallback until rebuilt. This tool intentionally does not refresh first; when the artifact is missing, unreadable, unsafe, or uses an unsupported source policy it compares against the startup auto-build fallback. Read-only; no side effects. WHEN TO USE: To decide whether CLI snapshot analysis or precise enrichment needs rebuilding. NOT TO USE: For module dependency freshness; for changed symbols (use gograph_changes). RETURNS: is_stale, graph_age, newest source metadata, changed_files, and build_context_changed."),
 	)
-	addTool(staleTool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	addTool(staleTool, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		base := persistedGraph(indexedGraph)
 		sr := search.Stale(base, graphRoot(base))
+		if len(selectedOptions.RequestedBuildTags) > 0 {
+			config, _ := buildctx.ResolveOrDefaultWithOptions(ctx, graphRoot(base), buildctx.ResolveOptions{BuildTags: selectedOptions.RequestedBuildTags})
+			sr = search.StaleWithConfig(base, graphRoot(base), config)
+		}
 		data, err := json.MarshalIndent(sr, "", "  ")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil

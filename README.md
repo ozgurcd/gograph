@@ -45,6 +45,9 @@ gograph stats
 # Optional: prioritize lower heap use on constrained hosts
 gograph build . --precise --memory-mode=low --max-memory=1GiB
 
+# Optional: include integration-tagged files and tests in this graph
+gograph build . --precise --tags=integration
+
 # Start with repository-wide results that require no guessed symbol
 gograph summary
 gograph hotspot --top 5
@@ -77,7 +80,8 @@ available, falls back to the build target `.gitignore` outside Git, and exits
 without replacing artifacts if no Go files are found or no source file parses
 successfully. The update accepts only an absent or regular `.gitignore`; a
 repository-provided link is refused and its target is not modified. Go build
-constraints, cmd/go package-directory rules, generated
+constraints, explicit comma-separated `--tags` (or inherited `GOFLAGS` when
+the flag is absent), cmd/go package-directory rules, generated
 sources, module-mode ignore directives, and Git ignores use the same scanner
 policy for building, freshness checks, and change detection. Source-file
 symlinks and other non-regular `.go` entries are reported and excluded;
@@ -147,6 +151,8 @@ for CLI consumers and later server processes, start the server explicitly with:
 
 ```bash
 gograph mcp . --persist-refresh
+# Keep MCP startup and every later refresh on the integration-tagged selection:
+gograph mcp . --tags=integration
 # Optional low-memory policy for startup analysis and later refreshes:
 gograph mcp . --memory-mode=low --max-memory=1GiB
 ```
@@ -307,6 +313,7 @@ You still need the `gograph` binary installed (`brew install --cask ozgurcd/tap/
 ```bash
 gograph mcp .                     # stdio server; refreshes stay in memory
 gograph mcp . --persist-refresh   # opt in to publishing refreshed artifacts
+gograph mcp . --tags=integration  # retain the same tagged context on every refresh
 gograph mcp . --memory-mode=low --max-memory=1GiB  # same low-memory refresh policy as CLI builds
 ```
 Add to your `.cursorrules` or AI system prompt:

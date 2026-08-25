@@ -75,6 +75,9 @@ gograph workspace build
 # Explicitly permits writes to stale or missing member .gograph artifacts.
 gograph workspace build --refresh-members
 
+# Select one tagged context for validation and every explicit member refresh.
+gograph workspace build --refresh-members --tags=integration
+
 # Apply the repository-build low-memory policy to each sequential refresh.
 gograph workspace build --refresh-members --memory-mode=low --max-memory=1GiB
 ```
@@ -89,6 +92,11 @@ replaced.
 Low-memory options preserve member graph precision while applying aggressive
 reclamation and an optional soft Go runtime memory target; the target is not a hard RSS
 or cross-repository transaction limit.
+Explicit comma-separated `--tags` replace any `GOFLAGS -tags` selection and
+participate in each member's build-context fingerprint. Use the same tags on
+workspace status/query/path/impact and `workspace mcp`; changing or omitting
+them makes a differently selected member artifact stale rather than mixing
+incompatible repository graphs.
 
 Overlay publication is deterministic for identical inputs and atomic. The
 persisted `input_fingerprint` binds the canonical manifest, ordered exact
@@ -110,12 +118,12 @@ recovery, while ordinary workspace queries remain read-only.
 
 ```bash
 gograph workspace status --json
-gograph workspace query --scope oss ApplyPolicy
+gograph workspace query --scope oss --tags=integration ApplyPolicy
 gograph workspace path --scope oss idp-oss:ApplyPolicy ui:RenderPolicy
 gograph workspace path --scope oss --include-possible idp-oss:ApplyPolicy ui:RenderPolicy
 gograph workspace impact --scope oss idp-oss:ApplyPolicy
 gograph workspace impact --scope oss --include-possible idp-oss:ApplyPolicy
-gograph workspace mcp
+gograph workspace mcp --tags=integration
 ```
 
 `repo:symbol` is query/display syntax only. Persisted node identities are

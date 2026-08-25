@@ -17,6 +17,7 @@
 - [GOGRAPH-PRECISE-ARTIFACT-BOUNDS-1](claims/GOGRAPH-PRECISE-ARTIFACT-BOUNDS-1.json) — Parser-only incremental test-edge reuse and the 512 MiB whole-artifact read bound.
 - [GOGRAPH-PRECISE-SSA-SCOPE-1](claims/GOGRAPH-PRECISE-SSA-SCOPE-1.json) — Repository-scoped precise SSA bodies and exclusion of dependency-wrapper noise.
 - [GOGRAPH-LOW-MEMORY-BUILD-2](claims/GOGRAPH-LOW-MEMORY-BUILD-2.json) — Correctness-preserving low-memory CLI, workspace-refresh, and MCP analysis policy.
+- [GOGRAPH-BUILD-TAGS-1](claims/GOGRAPH-BUILD-TAGS-1.json) — One fingerprinted explicit Go build-tag context across repository and workspace CLI/MCP analysis.
 
 ## Generated Reports (rebuilt dynamically)
 

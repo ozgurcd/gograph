@@ -59,6 +59,10 @@ type stagedArtifact struct {
 // failed manual precise retry: it cannot replace a still-fresh precise graph
 // with precise_fallback metadata.
 func publishGraphArtifacts(root string, candidate *graph.Graph, mode artifactPublicationMode) (result graphPublication, err error) {
+	return publishGraphArtifactsWithFreshness(root, candidate, mode, search.Stale)
+}
+
+func publishGraphArtifactsWithFreshness(root string, candidate *graph.Graph, mode artifactPublicationMode, freshness func(*graph.Graph, string) search.StaleResult) (result graphPublication, err error) {
 	if candidate == nil {
 		return graphPublication{}, fmt.Errorf("cannot publish a nil graph")
 	}
@@ -96,7 +100,7 @@ func publishGraphArtifacts(root string, candidate *graph.Graph, mode artifactPub
 		}
 	}()
 
-	if stale := search.Stale(candidate, absRoot); stale.IsStale {
+	if stale := freshness(candidate, absRoot); stale.IsStale {
 		return graphPublication{}, fmt.Errorf("refusing to publish stale graph (%d freshness changes)", stale.ChangeCount())
 	}
 
@@ -104,7 +108,7 @@ func publishGraphArtifacts(root string, candidate *graph.Graph, mode artifactPub
 	if loadErr != nil {
 		previous = nil
 	}
-	if previous != nil && !search.Stale(previous, absRoot).IsStale {
+	if previous != nil && !freshness(previous, absRoot).IsStale {
 		quality := compareGraphPublicationQuality(previous, candidate)
 		keepForRefresh := mode == refreshArtifactPublication && quality >= 0
 		keepPreciseAfterFailedManualRetry := mode == manualArtifactPublication &&
@@ -128,7 +132,7 @@ func publishGraphArtifacts(root string, candidate *graph.Graph, mode artifactPub
 
 	// Sources can change while reports are rendered and staged. Do not make a
 	// known-stale candidate visible; the caller can rebuild and retry.
-	if stale := search.Stale(candidate, absRoot); stale.IsStale {
+	if stale := freshness(candidate, absRoot); stale.IsStale {
 		return graphPublication{}, fmt.Errorf("source changed while staging graph artifacts (%d freshness changes)", stale.ChangeCount())
 	}
 	for _, artifact := range staged {

@@ -106,7 +106,15 @@ boundary and should not be used for untrusted repositories.
 
 ```bash
 gograph build . --precise
+# Include files and tests guarded by //go:build integration:
+gograph build . --precise --tags=integration
 ```
+
+`--tags` accepts a validated comma-separated list and selects one graph build
+context; it does not union multiple builds. An explicit value replaces
+`GOFLAGS -tags`, while omitting it preserves the existing inherited behavior.
+The selection is fingerprinted. Start MCP with the same option
+(`gograph mcp . --tags=integration`) so all later refreshes retain it.
 
 Attempts Go type loading plus CHA/SSA enrichment on top of the AST pass. Before its first `cmd/go` invocation, normal indexing validates Go tool metadata (`go.mod`, `go.sum`, `go.work`, `go.work.sum`, and `vendor/modules.txt`) and confines applicable workspace members to their workspace directory. The scanner then excludes linked or special recognized Go build inputs before build selection and AST reads. Before repository package type loading, the stronger preflight rejects source-tree links `cmd/go` may inspect across the selected root plus its effective module root, or the workspace root and member trees; `.git` and `.gograph` are excluded from that walk. Unsafe repository input makes enrichment fail closed while the safe AST graph remains available as `precise_fallback`. Compilable, build-selected production packages are required for precise data; if enrichment fails or omits an indexed non-test source file, gograph warns and retains the AST graph. Successful, fallback, and AST-only status is persisted as `precise`, `precise_fallback`, or `ast`, except that a failed retry keeps an existing fresh successful precise artifact covering the same sources. A separate non-fatal typed pass resolves direct and conservative interface test-call targets. Broken test packages yield `typed_partial` test attribution without downgrading successful production precision. A precise interface invocation retains every valid named in-repository CHA target, so `callers Repository.Delete` can resolve direct, embedded-interface, and promoted concrete methods without dropping alternative implementations. Promoted wrappers forward through traversal-only synthetic edges that do not appear as source call sites. CHA can still over-approximate runtime targets, while reflection, plugins, `unsafe`, test-only packages, unnamed concrete types, and module-external implementations remain incomplete. Go dependency/toolchain resolution follows the user's environment and remains open-world. Use before major refactors or blast-radius analysis.
 
@@ -156,6 +164,8 @@ parse_failures : 0
 
 ```bash
 gograph stale
+# For a graph built with --tags=integration:
+gograph stale --tags=integration
 ```
 
 Compares the current selected-file inventory, effective Go build context, and SHA-256 source-content digests with `graph.json`; modification times are diagnostic only. It uses the same build-constraint and ignore policy as `build`; `stale` and graph-backed query commands use the trusted directory from which `graph.json` was loaded, not its serialized `root` metadata, so they work identically from subdirectories. Exit `0` means current, `2` means stale, and `1` means an operational or JSON serialization error; text and `--json` modes use the same contract. Normally rebuild for status `2`. A status-`1` message that explicitly reports a missing or unsupported source-policy marker is a one-time rebuild migration; resolve other status-`1` errors instead of hiding them with an automatic rebuild.
@@ -259,6 +269,7 @@ files change:
 ```bash
 gograph build .           # fast rebuild, tolerates broken code
 gograph build . --precise # type-checked rebuild (before big refactors)
+gograph build . --precise --tags=integration # include tagged tests/files
 gograph build . --precise --memory-mode=low --max-memory=1GiB
                            # same precision, lower heap priority, potentially more GC CPU
 ```
@@ -281,6 +292,9 @@ Publication failure is returned as a tool error and retried
 later without rebuilding the fresh graph; failure to publish a required
 startup auto-build prevents the server from starting. A successful publication
 advances the persisted baseline used by default `changes`.
+For a tagged graph, start with `gograph mcp [path] --tags=integration`; the
+server reports requested/effective tags in `gograph_capabilities` and retains
+that selection for startup, refresh, baseline, and optional publication work.
 
 The same optional memory policy is available to MCP refreshes with
 `gograph mcp [path] --memory-mode=low --max-memory=1GiB`. The byte value is a

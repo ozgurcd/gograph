@@ -241,7 +241,7 @@ func dispatch(args []string) int {
 	case "path":
 		return runPath(args[1:])
 	case "stale":
-		return runStale()
+		return runStale(args[1:])
 	case "stats":
 		return runStats()
 	case "summary":
@@ -410,11 +410,14 @@ wiki destinations use rooted regular-file operations and refuse descendant
 links that could redirect reads, writes, or cleanup outside their selected root.
 
 MCP refreshes stay in memory by default. Starting
-  gograph mcp [path] --persist-refresh [--memory-mode=low] [--max-memory=1GiB]
+  gograph mcp [path] --persist-refresh [--tags=integration] [--memory-mode=low] [--max-memory=1GiB]
 publishes each confirmed-fresh startup build or refresh as graph.json plus nine
 reports. It keeps one latest state (not a branch cache), does not edit .gitignore,
 and returns publication failures to the triggering tool for a later retry. MCP
 refresh uses the same low-memory policy as CLI builds when those options are set.
+An explicit --tags selection replaces GOFLAGS -tags and is retained by startup,
+incremental/precise refreshes, and baselines; gograph_capabilities reports both
+requested and effective build tags under analysis_build_context.
 
 ━━━ FEDERATED WORKSPACES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 A regular .gograph-workspace.yml establishes a workspace root and confines
@@ -423,13 +426,13 @@ independently fingerprinted; .gograph/workspace.json is a deterministic,
 scope-specific cross-repository overlay rather than a merged fleet graph.
 
   gograph workspace build                 read members; write only the overlay
-  gograph workspace build --refresh-members
+  gograph workspace build --refresh-members [--tags=integration]
                                             explicitly permit member graph writes
                                             (accepts the same low-memory build options)
   gograph workspace status --json         member and overlay health/fingerprints
-  gograph workspace query [--scope ID] TERM --json
-  gograph workspace path [--scope ID] FROM TO --json
-  gograph workspace impact [--scope ID] TARGET --json
+  gograph workspace query [--scope ID] [--tags=integration] TERM --json
+  gograph workspace path [--scope ID] [--tags=integration] FROM TO --json
+  gograph workspace impact [--scope ID] [--tags=integration] TARGET --json
 
 Path and impact traverse exact facts by default. Add --include-possible only
 for exploratory traversal of ambiguous/possible evidence. The workspace MCP
@@ -598,17 +601,20 @@ AGENT WORKFLOW RULES (CRITICAL):
 2. AFTER editing:  run 'gograph build . --precise' then 'gograph review --uncommitted'
 
 INDEXING:
-build . [--precise] [--memory-mode=low] [--max-memory=1GiB]
+build . [--precise] [--tags=integration] [--memory-mode=low] [--max-memory=1GiB]
                      : parse AST, stage graph.json + reports, commit graph.json last
                        Honors Go build constraints and cmd/go package-directory rules;
                        skips generated, module-ignored, and Git-ignored sources.
+                       --tags selects a comma-separated tagged build context and
+                       overrides any GOFLAGS -tags value. Without it, GOFLAGS applies.
                        Low mode preserves precision while using aggressive GC/phase
                        reclamation; it may use more CPU. max-memory is a soft Go runtime memory target, not RSS.
 workspace <command>  : federated cross-repository overlay. Commands: build, status,
                        query, path, impact, mcp. Member refresh is opt-in through
                        'workspace build --refresh-members'. CLI and MCP status,
                        query, path, and impact share the same result contracts.
-stale                : check source selection, build context, and content digests
+stale [--tags=integration]
+                     : check source selection, build context, and content digests
                        exit 0 = up to date, 1 = error, 2 = stale
 stats                : schema/build/precision health, parse failures, and symbol/call/route counts
                        including ast_heuristic/typed_complete/typed_partial test resolution
@@ -733,7 +739,7 @@ gate                 : CI/CD enforcement against regular, non-linked project-roo
                        .gograph.yml; delta gates use the previous persisted graph
 gate init            : exclusively create a regular .gograph.yml; refuses links/overwrite
 snapshot <subcmd>    : confined architectural metric snapshots (save, diff, list, drop)
-mcp [path] [--persist-refresh] [--memory-mode=low] [--max-memory=1GiB]
+mcp [path] [--persist-refresh] [--tags=integration] [--memory-mode=low] [--max-memory=1GiB]
                      : start MCP server over stdio; refreshes stay in memory by default;
                        opt-in publishes one latest graph/report set without editing .gitignore
 gograph session <action>     : start/end audit sessions (create [word], end, audit, cleanup)
@@ -749,7 +755,27 @@ hook-guard           : PreToolUse hook — redirects indexed-repository Go symbo
 type buildOptions struct {
 	Root    string
 	Precise bool
+	Tags    []string
 	Memory  memorylimit.Policy
+}
+
+func parseBuildTagsOption(args []string, index int, tags *[]string) (bool, int, error) {
+	argument := args[index]
+	value := ""
+	switch {
+	case argument == "--tags":
+		if index+1 >= len(args) {
+			return true, index, fmt.Errorf("--tags requires a comma-separated value")
+		}
+		value = args[index+1]
+		index++
+	case strings.HasPrefix(argument, "--tags="):
+		value = strings.TrimPrefix(argument, "--tags=")
+	default:
+		return false, index, nil
+	}
+	*tags = append(*tags, value)
+	return true, index, nil
 }
 
 func parseBuildArgs(args []string) (buildOptions, error) {
@@ -767,7 +793,15 @@ func parseBuildArgs(args []string) (buildOptions, error) {
 				options.Precise = true
 				continue
 			}
-			handled, consumedThrough, err := parseMemoryOption(args, index, &options.Memory)
+			handled, consumedThrough, err := parseBuildTagsOption(args, index, &options.Tags)
+			if err != nil {
+				return buildOptions{}, err
+			}
+			if handled {
+				index = consumedThrough
+				continue
+			}
+			handled, consumedThrough, err = parseMemoryOption(args, index, &options.Memory)
 			if err != nil {
 				return buildOptions{}, err
 			}
@@ -788,6 +822,11 @@ func parseBuildArgs(args []string) (buildOptions, error) {
 	if err := options.Memory.Validate(); err != nil {
 		return buildOptions{}, err
 	}
+	normalizedTags, err := buildctx.NormalizeBuildTags(options.Tags)
+	if err != nil {
+		return buildOptions{}, fmt.Errorf("invalid --tags: %w", err)
+	}
+	options.Tags = normalizedTags
 	return options, nil
 }
 
@@ -809,11 +848,14 @@ func runBuild(args []string) int {
 	}
 
 	fmt.Printf("gograph build: scanning %s\n", absRoot)
+	if len(options.Tags) > 0 {
+		fmt.Printf("  build tags: %s\n", strings.Join(options.Tags, ","))
+	}
 	if options.Memory.Mode == memorylimit.ModeLow {
 		fmt.Printf("  memory mode: %s\n", memoryPolicySummary(options.Memory))
 	}
 
-	buildConfig, configErr := resolveBuildConfig(absRoot)
+	buildConfig, configErr := resolveBuildConfigWithTags(absRoot, options.Tags)
 	previous, _ := loadGraph(absRoot)
 	g, err := buildGraphWithConfig(absRoot, buildConfig, configErr, previous)
 	if err != nil {
@@ -839,7 +881,9 @@ func runBuild(args []string) int {
 	}
 
 	jsonPath := filepath.Join(absRoot, graphFile)
-	publication, err := publishGraphArtifacts(absRoot, g, manualArtifactPublication)
+	publication, err := publishGraphArtifactsWithFreshness(absRoot, g, manualArtifactPublication, func(candidate *graph.Graph, root string) search.StaleResult {
+		return search.StaleWithConfig(candidate, root, buildConfig)
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error publishing graph artifacts: %v\n", err)
 		return 1
@@ -858,7 +902,11 @@ func runBuild(args []string) int {
 }
 
 func BuildGraph(absRoot string) (*graph.Graph, error) {
-	buildConfig, configErr := resolveBuildConfig(absRoot)
+	return buildGraphWithTags(absRoot, nil)
+}
+
+func buildGraphWithTags(absRoot string, tags []string) (*graph.Graph, error) {
+	buildConfig, configErr := resolveBuildConfigWithTags(absRoot, tags)
 	previous, _ := loadGraph(absRoot)
 	return buildGraphWithConfig(absRoot, buildConfig, configErr, previous)
 }
@@ -1242,7 +1290,11 @@ func buildPreciseGraph(absRoot string) (*graph.Graph, error) {
 }
 
 func buildPreciseGraphWithMemory(absRoot string, policy memorylimit.Policy) (*graph.Graph, error) {
-	buildConfig, configErr := resolveBuildConfig(absRoot)
+	return buildPreciseGraphWithMemoryAndTags(absRoot, policy, nil)
+}
+
+func buildPreciseGraphWithMemoryAndTags(absRoot string, policy memorylimit.Policy, tags []string) (*graph.Graph, error) {
+	buildConfig, configErr := resolveBuildConfigWithTags(absRoot, tags)
 	previous, _ := loadGraph(absRoot)
 	g, err := buildGraphWithConfig(absRoot, buildConfig, configErr, previous)
 	if err != nil {
@@ -1257,7 +1309,11 @@ func buildPreciseGraphWithMemory(absRoot string, policy memorylimit.Policy) (*gr
 }
 
 func resolveBuildConfig(absRoot string) (buildctx.Config, error) {
-	return buildctx.ResolveOrDefault(context.Background(), absRoot)
+	return resolveBuildConfigWithTags(absRoot, nil)
+}
+
+func resolveBuildConfigWithTags(absRoot string, tags []string) (buildctx.Config, error) {
+	return buildctx.ResolveOrDefaultWithOptions(context.Background(), absRoot, buildctx.ResolveOptions{BuildTags: tags})
 }
 
 func precisionFallbackError(g *graph.Graph) error {
@@ -1687,6 +1743,17 @@ func graphRefresher(
 	buildPrecise func(string) (*graph.Graph, error),
 	publishers ...func(*graph.Graph) (graphPublication, error),
 ) func() (*graph.Graph, error) {
+	return graphRefresherWithFreshness(initial, root, buildAST, buildPrecise, search.Stale, publishers...)
+}
+
+func graphRefresherWithFreshness(
+	initial *graph.Graph,
+	root string,
+	buildAST func(string) (*graph.Graph, error),
+	buildPrecise func(string) (*graph.Graph, error),
+	freshness func(*graph.Graph, string) search.StaleResult,
+	publishers ...func(*graph.Graph) (graphPublication, error),
+) func() (*graph.Graph, error) {
 	latest := initial
 	artifactPath := filepath.Join(root, graphFile)
 	artifactInfo := graphArtifactInfo(artifactPath)
@@ -1731,7 +1798,7 @@ func graphRefresher(
 			}
 		}
 
-		if latest != nil && !search.Stale(latest, root).IsStale {
+		if latest != nil && !freshness(latest, root).IsStale {
 			if err := precisionFallbackError(latest); err != nil {
 				return nil, err
 			}
@@ -1761,7 +1828,7 @@ func graphRefresher(
 			if latest == nil {
 				return nil, errors.New("graph refresh returned no graph")
 			}
-			stale = search.Stale(latest, root)
+			stale = freshness(latest, root)
 			if !stale.IsStale {
 				if err := precisionFallbackError(latest); err != nil {
 					return nil, err
@@ -1820,6 +1887,7 @@ func shouldAdoptPersistedGraph(current, persisted *graph.Graph) bool {
 type mcpOptions struct {
 	Root           string
 	PersistRefresh bool
+	Tags           []string
 	Memory         memorylimit.Policy
 }
 
@@ -1846,7 +1914,15 @@ func parseMCPArgs(args []string) (mcpOptions, error) {
 				options.PersistRefresh = parsed
 				continue
 			}
-			handled, consumedThrough, err := parseMemoryOption(args, index, &options.Memory)
+			handled, consumedThrough, err := parseBuildTagsOption(args, index, &options.Tags)
+			if err != nil {
+				return mcpOptions{}, err
+			}
+			if handled {
+				index = consumedThrough
+				continue
+			}
+			handled, consumedThrough, err = parseMemoryOption(args, index, &options.Memory)
 			if err != nil {
 				return mcpOptions{}, err
 			}
@@ -1867,6 +1943,11 @@ func parseMCPArgs(args []string) (mcpOptions, error) {
 	if err := options.Memory.Validate(); err != nil {
 		return mcpOptions{}, err
 	}
+	normalizedTags, err := buildctx.NormalizeBuildTags(options.Tags)
+	if err != nil {
+		return mcpOptions{}, fmt.Errorf("invalid --tags: %w", err)
+	}
+	options.Tags = normalizedTags
 	return options, nil
 }
 
@@ -1885,12 +1966,15 @@ func prepareMCPGraph(options mcpOptions) (*graph.Graph, string, error) {
 		// Graph does not exist yet — build it automatically so Claude Desktop
 		// works without requiring a manual "gograph build ." step first.
 		fmt.Fprintf(os.Stderr, "graph unavailable or rebuild required, building automatically for %s...\n", absRoot)
-		g, err = BuildGraph(absRoot)
+		g, err = buildGraphWithTags(absRoot, options.Tags)
 		if err != nil {
 			return nil, "", fmt.Errorf("auto-building graph: %w", err)
 		}
 		if options.PersistRefresh {
-			publication, publishErr := publishGraphArtifacts(absRoot, g, refreshArtifactPublication)
+			buildConfig, _ := resolveBuildConfigWithTags(absRoot, options.Tags)
+			publication, publishErr := publishGraphArtifactsWithFreshness(absRoot, g, refreshArtifactPublication, func(candidate *graph.Graph, root string) search.StaleResult {
+				return search.StaleWithConfig(candidate, root, buildConfig)
+			})
 			if publishErr != nil {
 				return nil, "", fmt.Errorf("persisting auto-built graph: %w", publishErr)
 			}
@@ -1918,29 +2002,42 @@ func runMCP(args []string) int {
 		fmt.Fprintf(os.Stderr, "failed to prepare MCP graph: %v\n", err)
 		return 1
 	}
+	buildConfig, configErr := resolveBuildConfigWithTags(absRoot, options.Tags)
+	if configErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: MCP build context resolution failed: %v\n", configErr)
+	}
+	buildAST := func(root string) (*graph.Graph, error) {
+		return buildGraphWithTags(root, options.Tags)
+	}
+	freshness := func(candidate *graph.Graph, root string) search.StaleResult {
+		config, _ := resolveBuildConfigWithTags(root, options.Tags)
+		return search.StaleWithConfig(candidate, root, config)
+	}
 
 	var publishers []func(*graph.Graph) (graphPublication, error)
 	if options.PersistRefresh {
 		publishers = append(publishers, func(candidate *graph.Graph) (graphPublication, error) {
-			return publishGraphArtifacts(absRoot, candidate, refreshArtifactPublication)
+			return publishGraphArtifactsWithFreshness(absRoot, candidate, refreshArtifactPublication, freshness)
 		})
 	}
 	preciseBuilder := func(root string) (*graph.Graph, error) {
 		controller.Reclaim()
-		built, buildErr := buildPreciseGraphWithMemory(root, options.Memory)
+		built, buildErr := buildPreciseGraphWithMemoryAndTags(root, options.Memory, options.Tags)
 		controller.Reclaim()
 		return built, buildErr
 	}
-	rebuild := graphRefresher(g, absRoot, BuildGraph, preciseBuilder, publishers...)
+	rebuild := graphRefresherWithFreshness(g, absRoot, buildAST, preciseBuilder, freshness, publishers...)
 	buildBaseline := func(ctx context.Context, ref string) (*graph.Graph, error) {
-		return baseline.Build(ctx, absRoot, ref, BuildGraph)
+		return baseline.Build(ctx, absRoot, ref, buildAST)
 	}
 
-	if err := mcp.Serve(g, rebuild, BuildGraph, buildBaseline, Version, mcp.ServerOptions{
+	if err := mcp.Serve(g, rebuild, buildAST, buildBaseline, Version, mcp.ServerOptions{
 		PersistRefresh:          options.PersistRefresh,
 		MemoryMode:              string(options.Memory.Mode),
 		RequestedMaxMemoryBytes: options.Memory.MaxBytes,
 		EffectiveMaxMemoryBytes: controller.BoundedEffectiveLimit(),
+		RequestedBuildTags:      append([]string(nil), options.Tags...),
+		EffectiveBuildTags:      buildConfig.BuildContext().BuildTags,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
 		return 1
@@ -2433,7 +2530,7 @@ OUTPUT FLAGS
                              MANDATORY for all analytical commands when a session is active.
 
 INDEXING
-  build [path] [--precise] [--memory-mode=low] [--max-memory=<size>]
+  build [path] [--precise] [--tags=<tag[,tag...]>] [--memory-mode=low] [--max-memory=<size>]
                              Walk and parse a Go repository. Generates graph.json
                              and 9 targeted Markdown reports in .gograph/.
                              Adds .gograph/ to the Git repository root .gitignore
@@ -2450,6 +2547,8 @@ INDEXING
                              Test packages are resolved separately; broken tests record
                              typed_partial without downgrading production precision.
                              Typed-only test targets are recomputed during reuse.
+                             --tags selects a comma-separated tagged build context,
+                             replacing GOFLAGS -tags; omission preserves GOFLAGS.
                              --memory-mode=low prioritizes lower heap use through aggressive GC and
                              phase-boundary reclamation without changing precision.
                              --max-memory=<size> (for example 1GiB) adds a
@@ -2460,7 +2559,8 @@ INDEXING
                              Inactive build-constrained files, cmd/go wildcard-excluded
                              directories, generated sources, go.mod ignore paths, AI
                              worktrees, and Git-ignored paths are automatically skipped.
-  stale                      Check selected files, build context, and content digests.
+  stale [--tags=<tag[,tag...]>]
+                             Check selected files, build context, and content digests.
                              Exit 0 when current, 2 when stale, and 1 on error;
                              --json uses the same exit contract.
                              Agents should run this before structural analysis.
@@ -2474,7 +2574,7 @@ INDEXING
                              re-parsing — reads graph.json only.
 
 WORKSPACES
-  workspace build [path] [--refresh-members] [--memory-mode=low] [--max-memory=<size>]
+  workspace build [path] [--refresh-members] [--tags=<tag[,tag...]>] [--memory-mode=low] [--max-memory=<size>]
                              Build the deterministic cross-repository overlay. By
                              default member repositories are read-only and must
                              already have complete, current graphs. The explicit
@@ -2483,18 +2583,20 @@ WORKSPACES
                              mutations without implying cross-repository rollback.
                              Memory options match repository build and apply to each
                              refreshed member; max-memory remains a soft runtime memory target.
-  workspace status [path]   Report member availability/freshness/capabilities and
+  workspace status [path] [--tags=<tag[,tag...]>]
+                            Report member availability/freshness/capabilities and
                              overlay input/artifact fingerprints.
-  workspace query [--scope id] [--workspace path] <term...>
+  workspace query [--scope id] [--workspace path] [--tags=<tag[,tag...]>] <term...>
                              Search symbols, packages, modules, and HTTP contracts.
-  workspace path [--scope id] [--workspace path] [--include-possible] <from> <to>
+  workspace path [--scope id] [--workspace path] [--tags=<tag[,tag...]>] [--include-possible] <from> <to>
                              Find a shortest path in the virtual federated graph.
-  workspace impact [--scope id] [--workspace path] [--include-possible] <target>
+  workspace impact [--scope id] [--workspace path] [--tags=<tag[,tag...]>] [--include-possible] <target>
                              Find transitive cross-repository dependents.
                              Ambiguous/possible facts are excluded unless explicitly
                              included. Multiple scopes require --scope unless the
                              manifest defines default_scope.
-  workspace mcp [path]      Serve workspace status, query, path, and impact tools.
+  workspace mcp [path] [--tags=<tag[,tag...]>]
+                            Serve workspace status, query, path, and impact tools.
                              These tools are read-only. Their JSON values exactly
                              match the corresponding CLI --json results object;
                              the CLI adds only its generic command envelope.
@@ -2778,7 +2880,7 @@ AGENT INTEGRATION
                              validates regular Go tool metadata and workspace members confined
                              beneath the workspace; dependency
                              resolution follows the user's Go environment.
-  mcp [path] [--persist-refresh] [--memory-mode=low] [--max-memory=<size>]
+  mcp [path] [--persist-refresh] [--tags=<tag[,tag...]>] [--memory-mode=low] [--max-memory=<size>]
                              Start a Model Context Protocol server over stdio.
                              Exposes graph queries as native tools for AI clients;
                              adopts newer precise graphs and preserves precision on refresh.
@@ -2971,12 +3073,31 @@ func runPath(args []string) int {
 }
 
 // runStale checks whether graph.json is out of date relative to source files.
-func runStale() int {
+func runStale(rawArgs []string) int {
+	var buildTags []string
+	for index := 0; index < len(rawArgs); index++ {
+		handled, consumedThrough, err := parseBuildTagsOption(rawArgs, index, &buildTags)
+		if err != nil {
+			return failCommandf("stale", "invalid build tags: %v", err)
+		}
+		if !handled {
+			return failCommand("stale", "usage: gograph stale [--tags=integration]")
+		}
+		index = consumedThrough
+	}
+	normalizedTags, err := buildctx.NormalizeBuildTags(buildTags)
+	if err != nil {
+		return failCommandf("stale", "invalid --tags: %v", err)
+	}
 	g, err := loadGraph(".")
 	if err != nil {
 		return failCommand("stale", err.Error())
 	}
 	sr := search.Stale(g, graphRoot(g))
+	if len(normalizedTags) > 0 {
+		config, _ := resolveBuildConfigWithTags(graphRoot(g), normalizedTags)
+		sr = search.StaleWithConfig(g, graphRoot(g), config)
+	}
 	if jsonMode {
 		return staleJSONExitCode(
 			PrintJSON(okEnvelope("stale", "", sr, sr.ChangeCount())),

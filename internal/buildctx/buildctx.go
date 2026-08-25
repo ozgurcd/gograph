@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"go/build"
+	"go/build/constraint"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,10 +34,63 @@ type Config struct {
 	modulePath     string
 }
 
+// ResolveOptions selects explicit cmd/go build inputs. BuildTags is nil when
+// the caller wants cmd/go to inherit tags from GOFLAGS. A non-empty slice is
+// passed as one explicit -tags flag, which follows cmd/go's normal precedence
+// and replaces any -tags value inherited from GOFLAGS.
+type ResolveOptions struct {
+	BuildTags []string
+}
+
+// NormalizeBuildTags validates and canonicalizes comma-separated Go build-tag
+// values. It deliberately accepts only tag identifiers, never arbitrary Go
+// flags, so callers can safely pass the result as one exec argument.
+func NormalizeBuildTags(values []string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]struct{})
+	for _, value := range values {
+		if value == "" {
+			return nil, fmt.Errorf("build tags must not be empty")
+		}
+		if strings.IndexFunc(value, func(r rune) bool { return r == ' ' || r == '\t' || r == '\r' || r == '\n' }) >= 0 {
+			return nil, fmt.Errorf("build tags must be comma-separated, got %q", value)
+		}
+		for _, tag := range strings.Split(value, ",") {
+			if tag == "" {
+				return nil, fmt.Errorf("build tags must not contain empty entries")
+			}
+			expression, err := constraint.Parse("//go:build " + tag)
+			parsed, ok := expression.(*constraint.TagExpr)
+			if err != nil || !ok || parsed.Tag != tag {
+				return nil, fmt.Errorf("invalid Go build tag %q", tag)
+			}
+			seen[tag] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for tag := range seen {
+		result = append(result, tag)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
 // Resolve asks cmd/go for its effective build context. This deliberately lets
 // the Go tool interpret GOENV, GOFLAGS, toolchain selection, cgo defaults, and
 // tool/release tags instead of duplicating those rules in gograph.
 func Resolve(ctx context.Context, root string) (Config, error) {
+	return ResolveWithOptions(ctx, root, ResolveOptions{})
+}
+
+// ResolveWithOptions asks cmd/go for its effective build context after applying
+// the caller's explicit source-selection options.
+func ResolveWithOptions(ctx context.Context, root string, options ResolveOptions) (Config, error) {
+	tags, err := NormalizeBuildTags(options.BuildTags)
+	if err != nil {
+		return Config{}, err
+	}
 	canonicalRoot, err := canonicalDirectory(root)
 	if err != nil {
 		return Config{}, fmt.Errorf("resolve Go build root: %w", err)
@@ -53,7 +107,7 @@ func Resolve(ctx context.Context, root string) (Config, error) {
 	// not discover a different GOMOD merely because gograph was invoked from
 	// inside rather than outside a symlinked scan root.
 	environment := setEnvironmentValue(os.Environ(), "PWD", canonicalRoot)
-	return resolve(ctx, canonicalRoot, environment, runGoCommand)
+	return resolve(ctx, canonicalRoot, environment, tags, runGoCommand)
 }
 
 // ValidateToolchainMetadata verifies every local metadata path that cmd/go
@@ -295,11 +349,25 @@ func validateMetadataSet(files *sourcefs.Reader, directory, primary string, comp
 // or a usable build.Default snapshot together with the resolution error. AST
 // callers can remain tolerant while precise callers retain the error.
 func ResolveOrDefault(ctx context.Context, root string) (Config, error) {
-	config, err := Resolve(ctx, root)
+	return ResolveOrDefaultWithOptions(ctx, root, ResolveOptions{})
+}
+
+// ResolveOrDefaultWithOptions preserves explicit build tags in the AST
+// fallback while returning the cmd/go resolution error to precise callers.
+func ResolveOrDefaultWithOptions(ctx context.Context, root string, options ResolveOptions) (Config, error) {
+	tags, normalizeErr := NormalizeBuildTags(options.BuildTags)
+	if normalizeErr != nil {
+		return Config{}, normalizeErr
+	}
+	config, err := ResolveWithOptions(ctx, root, ResolveOptions{BuildTags: tags})
 	if err == nil {
 		return config, nil
 	}
-	return FromBuildContext(build.Default, os.Environ()), err
+	fallback := build.Default
+	if len(tags) > 0 {
+		fallback.BuildTags = append([]string(nil), tags...)
+	}
+	return FromBuildContext(fallback, os.Environ()), err
 }
 
 type goCommandRunner func(context.Context, string, []string, ...string) (stdout, stderr []byte, err error)
@@ -314,10 +382,13 @@ func runGoCommand(ctx context.Context, root string, environment []string, args .
 	return stdout, stderr.Bytes(), err
 }
 
-func resolve(ctx context.Context, root string, environment []string, run goCommandRunner) (Config, error) {
-	stdout, stderr, err := run(ctx, root, environment,
-		"list", "-e", "-json=false", "-deps=false", "-test=false", "-export=false", "-find=false", "-f", goListContextTemplate, "builtin",
-	)
+func resolve(ctx context.Context, root string, environment, buildTags []string, run goCommandRunner) (Config, error) {
+	arguments := []string{"list", "-e", "-json=false", "-deps=false", "-test=false", "-export=false", "-find=false"}
+	if len(buildTags) > 0 {
+		arguments = append(arguments, "-tags="+strings.Join(buildTags, ","))
+	}
+	arguments = append(arguments, "-f", goListContextTemplate, "builtin")
+	stdout, stderr, err := run(ctx, root, environment, arguments...)
 	if err != nil {
 		return Config{}, commandError("resolve Go build context", stdout, stderr, err)
 	}

@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/ozgurcd/gograph/internal/buildctx"
 	"github.com/ozgurcd/gograph/internal/graph"
 	mcppkg "github.com/ozgurcd/gograph/internal/mcp"
+	"github.com/ozgurcd/gograph/internal/scanner"
 	"github.com/ozgurcd/gograph/internal/search"
 )
 
@@ -750,6 +752,92 @@ func TestCapabilitiesReportAnalysisMemoryPolicy(t *testing.T) {
 		if value, _ := memory[field].(string); value == "" {
 			t.Errorf("analysis_memory.%s is empty", field)
 		}
+	}
+}
+
+func TestCapabilitiesReportBuildTagSelection(t *testing.T) {
+	previous := mcppkg.ExposeToolsForTesting
+	handlers := make(map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error))
+	mcppkg.ExposeToolsForTesting = handlers
+	t.Cleanup(func() { mcppkg.ExposeToolsForTesting = previous })
+
+	mcppkg.NewServer(
+		&graph.Graph{},
+		mockRebuild(&graph.Graph{}),
+		mockBuildGraph(),
+		mockBuildBaseline(),
+		"dev",
+		mcppkg.ServerOptions{
+			RequestedBuildTags: []string{"integration"},
+			EffectiveBuildTags: []string{"integration"},
+		},
+	)
+	text := callTool(t, handlers["gograph_capabilities"], nil)
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	selection, ok := payload["analysis_build_context"].(map[string]any)
+	if !ok {
+		t.Fatalf("analysis_build_context = %#v, want object", payload["analysis_build_context"])
+	}
+	for _, field := range []string{"requested_build_tags", "effective_build_tags"} {
+		if !jsonArrayContains(selection[field], "integration") {
+			t.Errorf("analysis_build_context.%s = %#v", field, selection[field])
+		}
+	}
+	for _, field := range []string{"selection_semantics", "refresh_semantics"} {
+		if value, _ := selection[field].(string); value == "" {
+			t.Errorf("analysis_build_context.%s is empty", field)
+		}
+	}
+}
+
+func TestMCPStaleUsesStartupBuildTags(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/mcp-tags\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "regular.go"), []byte("package tags\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "integration.go"), []byte("//go:build integration\n\npackage tags\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOENV", "off")
+	t.Setenv("GOWORK", "off")
+	t.Setenv("GOTOOLCHAIN", "local")
+	t.Setenv("GOFLAGS", "")
+	config, err := buildctx.ResolveWithOptions(context.Background(), root, buildctx.ResolveOptions{BuildTags: []string{"integration"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, fingerprint, walkErrors := scanner.WalkWithConfigAndFingerprint(root, config)
+	if len(walkErrors) != 0 {
+		t.Fatalf("walk errors: %v", walkErrors)
+	}
+	g := &graph.Graph{Root: root, GeneratedAt: time.Now(), Build: &graph.BuildMetadata{BuildContextFingerprint: fingerprint}}
+	for _, path := range paths {
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		relative, _ := filepath.Rel(root, path)
+		g.Files = append(g.Files, graph.FileNode{Path: relative, ContentDigest: graph.SourceDigest(data)})
+	}
+
+	previous := mcppkg.ExposeToolsForTesting
+	handlers := make(map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error))
+	mcppkg.ExposeToolsForTesting = handlers
+	t.Cleanup(func() { mcppkg.ExposeToolsForTesting = previous })
+	mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), mockBuildBaseline(), "dev", mcppkg.ServerOptions{RequestedBuildTags: []string{"integration"}, EffectiveBuildTags: []string{"integration"}})
+	text := callTool(t, handlers["gograph_stale"], nil)
+	var result search.StaleResult
+	if err := json.Unmarshal([]byte(text), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.IsStale {
+		t.Fatalf("tagged graph was stale in matching MCP context: %+v", result)
 	}
 }
 

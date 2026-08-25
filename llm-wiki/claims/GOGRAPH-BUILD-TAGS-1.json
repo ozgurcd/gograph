@@ -1,0 +1,47 @@
+{
+  "schema_version": "scrinium.claim/v1",
+  "id": "GOGRAPH-BUILD-TAGS-1",
+  "subject": "explicit Go build-tag selection",
+  "statement": "Explicit --tags selects one validated Go build context across repository AST and precise builds, typed test attribution, freshness, project MCP startup and refresh, Git baselines, workspace member refresh and validation, and workspace CLI/MCP queries. The selection is not a union of contexts, is included in existing build fingerprints, replaces GOFLAGS -tags only when explicitly supplied, and otherwise preserves cmd/go-resolved inherited behavior.",
+  "lifecycle": {
+    "state": "active"
+  },
+  "authorship": {
+    "kind": "agent",
+    "origin": "codex:implementation",
+    "recorded_at": "2026-08-25T11:35:17.418496Z"
+  },
+  "evidence": [
+    {
+      "id": "EV-BUILD-TAGS-IMPLEMENTATION",
+      "kind": "repository_reference",
+      "polarity": "supports",
+      "origin": {
+        "kind": "repository",
+        "reference": "gograph working tree"
+      },
+      "locator": "internal/buildctx/buildctx.go; internal/cli/cli.go; internal/cli/workspace.go; internal/mcp/server.go; internal/mcp/workspace.go; internal/validation/snapshot.go",
+      "scope": "Validated cmd/go tag selection and CLI/MCP/workspace propagation",
+      "availability": "available",
+      "captured_at": "2026-08-25T11:35:00Z",
+      "derived_from": []
+    },
+    {
+      "id": "EV-BUILD-TAGS-VERIFICATION",
+      "kind": "repository_reference",
+      "polarity": "supports",
+      "origin": {
+        "kind": "repository",
+        "reference": "gograph working tree"
+      },
+      "locator": "internal/cli/build_tags_test.go; internal/cli/workspace_integration_test.go; internal/mcp/server_test.go; internal/buildctx/buildctx_test.go; Makefile verify",
+      "scope": "Tagged precise test attribution and untested census, GOFLAGS precedence, workspace CLI/MCP parity, MCP freshness/capabilities, and full verification pipeline",
+      "availability": "available",
+      "captured_at": "2026-08-25T11:35:00Z",
+      "derived_from": []
+    }
+  ],
+  "validation_results": [],
+  "created_at": "2026-08-25T11:35:17.418496Z",
+  "updated_at": "2026-08-25T11:35:54.733393Z"
+}

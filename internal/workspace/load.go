@@ -23,9 +23,13 @@ type MemberInspection struct {
 }
 
 func InspectMembers(ctx context.Context, root string, manifest Manifest) []MemberInspection {
+	return InspectMembersWithBuildTags(ctx, root, manifest, nil)
+}
+
+func InspectMembersWithBuildTags(ctx context.Context, root string, manifest Manifest, buildTags []string) []MemberInspection {
 	inspections := make([]MemberInspection, 0, len(manifest.Repositories))
 	for _, config := range manifest.Repositories {
-		inspections = append(inspections, InspectMember(ctx, root, config))
+		inspections = append(inspections, InspectMemberWithBuildTags(ctx, root, config, buildTags))
 	}
 	return inspections
 }
@@ -33,13 +37,17 @@ func InspectMembers(ctx context.Context, root string, manifest Manifest) []Membe
 // InspectMember validates one configured member against its current source,
 // build selection, workspace capabilities, and on-disk module inventory.
 func InspectMember(ctx context.Context, root string, config RepositoryConfig) MemberInspection {
+	return InspectMemberWithBuildTags(ctx, root, config, nil)
+}
+
+func InspectMemberWithBuildTags(ctx context.Context, root string, config RepositoryConfig, buildTags []string) MemberInspection {
 	memberRoot, rootErr := ResolveMemberRoot(root, config)
 	inspection := MemberInspection{Config: config, Root: memberRoot}
 	if rootErr != nil {
 		inspection.Error = rootErr
 		return inspection
 	}
-	snapshot, err := (validation.RepositoryLoader{}).Load(ctx, memberRoot)
+	snapshot, err := (validation.RepositoryLoader{BuildTags: buildTags}).Load(ctx, memberRoot)
 	if err != nil {
 		inspection.Error = err
 		return inspection
@@ -72,7 +80,11 @@ func InspectMember(ctx context.Context, root string, config RepositoryConfig) Me
 }
 
 func LoadMembers(ctx context.Context, root string, manifest Manifest) ([]LoadedMember, error) {
-	inspections := InspectMembers(ctx, root, manifest)
+	return LoadMembersWithBuildTags(ctx, root, manifest, nil)
+}
+
+func LoadMembersWithBuildTags(ctx context.Context, root string, manifest Manifest, buildTags []string) ([]LoadedMember, error) {
+	inspections := InspectMembersWithBuildTags(ctx, root, manifest, buildTags)
 	members := make([]LoadedMember, 0, len(inspections))
 	for _, inspection := range inspections {
 		if inspection.Error != nil {
@@ -168,6 +180,10 @@ func LoadArtifact(root string) (*Artifact, string, error) {
 }
 
 func Load(ctx context.Context, start string) (*LoadedWorkspace, error) {
+	return LoadWithBuildTags(ctx, start, nil)
+}
+
+func LoadWithBuildTags(ctx context.Context, start string, buildTags []string) (*LoadedWorkspace, error) {
 	root, err := FindRoot(start)
 	if err != nil {
 		return nil, err
@@ -176,7 +192,7 @@ func Load(ctx context.Context, start string) (*LoadedWorkspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	members, err := LoadMembers(ctx, root, manifest)
+	members, err := LoadMembersWithBuildTags(ctx, root, manifest, buildTags)
 	if err != nil {
 		return nil, err
 	}

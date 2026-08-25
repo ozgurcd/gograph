@@ -56,8 +56,12 @@ type Status struct {
 }
 
 func InspectStatus(ctx context.Context, root string, manifest Manifest) Status {
+	return InspectStatusWithBuildTags(ctx, root, manifest, nil)
+}
+
+func InspectStatusWithBuildTags(ctx context.Context, root string, manifest Manifest, buildTags []string) Status {
 	status := Status{SchemaVersion: StatusSchemaVersion, WorkspaceName: manifest.Name, AggregateState: StateComplete, DefaultScope: manifest.DefaultScope, Overlay: OverlayStatus{Diagnostics: []string{}}}
-	loader := validation.RepositoryLoader{}
+	loader := validation.RepositoryLoader{BuildTags: buildTags}
 	var loaded []LoadedMember
 	availableMembers := 0
 	for _, config := range manifest.Repositories {

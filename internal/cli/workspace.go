@@ -8,9 +8,11 @@ import (
 	"os"
 	"strings"
 
+	"github.com/ozgurcd/gograph/internal/buildctx"
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/mcp"
 	"github.com/ozgurcd/gograph/internal/memorylimit"
+	"github.com/ozgurcd/gograph/internal/search"
 	"github.com/ozgurcd/gograph/internal/sourcefs"
 	workspacegraph "github.com/ozgurcd/gograph/internal/workspace"
 )
@@ -61,9 +63,18 @@ func runWorkspaceBuild(args []string) int {
 	start := "."
 	startSet := false
 	refreshMembers := false
+	var buildTags []string
 	memoryPolicy := memorylimit.Standard()
 	for index := 0; index < len(args); index++ {
 		argument := args[index]
+		handled, consumedThrough, tagsErr := parseBuildTagsOption(args, index, &buildTags)
+		if tagsErr != nil {
+			return failCommandf("workspace build", "invalid build tags: %v", tagsErr)
+		}
+		if handled {
+			index = consumedThrough
+			continue
+		}
 		handled, consumedThrough, memoryErr := parseMemoryOption(args, index, &memoryPolicy)
 		if memoryErr != nil {
 			return failCommandf("workspace build", "invalid memory policy: %v", memoryErr)
@@ -81,11 +92,15 @@ func runWorkspaceBuild(args []string) int {
 			start = argument
 			startSet = true
 		default:
-			return failCommand("workspace build", "usage: gograph workspace build [path] [--refresh-members] [--memory-mode=low] [--max-memory=1GiB]")
+			return failCommand("workspace build", "usage: gograph workspace build [path] [--refresh-members] [--tags=integration] [--memory-mode=low] [--max-memory=1GiB]")
 		}
 	}
 	if err := memoryPolicy.Validate(); err != nil {
 		return failCommandf("workspace build", "invalid memory policy: %v", err)
+	}
+	buildTags, err := buildctx.NormalizeBuildTags(buildTags)
+	if err != nil {
+		return failCommandf("workspace build", "invalid --tags: %v", err)
 	}
 	controller, err := memorylimit.Apply(memoryPolicy)
 	if err != nil {
@@ -101,7 +116,7 @@ func runWorkspaceBuild(args []string) int {
 		return failCommand("workspace build", err.Error())
 	}
 	result := workspaceBuildResult{SchemaVersion: "gograph.workspace-build.v1", WorkspaceName: manifest.Name, RefreshPlan: []workspaceMutation{}, RefreshAttempted: []workspaceMutation{}, RefreshSucceeded: []workspaceMutation{}, RefreshFailed: []workspaceMutation{}}
-	inspections := workspacegraph.InspectMembers(context.Background(), root, manifest)
+	inspections := workspacegraph.InspectMembersWithBuildTags(context.Background(), root, manifest, buildTags)
 	for _, inspection := range inspections {
 		if inspection.Error == nil {
 			continue
@@ -124,14 +139,14 @@ func runWorkspaceBuild(args []string) int {
 				return writeWorkspaceBuildFailure(result, fmt.Sprintf("refresh repository %q: %v", config.ID, rootErr))
 			}
 			controller.Reclaim()
-			if err := refreshWorkspaceMember(memberRoot, config.Precision == "precise", memoryPolicy); err != nil {
+			if err := refreshWorkspaceMember(memberRoot, config.Precision == "precise", memoryPolicy, buildTags); err != nil {
 				attempt.Error = err.Error()
 				attempt.AfterFingerprint = graphArtifactFingerprint(memberRoot)
 				result.RefreshFailed = append(result.RefreshFailed, attempt)
 				return writeWorkspaceBuildFailure(result, fmt.Sprintf("refresh repository %q: %v", config.ID, err))
 			}
 			attempt.AfterFingerprint = graphArtifactFingerprint(memberRoot)
-			if inspection := workspacegraph.InspectMember(context.Background(), root, config); inspection.Error != nil {
+			if inspection := workspacegraph.InspectMemberWithBuildTags(context.Background(), root, config, buildTags); inspection.Error != nil {
 				attempt.Error = inspection.Error.Error()
 				result.RefreshFailed = append(result.RefreshFailed, attempt)
 				return writeWorkspaceBuildFailure(result, fmt.Sprintf("refreshed repository %q is unusable: %v", config.ID, inspection.Error))
@@ -139,7 +154,7 @@ func runWorkspaceBuild(args []string) int {
 			result.RefreshSucceeded = append(result.RefreshSucceeded, attempt)
 		}
 	}
-	members, err := workspacegraph.LoadMembers(context.Background(), root, manifest)
+	members, err := workspacegraph.LoadMembersWithBuildTags(context.Background(), root, manifest, buildTags)
 	if err != nil {
 		return writeWorkspaceBuildFailure(result, err.Error())
 	}
@@ -188,8 +203,8 @@ func writeWorkspaceBuildFailure(result workspaceBuildResult, message string) int
 	return 1
 }
 
-func refreshWorkspaceMember(root string, preciseMode bool, memoryPolicy memorylimit.Policy) error {
-	buildConfig, configErr := resolveBuildConfig(root)
+func refreshWorkspaceMember(root string, preciseMode bool, memoryPolicy memorylimit.Policy, buildTags []string) error {
+	buildConfig, configErr := resolveBuildConfigWithTags(root, buildTags)
 	previous, _ := loadGraph(root)
 	g, err := buildGraphWithConfig(root, buildConfig, configErr, previous)
 	if err != nil {
@@ -204,7 +219,9 @@ func refreshWorkspaceMember(root string, preciseMode bool, memoryPolicy memoryli
 	if err := refreshCompleteGraphSourceFingerprint(root, g, buildConfig); err != nil {
 		return err
 	}
-	_, err = publishGraphArtifacts(root, g, manualArtifactPublication)
+	_, err = publishGraphArtifactsWithFreshness(root, g, manualArtifactPublication, func(candidate *graph.Graph, candidateRoot string) search.StaleResult {
+		return search.StaleWithConfig(candidate, candidateRoot, buildConfig)
+	})
 	return err
 }
 
@@ -223,12 +240,9 @@ func graphArtifactFingerprint(root string) string {
 }
 
 func runWorkspaceStatus(args []string) int {
-	if len(args) > 1 || len(args) == 1 && strings.HasPrefix(args[0], "-") {
-		return failCommand("workspace status", "usage: gograph workspace status [path]")
-	}
-	start := "."
-	if len(args) == 1 {
-		start = args[0]
+	start, buildTags, err := parseWorkspaceStartAndTags(args, "workspace status")
+	if err != nil {
+		return failCommand("workspace status", err.Error())
 	}
 	root, err := workspacegraph.FindRoot(start)
 	if err != nil {
@@ -238,7 +252,7 @@ func runWorkspaceStatus(args []string) int {
 	if err != nil {
 		return failCommand("workspace status", err.Error())
 	}
-	status := workspacegraph.InspectStatus(context.Background(), root, manifest)
+	status := workspacegraph.InspectStatusWithBuildTags(context.Background(), root, manifest, buildTags)
 	if jsonMode {
 		return PrintJSON(okEnvelope("workspace status", manifest.Name, status, len(status.Members)))
 	}
@@ -267,6 +281,7 @@ type workspaceQueryArgs struct {
 	Start           string
 	Scope           string
 	IncludePossible bool
+	BuildTags       []string
 	Positional      []string
 }
 
@@ -274,6 +289,14 @@ func parseWorkspaceQueryArgs(args []string) (workspaceQueryArgs, error) {
 	parsed := workspaceQueryArgs{Start: "."}
 	seenScope, seenWorkspace, seenIncludePossible := false, false, false
 	for index := 0; index < len(args); index++ {
+		handled, consumedThrough, tagsErr := parseBuildTagsOption(args, index, &parsed.BuildTags)
+		if tagsErr != nil {
+			return parsed, tagsErr
+		}
+		if handled {
+			index = consumedThrough
+			continue
+		}
 		switch args[index] {
 		case "--scope":
 			if seenScope {
@@ -308,11 +331,16 @@ func parseWorkspaceQueryArgs(args []string) (workspaceQueryArgs, error) {
 			parsed.Positional = append(parsed.Positional, args[index])
 		}
 	}
+	var err error
+	parsed.BuildTags, err = buildctx.NormalizeBuildTags(parsed.BuildTags)
+	if err != nil {
+		return parsed, fmt.Errorf("invalid --tags: %w", err)
+	}
 	return parsed, nil
 }
 
 func loadWorkspaceQuery(parsed workspaceQueryArgs) (*workspacegraph.LoadedWorkspace, workspacegraph.ScopeOverlay, error) {
-	loaded, err := workspacegraph.Load(context.Background(), parsed.Start)
+	loaded, err := workspacegraph.LoadWithBuildTags(context.Background(), parsed.Start, parsed.BuildTags)
 	if err != nil {
 		return nil, workspacegraph.ScopeOverlay{}, err
 	}
@@ -327,7 +355,7 @@ func runWorkspaceQuery(args []string) int {
 	}
 	if err != nil || len(parsed.Positional) == 0 {
 		if err == nil {
-			err = fmt.Errorf("usage: gograph workspace query [--scope id] <term...>")
+			err = fmt.Errorf("usage: gograph workspace query [--scope id] [--tags=integration] <term...>")
 		}
 		return failCommand("workspace query", err.Error())
 	}
@@ -357,7 +385,7 @@ func runWorkspacePath(args []string) int {
 	parsed, err := parseWorkspaceQueryArgs(args)
 	if err != nil || len(parsed.Positional) != 2 {
 		if err == nil {
-			err = fmt.Errorf("usage: gograph workspace path [--scope id] [--include-possible] <from> <to>")
+			err = fmt.Errorf("usage: gograph workspace path [--scope id] [--tags=integration] [--include-possible] <from> <to>")
 		}
 		return failCommand("workspace path", err.Error())
 	}
@@ -387,7 +415,7 @@ func runWorkspaceImpact(args []string) int {
 	parsed, err := parseWorkspaceQueryArgs(args)
 	if err != nil || len(parsed.Positional) != 1 {
 		if err == nil {
-			err = fmt.Errorf("usage: gograph workspace impact [--scope id] [--include-possible] <target>")
+			err = fmt.Errorf("usage: gograph workspace impact [--scope id] [--tags=integration] [--include-possible] <target>")
 		}
 		return failCommand("workspace impact", err.Error())
 	}
@@ -416,12 +444,9 @@ func workspaceDisplayNode(node workspacegraph.NodeRef) string {
 }
 
 func runWorkspaceMCP(args []string) int {
-	if len(args) > 1 || len(args) == 1 && strings.HasPrefix(args[0], "-") {
-		return failCommand("workspace mcp", "usage: gograph workspace mcp [path]")
-	}
-	start := "."
-	if len(args) == 1 {
-		start = args[0]
+	start, buildTags, err := parseWorkspaceStartAndTags(args, "workspace mcp")
+	if err != nil {
+		return failCommand("workspace mcp", err.Error())
 	}
 	root, err := workspacegraph.FindRoot(start)
 	if err != nil {
@@ -430,8 +455,36 @@ func runWorkspaceMCP(args []string) int {
 	if _, _, err := workspacegraph.LoadManifest(root); err != nil {
 		return failCommand("workspace mcp", err.Error())
 	}
-	if err := mcp.ServeWorkspace(root, Version); err != nil {
+	if err := mcp.ServeWorkspaceWithBuildTags(root, Version, buildTags); err != nil {
 		return failCommand("workspace mcp", err.Error())
 	}
 	return 0
+}
+
+func parseWorkspaceStartAndTags(args []string, command string) (string, []string, error) {
+	start := "."
+	startSet := false
+	var buildTags []string
+	for index := 0; index < len(args); index++ {
+		handled, consumedThrough, err := parseBuildTagsOption(args, index, &buildTags)
+		if err != nil {
+			return "", nil, err
+		}
+		if handled {
+			index = consumedThrough
+			continue
+		}
+		if strings.HasPrefix(args[index], "-") {
+			return "", nil, fmt.Errorf("unknown argument: %s", args[index])
+		}
+		if startSet {
+			return "", nil, fmt.Errorf("usage: gograph %s [path] [--tags=integration]", command)
+		}
+		start, startSet = args[index], true
+	}
+	normalized, err := buildctx.NormalizeBuildTags(buildTags)
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid --tags: %w", err)
+	}
+	return start, normalized, nil
 }

@@ -20,6 +20,13 @@ This document outlines the core architectural philosophy, constraints, and devel
 
 - **Default Mode (Heuristic):** The default `gograph build .` uses raw Go AST parsing (`go/ast`, `go/parser`). It uses duck-typing and structural heuristics. It **must** tolerate incomplete, uncompilable, or messy codebases.
 - **Precise Mode (Type-Checked):** The `gograph build . --precise` command uses `go/types` for Class Hierarchy Analysis (CHA) and exact interface satisfaction. Each interface invocation retains all valid named in-repository CHA targets as parallel edges. Promoted-method wrappers use explicitly marked, traversal-only forwarding edges with no source provenance. Precise analysis is allowed to fail and publish the AST graph if the target codebase does not compile, but that fallback must be visible in metadata and stats. If the same selected sources already have a fresh successful precise artifact, a failed precise retry retains that artifact rather than replacing it with a fallback.
+- **Build-Tag Context:** `--tags=<tag[,tag...]>` selects one validated Go
+  build context across AST scanning, precise loading, test attribution,
+  freshness, Git-baseline builds, MCP refresh, and workspace member validation.
+  It is not a union of tagged and untagged graphs. Explicit tags follow
+  `cmd/go` precedence and replace `GOFLAGS -tags`; absence preserves inherited
+  behavior. The effective selection is fingerprinted, and MCP capabilities
+  disclose requested/effective tags.
 - **Navigation Aids, Not Proofs:** Heuristic extractors (such as REST route mappers, SQL query extractors, or test edge mappers) are strictly navigation aids for AI agents. They are not guaranteed to find every dynamic invocation. Do not use hyperbolic language (e.g., "cryptographic proof") to describe AST analysis.
 - **Security Flow Contract:** Flow analysis may be interprocedural but must remain bounded, deterministic, tolerant of broken code, and explicit about path insensitivity and call-context limits. Persist reusable AST facts in the graph and apply sanitizer policy at query time. Report confidence and never describe a finding as proof of exploitability.
 

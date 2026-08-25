@@ -62,6 +62,38 @@ func TestResolveUsesEffectiveGoToolContext(t *testing.T) {
 	}
 }
 
+func TestResolveWithOptionsOverridesGOFLAGSBuildTags(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/explicit-tags\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOENV", "off")
+	t.Setenv("GOWORK", "off")
+	t.Setenv("GOTOOLCHAIN", "local")
+	t.Setenv("GOFLAGS", "-tags=ambient_tag")
+
+	config, err := ResolveWithOptions(context.Background(), root, ResolveOptions{BuildTags: []string{"second,explicit_tag", "second"}})
+	if err != nil {
+		t.Fatalf("ResolveWithOptions: %v", err)
+	}
+	if got, want := config.BuildContext().BuildTags, []string{"explicit_tag", "second"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("BuildTags = %v, want %v", got, want)
+	}
+	if got, want := config.Flags(), []string{"-tags=explicit_tag,second"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Flags = %v, want %v", got, want)
+	}
+}
+
+func TestNormalizeBuildTagsRejectsFlagsAndExpressions(t *testing.T) {
+	for _, value := range []string{"", "integration,,linux", "integration linux", "integration||linux", "-mod=vendor"} {
+		t.Run(value, func(t *testing.T) {
+			if _, err := NormalizeBuildTags([]string{value}); err == nil {
+				t.Fatalf("NormalizeBuildTags(%q) succeeded", value)
+			}
+		})
+	}
+}
+
 func TestResolveCanonicalizesSymlinkRootIndependentlyOfAmbientPWD(t *testing.T) {
 	realRoot := filepath.Join(t.TempDir(), "real")
 	if err := os.MkdirAll(realRoot, 0o755); err != nil {
@@ -474,7 +506,7 @@ func TestConfigAccessorsReturnDefensiveCopies(t *testing.T) {
 }
 
 func TestResolveIgnoresSuccessfulStderr(t *testing.T) {
-	config, err := resolve(context.Background(), t.TempDir(), []string{"PATH=test"}, func(_ context.Context, _ string, _ []string, args ...string) ([]byte, []byte, error) {
+	config, err := resolve(context.Background(), t.TempDir(), []string{"PATH=test"}, nil, func(_ context.Context, _ string, _ []string, args ...string) ([]byte, []byte, error) {
 		if args[0] == "env" {
 			return []byte(testWireModuleContextJSON), []byte("go: module diagnostic\n"), nil
 		}
@@ -501,7 +533,7 @@ func TestResolveReportsCommandDiagnostics(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := resolve(context.Background(), t.TempDir(), nil, func(context.Context, string, []string, ...string) ([]byte, []byte, error) {
+			_, err := resolve(context.Background(), t.TempDir(), nil, nil, func(context.Context, string, []string, ...string) ([]byte, []byte, error) {
 				return []byte(tc.stdout), []byte(tc.stderr), commandErr
 			})
 			if err == nil || !strings.Contains(err.Error(), tc.want) || !errors.Is(err, commandErr) {
@@ -513,7 +545,7 @@ func TestResolveReportsCommandDiagnostics(t *testing.T) {
 
 func TestResolveReportsModuleContextDiagnostics(t *testing.T) {
 	commandErr := errors.New("exit status 1")
-	_, err := resolve(context.Background(), t.TempDir(), nil, func(_ context.Context, _ string, _ []string, args ...string) ([]byte, []byte, error) {
+	_, err := resolve(context.Background(), t.TempDir(), nil, nil, func(_ context.Context, _ string, _ []string, args ...string) ([]byte, []byte, error) {
 		if args[0] == "list" {
 			return []byte(testWireContextJSON), nil, nil
 		}
