@@ -444,3 +444,7 @@ Recorded that workspace status, query, path, and impact share one native result 
 - Added validated `--tags` selection across repository AST/precise builds, tagged test attribution, stale checks, project MCP refresh/baselines/capabilities, explicit workspace member refresh/validation, and workspace CLI/MCP queries.
 - Explicit tags replace `GOFLAGS -tags`; omission preserves existing cmd/go resolution. The selected context remains fingerprinted and is never treated as a union of tagged graphs.
 - Full `make verify` passed, including uncached unit/integration and race tests, vet, lint/static analysis, source/binary vulnerability scans, and documentation rendering.
+
+## 2026-08-25 — v1.6.5 release
+
+Released gograph v1.6.5 from `a5bf0d2aa81e16c4e8d3b186deaaec0a42b2e73c`, incorporating explicit Go build-tag contexts (`d22ab33`) and proof-backed test attribution (`9cde47a`). Local and hosted release gates passed uncached unit/race tests, lint/static/vulnerability checks, docs, CLI/MCP parity, six deterministic MCPBs, GoReleaser artifacts, and exact archive scans. Workflow `32853858696` published and independently verified 14 GitHub assets, the Homebrew 1.6.5 cask, and the active/latest official MCP Registry 1.6.5 record.
