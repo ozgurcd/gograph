@@ -299,7 +299,7 @@ You can check whether a rebuild is needed:
 gograph stale
 ```
 
-The MCP server checks source-content digests, the selected inventory/build fingerprint, and newer persisted graphs per analysis call. After an edit it reparses changed packages while reusing unchanged package AST records. A precise session still re-runs repository-wide CHA/SSA rather than silently becoming AST-only; if that refresh cannot complete precisely, the analysis call returns an error. MCP `stale`, default `changes`, and `stats` inspect a trusted persisted graph when present, or the startup in-memory fallback when the artifact is missing, unreadable, unsafe, or uses an unsupported source policy.
+The MCP server checks source-content digests, the selected inventory/build fingerprint, and newer persisted graphs per analysis call. After an edit it reparses changed packages while reusing unchanged package AST records. Every refresh-backed response preserves its existing text and adds machine-readable `gograph.graph-state.v1` metadata through `gograph.mcp-result.v1`. A precise session still re-runs repository-wide CHA/SSA. If enrichment fails, the tool can serve an explicitly marked current in-memory fallback; if an ordinary refresh fails, it can serve the last trusted stale graph. Neither is silently published, and a mismatched build context still fails closed. MCP `stale`, default `changes`, and `stats` inspect a trusted persisted graph when present, or the startup in-memory fallback when the artifact is missing, unreadable, unsafe, or uses an unsupported source policy. CLI graph-backed `--json` envelopes expose the same state for their persisted result.
 
 MCP refreshes are in-memory by default. Start with
 `gograph mcp [path] --persist-refresh` to publish successful refreshes to the
@@ -307,8 +307,9 @@ latest `.gograph/graph.json` and nine reports. Publication uses the same
 `.artifacts.lock` and graph-last commit marker described above; it is not a
 bundle-atomic transaction, and the lock file remains as separate operational
 state. The option does not update `.gitignore` and is not a branch cache.
-Publication failure is returned as a tool error and retried
-later without rebuilding the fresh graph; failure to publish a required
+Later publication failure is reported as `persistence.outcome=failed` while
+the fresh in-memory result remains usable, and is retried later without
+rebuilding; failure to publish a required
 startup auto-build prevents the server from starting. A successful publication
 advances the persisted baseline used by default `changes`.
 For a tagged graph, start with `gograph mcp [path] --tags=integration`; the

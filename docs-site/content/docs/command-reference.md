@@ -107,6 +107,9 @@ gograph stale [--tags=integration[,tag...]] [--json]
 Compares the selected-file inventory, effective Go build context, and SHA-256 source-content digests with `.gograph/graph.json`. Modification times remain diagnostic fields only. It reports added, deleted, newly active, newly inactive, and byte-modified selected files plus build-context changes.
 Use the same `--tags` value supplied to `build` when checking an explicitly
 tagged artifact. Without it, `stale` continues to resolve inherited `GOFLAGS`.
+Text output reports the persisted graph's source, freshness, completeness, and
+precision. JSON adds the same full `gograph.graph-state.v1` object as top-level
+`graph_state`, including refresh and persistence outcomes.
 
 Text and JSON modes use the same exit contract:
 
@@ -125,6 +128,9 @@ gograph stats [--json]
 ```
 Provides a source-parse-free index health summary derived from the persisted
 `.gograph/graph.json`. The CLI does not refresh before reporting it.
+Text adds `artifact_source` and `freshness`; JSON adds top-level
+`gograph.graph-state.v1`. Successful repository graph-backed CLI JSON commands
+use this same additive field without changing their existing `results` value.
 - **Output fields**:
   - `schema_version`
   - `generated_at`
@@ -937,7 +943,7 @@ gograph mcp [path] [--persist-refresh] [--tags=integration[,tag...]] [--memory-m
 Starts a Model Context Protocol (MCP) server over `stdio`, exposing gograph's
 query, analysis, and workflow capabilities as native tools for integration with
 AI clients (e.g., Claude Code, Cursor).
-- **Freshness**: If `graph.json` is missing, unreadable, linked through a descendant path, or has a missing/unsupported source-policy marker, startup builds a safe in-memory AST graph. Source-analysis tools compare selected source digests plus the build/module fingerprint and newer persisted artifacts per call, then reparse changed packages while reusing unchanged package AST records. MCP `stale`, default `changes`, and `stats` inspect the trusted persisted snapshot, or the startup in-memory fallback when no usable artifact exists. Precise and precise-fallback sessions still re-run repository-wide CHA/SSA, and a failed precise refresh is returned visibly.
+- **Freshness**: If `graph.json` is missing, unreadable, linked through a descendant path, or has a missing/unsupported source-policy marker, startup builds a safe in-memory AST graph. Source-analysis tools compare selected source digests plus the build/module fingerprint and newer persisted artifacts per call, then reparse changed packages while reusing unchanged package AST records. Every refresh-backed result preserves its existing text and adds `gograph.mcp-result.v1` structured content plus `_meta.gograph_graph_state`. The nested `gograph.graph-state.v1` independently reports persisted/in-memory source, current/stale freshness, complete/partial parsing, AST/precise/fallback analysis, refresh outcome, and persistence outcome; each operation owns its bounded diagnostic. Failed precise enrichment can serve a marked current in-memory fallback; an ordinary refresh failure can serve the last trusted stale graph. Degraded states are not silently published. MCP `stale`, default `changes`, and `stats` inspect the trusted persisted snapshot, or the startup in-memory fallback when no usable artifact exists, and attach the exact state they inspect.
 - **Build tags**: `--tags` uses the same validated selection and precedence as
   CLI `build`. Startup analysis, incremental AST rebuilds, precise refreshes,
   temporary Git baselines, and optional artifact publication all retain that
@@ -946,15 +952,17 @@ AI clients (e.g., Claude Code, Cursor).
 - **Environment binding**: A persisted graph is valid only under its recorded
   effective source/build selection. Start MCP with the same `GOWORK`,
   `GOFLAGS`, and explicit `--tags`; a mismatch is stale and must refresh
-  successfully or return a diagnostic rather than serving incompatible facts.
+  successfully or return a diagnostic rather than serving incompatible facts;
+  stale-on-error never bypasses this boundary.
   `gograph doctor --json` reports the same diagnostic before server startup.
 - **Persistence**: Refreshes remain in memory by default. `--persist-refresh`
   writes or overwrites `.gograph/graph.json` and the nine Markdown reports only
   after a successful, confirmed-fresh refresh. It does not update `.gitignore`
   and keeps one latest state rather than a per-branch cache. A publication
   failure during startup auto-build prevents the server from starting. A later
-  tool-triggered failure makes that tool fail and is retried on another
-  refresh-capable call without rebuilding the fresh in-memory graph. Writers
+  publication failure serves the fresh in-memory result with
+  `persistence.outcome=failed` and is retried on another refresh-capable call
+  without rebuilding. Writers
   wait up to 30 seconds on `.gograph/.artifacts.lock`. Reports are renamed
   first and `graph.json` last as the commit marker. Same-directory replacement
   is atomic on Unix-like systems but is not guaranteed atomic by Go on non-Unix

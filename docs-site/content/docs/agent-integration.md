@@ -125,8 +125,15 @@ persisted artifacts per call, then reparse changed packages after edits.
 `gograph_stale`, default
 `gograph_changes`, and `gograph_stats` use a trusted persisted graph when one
 exists and otherwise inspect the startup in-memory fallback. Precise and
-precise-fallback sessions still re-run repository-wide CHA/SSA, and a failed precise refresh is
-returned visibly. A failed precise publication retry cannot replace an
+precise-fallback sessions still re-run repository-wide CHA/SSA. Every
+refresh-backed tool preserves its compatibility text and adds
+`gograph.mcp-result.v1` structured content plus
+`_meta.gograph_graph_state`. The shared `gograph.graph-state.v1` value reports
+persisted/in-memory source, current/stale freshness, complete/partial parsing,
+AST/precise/fallback analysis, refresh outcome, and persistence outcome. A
+failed precise refresh can serve a marked current in-memory fallback, and an
+ordinary refresh failure can serve the last trusted stale graph. Neither is
+silently published; a mismatched Go build context still fails closed. A failed precise publication retry cannot replace an
 existing fresh successful precise artifact covering the same selected sources.
 `--tags` selects the same validated, fingerprinted Go build context as CLI
 `build`; an explicit value replaces `GOFLAGS -tags`, and startup plus every
@@ -142,8 +149,9 @@ Refresh publication is opt-in. `--persist-refresh` writes or overwrites
 `.gograph/graph.json` and the nine reports after a successful refresh, without
 changing `.gitignore`. It keeps only the latest state and is not a branch
 cache. A failed initial auto-build publication prevents startup. A later
-tool-triggered failure is returned as a tool error and retried using the
-already-fresh in-memory graph. Graph/report publishers wait up to 30 seconds on
+tool-triggered publication failure serves the already-fresh in-memory result
+with `persistence.outcome=failed` and retries the write on a later call without
+rebuilding. Graph/report publishers wait up to 30 seconds on
 `.gograph/.artifacts.lock`, stage all ten artifacts, rename reports first, and
 rename `graph.json` last as the commit marker. Publication requires a real
 `.gograph` directory and a regular-or-absent lock entry; persisted graph reads

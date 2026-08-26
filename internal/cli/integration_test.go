@@ -86,6 +86,13 @@ func TestJSONSchema(t *testing.T) {
 		if env["command"] != "callers" {
 			t.Errorf("expected command 'callers', got %v", env["command"])
 		}
+		state, ok := env["graph_state"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected graph_state object, got %T", env["graph_state"])
+		}
+		if state["schema_version"] != "gograph.graph-state.v1" || state["source"] != "persisted" || state["freshness"] != "current" || state["completeness"] != "complete" || state["precision"] != "ast" {
+			t.Fatalf("unexpected graph_state: %+v", state)
+		}
 
 		results, ok := env["results"].([]interface{})
 		if !ok {

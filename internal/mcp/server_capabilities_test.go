@@ -63,6 +63,13 @@ func TestGographCapabilities(t *testing.T) {
 	if got := int(transport["project_server_tools"].(float64)); got != len(registeredNames) {
 		t.Errorf("transport_contract project_server_tools = %d, registered = %d", got, len(registeredNames))
 	}
+	graphState, ok := out["graph_state"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected graph_state object, got %T", out["graph_state"])
+	}
+	if graphState["schema"] != "gograph.graph-state.v1" || graphState["mcp_result_schema"] != "gograph.mcp-result.v1" {
+		t.Fatalf("graph_state schemas = %#v", graphState)
+	}
 	for _, want := range []string{"gograph_workspace_status", "gograph_workspace_query", "gograph_workspace_path", "gograph_workspace_impact"} {
 		if !jsonArrayContains(transport["workspace_server_tools"], want) {
 			t.Errorf("transport_contract omits workspace MCP tool %q", want)
@@ -145,6 +152,9 @@ func TestGographCapabilities(t *testing.T) {
 		"path_ranking",
 		"exact before ambiguous/possible",
 		"fewer cross-repository transitions",
+		"gograph.graph-state.v1",
+		"persisted|in_memory|unknown",
+		"mismatched Go build context still fails closed",
 	} {
 		if !strings.Contains(toolsStr, want) {
 			t.Errorf("capabilities prerequisite omits %q", want)

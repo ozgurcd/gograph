@@ -5,6 +5,11 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sync"
+
+	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/graphstate"
+	"github.com/ozgurcd/gograph/internal/search"
 )
 
 // jsonMode is set to true when --json is present in the CLI args.
@@ -13,6 +18,11 @@ import (
 var jsonMode bool
 var filesOnlyMode bool
 var mermaidMode bool
+
+var outputGraph struct {
+	sync.RWMutex
+	graph *graph.Graph
+}
 
 // SchemaVersion is the stable JSON output schema version. Bump when the
 // envelope shape changes in a backwards-incompatible way.
@@ -30,12 +40,18 @@ type Envelope struct {
 	Count   int         `json:"count"`
 	Results interface{} `json:"results,omitempty"`
 	Error   string      `json:"error,omitempty"`
+	// GraphState is additive request provenance for repository graph-backed
+	// JSON commands. It is omitted for host, lifecycle, and hard-error results.
+	GraphState *graphstate.State `json:"graph_state,omitempty"`
 }
 
 // PrintJSON serialises env to stdout as indented JSON and always exits
 // cleanly (exit 0) unless Status is "error", in which case it exits 1.
 // This function never returns.
 func PrintJSON(env Envelope) int {
+	if env.GraphState == nil && env.Status != "error" && commandReportsGraphState(env.Command) {
+		env.GraphState = currentOutputGraphState()
+	}
 	data, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "json marshal error: %v\n", err)
@@ -46,6 +62,46 @@ func PrintJSON(env Envelope) int {
 		return 1
 	}
 	return 0
+}
+
+func currentOutputGraphState() *graphstate.State {
+	outputGraph.RLock()
+	g := outputGraph.graph
+	outputGraph.RUnlock()
+	if g == nil {
+		return nil
+	}
+	stale := search.Stale(g, graphRoot(g))
+	state := graphstate.ManualPersisted(g, stale.IsStale)
+	return &state
+}
+
+func resetOutputGraph() {
+	outputGraph.Lock()
+	outputGraph.graph = nil
+	outputGraph.Unlock()
+}
+
+func rememberOutputGraph(g *graph.Graph) {
+	outputGraph.Lock()
+	outputGraph.graph = g
+	outputGraph.Unlock()
+}
+
+func commandReportsGraphState(command string) bool {
+	switch command {
+	case "query", "explore", "focus", "node", "source", "public", "fields", "embeds", "imports",
+		"callers", "callees", "impact", "implementers", "envs", "interfaces", "concurrency", "tests",
+		"coverage", "identity", "routes", "sql", "errors", "errorflow", "trace", "flow", "path",
+		"stale", "stats", "summary", "untested", "orphans", "godobj", "skeleton", "mutate", "arity",
+		"complexity", "diagram", "coupling", "context", "hotspot", "deps", "dependents", "changes",
+		"constructors", "literals", "usages", "returnusage", "schema", "globals", "mocks", "fixtures",
+		"boundaries", "endpoint", "explain", "plan", "review", "risk", "api", "contract", "check",
+		"httpcalls":
+		return true
+	default:
+		return false
+	}
 }
 
 // okEnvelope builds a standard "ok" envelope for slice results.

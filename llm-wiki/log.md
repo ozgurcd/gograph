@@ -461,3 +461,7 @@ Implemented shared CLI/MCP `gograph.explore.v1` response modes: compact preserve
 ## 2026-08-26 — Deterministic ranked relationship paths
 
 Repository and workspace path queries now select one deterministic best route using the shared order: exact/ambiguous/possible certainty, visible length, production before tests, typed resolution before heuristics, cross-repository transitions, then canonical provenance. Existing singular CLI/MCP response contracts and workspace exact-only defaults remain compatible. Updated project, workflow, and workspace-v1 durable contracts.
+
+## 2026-08-26 — Seamless explicit graph freshness
+
+Added shared `gograph.graph-state.v1` provenance to repository CLI JSON and project MCP results without changing native functional payloads. MCP now serves explicitly marked current in-memory precise fallbacks or trusted stale artifacts after eligible refresh failures, while mismatched Go build contexts remain fail-closed and degraded graphs are never silently published. Refresh and persistence have independent bounded diagnostics; later publication failures retain the fresh in-memory result for retry. Snapshot `stale`, default `changes`, and `stats` report the exact persisted artifact or startup fallback they inspect.

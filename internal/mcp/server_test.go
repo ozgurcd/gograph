@@ -14,6 +14,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/ozgurcd/gograph/internal/buildctx"
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/graphstate"
 	mcppkg "github.com/ozgurcd/gograph/internal/mcp"
 	"github.com/ozgurcd/gograph/internal/scanner"
 	"github.com/ozgurcd/gograph/internal/search"
@@ -66,6 +67,102 @@ func TestNewServer(t *testing.T) {
 	s := mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), mockBuildBaseline(), "dev")
 	if s == nil {
 		t.Fatal("expected NewServer to return a valid server instance")
+	}
+}
+
+func TestRefreshBackedResultReportsGraphStateWithoutChangingTextPayload(t *testing.T) {
+	prev := mcppkg.ExposeToolsForTesting
+	handlers := make(map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error))
+	mcppkg.ExposeToolsForTesting = handlers
+	t.Cleanup(func() { mcppkg.ExposeToolsForTesting = prev })
+
+	g := &graph.Graph{Build: &graph.BuildMetadata{Complete: false, Precision: graph.PrecisionFallback}}
+	state := graphstate.New(g, graphstate.SourceInMemory, graphstate.FreshnessCurrent, graphstate.Refresh{
+		Policy: "automatic", Attempted: true, Outcome: "fallback", Diagnostic: "typed loading failed",
+	}, graphstate.Persistence{Requested: true, Outcome: "skipped_degraded"})
+	mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), mockBuildBaseline(), "dev", mcppkg.ServerOptions{
+		PersistRefresh: true,
+		GraphState:     func() graphstate.State { return state },
+	})
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"term": "missing"}
+	result, err := handlers["gograph_query"](context.Background(), req)
+	if err != nil || result == nil || result.IsError {
+		t.Fatalf("query result = %+v, err = %v", result, err)
+	}
+	content, ok := mcp.AsTextContent(result.Content[0])
+	if !ok || strings.Contains(content.Text, "graph_state") {
+		t.Fatalf("compatibility text payload was rewritten: %#v", result.Content)
+	}
+	if result.Meta == nil {
+		t.Fatal("missing MCP graph-state metadata")
+	}
+	encodedMeta, err := json.Marshal(result.Meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(encodedMeta, &metadata); err != nil {
+		t.Fatalf("decode metadata: %v", err)
+	}
+	if _, ok := metadata["gograph_graph_state"]; !ok {
+		t.Fatalf("missing gograph_graph_state metadata: %s", encodedMeta)
+	}
+	encoded, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var structured struct {
+		SchemaVersion string           `json:"schema_version"`
+		GraphState    graphstate.State `json:"graph_state"`
+	}
+	if err := json.Unmarshal(encoded, &structured); err != nil {
+		t.Fatalf("decode structured result: %v", err)
+	}
+	if structured.SchemaVersion != "gograph.mcp-result.v1" || structured.GraphState != state {
+		t.Fatalf("structured result = %+v", structured)
+	}
+}
+
+func TestSnapshotResultsReportTheGraphTheyInspect(t *testing.T) {
+	prev := mcppkg.ExposeToolsForTesting
+	handlers := make(map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error))
+	mcppkg.ExposeToolsForTesting = handlers
+	t.Cleanup(func() { mcppkg.ExposeToolsForTesting = prev })
+
+	g := &graph.Graph{
+		Root:  t.TempDir(),
+		Build: &graph.BuildMetadata{Complete: true, Precision: graph.PrecisionAST},
+	}
+	liveState := graphstate.New(g, graphstate.SourcePersisted, graphstate.FreshnessCurrent,
+		graphstate.Refresh{Policy: "automatic", Outcome: "not_needed"},
+		graphstate.Persistence{Outcome: "persisted"},
+	)
+	mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), mockBuildBaseline(), "dev", mcppkg.ServerOptions{
+		GraphState: func() graphstate.State { return liveState },
+	})
+
+	for _, toolName := range []string{"gograph_changes", "gograph_stale", "gograph_stats"} {
+		t.Run(toolName, func(t *testing.T) {
+			result, err := handlers[toolName](context.Background(), mcp.CallToolRequest{})
+			if err != nil || result == nil || result.IsError {
+				t.Fatalf("result = %+v, err = %v", result, err)
+			}
+			encoded, err := json.Marshal(result.StructuredContent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var structured struct {
+				GraphState graphstate.State `json:"graph_state"`
+			}
+			if err := json.Unmarshal(encoded, &structured); err != nil {
+				t.Fatal(err)
+			}
+			if structured.GraphState.Source != graphstate.SourceInMemory || structured.GraphState.Refresh.Policy != "manual" {
+				t.Fatalf("state = %+v, want startup fallback inspected without refresh", structured.GraphState)
+			}
+		})
 	}
 }
 

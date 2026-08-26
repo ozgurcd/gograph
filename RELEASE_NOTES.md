@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Seamless, explicit graph freshness
+
+- Repository graph-backed CLI JSON envelopes now include additive
+  `gograph.graph-state.v1` provenance. The independent axes identify whether
+  the result came from a persisted or in-memory graph, whether it is current or
+  stale, whether parsing is complete or partial, and whether analysis is AST,
+  precise, or fallback. CLI `stats` and `stale` expose the same state in text.
+- Refresh-backed project MCP tools preserve their existing text payloads and
+  add `gograph.mcp-result.v1` structured content plus
+  `_meta.gograph_graph_state`. `gograph_stale`, default `gograph_changes`, and
+  `gograph_stats` attach the state of the persisted artifact or startup fallback
+  they actually inspect.
+- MCP still refreshes automatically. Failed precise enrichment can serve a
+  current, explicitly marked in-memory fallback; an operational refresh
+  failure can serve the last trusted stale graph. Degraded graphs are never
+  silently published, publication failure is reported on its independent
+  persistence axis while the fresh in-memory result remains usable, operation
+  diagnostics are bounded, and a mismatched Go build context continues to fail
+  closed.
+- Added shared state/refresh regressions for partial and fallback composition,
+  stale serving, context mismatch, publication failure, unchanged MCP text,
+  structured metadata, and CLI JSON reporting. Updated CLI/MCP capabilities,
+  help, public docs, agent guidance, and durable architecture contracts.
+
 ### Deterministic ranked relationship paths
 
 - Repository `path`/`gograph_path` and workspace

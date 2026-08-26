@@ -15,12 +15,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
 	"github.com/ozgurcd/gograph/internal/baseline"
 	"github.com/ozgurcd/gograph/internal/buildctx"
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/graphstate"
 	"github.com/ozgurcd/gograph/internal/mcp"
 	"github.com/ozgurcd/gograph/internal/memorylimit"
 	"github.com/ozgurcd/gograph/internal/moduleinventory"
@@ -59,6 +61,7 @@ var Version = "dev"
 
 // Run is the entrypoint called from main.
 func Run(args []string) int {
+	resetOutputGraph()
 	if len(args) == 0 {
 		printHelp()
 		return 0
@@ -396,9 +399,16 @@ Partial builds record parse failures and selection/security warnings in graph.js
                     exits 0 (pass), 1 (evaluated fail), or 2 (cannot evaluate)
 
 CLI graph-backed analysis uses the last trusted persisted graph, written by a manual build or an
-opt-in MCP publication. The MCP server checks source freshness and newer
-persisted graphs per call. After edits it rebuilds in the current requested
-mode, so precise analysis is recomputed.
+opt-in MCP publication. Repository graph-backed --json envelopes add
+gograph.graph-state.v1 so source, freshness, completeness, precision, refresh,
+and persistence are explicit. Text stats/stale show the persisted state.
+The MCP server checks source freshness and newer persisted graphs per call.
+After edits it rebuilds in the current requested mode, so precise analysis is
+recomputed. Refresh-backed MCP results retain their compatibility text and add
+gograph.mcp-result.v1 structured content plus _meta.gograph_graph_state. Failed
+precise enrichment may serve a marked in-memory fallback; an operational
+refresh failure may serve the last trusted stale artifact. Degraded states are
+not silently published, and build-context mismatches still fail closed.
 
 Repository source and persisted-index reads are confined beneath the selected
 authority: linked directories and linked or special recognized Go build inputs are excluded, linked or
@@ -427,7 +437,8 @@ MCP refreshes stay in memory by default. Starting
   gograph mcp [path] --persist-refresh [--tags=integration] [--memory-mode=low] [--max-memory=1GiB]
 publishes each confirmed-fresh startup build or refresh as graph.json plus nine
 reports. It keeps one latest state (not a branch cache), does not edit .gitignore,
-and returns publication failures to the triggering tool for a later retry. MCP
+and reports later publication failures as persistence=failed while serving the
+fresh in-memory result and retrying publication on a later call. MCP
 refresh uses the same low-memory policy as CLI builds when those options are set.
 An explicit --tags selection replaces GOFLAGS -tags and is retained by startup,
 incremental/precise refreshes, and baselines; gograph_capabilities reports both
@@ -571,7 +582,8 @@ the graph-oriented commands listed below. Request only one output mode at a time
 
   (default)       [kind] Name — detail  (file:line)  — one result per line
   --json          {"schema_version":"1","command":"...","status":"ok",
-                   "query":"...","count":N,"results":[...]}
+                   "query":"...","count":N,"results":[...],
+                   "graph_state":{"schema_version":"gograph.graph-state.v1",...}}
   --files-only    flat deduplicated list of file paths — use for checklists
   --mermaid       visual dependency/call diagrams in Mermaid format
                   (supported by deps, dependents, coupling, callers, callees, path, impact, endpoint)
@@ -611,10 +623,14 @@ Know these before trusting results:
                         known suffix or handler symbol.
   impact / skeleton     can produce very large output on hotspot symbols or large repos.
                         Use callers --depth N for bounded traversal instead of impact.
-  CLI snapshot results  reflect the last trusted persisted graph. Run 'gograph stale' first;
-                        exit status encodes result (0 = up to date, 1 = error, 2 = stale).
+  CLI snapshot results  reflect the last trusted persisted graph. JSON graph-backed commands
+                        report graph_state; text users can run stats/stale. stale exit status
+                        encodes result (0 = up to date, 1 = error, 2 = stale).
   MCP analysis          checks source freshness and newer graph.json artifacts per call;
-                        edits preserve/retry the requested precision. stale/default
+                        edits preserve/retry the requested precision. Each refresh-backed result
+                        reports persisted/in-memory, current/stale, complete/partial, and
+                        ast/precise/fallback state. Degraded trusted results remain usable and
+                        explicit; mismatched Go build contexts fail closed. stale/default
                         changes/stats inspect trusted persisted graph.json, or the startup
                         auto-build fallback when no usable artifact exists. --persist-refresh
                         can publish successful refreshes for later CLI/server processes.
@@ -1861,7 +1877,51 @@ func graphRefresherWithFreshness(
 	freshness func(*graph.Graph, string) search.StaleResult,
 	publishers ...func(*graph.Graph) (graphPublication, error),
 ) func() (*graph.Graph, error) {
+	initialFreshness := graphstate.FreshnessUnknown
+	if initial != nil {
+		initialFreshness = graphstate.FreshnessCurrent
+		if freshness(initial, root).IsStale {
+			initialFreshness = graphstate.FreshnessStale
+		}
+	}
+	initialState := graphstate.New(initial, graphstate.SourceInMemory, initialFreshness, graphstate.Refresh{
+		Policy:    "automatic",
+		Attempted: false,
+		Outcome:   "not_attempted",
+	}, graphstate.Persistence{Requested: len(publishers) > 0, Outcome: "not_requested"})
+	refresh, _ := graphRefresherWithServingState(initial, initialState, root, buildAST, buildPrecise, freshness, false, publishers...)
+	return refresh
+}
+
+type servingStateTracker struct {
+	mu    sync.RWMutex
+	state graphstate.State
+}
+
+func (tracker *servingStateTracker) set(state graphstate.State) {
+	tracker.mu.Lock()
+	tracker.state = state
+	tracker.mu.Unlock()
+}
+
+func (tracker *servingStateTracker) get() graphstate.State {
+	tracker.mu.RLock()
+	defer tracker.mu.RUnlock()
+	return tracker.state
+}
+
+func graphRefresherWithServingState(
+	initial *graph.Graph,
+	initialState graphstate.State,
+	root string,
+	buildAST func(string) (*graph.Graph, error),
+	buildPrecise func(string) (*graph.Graph, error),
+	freshness func(*graph.Graph, string) search.StaleResult,
+	serveDegraded bool,
+	publishers ...func(*graph.Graph) (graphPublication, error),
+) (func() (*graph.Graph, error), func() graphstate.State) {
 	latest := initial
+	latestSource := initialState.Source
 	artifactPath := filepath.Join(root, graphFile)
 	artifactInfo := graphArtifactInfo(artifactPath)
 	var publisher func(*graph.Graph) (graphPublication, error)
@@ -1869,29 +1929,56 @@ func graphRefresherWithFreshness(
 		publisher = publishers[0]
 	}
 	pendingPublication := false
+	tracker := &servingStateTracker{state: initialState}
+	persistence := func(source graphstate.Source, outcome, diagnostic string) graphstate.Persistence {
+		if outcome == "" {
+			switch {
+			case source == graphstate.SourcePersisted:
+				outcome = "persisted"
+			case publisher == nil:
+				outcome = "not_requested"
+			default:
+				outcome = "pending"
+			}
+		}
+		return graphstate.Persistence{Requested: publisher != nil, Outcome: outcome, Diagnostic: diagnostic}
+	}
+	stateFor := func(candidate *graph.Graph, source graphstate.Source, stale bool, refresh graphstate.Refresh, persistenceOutcome, persistenceDiagnostic string) graphstate.State {
+		freshnessState := graphstate.FreshnessCurrent
+		if stale {
+			freshnessState = graphstate.FreshnessStale
+		}
+		return graphstate.New(candidate, source, freshnessState, refresh, persistence(source, persistenceOutcome, persistenceDiagnostic))
+	}
 
-	publishLatest := func() (*graph.Graph, error) {
+	publishLatest := func(refreshOutcome string, refreshAttempted bool) (*graph.Graph, error) {
 		if publisher == nil {
+			tracker.set(stateFor(latest, latestSource, false, graphstate.Refresh{Policy: "automatic", Attempted: refreshAttempted, Outcome: refreshOutcome}, "", ""))
 			return latest, nil
 		}
 		publication, err := publisher(latest)
 		if err != nil {
 			pendingPublication = true
+			tracker.set(stateFor(latest, latestSource, false, graphstate.Refresh{Policy: "automatic", Attempted: refreshAttempted, Outcome: refreshOutcome}, "failed", err.Error()))
 			return nil, fmt.Errorf("persisting refreshed graph: %w", err)
 		}
 		if publication.Graph == nil {
 			pendingPublication = true
-			return nil, errors.New("persisting refreshed graph returned no graph")
+			err := errors.New("persisting refreshed graph returned no graph")
+			tracker.set(stateFor(latest, latestSource, false, graphstate.Refresh{Policy: "automatic", Attempted: refreshAttempted, Outcome: refreshOutcome}, "failed", err.Error()))
+			return nil, err
 		}
 		latest = publication.Graph
+		latestSource = graphstate.SourcePersisted
 		pendingPublication = false
 		// Do not treat our own same-directory replacement as a later external build on
 		// the next tool call.
 		artifactInfo = graphArtifactInfo(artifactPath)
+		tracker.set(stateFor(latest, latestSource, false, graphstate.Refresh{Policy: "automatic", Attempted: refreshAttempted, Outcome: refreshOutcome}, "persisted", ""))
 		return latest, nil
 	}
 
-	return func() (*graph.Graph, error) {
+	refresh := func() (*graph.Graph, error) {
 		currentArtifactInfo := graphArtifactInfo(artifactPath)
 		if graphArtifactChanged(artifactInfo, currentArtifactInfo) {
 			if persisted, err := loadGraph(root); err == nil {
@@ -1900,18 +1987,30 @@ func graphRefresherWithFreshness(
 				artifactInfo = currentArtifactInfo
 				if shouldAdoptPersistedGraph(latest, persisted) {
 					latest = persisted
+					latestSource = graphstate.SourcePersisted
 					pendingPublication = false
+					stale := freshness(latest, root).IsStale
+					tracker.set(stateFor(latest, latestSource, stale, graphstate.Refresh{Policy: "automatic", Attempted: true, Outcome: "adopted"}, "persisted", ""))
 				}
 			}
 		}
 
 		if latest != nil && !freshness(latest, root).IsStale {
 			if err := precisionFallbackError(latest); err != nil {
+				tracker.set(stateFor(latest, latestSource, false, graphstate.Refresh{Policy: "automatic", Attempted: false, Outcome: "fallback", Diagnostic: err.Error()}, "skipped_degraded", ""))
+				if serveDegraded {
+					return latest, nil
+				}
 				return nil, err
 			}
 			if pendingPublication {
-				return publishLatest()
+				published, err := publishLatest("not_needed", false)
+				if err != nil && serveDegraded {
+					return latest, nil
+				}
+				return published, err
 			}
+			tracker.set(stateFor(latest, latestSource, false, graphstate.Refresh{Policy: "automatic", Attempted: false, Outcome: "not_needed"}, "", ""))
 			return latest, nil
 		}
 
@@ -1928,8 +2027,22 @@ func graphRefresherWithFreshness(
 			refreshed, err := build(root)
 			if refreshed != nil {
 				latest = refreshed
+				latestSource = graphstate.SourceInMemory
 			}
 			if err != nil {
+				if latest != nil {
+					stale = freshness(latest, root)
+					outcome := "failed"
+					persistenceOutcome := ""
+					if latest.Build != nil && latest.Build.EffectivePrecision() == graph.PrecisionFallback {
+						outcome = "fallback"
+						persistenceOutcome = "skipped_degraded"
+					}
+					tracker.set(stateFor(latest, latestSource, stale.IsStale, graphstate.Refresh{Policy: "automatic", Attempted: true, Outcome: outcome, Diagnostic: err.Error()}, persistenceOutcome, ""))
+					if serveDegraded && !stale.BuildContextChanged {
+						return latest, nil
+					}
+				}
 				return nil, err
 			}
 			if latest == nil {
@@ -1938,13 +2051,27 @@ func graphRefresherWithFreshness(
 			stale = freshness(latest, root)
 			if !stale.IsStale {
 				if err := precisionFallbackError(latest); err != nil {
+					tracker.set(stateFor(latest, latestSource, false, graphstate.Refresh{Policy: "automatic", Attempted: true, Outcome: "fallback", Diagnostic: err.Error()}, "skipped_degraded", ""))
+					if serveDegraded {
+						return latest, nil
+					}
 					return nil, err
 				}
-				return publishLatest()
+				published, err := publishLatest("refreshed", true)
+				if err != nil && serveDegraded {
+					return latest, nil
+				}
+				return published, err
 			}
 		}
-		return nil, fmt.Errorf("graph remained stale after %d refresh attempts (%d freshness changes)", maxAttempts, stale.ChangeCount())
+		err := fmt.Errorf("graph remained stale after %d refresh attempts (%d freshness changes)", maxAttempts, stale.ChangeCount())
+		tracker.set(stateFor(latest, latestSource, true, graphstate.Refresh{Policy: "automatic", Attempted: true, Outcome: "failed", Diagnostic: err.Error()}, "", ""))
+		if serveDegraded && latest != nil && !stale.BuildContextChanged {
+			return latest, nil
+		}
+		return nil, err
 	}
+	return refresh, tracker.get
 }
 
 func graphArtifactInfo(path string) os.FileInfo {
@@ -2059,15 +2186,23 @@ func parseMCPArgs(args []string) (mcpOptions, error) {
 }
 
 func prepareMCPGraph(options mcpOptions) (*graph.Graph, string, error) {
+	g, root, _, err := prepareMCPGraphWithState(options)
+	return g, root, err
+}
+
+func prepareMCPGraphWithState(options mcpOptions) (*graph.Graph, string, graphstate.State, error) {
 	root := options.Root
 	if root == "." {
 		root = rootfind.FindRepositoryRoot()
 	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
-		return nil, "", fmt.Errorf("resolving path: %w", err)
+		return nil, "", graphstate.State{}, fmt.Errorf("resolving path: %w", err)
 	}
 
+	source := graphstate.SourcePersisted
+	refresh := graphstate.Refresh{Policy: "automatic", Attempted: false, Outcome: "not_attempted"}
+	persistence := graphstate.Persistence{Requested: options.PersistRefresh, Outcome: "persisted"}
 	g, err := loadGraph(absRoot)
 	if err != nil {
 		// Graph does not exist yet — build it automatically so Claude Desktop
@@ -2075,21 +2210,33 @@ func prepareMCPGraph(options mcpOptions) (*graph.Graph, string, error) {
 		fmt.Fprintf(os.Stderr, "graph unavailable or rebuild required, building automatically for %s...\n", absRoot)
 		g, err = buildGraphWithTags(absRoot, options.Tags)
 		if err != nil {
-			return nil, "", fmt.Errorf("auto-building graph: %w", err)
+			return nil, "", graphstate.State{}, fmt.Errorf("auto-building graph: %w", err)
 		}
+		source = graphstate.SourceInMemory
+		refresh = graphstate.Refresh{Policy: "automatic", Attempted: true, Outcome: "startup_build"}
+		persistence.Outcome = "not_requested"
 		if options.PersistRefresh {
 			buildConfig, _ := resolveBuildConfigWithTags(absRoot, options.Tags)
 			publication, publishErr := publishGraphArtifactsWithFreshness(absRoot, g, refreshArtifactPublication, func(candidate *graph.Graph, root string) search.StaleResult {
 				return search.StaleWithConfig(candidate, root, buildConfig)
 			})
 			if publishErr != nil {
-				return nil, "", fmt.Errorf("persisting auto-built graph: %w", publishErr)
+				return nil, "", graphstate.State{}, fmt.Errorf("persisting auto-built graph: %w", publishErr)
 			}
 			g = publication.Graph
+			source = graphstate.SourcePersisted
+			persistence.Outcome = "persisted"
 		}
 	}
 	absRoot = graphRoot(g)
-	return g, absRoot, nil
+	config, _ := resolveBuildConfigWithTags(absRoot, options.Tags)
+	stale := search.StaleWithConfig(g, absRoot, config).IsStale
+	freshness := graphstate.FreshnessCurrent
+	if stale {
+		freshness = graphstate.FreshnessStale
+	}
+	state := graphstate.New(g, source, freshness, refresh, persistence)
+	return g, absRoot, state, nil
 }
 
 func runMCP(args []string) int {
@@ -2104,7 +2251,7 @@ func runMCP(args []string) int {
 		return 1
 	}
 	defer controller.Restore()
-	g, absRoot, err := prepareMCPGraph(options)
+	g, absRoot, initialState, err := prepareMCPGraphWithState(options)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to prepare MCP graph: %v\n", err)
 		return 1
@@ -2133,7 +2280,7 @@ func runMCP(args []string) int {
 		controller.Reclaim()
 		return built, buildErr
 	}
-	rebuild := graphRefresherWithFreshness(g, absRoot, buildAST, preciseBuilder, freshness, publishers...)
+	rebuild, graphState := graphRefresherWithServingState(g, initialState, absRoot, buildAST, preciseBuilder, freshness, true, publishers...)
 	buildBaseline := func(ctx context.Context, ref string) (*graph.Graph, error) {
 		return baseline.Build(ctx, absRoot, ref, buildAST)
 	}
@@ -2145,6 +2292,7 @@ func runMCP(args []string) int {
 		EffectiveMaxMemoryBytes: controller.BoundedEffectiveLimit(),
 		RequestedBuildTags:      append([]string(nil), options.Tags...),
 		EffectiveBuildTags:      buildConfig.BuildContext().BuildTags,
+		GraphState:              graphState,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
 		return 1
@@ -2185,6 +2333,7 @@ func loadGraph(root string) (*graph.Graph, error) {
 	// relative, because later MCP operations may run from another working
 	// directory and would otherwise re-anchor graph-derived source reads there.
 	g.Root = absRoot
+	rememberOutputGraph(&g)
 	return &g, nil
 }
 
@@ -2672,7 +2821,8 @@ INDEXING
   stale [--tags=<tag[,tag...]>]
                              Check selected files, build context, and content digests.
                              Exit 0 when current, 2 when stale, and 1 on error;
-                             --json uses the same exit contract.
+                             text and --json report persisted/current, complete/partial,
+                             and ast/precise/fallback graph state; --json uses the same exit contract.
                              Agents should run this before structural analysis.
   stats                      Compact index health summary: schema version, build
                              timestamp, and counts of packages, files, symbols,
@@ -2680,7 +2830,8 @@ INDEXING
                              test edges, flow functions, build completeness, analysis
                              precision (ast/precise/precise_fallback), test-call resolution
                              (ast_heuristic/typed_complete/typed_partial), parser reuse,
-                             rebuilt-package count, and parse failures. Zero
+                             rebuilt-package count, parse failures, persisted source, and
+                             freshness. JSON includes gograph.graph-state.v1. Zero
                              re-parsing — reads graph.json only.
 
 WORKSPACES
@@ -3010,7 +3161,12 @@ AGENT INTEGRATION
   mcp [path] [--persist-refresh] [--tags=<tag[,tag...]>] [--memory-mode=low] [--max-memory=<size>]
                              Start a Model Context Protocol server over stdio.
                              Exposes graph queries as native tools for AI clients;
-                             adopts newer precise graphs and preserves precision on refresh.
+                             adopts newer precise graphs and reports every served graph as
+                             persisted/in-memory, current/stale, complete/partial, and
+                             ast/precise/fallback in MCP metadata and structured content.
+                             Failed enrichment may serve a marked in-memory fallback; an
+                             ordinary refresh failure may serve the last trusted stale graph.
+                             Build-context mismatches still fail closed.
                              --persist-refresh is opt-in and publishes the latest successful
                              refresh to .gograph; it is not a multi-branch graph cache.
                              Memory options apply the same low-memory policy to startup
@@ -3228,12 +3384,16 @@ func runStale(rawArgs []string) int {
 		config, _ := resolveBuildConfigWithTags(graphRoot(g), normalizedTags)
 		sr = search.StaleWithConfig(g, graphRoot(g), config)
 	}
+	state := graphstate.ManualPersisted(g, sr.IsStale)
 	if jsonMode {
+		envelope := okEnvelope("stale", "", sr, sr.ChangeCount())
+		envelope.GraphState = &state
 		return staleJSONExitCode(
-			PrintJSON(okEnvelope("stale", "", sr, sr.ChangeCount())),
+			PrintJSON(envelope),
 			sr.IsStale,
 		)
 	}
+	fmt.Printf("Graph state: source=%s freshness=%s completeness=%s precision=%s.\n", state.Source, state.Freshness, state.Completeness, state.Precision)
 	if !sr.IsStale {
 		fmt.Printf("Graph is up to date (generated: %s).\n", sr.GraphAge)
 		return exitSuccess
@@ -3268,10 +3428,16 @@ func runStats() int {
 		return failCommand("stats", err.Error())
 	}
 	st := search.Stats(g)
+	freshness := search.Stale(g, graphRoot(g))
+	state := graphstate.ManualPersisted(g, freshness.IsStale)
 	if jsonMode {
-		return PrintJSON(okEnvelope("stats", "", st, 1))
+		envelope := okEnvelope("stats", "", st, 1)
+		envelope.GraphState = &state
+		return PrintJSON(envelope)
 	}
 	fmt.Printf("schema_version : %s\n", st.SchemaVersion)
+	fmt.Printf("artifact_source: %s\n", state.Source)
+	fmt.Printf("freshness      : %s\n", state.Freshness)
 	fmt.Printf("generated_at   : %s\n", st.GeneratedAt)
 	fmt.Printf("precision      : %s\n", st.Precision)
 	fmt.Printf("test_resolution: %s\n", st.TestCallResolution)

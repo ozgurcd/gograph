@@ -11,7 +11,9 @@ import (
 
 	mcpprotocol "github.com/mark3labs/mcp-go/mcp"
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/graphstate"
 	mcpserver "github.com/ozgurcd/gograph/internal/mcp"
+	"github.com/ozgurcd/gograph/internal/search"
 )
 
 func skipCoverageCacheFallback(t *testing.T, g *graph.Graph) {
@@ -755,6 +757,139 @@ func TestGraphRefresherDoesNotAdoptNewerASTOverPreciseGraph(t *testing.T) {
 	}
 	if got != initial {
 		t.Fatalf("newer AST artifact downgraded precise graph: got=%p want=%p", got, initial)
+	}
+}
+
+func TestServingRefresherReturnsExplicitInMemoryFallback(t *testing.T) {
+	root := t.TempDir()
+	initial := &graph.Graph{Root: root, Build: &graph.BuildMetadata{Complete: true, Precision: graph.PrecisionPrecise}}
+	fallback := &graph.Graph{Root: root, Build: &graph.BuildMetadata{Complete: true, Precision: graph.PrecisionFallback}}
+	initialState := graphstate.New(initial, graphstate.SourcePersisted, graphstate.FreshnessStale, graphstate.Refresh{
+		Policy: "automatic", Attempted: false, Outcome: "not_attempted",
+	}, graphstate.Persistence{Outcome: "persisted"})
+	refresh, state := graphRefresherWithServingState(
+		initial,
+		initialState,
+		root,
+		func(string) (*graph.Graph, error) { t.Fatal("unexpected AST build"); return nil, nil },
+		func(string) (*graph.Graph, error) { return fallback, errors.New("typed loading failed") },
+		func(candidate *graph.Graph, _ string) search.StaleResult {
+			return search.StaleResult{IsStale: candidate == initial}
+		},
+		true,
+	)
+
+	got, err := refresh()
+	if err != nil || got != fallback {
+		t.Fatalf("refresh = graph:%p err:%v, want served fallback %p", got, err, fallback)
+	}
+	served := state()
+	if served.Source != graphstate.SourceInMemory || served.Freshness != graphstate.FreshnessCurrent || served.Precision != graphstate.PrecisionFallback {
+		t.Fatalf("fallback state = %+v", served)
+	}
+	if served.Refresh.Outcome != "fallback" || served.Refresh.Diagnostic == "" || served.Persistence.Outcome != "skipped_degraded" {
+		t.Fatalf("fallback operations = refresh:%+v persistence:%+v", served.Refresh, served.Persistence)
+	}
+}
+
+func TestServingRefresherReturnsTrustedStaleGraphAfterBuildFailure(t *testing.T) {
+	root := t.TempDir()
+	initial := &graph.Graph{Root: root, Build: &graph.BuildMetadata{Complete: true, Precision: graph.PrecisionAST}}
+	initialState := graphstate.ManualPersisted(initial, true)
+	refresh, state := graphRefresherWithServingState(
+		initial,
+		initialState,
+		root,
+		func(string) (*graph.Graph, error) { return nil, errors.New("source changed during scan") },
+		func(string) (*graph.Graph, error) { t.Fatal("unexpected precise build"); return nil, nil },
+		func(*graph.Graph, string) search.StaleResult { return search.StaleResult{IsStale: true} },
+		true,
+	)
+
+	got, err := refresh()
+	if err != nil || got != initial {
+		t.Fatalf("refresh = graph:%p err:%v, want trusted stale graph %p", got, err, initial)
+	}
+	served := state()
+	if served.Source != graphstate.SourcePersisted || served.Freshness != graphstate.FreshnessStale || served.Refresh.Outcome != "failed" || served.Refresh.Diagnostic == "" {
+		t.Fatalf("stale state = %+v", served)
+	}
+}
+
+func TestServingRefresherNeverServesMismatchedBuildContext(t *testing.T) {
+	root := t.TempDir()
+	initial := &graph.Graph{Root: root, Build: &graph.BuildMetadata{Complete: true, Precision: graph.PrecisionAST}}
+	initialState := graphstate.ManualPersisted(initial, true)
+	refresh, state := graphRefresherWithServingState(
+		initial,
+		initialState,
+		root,
+		func(string) (*graph.Graph, error) { return nil, errors.New("cannot resolve selected Go context") },
+		func(string) (*graph.Graph, error) { t.Fatal("unexpected precise build"); return nil, nil },
+		func(*graph.Graph, string) search.StaleResult {
+			return search.StaleResult{IsStale: true, BuildContextChanged: true}
+		},
+		true,
+	)
+
+	got, err := refresh()
+	if got != nil || err == nil || !strings.Contains(err.Error(), "selected Go context") {
+		t.Fatalf("mismatched context refresh = graph:%p err:%v, want hard failure", got, err)
+	}
+	served := state()
+	if served.Freshness != graphstate.FreshnessStale || served.Refresh.Outcome != "failed" {
+		t.Fatalf("mismatched context state = %+v", served)
+	}
+}
+
+func TestServingRefresherReportsPublicationFailureWithoutDiscardingFreshGraph(t *testing.T) {
+	root := t.TempDir()
+	initial := &graph.Graph{Root: root, Build: &graph.BuildMetadata{Complete: true, Precision: graph.PrecisionAST}}
+	refreshed := &graph.Graph{Root: root, Build: &graph.BuildMetadata{Complete: false, Precision: graph.PrecisionAST}}
+	initialState := graphstate.ManualPersisted(initial, true)
+	builds := 0
+	publications := 0
+	refresh, state := graphRefresherWithServingState(
+		initial,
+		initialState,
+		root,
+		func(string) (*graph.Graph, error) { builds++; return refreshed, nil },
+		func(string) (*graph.Graph, error) { t.Fatal("unexpected precise build"); return nil, nil },
+		func(candidate *graph.Graph, _ string) search.StaleResult {
+			return search.StaleResult{IsStale: candidate == initial}
+		},
+		true,
+		func(*graph.Graph) (graphPublication, error) {
+			publications++
+			if publications == 1 {
+				return graphPublication{}, errors.New("disk full")
+			}
+			return graphPublication{Graph: refreshed}, nil
+		},
+	)
+
+	got, err := refresh()
+	if err != nil || got != refreshed {
+		t.Fatalf("refresh = graph:%p err:%v, want fresh in-memory graph %p", got, err, refreshed)
+	}
+	served := state()
+	if served.Source != graphstate.SourceInMemory || served.Freshness != graphstate.FreshnessCurrent || served.Completeness != graphstate.CompletenessPartial {
+		t.Fatalf("fresh state = %+v", served)
+	}
+	if served.Persistence.Outcome != "failed" || served.Persistence.Diagnostic == "" || served.Refresh.Diagnostic != "" {
+		t.Fatalf("publication state = refresh:%+v persistence:%+v", served.Refresh, served.Persistence)
+	}
+
+	got, err = refresh()
+	if err != nil || got != refreshed {
+		t.Fatalf("publication retry = graph:%p err:%v, want published graph %p", got, err, refreshed)
+	}
+	served = state()
+	if builds != 1 || publications != 2 {
+		t.Fatalf("builds/publications = %d/%d, want 1/2", builds, publications)
+	}
+	if served.Source != graphstate.SourcePersisted || served.Refresh.Attempted || served.Persistence.Outcome != "persisted" || served.Persistence.Diagnostic != "" {
+		t.Fatalf("published retry state = %+v", served)
 	}
 }
 

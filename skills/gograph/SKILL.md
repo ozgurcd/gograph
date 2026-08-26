@@ -79,6 +79,16 @@ Packaged and generated registrations keep refresh persistence off by default.
    `gograph build . --precise` first. Run the repository's required tests and
    checks separately.
 
+Every refresh-backed MCP response preserves its compatibility text and adds a
+`gograph.mcp-result.v1` `structuredContent` value. Inspect its
+`graph_state` before using an absence or broad impact result: `source`,
+`freshness`, `completeness`, and `precision` are independent. A current
+in-memory fallback and a trusted stale persisted result are intentionally
+usable but degraded; disclose them and cross-check important negatives. A
+different effective Go build context fails closed rather than being served.
+CLI graph-backed `--json` responses expose the same
+`gograph.graph-state.v1` object at the envelope top level.
+
 ## High-value tools
 
 | Tool | Use case |
@@ -167,9 +177,9 @@ An operator can opt into durable MCP refreshes with
 `gograph mcp [path] --persist-refresh`. After a successful refresh this writes
 or overwrites `.gograph/graph.json` and the nine reports, without modifying
 `.gitignore`. Refresh-capable tools then advertise that they may write. A
-publication failure during a tool-triggered refresh is a tool error and is
-retried on a later refresh-capable call without rebuilding the fresh in-memory
-graph. If startup must auto-build, failure to publish prevents the server from
+publication failure during a tool-triggered refresh is reported as
+`persistence.outcome=failed`; the fresh in-memory result remains usable and the
+write is retried on a later refresh-capable call without rebuilding. If startup must auto-build, failure to publish prevents the server from
 starting. A failed precise retry retains an already-fresh successful precise
 artifact for the same sources. The artifact is the latest state only, not a
 branch cache. Because default `gograph_changes` compares the working tree with

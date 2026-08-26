@@ -287,7 +287,7 @@ func TestRunCheckJSONSuccessAndPolicyFailureUseEnvelope(t *testing.T) {
 		if report.Status != string(search.CheckPassed) || len(report.Findings) != 0 {
 			t.Fatalf("report = %+v", report)
 		}
-		requireJSONContractFields(t, fields, "schema_version", "command", "status", "count", "results")
+		requireJSONContractFields(t, fields, "schema_version", "command", "status", "count", "results", "graph_state")
 	})
 
 	t.Run("failed policy preserves exit one", func(t *testing.T) {
@@ -314,7 +314,7 @@ func TestRunCheckJSONSuccessAndPolicyFailureUseEnvelope(t *testing.T) {
 		if report.Status != string(search.CheckFailed) || len(report.Findings) != 1 {
 			t.Fatalf("report = %+v", report)
 		}
-		requireJSONContractFields(t, fields, "schema_version", "command", "status", "count", "results")
+		requireJSONContractFields(t, fields, "schema_version", "command", "status", "count", "results", "graph_state")
 	})
 }
 
@@ -370,7 +370,7 @@ func TestRunAPIJSONCountReflectsDriftItems(t *testing.T) {
 	if envelope.Count != 3 {
 		t.Fatalf("count = %d, want 3 (one added, one removed, one route added)", envelope.Count)
 	}
-	requireJSONContractFields(t, fields, "schema_version", "command", "query", "status", "count", "results")
+	requireJSONContractFields(t, fields, "schema_version", "command", "query", "status", "count", "results", "graph_state")
 }
 
 func TestRunCheckRejectsLinkedDefaultConfig(t *testing.T) {
