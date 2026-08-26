@@ -2,7 +2,25 @@
 
 ## Unreleased
 
-No changes yet.
+### Bounded first-call exploration
+
+- Added CLI `gograph explore <term...> [--limit N] [--exact] [--json]` and
+  project-MCP `gograph_explore`. Both use one shared `gograph.explore.v1`
+  result that combines ranked lexical matches with an explicitly disclosed
+  selected symbol's source, nodes, direct callers, direct callees, attributed
+  tests, and exact identity-resolved transitive upstream impact; possible
+  dispatch edges stay out of the bundled impact result.
+- Explore results preserve ambiguity, report direct-versus-ranked selection,
+  include complete section totals, and name every truncated section. The
+  common per-section limit defaults to 10 and is clamped to 1-100; specialized
+  commands remain available for complete focused output.
+- Question-like input is deterministically tokenized for lexical search and is
+  not presented as model-interpreted understanding. Exact mode retains broad
+  matches while refusing to promote a fuzzy result into deep symbol context.
+- Updated CLI help/capabilities, MCP capabilities, transport counts, README,
+  agent guidance, public command reference, integrations, and durable project
+  context. The project MCP server now exposes 64 CLI-equivalent capabilities
+  plus four session lifecycle tools (68 endpoints total).
 
 ## v1.6.6 — 2026-08-25
 

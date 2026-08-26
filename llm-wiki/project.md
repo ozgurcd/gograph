@@ -2,20 +2,22 @@
 title: Project Identity and Architecture
 type: project
 status: current
-updated: 2026-08-25
+updated: 2026-08-26
 sources:
   - SRC-20260614-gograph-legacy-project
 ---
 
 # Project: gograph
 
-`gograph` is a local Go repository indexer for coding agents. CLI and the project MCP server share 63 repository query, analysis, and workflow capabilities; four additional session tools make 67 project endpoints. A separate workspace MCP server exposes status, query, path, and impact through the same native implementations as their CLI operations. CLI graph-backed commands read persisted `.gograph/graph.json`. Project MCP keeps source-analysis requests fresh in memory by default and can publish refreshed artifacts only when started with `--persist-refresh`.
+`gograph` is a local Go repository indexer for coding agents. CLI and the project MCP server share 64 repository query, analysis, and workflow capabilities; four additional session tools make 68 project endpoints. A separate workspace MCP server exposes status, query, path, and impact through the same native implementations as their CLI operations. CLI graph-backed commands read persisted `.gograph/graph.json`. Project MCP keeps source-analysis requests fresh in memory by default and can publish refreshed artifacts only when started with `--persist-refresh`.
 
 ## Positioning and onboarding
 
 gograph is a local repository-analysis layer backed by persisted or in-memory graph state, not a replacement for every Go or search tool. Use `gopls` for live compiler-backed workspace diagnostics, navigation, implementations, and refactoring; use `rg` or other text search for literals, comments, generated/non-indexed files, and non-Go content. Use gograph for repository-level impact, reachability, application inventories, composed agent workflows, and policy gates. When graph precision is AST/fallback, results are ambiguous, or a known call is missing, cross-check with `gopls` or targeted source/text search and disclose the fallback.
 
 The executable Go package is `github.com/ozgurcd/gograph/cmd/gograph`. First-run documentation must use repository-wide commands such as `stats`, `summary`, and `hotspot` before examples that require a project-specific symbol. Product claims must distinguish reproducible snapshot counts from inference and must not promise absolute accuracy, fixed token savings, or hallucination-rate improvements without published methodology and data.
+
+CLI `explore` and MCP `gograph_explore` are one additive, bounded first-call capability over the shared `gograph.explore.v1` value. They rank deterministic lexical matches, disclose the selected symbol and whether it came from direct or ranked resolution, preserve ambiguity, and bundle source, callers, callees, attributed tests, and exact identity-resolved transitive impact. Possible dispatch edges are excluded from that bundled impact section. Question-like input is tokenized lexically rather than interpreted by a model. Complete section totals and truncation metadata direct callers to the existing focused commands when they need unbounded evidence or broader fallback traversal; those commands remain stable and authoritative.
 
 ## Published evidence and shareable entry points
 

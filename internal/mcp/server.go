@@ -332,8 +332,8 @@ func NewServer(
 			"summary":      "gograph MCP capabilities",
 			"prerequisite": "The MCP server loads only a regular, repository-confined .gograph/graph.json with the current source-policy marker and " + startupGraph + ". Whole graph, saved-baseline, validation, MCP-reload, and workspace-overlay JSON reads reject artifacts larger than 512 MiB before allocation; startup recovery rebuilds an oversized graph from source. Its serialized root is ignored. Source-analysis tools compare selected-file content digests and the build/module fingerprint per call, then incrementally rebuild changed package ASTs after edits using the latest requested analysis mode and build tags selected at MCP startup; precise CHA/SSA enrichment remains repository-wide for selected project packages but does not build dependency SSA bodies, and separately attempts typed test-call attribution without making test compilation a prerequisite for production precision. Typed-only test targets are recomputed rather than restored as parser facts. gograph_stale, gograph_changes without git_ref, and gograph_stats inspect that trusted persisted index, or the startup auto-build fallback when no usable artifact exists. Linked directories and linked or special files recognized as Go build inputs are excluded, while unrelated regular-file or dangling links with non-Go extensions do not block precision. Linked/non-regular Go tool metadata (go.mod, go.sum, go.work, go.work.sum, and vendor/modules.txt) is rejected before toolchain use. Applicable go.work members may be sibling modules beneath the nearest real Git checkout; without that boundary they remain confined beneath the workspace directory. Each member directory, go.mod, and optional go.sum is validated before cmd/go. Use the current binary for untrusted repositories because older binaries do not enforce this contract. Run `gograph build . --precise --tags=integration` for type-checked CHA/SSA enrichment of an explicitly tagged selection; MCP accepts the same --tags selector, adopts a newer precise graph, and re-runs precision after source changes without silently changing that context or downgrading to AST-only analysis. A persisted graph built under a different effective GOWORK or build selection is stale and must refresh successfully or return a diagnostic rather than being silently served; `gograph doctor --json` reports that diagnostic. On constrained hosts, project MCP startup accepts `--memory-mode=low --max-memory=1GiB`; analysis_memory reports the requested/effective soft Go runtime memory target, which is not a hard RSS cap. Session lifecycle tools write local telemetry, gograph_session_cleanup deletes stale logs, gograph_boundaries_create writes configuration, and gograph_wiki writes documentation; wiki regeneration prunes only obsolete generator-owned package pages and preserves custom pages plus packages/README.md. Their repository-controlled paths use rooted regular-file operations that reject descendant links. When an audit session is active, non-session MCP calls append observational command telemetry even when their analysis contract is read-only. Saved graph baselines must be regular files inside the project root, have no linked path component, and carry the exact current source-policy marker; their serialized root is ignored. gograph_doc rejects filesystem-shaped queries and source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees; .git and .gograph are excluded from that preflight. It invokes the local Go toolchain after repository source/metadata validation and is annotated open-world because dependency resolution follows the user's Go environment.",
 			"transport_contract": map[string]any{
-				"project_server_tools": 67,
-				"cli_equivalent_tools": 63,
+				"project_server_tools": 68,
+				"cli_equivalent_tools": 64,
 				"session_tools":        []string{"gograph_session_create", "gograph_session_end", "gograph_session_audit", "gograph_session_cleanup"},
 				"standard_mapping":     "CLI <command> maps to MCP gograph_<command>",
 				"special_mappings": map[string]string{
@@ -384,6 +384,7 @@ func NewServer(
 				{"name": "gograph_session_audit", "purpose": "Review and grade agent compliance (Plan rule, Review rule, Composability/Efficiency) and tool success rates."},
 				{"name": "gograph_session_cleanup", "purpose": "Delete stale inactive regular session logs without following linked repository paths; preserves the active log."},
 				{"name": "gograph_query", "purpose": "Search symbols, packages, files, and imports by one term or an OR-combined terms array."},
+				{"name": "gograph_explore", "purpose": "Bounded first-call discovery: ranked lexical matches plus an explicitly selected symbol's source, callers, callees, tests, and exact identity-resolved transitive impact."},
 				{"name": "gograph_focus", "purpose": "Full structural summary of one package: files, symbols, internal call edges, and imports. Use before editing an unfamiliar package."},
 				{"name": "gograph_context", "purpose": "Pre-flight bundle: first node plus all ambiguous nodes, source/source_error, callers, callees, structured tests, and top-level role. Use uncommitted=true for all modified symbols."},
 				{"name": "gograph_plan", "purpose": "Pre-edit plan: symbols to inspect first, tests, routes, env, and risk flags. Set with_context=true to inline the same complete context bundles."},
@@ -446,12 +447,13 @@ func NewServer(
 				{"name": "gograph_wiki", "purpose": "Generate machine-first Markdown; relative output is project-rooted, while absolute output is an explicit real local destination."},
 			},
 			"recommended_workflows": map[string][]string{
-				"session_start":  {"READ llm-wiki/index.md", "READ llm-wiki/project.md", "READ llm-wiki/agent-rules.md", "READ llm-wiki/agent-contract.md", "CLI gograph doctor --json", "gograph_summary", "gograph_stale"},
-				"before_edit":    {"gograph_context", "gograph_plan"},
-				"after_edit":     {"gograph_review", "gograph_risk", "gograph_api", "gograph_boundaries"},
-				"error_changes":  {"gograph_errorflow", "gograph_review"},
-				"security_audit": {"gograph_flow", "gograph_source", "gograph_callers"},
-				"api_changes":    {"gograph_api", "gograph_review"},
+				"session_start":   {"READ llm-wiki/index.md", "READ llm-wiki/project.md", "READ llm-wiki/agent-rules.md", "READ llm-wiki/agent-contract.md", "CLI gograph doctor --json", "gograph_summary", "gograph_stale"},
+				"initial_explore": {"gograph_explore", "gograph_focus or a specialized tool when a complete section is needed"},
+				"before_edit":     {"gograph_context", "gograph_plan"},
+				"after_edit":      {"gograph_review", "gograph_risk", "gograph_api", "gograph_boundaries"},
+				"error_changes":   {"gograph_errorflow", "gograph_review"},
+				"security_audit":  {"gograph_flow", "gograph_source", "gograph_callers"},
+				"api_changes":     {"gograph_api", "gograph_review"},
 			},
 			"limitations": []string{
 				"gograph is static analysis.",
@@ -507,6 +509,42 @@ func NewServer(
 		}
 		results := search.Query(g, terms)
 		return formatResults(results), nil
+	})
+
+	// Tool: gograph_explore
+	exploreTool := mcp.NewTool("gograph_explore",
+		mcp.WithDescription("Explore a lexical term or Go symbol in one bounded call. Combines ranked broad matches with an explicitly disclosed selected symbol, source, node metadata, direct callers, direct callees, attributed tests, and exact identity-resolved transitive upstream impact; possible dispatch edges are excluded from impact. The MCP server refreshes source analysis before the call. Read-only; no persistent side effects. Question-like text is tokenized for deterministic lexical matching and is not interpreted by a model. WHEN TO USE: As the first structural call when you want both discovery and a useful symbol context without choosing several specialized tools. NOT TO USE: When you need a complete unbounded section or broader fallback traversal (use gograph_query, gograph_context, or gograph_impact); for package-wide orientation (use gograph_focus). RETURNS: gograph.explore.v1 with selection_basis, ambiguity, complete section totals, bounded arrays, and explicit truncated_sections."),
+		mcp.WithString("query", mcp.Required(), mcp.Description("A symbol, fully-qualified ID, lexical feature term, or short question-like phrase to explore")),
+		mcp.WithInteger("limit", mcp.Description("Maximum rows returned per section, clamped to 1-100 (default 10)")),
+		mcp.WithBoolean("exact", mcp.Description("Require exact symbol resolution for deep context; broad lexical matches remain visible")),
+	)
+	addTool(exploreTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if newG, err := rebuild(); err == nil {
+			g = newG
+		} else {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
+		}
+		args, ok := request.Params.Arguments.(map[string]any)
+		if !ok {
+			return mcp.NewToolResultError("invalid arguments"), nil
+		}
+		query, ok := args["query"].(string)
+		if !ok || strings.TrimSpace(query) == "" {
+			return mcp.NewToolResultError("query must be a non-empty string"), nil
+		}
+		limit, err := intArg(args, "limit", search.DefaultExploreLimit, 1, search.MaxExploreLimit)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		result := search.Explore(g, graphRoot(g), query, search.ExploreOptions{
+			Limit: limit,
+			Exact: boolArg(args, "exact"),
+		})
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultText(string(data)), nil
 	})
 
 	// Tool: gograph_focus

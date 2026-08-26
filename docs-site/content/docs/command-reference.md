@@ -170,6 +170,31 @@ for the schemas, freshness rules, and completeness requirements.
 
 ## Search & Navigation
 
+### explore
+```bash
+gograph explore <term...> [--limit N] [--exact] [--json]
+```
+Performs bounded first-call discovery by composing ranked broad lexical matches
+with one explicitly disclosed selected symbol's node metadata, source, direct
+callers, direct callees, attributed tests, and exact identity-resolved
+transitive upstream impact. Possible dispatch edges are excluded from this
+bounded impact section. Use focused `impact` for broader fallback traversal.
+
+- **Selection**: `selection_basis` is `direct_symbol_match`,
+  `ranked_lexical_match`, or `none`; `ambiguous` remains true when the selected
+  symbol resolves to several nodes. Question-like input is tokenized
+  lexically and is not interpreted by a model.
+- **Bounds**: `--limit` applies independently to every returned list, defaults
+  to 10, and is clamped to 1-100. `totals` reports complete section sizes and
+  `truncated_sections` identifies every bounded section. Use the focused
+  `query`, `context`, or `impact` command when a complete section is required.
+- **Exact mode**: `--exact` requires exact resolution for deep symbol context;
+  broad lexical matches remain visible but are not promoted automatically.
+- **JSON/MCP parity**: CLI `--json` places the native
+  `gograph.explore.v1` value in its generic `results` envelope. MCP
+  `gograph_explore` returns that same native value as JSON text, with required
+  `query` and matching optional `limit` and `exact` parameters.
+
 ### query
 ```bash
 gograph query <term...>
@@ -835,12 +860,12 @@ transport has an undocumented analytical feature.
 | Types/tests | `implementers` ↔ `gograph_implementers`; `interfaces` ↔ `gograph_interfaces`; `fields` ↔ `gograph_fields`; `embeds` ↔ `gograph_embeds`; `constructors` ↔ `gograph_constructors`; `literals` ↔ `gograph_literals`; `usages` ↔ `gograph_usages`; `returnusage` ↔ `gograph_returnusage`; `schema` ↔ `gograph_schema`; `globals` ↔ `gograph_globals`; `mocks` ↔ `gograph_mocks`; `fixtures` ↔ `gograph_fixtures`; `identity` ↔ `gograph_identity` |
 | Packages/changes | `imports` ↔ `gograph_imports`; `deps` ↔ `gograph_deps`; `dependents` ↔ `gograph_dependents`; `changes` ↔ `gograph_changes` |
 | Extraction | `routes` ↔ `gograph_routes`; `sql` ↔ `gograph_sql`; `errors` ↔ `gograph_errors`; `envs` ↔ `gograph_envs`; `concurrency` ↔ `gograph_concurrency`; `httpcalls` ↔ `gograph_httpcalls`; `flow` ↔ `gograph_flow`; `tests` ↔ `gograph_tests`; `coverage` ↔ `gograph_coverage` |
-| Composed workflows | `context` ↔ `gograph_context`; `plan` ↔ `gograph_plan`; `review` ↔ `gograph_review`; `risk` ↔ `gograph_risk`; `errorflow` ↔ `gograph_errorflow`; `trace` ↔ `gograph_trace`; `endpoint` ↔ `gograph_endpoint`; `explain` ↔ `gograph_explain`; `summary` ↔ `gograph_summary`; `untested` ↔ `gograph_untested` |
+| Composed workflows | `explore` ↔ `gograph_explore`; `context` ↔ `gograph_context`; `plan` ↔ `gograph_plan`; `review` ↔ `gograph_review`; `risk` ↔ `gograph_risk`; `errorflow` ↔ `gograph_errorflow`; `trace` ↔ `gograph_trace`; `endpoint` ↔ `gograph_endpoint`; `explain` ↔ `gograph_explain`; `summary` ↔ `gograph_summary`; `untested` ↔ `gograph_untested` |
 | Quality/policy | `api`/`contract` ↔ `gograph_api`; `boundaries` ↔ `gograph_boundaries`; `boundaries --create` ↔ `gograph_boundaries_create`; `check` ↔ `gograph_check`; `complexity` ↔ `gograph_complexity`; `coupling` ↔ `gograph_coupling`; `diagram` ↔ `gograph_diagram`; `hotspot` ↔ `gograph_hotspot`; `godobj` ↔ `gograph_godobj`; `skeleton` ↔ `gograph_skeleton`; `mutate` ↔ `gograph_mutate`; `arity` ↔ `gograph_arity` |
 | Documentation/toolchain | `wiki` ↔ `gograph_wiki`; `doc` ↔ `gograph_doc` |
 | Session lifecycle | `session create` ↔ `gograph_session_create`; `session end` ↔ `gograph_session_end`; `session audit` ↔ `gograph_session_audit`; `session cleanup` ↔ `gograph_session_cleanup` |
 
-That is 63 CLI-equivalent project capabilities plus four session tools: 67
+That is 64 CLI-equivalent project capabilities plus four session tools: 68
 tools on `gograph mcp`. The separate `gograph workspace mcp` server adds these
 four exact pairs:
 
@@ -925,10 +950,12 @@ AI clients (e.g., Claude Code, Cursor).
   `gograph_impact`, `gograph_endpoint`, `gograph_dependents`, `gograph_deps`,
   `gograph_path`, or `gograph_coupling`. The tool returns Mermaid flowchart
   text instead of its normal response.
-- **Parity**: 63 query, analysis, and workflow commands have corresponding MCP
-  endpoints; four additional endpoints manage sessions (67 endpoints total).
+- **Parity**: 64 query, analysis, and workflow commands have corresponding MCP
+  endpoints; four additional endpoints manage sessions (68 endpoints total).
   MCP uses typed tool arguments rather than CLI global flags, and some
   not-found and status results have different transport-level presentation.
+  `gograph_explore` and CLI `explore --json` share the native
+  `gograph.explore.v1` value; only the CLI adds its generic envelope.
 - **Audit telemetry**: Read-only annotations describe the functional analysis
   contract. While an audit session is active, non-session MCP calls append
   local command/status telemetry without arguments or query results.

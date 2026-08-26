@@ -83,6 +83,7 @@ func main() { _ = Work() }
 	handlers := setupHandlers(t, g)
 	args := map[string]map[string]any{
 		"gograph_query":             {"terms": []any{"Work", "Config"}},
+		"gograph_explore":           {"query": "Work", "limit": float64(5), "exact": true},
 		"gograph_focus":             {"package": "sample"},
 		"gograph_callers":           {"function": "Work", "depth": float64(2), "no_tests": true},
 		"gograph_callees":           {"function": "main", "depth": float64(2)},
@@ -147,7 +148,7 @@ func main() { _ = Work() }
 		called++
 		callTool(t, handler, args[name])
 	}
-	if called != 63 {
-		t.Fatalf("executed %d non-session MCP tools, want 63", called)
+	if called != 64 {
+		t.Fatalf("executed %d non-session MCP tools, want 64", called)
 	}
 }

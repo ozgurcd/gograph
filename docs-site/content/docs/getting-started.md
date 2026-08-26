@@ -189,6 +189,9 @@ Choose a real function or method reported by `summary`, `hotspot`, or
 `gograph complexity`, then replace `YourSymbol` below with that name:
 
 ```bash
+# Start with bounded ranked discovery and an explicit selected symbol
+gograph explore YourSymbol
+
 # Read its source and surrounding graph context
 gograph source YourSymbol
 gograph context YourSymbol
@@ -205,6 +208,11 @@ gograph impact YourSymbol
 # Before editing it
 gograph plan YourSymbol
 ```
+
+`explore` is additive: it limits each section (10 by default), reports complete
+totals and truncation, and shares `gograph.explore.v1` with MCP
+`gograph_explore`. Use the focused commands shown above when you need an
+unbounded section.
 
 ### Example: Reading Symbol Source Code
 

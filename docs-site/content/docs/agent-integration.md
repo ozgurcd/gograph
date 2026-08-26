@@ -169,7 +169,7 @@ Eight graph-oriented MCP tools match the CLI's Mermaid surface. Set
 of the tool's normal response. `gograph_diagram` always returns Mermaid
 architecture text.
 
-The server exposes 67 endpoints: 63 tools corresponding to CLI query,
+The server exposes 68 endpoints: 64 tools corresponding to CLI query,
 analysis, and workflow commands plus four session lifecycle tools. Tool
 arguments and transport-level status presentation can differ from CLI flags
 and process exit codes. `gograph_flow` matches the CLI `flow` filters (`term`,
@@ -183,6 +183,13 @@ by default; `transitive=true` maps to CLI `tests --transitive` and returns the
 same `gograph.tests.v1` exact/possible paths. `gograph_untested.exclude[]` is the
 typed equivalent of repeatable CLI `--exclude` globs; its rows include full
 stable IDs, corresponding to CLI `untested --wide` presentation.
+`gograph_explore` is the bounded first-call option: it returns ranked lexical
+matches plus an explicitly disclosed selected symbol's source, callers,
+callees, tests, and exact identity-resolved transitive impact; possible
+dispatch is excluded from that impact section. Its native
+`gograph.explore.v1` JSON is
+the same value wrapped by CLI `explore --json`; use focused tools when a
+complete unbounded section is required.
 
 The normal mapping is CLI `<command>` to project-MCP
 `gograph_<command>`; aliases, boundary creation, and session actions are listed

@@ -32,6 +32,7 @@ capabilities, or build-context diagnostic are visible before any MCP result is
 trusted.
 
 ```sh
+gograph explore <term...>       # bounded ranked discovery + selected symbol context + impact
 gograph query <term>            # symbol/package/file/import/call substring search (works great for finding specific test names!)
 gograph focus <package>         # isolate context for a specific package
 gograph callers <function|Interface.Method> [--no-tests] [--depth N] [--exact] # who calls it; interface-qualified queries expand precise CHA targets
@@ -199,7 +200,8 @@ search from the start.
 - Session start: read `llm-wiki/index.md` → `llm-wiki/project.md` → `llm-wiki/agent-rules.md` → `llm-wiki/agent-contract.md` (if these maintained pages exist). Treat `agent-rules.md` as protected policy and use the repository's governed draft workflow for proposed changes.
 - If generated pages are missing: `gograph build . --precise && gograph wiki`
 - Graph freshness: `gograph stats` + `gograph stale`
-- Understand a symbol: `gograph context <symbol>` (raw data) or `gograph explain <symbol>` (narrative — use when you need to understand purpose and architecture)
+- Start from an unfamiliar term: `gograph explore <term...>` (bounded ranked matches plus disclosed symbol selection, source, callers, callees, tests, and exact identity impact)
+- Understand a known symbol: `gograph context <symbol>` (raw data) or `gograph explain <symbol>` (narrative — use when you need to understand purpose and architecture)
 - Before editing: `gograph plan <symbol>` (callers, tests, SQL/env/route risk)
 - Before a package refactor: `gograph dependents <pkg>` (indexed import consumers)
 - After editing: `gograph build . --precise`, then `gograph review --uncommitted`, followed by the repository's required tests and checks
@@ -400,6 +402,21 @@ cli                                                          14       0  1.00
 search                                                        9       0  1.00
 graph                                                         3       8  0.27
 ```
+
+### Bounded first-call exploration
+
+`gograph explore <term...> [--limit N] [--exact]` combines broad lexical
+discovery with a selected symbol's source, nodes, direct callers, direct
+callees, attributed tests, and exact identity-resolved transitive upstream
+impact. Possible dispatch edges are excluded from that bounded impact section. It reports
+`selection_basis`, `ambiguous`, complete section totals, and
+`truncated_sections` so a ranked match is never presented as an undisclosed
+exact choice. Question-like input is tokenized lexically; no model interprets
+the question. The default limit is 10 rows per section and values are clamped
+to 1-100. Use `query`, `context`, or `impact` when a complete focused section
+is required. CLI `--json` wraps the same `gograph.explore.v1` native value
+returned by MCP `gograph_explore`. Use focused `impact` when broader
+short-name fallback traversal is required.
 
 ### 15. Symbol context bundle (primary token saver)
 `gograph context <symbol>` is a composed command that bundles the following
@@ -883,7 +900,7 @@ non-read-only because a request may publish artifacts.
 
 ### Registered MCP Tools
 
-The current suite registers 67 MCP endpoints: 63 query, analysis, and workflow tools plus four session lifecycle tools. The live `gograph_capabilities` payload is tested against the server registry. The optional `mermaid=true` parameter on `callers`, `callees`, `impact`, `endpoint`, `dependents`, `deps`, `path`, and `coupling` returns the same Markdown-fenced Mermaid presentation as CLI `--mermaid`; absent or false, each tool retains its normal response format.
+The current suite registers 68 MCP endpoints: 64 query, analysis, and workflow tools plus four session lifecycle tools. The live `gograph_capabilities` payload is tested against the server registry. The optional `mermaid=true` parameter on `callers`, `callees`, `impact`, `endpoint`, `dependents`, `deps`, `path`, and `coupling` returns the same Markdown-fenced Mermaid presentation as CLI `--mermaid`; absent or false, each tool retains its normal response format.
 - **`gograph_capabilities`**: Discover available tools and workflows.
 - **`gograph_stale`**: Check whether trusted persisted `.gograph/graph.json`, or the startup fallback when no usable artifact exists, is outdated relative to selected Go source content digests or the effective build context. The newest mtime fields are diagnostic only. Returns JSON with `is_stale`, `graph_age`, `newest_source_mtime`, `newest_source_file`, `changed_files[]`, and `build_context_changed`.
 - **`gograph_session_create`**: Start a telemetry audit session using a strictly validated ID and regular, repository-confined state under `.gograph/sessions/`; linked storage is refused.
@@ -891,6 +908,7 @@ The current suite registers 67 MCP endpoints: 63 query, analysis, and workflow t
 - **`gograph_session_audit`**: Review and grade agent compliance and tool success rates. IDs accept only letters, digits, and underscore; logs must be regular repository-confined files.
 - **`gograph_session_cleanup`**: Delete stale inactive regular session logs without following linked directories or files; the active log is preserved.
 - **`gograph_query`**: Accepts `term` or a `terms` array; multiple terms use the CLI's OR semantics.
+- **`gograph_explore`**: Bounded first-call discovery matching CLI `explore`. Required `query` accepts a symbol, fully-qualified ID, lexical term, or short question-like phrase; optional `limit` is clamped to 1-100 and `exact` prevents fuzzy promotion into deep context. Returns `gograph.explore.v1` with ranked matches, explicit selection basis and ambiguity, source, callers, callees, tests, exact identity impact, complete totals, and truncation metadata.
 - **`gograph_focus`**
 - **`gograph_callers`**: Supports `depth` (1-10), `no_tests`, exact matching, and optional Mermaid presentation, equivalent to the CLI traversal options. In a precise graph, `Interface.Method` resolves through every recorded implementer while returning a shared source call site once.
 - **`gograph_callees`**: Supports `depth` (1-10), `no_tests`, and optional Mermaid presentation, equivalent to the CLI traversal options.

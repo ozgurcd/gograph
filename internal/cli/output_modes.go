@@ -17,6 +17,7 @@ var commandOutputModes = map[string]outputModeSupport{
 	"--version":    outputJSON,
 	"-v":           outputJSON,
 	"query":        outputJSON | outputFilesOnly,
+	"explore":      outputJSON,
 	"focus":        outputJSON | outputFilesOnly,
 	"node":         outputJSON | outputFilesOnly,
 	"source":       outputJSON,

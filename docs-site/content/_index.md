@@ -24,6 +24,7 @@ gograph build . --precise --tags=integration # include tagged files/tests
 gograph stats             # verify build health and analysis precision
 gograph summary           # repository overview; no symbol name required
 gograph hotspot --top 5   # choose a real symbol for context or plan
+gograph explore YourSymbol # ranked matches + selected symbol context + bounded exact identity impact
 gograph flow --no-tests   # potential production source-to-sink paths
 ```
 
@@ -64,8 +65,10 @@ Copilot, Antigravity, and OpenCode.
   successful precise analysis, and visible precise fallback. A failed precise
   retry does not replace an existing fresh precise artifact covering the same
   selected sources.
-* **Composed workflows**: `context`, `plan`, `review`, and `summary` combine
-  related graph evidence. Savings depend on the repository and task.
+* **Composed workflows**: `explore`, `context`, `plan`, `review`, and `summary`
+  combine related graph evidence. `explore` discloses lexical selection,
+  ambiguity, full totals, and truncated sections; focused commands remain the
+  complete interfaces. Savings depend on the repository and task.
 
 
 

@@ -198,6 +198,8 @@ func dispatch(args []string) int {
 		return runDoctor(args[1:])
 	case "query":
 		return runQuery(args[1:])
+	case "explore":
+		return runExplore(args[1:])
 	case "focus":
 		return runFocus(args[1:])
 	case "node":
@@ -464,8 +466,8 @@ Every repository query, analysis, and workflow capability has a project MCP
 equivalent. The normal mapping is CLI '<command>' → MCP 'gograph_<command>'.
 Special mappings are 'contract' → gograph_api, 'boundaries --create' →
 gograph_boundaries_create, and the four 'session' actions →
-gograph_session_create/end/audit/cleanup. That project server exposes 67 tools:
-63 CLI-equivalent capabilities plus four session lifecycle tools.
+gograph_session_create/end/audit/cleanup. That project server exposes 68 tools:
+64 CLI-equivalent capabilities plus four session lifecycle tools.
 
 Workspace status, query, path, and impact use the separate four-tool workspace
 MCP server described above. CLI-only process, host, CI, and artifact operations
@@ -476,6 +478,7 @@ transport-specific (CLI flags/envelopes versus typed MCP arguments/content).
 
 ━━━ COMMON WORKFLOWS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Start of any session         → doctor --json, stale, summary  (installation + graph health + briefing)
+  Explore an unfamiliar term   → explore <term>  (ranked matches + selected symbol context + exact impact)
   Onboard to unfamiliar repo   → hotspot, skeleton, focus <pkg>
   Find where X is defined      → query <term>  then  source <sym> to read body
   Understand a symbol (raw)    → context <sym>  (callers+callees+source+tests in one call)
@@ -500,7 +503,8 @@ transport-specific (CLI flags/envelopes versus typed MCP arguments/content).
   CI enforcement               → gate, check --since <ref>
 
 ━━━ WHEN TO USE WHAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FINDING THINGS — three different scopes:
+FINDING THINGS — four different scopes:
+  explore <term>    bounded first call: ranked matches + disclosed symbol selection + context + exact identity impact
   query <term>      broad: searches symbol names, file paths, package names, import paths, call sites
   node <sym>        exact: AST metadata for one named symbol (kind, file, line, signature, doc)
   source <sym>      body: extracts the actual source code block — use instead of reading the file
@@ -514,7 +518,8 @@ CALL GRAPH — two different depths:
     recorded precise implementer and returning a shared source site once. Precise IDs
     and interface expansion require a --precise build for full effect.
 
-SYMBOL UNDERSTANDING — two different outputs:
+SYMBOL UNDERSTANDING — three different outputs:
+  explore <term>   discovery plus bounded symbol context and exact identity impact in one response
   context <sym>   structured data: node + source + callers + callees + tests — fast, token-efficient
   explain <sym>   narrative: role classification, prod vs test split, complexity, SQL, env, routes, interfaces
                   → use context when you need lists to act on; use explain when you need to understand purpose
@@ -690,6 +695,11 @@ changes              : symbols modified/new/deleted since the trusted persisted 
                        deleted includes files absent from the safe selected inventory
 changes --git <ref>  : symbols in files changed since a git ref (e.g. main, HEAD~5, v1.4.50)
 constructors <struct>: factory functions returning this struct
+explore <term...> [--limit N] [--exact]
+                     : bounded ranked lexical matches plus an explicitly selected symbol's
+                       source, callers, callees, tests, and exact identity-resolved transitive impact. Question-like
+                       text is lexical, not model-interpreted; selection_basis, ambiguity,
+                       totals, and truncation are explicit; default limit 10, maximum 100.
 literals <struct>    : composite literal sites Foo{...} — run before adding/removing a required field
 usages <type>        : where a type appears in signatures and fields (param/return/field/iface method)
 returnusage <fn>     : how each caller uses the return value of fn (discarded/assigned/returned/passed)
@@ -2719,7 +2729,7 @@ CLI / MCP TRANSPORT COVERAGE
                              maps to gograph_<command>; contract maps to gograph_api,
                              boundaries --create to gograph_boundaries_create, and
                              session actions to gograph_session_create/end/audit/cleanup.
-                             Total: 63 CLI-equivalent capabilities + 4 session tools.
+                             Total: 64 CLI-equivalent capabilities + 4 session tools.
   Workspace server           status, query, path, and impact map exactly to the four
                              gograph_workspace_* tools listed under WORKSPACES.
   CLI-only operations        build, validate, doctor, gate, snapshot,
@@ -2735,6 +2745,15 @@ AGENT WORKFLOW RULES (CRITICAL)
      to verify test coverage, complexity, and that no unintended risks were introduced.
 
 SEARCH & NAVIGATION
+  explore <term...> [--limit N] [--exact]
+                             Bounded first-call discovery: ranked lexical matches plus
+                             selected symbol node/source/callers/callees/tests and
+                             exact identity-resolved transitive impact. Possible dispatch is excluded.
+                             Reports selection basis, ambiguity,
+                             complete totals, and truncated sections. Question-like
+                             input is lexical, not model-interpreted. Default limit 10;
+                             values are clamped to 1-100. --exact disables promotion
+                             of a fuzzy lexical match into deep symbol context.
   query <term...>            Search across symbols, packages, files, imports, and
                              call sites. Case-insensitive, OR logic across terms.
   focus <package>            Show all symbols, imports, and call edges for one

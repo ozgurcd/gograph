@@ -648,8 +648,8 @@ func TestPersistRefreshUpdatesOnlyRefreshingToolContracts(t *testing.T) {
 			}
 		}
 	}
-	if len(persistTools) != 67 || len(nonRefreshing) != 8 || refreshingCount != 59 {
-		t.Fatalf("tool classification: total=%d non-refreshing=%d refreshing=%d, want 67/8/59", len(persistTools), len(nonRefreshing), refreshingCount)
+	if len(persistTools) != 68 || len(nonRefreshing) != 8 || refreshingCount != 60 {
+		t.Fatalf("tool classification: total=%d non-refreshing=%d refreshing=%d, want 68/8/60", len(persistTools), len(nonRefreshing), refreshingCount)
 	}
 	boundariesCreate := persistTools["gograph_boundaries_create"].Tool.Annotations.IdempotentHint
 	if boundariesCreate == nil || *boundariesCreate {

@@ -2,7 +2,7 @@
 title: Agent Workflow Contract
 type: workflow
 status: current
-updated: 2026-08-25
+updated: 2026-08-26
 sources:
   - SRC-20260614-gograph-legacy-agent-contract
 ---
@@ -47,6 +47,7 @@ After editing Go code:
 | Task | Preferred structural tool | Fallback or cross-check |
 |---|---|---|
 | Find Go symbol | `gograph_query` / `gograph_node` | `gopls` search or targeted source/text search |
+| Explore unfamiliar structural term | `gograph_explore` / CLI `explore` | focused `query`, `context`, or `impact` for a complete section |
 | Read function body | `gograph_source` | `gopls` file context or scoped file read |
 | Find callers | precise `gograph_callers` | `gopls` references and targeted source verification |
 | Attribute one test | `gograph_coverage`/CLI `coverage` | run the test and runtime coverage tools for execution claims |
@@ -56,13 +57,15 @@ After editing Go code:
 | Pre-edit analysis | `gograph_plan` / `gograph_context` | compiler and source inspection |
 | Post-edit review | `gograph_review` | tests, vet, linters, and runtime checks |
 
-Prefer composed calls such as `gograph_context` or `gograph_plan` when they match the question. Measure actual tool calls and tokens instead of assuming a fixed saving.
+Prefer composed calls such as `gograph_explore`, `gograph_context`, or `gograph_plan` when they match the question. Explore is a bounded discovery layer, not a replacement for focused commands. Measure actual tool calls and tokens instead of assuming a fixed saving.
 
 ## CLI and MCP contract
 
-All 63 repository query, analysis, and workflow capabilities must remain semantically equivalent across CLI and the project MCP server; four additional project-MCP endpoints implement session lifecycle. Workspace status, query, path, and impact use a separate four-tool read-only workspace MCP server and share native implementations with their CLI operations. The standard mapping is CLI `<command>` to MCP `gograph_<command>`; `contract`, `boundaries --create`, and session actions have explicit special mappings. The complete CLI-only boundary is `build`, `validate`, `doctor`, `gate`, `snapshot`, integration installation, project/workspace MCP startup, workspace build/member refresh, help, and version. `doctor --json` reports both installation/PATH findings and current repository graph availability, freshness, analysis mode, capabilities, and diagnostic so operational health remains machine-readable without adding a duplicate MCP method. Presentation is transport-specific: CLI `--json` and the supported `--files-only` commands correspond to structured MCP content, while the eight graph-oriented Mermaid commands use MCP `mermaid=true`. The CLI validates output-mode support and rejects conflicting modes. Successful JSON envelopes always carry `count`, collection-shaped empties use `[]`, and hard failures use an error envelope; `session audit --json` deliberately returns its native audit object.
+All 64 repository query, analysis, and workflow capabilities must remain semantically equivalent across CLI and the project MCP server; four additional project-MCP endpoints implement session lifecycle. Workspace status, query, path, and impact use a separate four-tool read-only workspace MCP server and share native implementations with their CLI operations. The standard mapping is CLI `<command>` to MCP `gograph_<command>`; `contract`, `boundaries --create`, and session actions have explicit special mappings. The complete CLI-only boundary is `build`, `validate`, `doctor`, `gate`, `snapshot`, integration installation, project/workspace MCP startup, workspace build/member refresh, help, and version. `doctor --json` reports both installation/PATH findings and current repository graph availability, freshness, analysis mode, capabilities, and diagnostic so operational health remains machine-readable without adding a duplicate MCP method. Presentation is transport-specific: CLI `--json` and the supported `--files-only` commands correspond to structured MCP content, while the eight graph-oriented Mermaid commands use MCP `mermaid=true`. The CLI validates output-mode support and rejects conflicting modes. Successful JSON envelopes always carry `count`, collection-shaped empties use `[]`, and hard failures use an error envelope; `session audit --json` deliberately returns its native audit object.
 
 CLI analytical commands require `--intention` while an audit session is active. MCP schemas do not expose or enforce an intention parameter. Instead, active sessions record observational MCP command, duration, success/failure, and empty intention; arguments and query results are omitted. Read-only annotations describe the functional analysis contract, with this local audit telemetry as an observational exception. When `--persist-refresh` is enabled, refresh-capable tools advertise filesystem mutation and may replace the latest graph/report artifacts.
+
+CLI `explore` and MCP `gograph_explore` must use the same native `gograph.explore.v1` value. The result must identify direct versus ranked lexical selection, preserve ambiguity, report complete totals and every truncated section, and state that question-like input is lexical rather than model-interpreted. The common limit is bounded. Bundled impact traverses exact identity-resolved call edges, follows synthetic forwarding without reporting it, and excludes possible dispatch; specialized commands remain available for complete or broader focused output.
 
 Coverage responses must not merge ambiguous same-named tests, and any uncertain dispatch must propagate `possible` to downstream derived rows. Canonical symbol IDs are stable only while module/package, receiver, and name identity remain unchanged. Identity and coverage must preserve an orthogonal exact package qualifier for the in-package/external-test ID collision; file and line are current location, not identity. CLI repeatable `untested --exclude` and MCP `exclude[]` must use identical lexical repository-relative matching.
 

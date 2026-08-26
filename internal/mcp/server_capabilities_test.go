@@ -76,7 +76,7 @@ func TestGographCapabilities(t *testing.T) {
 
 	toolsStr := string(text)
 	expectedTools := []string{
-		"gograph_capabilities", "gograph_context", "gograph_plan", "gograph_review",
+		"gograph_capabilities", "gograph_explore", "gograph_context", "gograph_plan", "gograph_review",
 		"gograph_errorflow", "gograph_api", "gograph_boundaries",
 		"gograph_flow",
 	}

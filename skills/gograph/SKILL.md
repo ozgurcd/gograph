@@ -1,7 +1,7 @@
 ---
 name: gograph
 version: "0.1.0"
-description: "Go repository intelligence for Claude Code. Use when reading, navigating, editing, reviewing, or refactoring a Go codebase. Adds AST-aware call graphs, blast-radius analysis, impact and security-flow candidates, and 63 query, analysis, and workflow capabilities through the local gograph MCP server."
+description: "Go repository intelligence for Claude Code. Use when reading, navigating, editing, reviewing, or refactoring a Go codebase. Exposes 64 query, analysis, and workflow capabilities through the local gograph MCP server, including bounded first-call exploration, AST-aware call graphs, blast-radius analysis, impact, and security-flow candidates."
 argument-hint: "gograph stats | gograph plan UserService.Login | gograph review --uncommitted"
 allowed-tools: Bash, Read
 homepage: https://gograph.identuum.ai
@@ -13,7 +13,7 @@ user-invocable: true
 
 # gograph: Go Repository Intelligence
 
-`gograph` is a local, AST-aware Go code intelligence engine that exposes 63 query, analysis, and workflow capabilities over the Model Context Protocol (67 endpoints including session lifecycle). It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) a structural view backed by a persisted or in-memory graph. `gograph_context` combines evidence that may otherwise require several navigation and source calls; actual savings depend on the task.
+`gograph` is a local, AST-aware Go code intelligence engine that exposes 64 query, analysis, and workflow capabilities over the Model Context Protocol (68 endpoints including session lifecycle). It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) a structural view backed by a persisted or in-memory graph. `gograph_explore` combines ranked lexical discovery with an explicit selected symbol, source, callers, callees, tests, and bounded exact identity impact; `gograph_context` remains the focused known-symbol bundle. Actual savings depend on the task.
 
 `gopls` provides live compiler-backed navigation, diagnostics, implementations,
 refactoring, and experimental MCP support. `gograph` complements it with a
@@ -65,7 +65,7 @@ Packaged and generated registrations keep refresh persistence off by default.
    `gograph build . --precise --strict` when CI must fail on fallback. If
    compilation prevents precision during exploratory work, use CLI
    `gograph build .` and explain the fallback.
-3. **For structural symbol / type / function discovery, use `gograph_query` instead of `grep`, `rg`, `find`, or glob.** Text search also matches comments and string literals; `gograph_query` returns AST-derived matches. Continue to use text search for literal strings, documentation, ordinary non-sensitive configuration, and non-Go files.
+3. **For unfamiliar structural questions, invoke `gograph_explore` first; for complete structural symbol / type / function discovery, use `gograph_query` instead of `grep`, `rg`, `find`, or glob.** `gograph_explore` is bounded and discloses lexical selection, ambiguity, totals, and truncation; follow with a focused tool when a complete section is needed. Text search also matches comments and string literals; `gograph_query` returns AST-derived matches. Continue to use text search for literal strings, documentation, ordinary non-sensitive configuration, and non-Go files.
 4. **Before editing any Go symbol**, invoke `gograph_plan` with
    `symbol=<symbol>`. The plan returns callers, tests connected to the symbol,
    and a blast-radius estimate. Edit decisions should reference the plan.
@@ -84,6 +84,7 @@ Packaged and generated registrations keep refresh persistence off by default.
 | Tool | Use case |
 |---|---|
 | `gograph_capabilities` | Discover what the connected server exposes |
+| `gograph_explore` with `query=<term-or-symbol>` | Bounded ranked discovery + disclosed symbol source/callers/callees/tests/exact identity impact |
 | `gograph_query` with `term=<term>` or `terms=[...]` | AST-derived structural symbol search |
 | `gograph_context` with `symbol=<symbol>` | Node + source + callers + callees + tests in one call |
 | `gograph_plan` with `symbol=<symbol>` | Pre-edit blast radius + callers + tests |
@@ -106,7 +107,7 @@ Packaged and generated registrations keep refresh persistence off by default.
 | `gograph_identity` with `symbol=<symbol-or-stable-id>` | Print or re-resolve canonical symbol identity without silently choosing ambiguity; optional `package` disambiguation |
 | `gograph_check` | Policy checks, including changed-route tests, coverage, orphans, API drift, arity, and complexity |
 
-The live surface is 67 MCP endpoints; `gograph_capabilities` is the tested source of truth. `gograph_flow` is path-insensitive with bounded call-site matching; use it for security review leads, not exploitability proof.
+The live surface is 68 MCP endpoints; `gograph_capabilities` is the tested source of truth. `gograph_flow` is path-insensitive with bounded call-site matching; use it for security review leads, not exploitability proof.
 For `gograph_callers`, `gograph_callees`, `gograph_impact`,
 `gograph_endpoint`, `gograph_dependents`, `gograph_deps`, `gograph_path`, and
 `gograph_coupling`, set `mermaid=true` to request Markdown-fenced Mermaid

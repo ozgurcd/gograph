@@ -124,7 +124,7 @@ Here is how Claude Code behaves before and after `gograph`:
 
 ## 5. MCP Integration
 
-Registering `gograph` as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server exposes all 63 repository query, analysis, and workflow capabilities as project tools such as `gograph_query`, `gograph_coverage`, and `gograph_identity`, plus four session lifecycle tools. The separate `gograph workspace mcp` server exposes status, query, path, and impact with the same native results as their CLI counterparts. Process/host/artifact operations (`build`, `validate`, `doctor`, `gate`, `snapshot`, plugin/hook installation, project/workspace MCP startup, workspace build/member refresh, help, and version) intentionally remain CLI-only. Presentation is transport-specific: MCP uses typed parameters and content payloads instead of CLI output flags. For `callers`, `callees`, `impact`, `endpoint`, `dependents`, `deps`, `path`, and `coupling`, set `mermaid=true` to receive the same Markdown-fenced Mermaid diagram produced by CLI `--mermaid`. See the [complete transport matrix](../docs-site/content/docs/command-reference.md#cli--mcp-transport-matrix).
+Registering `gograph` as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server exposes all 64 repository query, analysis, and workflow capabilities as project tools such as `gograph_explore`, `gograph_query`, `gograph_coverage`, and `gograph_identity`, plus four session lifecycle tools. `gograph_explore` is an additive bounded first call that combines ranked lexical discovery with an explicitly disclosed selected symbol's source, callers, callees, tests, and exact identity-resolved transitive impact; possible dispatch stays excluded there, while focused tools remain available for complete sections and broader fallback traversal. The separate `gograph workspace mcp` server exposes status, query, path, and impact with the same native results as their CLI counterparts. Process/host/artifact operations (`build`, `validate`, `doctor`, `gate`, `snapshot`, plugin/hook installation, project/workspace MCP startup, workspace build/member refresh, help, and version) intentionally remain CLI-only. Presentation is transport-specific: MCP uses typed parameters and content payloads instead of CLI output flags. For `callers`, `callees`, `impact`, `endpoint`, `dependents`, `deps`, `path`, and `coupling`, set `mermaid=true` to receive the same Markdown-fenced Mermaid diagram produced by CLI `--mermaid`. See the [complete transport matrix](../docs-site/content/docs/command-reference.md#cli--mcp-transport-matrix).
 
 ### Claude Desktop Config + Shared Claude Rules/Hook
 
@@ -149,7 +149,7 @@ The hook (`gograph hook-guard`) runs automatically before every `Bash` tool call
 1. Resolves parsed search targets against the tool call's `cwd` and checks for a real `.gograph` ancestor
 2. Detects it is a Go symbol search (every non-exempt pattern branch is a valid identifier or an identifier-only alternation, with each branch matching `[A-Za-z_][a-zA-Z0-9_]{2,}`)
 3. Blocks the call (exit code `2`) and outputs which `gograph` tool to use instead
-4. Claude immediately retries using the correct `gograph_query` / `gograph_context` / etc. call
+4. Claude immediately retries using the correct `gograph_explore` / `gograph_query` / `gograph_context` / etc. call
 
 **The hook is smart — it only intercepts symbol searches.** These pass through unchanged:
 - Searches whose effective targets have no `.gograph` ancestor, including non-Go repositories in multi-root workspaces
