@@ -142,6 +142,9 @@ func TestGographCapabilities(t *testing.T) {
 		"compact=true",
 		"deep=true",
 		"same native gograph.explore.v1 value",
+		"path_ranking",
+		"exact before ambiguous/possible",
+		"fewer cross-repository transitions",
 	} {
 		if !strings.Contains(toolsStr, want) {
 			t.Errorf("capabilities prerequisite omits %q", want)

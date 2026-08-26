@@ -71,6 +71,11 @@ COMMANDS
   impact [--scope id] [--workspace path] [--tags=<tags>] [--include-possible] <target>
   mcp [path] [--tags=<tags>]
 
+PATH RANKING
+  Competing paths prefer exact over ambiguous/possible evidence, then shorter
+  paths, production over tests, typed resolution over heuristics, and fewer
+  cross-repository transitions. Canonical tie-breaking is deterministic.
+
 MANIFEST
   The checked-in .gograph-workspace.yml establishes the workspace root.
   Member paths must be unique, relative, non-linked directories confined beneath it.

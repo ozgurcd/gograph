@@ -461,6 +461,11 @@ the CLI only adds its generic command envelope. Workspace changes are not part
 of workspace v1. Advisory Git status disables member-configured fsmonitor hooks
 and optional index writes.
 
+Repository and workspace path queries rank competing routes by exact before
+ambiguous/possible, then shorter, production before tests, typed resolution
+before heuristics, and fewer cross-repository transitions when otherwise
+equivalent. A canonical edge key makes the selected path deterministic.
+
 ━━━ CLI / MCP TRANSPORT COVERAGE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Every repository query, analysis, and workflow capability has a project MCP
 equivalent. The normal mapping is CLI '<command>' → MCP 'gograph_<command>'.
@@ -673,7 +678,7 @@ imports <path>       : files importing a specific import path
 interfaces <struct>  : interfaces satisfied by this struct (inverse of implementers)
 node <sym>           : AST metadata for one symbol (kind, file, line, signature, doc)
 orphans              : symbols unreachable via BFS from main/init, test, route, and eligible public roots
-path <from> <to>     : shortest call chain between two symbols (BFS)
+path <from> <to>     : best ranked call chain between two symbols
 public <pkg>         : exported symbols only
 query <term...>      : broad OR search — symbols, files, packages, imports, call sites
 routes               : all HTTP REST routes. Annotates unresolvable handlers.
@@ -2694,7 +2699,7 @@ WORKSPACES
   workspace query [--scope id] [--workspace path] [--tags=<tag[,tag...]>] <term...>
                              Search symbols, packages, modules, and HTTP contracts.
   workspace path [--scope id] [--workspace path] [--tags=<tag[,tag...]>] [--include-possible] <from> <to>
-                             Find a shortest path in the virtual federated graph.
+                             Find the best ranked path in the virtual federated graph.
   workspace impact [--scope id] [--workspace path] [--tags=<tag[,tag...]>] [--include-possible] <target>
                              Find transitive cross-repository dependents.
                              Ambiguous/possible facts are excluded unless explicitly
@@ -2796,7 +2801,7 @@ CALL GRAPH
   impact --uncommitted       Blast radius of all uncommitted modified symbols.
   impact --since <ref>       Blast radius of all symbols changed since a git ref (e.g. main, HEAD~5).
                              Composes changes --git <ref> + impact into one call.
-  path <from> <to>           Shortest call chain between two symbols (BFS).
+  path <from> <to>           Best ranked call chain between two symbols.
                              For callers/callees/impact/path: the symbol argument can be a short
                              name ("Validate" — fuzzy substring), concrete dot-notation,
                              interface notation ("Repository.Delete" for callers), or a fully-qualified ID
@@ -3163,7 +3168,7 @@ func runFlow(args []string) int {
 	return 0
 }
 
-// runPath finds the shortest call chain between two symbols via BFS.
+// runPath finds the best ranked call chain between two symbols.
 func runPath(args []string) int {
 	if len(args) != 2 || args[0] == "" || args[1] == "" || strings.HasPrefix(args[0], "-") || strings.HasPrefix(args[1], "-") {
 		return failCommand("path", "usage: gograph path <from-symbol> <to-symbol>")

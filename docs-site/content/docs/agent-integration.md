@@ -169,6 +169,11 @@ Eight graph-oriented MCP tools match the CLI's Mermaid surface. Set
 of the tool's normal response. `gograph_diagram` always returns Mermaid
 architecture text.
 
+CLI `path` and MCP `gograph_path` select the same deterministic best route:
+exact before possible, then shorter paths, production before tests, typed
+resolution before heuristics, and a canonical tie-breaker. Workspace path uses
+the same ordering and finally prefers fewer cross-repository transitions.
+
 The server exposes 68 endpoints: 64 tools corresponding to CLI query,
 analysis, and workflow commands plus four session lifecycle tools. Tool
 arguments and transport-level status presentation can differ from CLI flags

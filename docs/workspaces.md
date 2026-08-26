@@ -162,6 +162,14 @@ traversal. `--include-possible` opts into ambiguous and possible relationships
 for exploration. These weaker relationships cannot satisfy future machine
 validation unless a predicate explicitly requests them.
 
+When more than one traversable path exists, `workspace path` and
+`gograph_workspace_path` select the same deterministic best route. Ranking is
+lexicographic: exact before ambiguous before possible; then shorter paths;
+production before tests; typed resolution before heuristics; and fewer
+cross-repository transitions when otherwise equivalent. A canonical
+relationship/provenance key breaks complete ties, so member or edge iteration
+order cannot change the answer.
+
 Parser-only `pkg.Func` call matching is possible evidence because a local value
 can shadow an import name. Type-resolved static call targets are exact; CHA
 interface targets remain possible. Dynamic HTTP handler factories and

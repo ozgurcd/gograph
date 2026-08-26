@@ -2,7 +2,7 @@
 title: Federated workspace v1
 type: decision
 status: current
-updated: 2026-08-25
+updated: 2026-08-26
 sources: []
 ---
 
@@ -28,6 +28,8 @@ HTTP clients and handlers resolve through first-class contracts identified by lo
 
 Certainty (`exact`, `ambiguous`, `possible`) and evidence origin (`structural`, `configured`, `derived`) are independent. Only exact facts traverse by default. Ambiguous/possible facts require opt-in and cannot silently satisfy machine validation. A derived fact is exact only if every dependency is exact.
 
+When several traversable routes exist, workspace path selects one deterministic best route rather than the first breadth-first hit. Ranking is lexicographic by worst certainty (`exact`, then `ambiguous`, then `possible`), visible path length, production before tests, typed resolution before heuristics, and cross-repository transition count. Canonical relationship/provenance identity breaks complete ties. Categorical path states remain distinct during traversal so a later possible, test, or heuristic edge cannot discard a prefix that becomes globally preferable after degradation. Synthetic forwarding consumes no visible length. This ranking is query-derived state and does not add facts to the persisted overlay or change the singular path response schema.
+
 Parser-only `pkg.Func` matching is possible because a local value may shadow an import. Type-resolved static targets are exact; CHA interface targets remain possible. Synthetic precise wrapper edges remain exact traversal facts. Dynamic or unresolved HTTP handlers degrade their serving relations instead of being labeled exact.
 
 ## Fingerprints and mutation
@@ -38,7 +40,7 @@ The input fingerprint covers canonical manifest data, ordered exact member artif
 
 ## CLI and MCP parity
 
-Workspace status, query, path, and impact share one native implementation and result contract with `gograph_workspace_status`, `gograph_workspace_query`, `gograph_workspace_path`, and `gograph_workspace_impact` on the separate read-only workspace server. CLI `--json` places the native value in its generic `results` envelope; the matching MCP tool returns that exact value as JSON text. Scope selection, deterministic ordering, exact-only default traversal, and explicit possible-edge traversal therefore cannot diverge by transport. Workspace build, member refresh, overlay publication, and workspace-server startup remain CLI-only lifecycle operations; workspace MCP exposes no mutation tool.
+Workspace status, query, path, and impact share one native implementation and result contract with `gograph_workspace_status`, `gograph_workspace_query`, `gograph_workspace_path`, and `gograph_workspace_impact` on the separate read-only workspace server. CLI `--json` places the native value in its generic `results` envelope; the matching MCP tool returns that exact value as JSON text. Scope selection, deterministic ranked path selection, exact-only default traversal, and explicit possible-edge traversal therefore cannot diverge by transport. Workspace build, member refresh, overlay publication, and workspace-server startup remain CLI-only lifecycle operations; workspace MCP exposes no mutation tool.
 
 ## P0 boundary
 

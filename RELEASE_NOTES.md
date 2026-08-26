@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Deterministic ranked relationship paths
+
+- Repository `path`/`gograph_path` and workspace
+  `workspace path`/`gograph_workspace_path` now select competing routes with
+  one shared lexicographic policy: exact before ambiguous/possible, then
+  shorter paths, production before tests, typed resolution before heuristics,
+  and fewer cross-repository transitions when otherwise equivalent.
+- Canonical relationship/provenance tie-breaking makes the selected path
+  independent of graph edge iteration order. Existing singular path response
+  shapes, exact-only workspace defaults, `--include-possible`, JSON envelopes,
+  and Mermaid output remain compatible.
+- CLI help, CLI capabilities, MCP tool descriptions/capabilities, coding-agent
+  guidance, workspace documentation, and the public command reference now
+  describe the same ranking contract.
+
 ### Bounded first-call exploration
 
 - Added CLI `gograph explore <term...> [--compact|--deep] [--limit N] [--exact] [--json]` and

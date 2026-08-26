@@ -284,7 +284,10 @@ Calculates the transitive upstream blast radius (all functions that eventually c
 ```bash
 gograph path <from> <to> [--json|--mermaid]
 ```
-Calculates and prints the shortest call chain (BFS path) between two symbols, verifying reachability.
+Calculates the best indexed call chain between two symbols. Competing paths are
+ranked deterministically by exact before possible, then shorter paths,
+production before tests, typed resolution before heuristics, and a canonical
+relationship key. CLI and `gograph_path` use the same implementation.
 
 ### orphans
 ```bash
@@ -824,10 +827,13 @@ persisted identities are structured.
 gograph workspace path [--scope id] [--workspace path] [--tags=integration[,tag...]] [--include-possible] <from> <to> [--json]
 ```
 
-Finds a shortest path over the selected member graphs plus the workspace
-overlay. Cross-repository Go resolutions materialize as ordinary `calls`;
-HTTP clients and handlers connect through a contract as `calls_http` then
-`serves_http`.
+Finds the best path over the selected member graphs plus the workspace overlay.
+Competing paths rank exact before ambiguous before possible, then shorter,
+production before tests, typed resolution before heuristics, and fewer
+cross-repository transitions when otherwise equivalent. A canonical final
+tie-breaker makes results independent of edge iteration order. Cross-repository
+Go resolutions materialize as ordinary `calls`; HTTP clients and handlers
+connect through a contract as `calls_http` then `serves_http`.
 
 ### workspace impact
 

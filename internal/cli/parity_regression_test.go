@@ -365,12 +365,14 @@ func TestCLIPathAndSkeletonHonorJSONOutput(t *testing.T) {
 		Files:    []graph.FileNode{{ID: "main.go", Path: "main.go", PackageName: "sample"}},
 		Symbols: []graph.SymbolNode{
 			{ID: "example.com/parity::Start", Name: "Start", Kind: graph.KindFunction, PackageName: "sample", File: "main.go", Line: 1, EndLine: 1, Signature: "func Start()"},
-			{ID: "example.com/parity::End", Name: "End", Kind: graph.KindFunction, PackageName: "sample", File: "main.go", Line: 2, EndLine: 2, Signature: "func End()"},
+			{ID: "example.com/parity::ExactMid", Name: "ExactMid", Kind: graph.KindFunction, PackageName: "sample", File: "main.go", Line: 2, EndLine: 2, Signature: "func ExactMid()"},
+			{ID: "example.com/parity::End", Name: "End", Kind: graph.KindFunction, PackageName: "sample", File: "main.go", Line: 3, EndLine: 3, Signature: "func End()"},
 		},
-		Calls: []graph.CallEdge{{
-			CallerSymbolID: "example.com/parity::Start", CallerName: "Start",
-			CalleeSymbolID: "example.com/parity::End", CalleeRaw: "End", File: "main.go", Line: 1,
-		}},
+		Calls: []graph.CallEdge{
+			{CallerSymbolID: "example.com/parity::Start", CallerName: "Start", CalleeSymbolID: "example.com/parity::End", CalleeRaw: "End", File: "main.go", Line: 1, Resolution: graph.CallResolutionCHA},
+			{CallerSymbolID: "example.com/parity::Start", CallerName: "Start", CalleeSymbolID: "example.com/parity::ExactMid", CalleeRaw: "ExactMid", File: "main.go", Line: 1, Resolution: graph.CallResolutionStatic},
+			{CallerSymbolID: "example.com/parity::ExactMid", CallerName: "ExactMid", CalleeSymbolID: "example.com/parity::End", CalleeRaw: "End", File: "main.go", Line: 2, Resolution: graph.CallResolutionStatic},
+		},
 	}
 	root := writeCLIParityGraph(t, g)
 
@@ -396,6 +398,15 @@ func TestCLIPathAndSkeletonHonorJSONOutput(t *testing.T) {
 			}
 			if envelope.Command != tc.name || envelope.Status != "ok" || len(envelope.Results) == 0 {
 				t.Fatalf("unexpected %s JSON envelope: %s", tc.name, stdout)
+			}
+			if tc.name == "path" {
+				var steps []search.Result
+				if err := json.Unmarshal(envelope.Results, &steps); err != nil {
+					t.Fatalf("decode ranked path: %v\n%s", err, stdout)
+				}
+				if len(steps) != 3 || steps[1].Name != "ExactMid" {
+					t.Fatalf("CLI did not prefer exact ranked path: %+v", steps)
+				}
 			}
 		})
 	}

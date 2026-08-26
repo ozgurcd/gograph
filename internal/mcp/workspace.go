@@ -64,7 +64,7 @@ func NewWorkspaceServerWithBuildTags(root, version string, buildTags []string) *
 	})
 
 	pathTool := protocol.NewTool("gograph_workspace_path",
-		protocol.WithDescription("Find the shortest traversable path across repository-local calls, workspace-resolved Go calls, and first-class HTTP contract nodes. Exact edges are used by default; ambiguous/possible edges require include_possible=true. Read-only."),
+		protocol.WithDescription("Find the best traversable path across repository-local calls, workspace-resolved Go calls, and first-class HTTP contract nodes. Competing paths rank exact before ambiguous/possible, then shorter, production before tests, typed resolution before heuristics, and fewer cross-repository transitions, with deterministic canonical tie-breaking. Exact edges are used by default; ambiguous/possible edges require include_possible=true. Read-only."),
 		protocol.WithString("from", protocol.Required(), protocol.Description("Source selector; repo:symbol is accepted as display/query syntax")),
 		protocol.WithString("to", protocol.Required(), protocol.Description("Destination selector; repo:symbol is accepted as display/query syntax")),
 		protocol.WithString("scope", protocol.Description("Resolution scope")),

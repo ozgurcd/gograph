@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/pathrank"
 	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
 
@@ -1327,20 +1328,7 @@ func Errors(g *graph.Graph, term string, includeTests bool) []Result {
 }
 
 func isTestFile(path string) bool {
-	if strings.HasSuffix(path, "_test.go") {
-		return true
-	}
-	fl := strings.ToLower(path)
-	if strings.Contains(fl, "mock") || strings.Contains(fl, "fake") {
-		return true
-	}
-	parts := strings.Split(path, "/")
-	for _, p := range parts {
-		if p == "testdata" || p == "test" || p == "tests" {
-			return true
-		}
-	}
-	return false
+	return pathrank.IsTestPath(path)
 }
 
 // Embeds shows what structs embed the target struct.

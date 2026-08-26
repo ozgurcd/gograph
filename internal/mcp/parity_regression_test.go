@@ -203,6 +203,29 @@ func TestMCPMermaidParityIsAdvertisedAndExecutable(t *testing.T) {
 	}
 }
 
+func TestMCPPathUsesSharedRankedSelection(t *testing.T) {
+	g := parityRegressionGraph(t)
+	const exactMidID = "example.com/parity/beta::ExactMid"
+	g.Symbols = append(g.Symbols, graph.SymbolNode{ID: exactMidID, Name: "ExactMid", Kind: graph.KindFunction, PackageName: "beta", File: "beta/middle.go", Line: 3, EndLine: 3})
+	g.Calls = []graph.CallEdge{
+		{CallerSymbolID: "example.com/parity/alpha::Start", CallerName: "Start", CalleeSymbolID: "example.com/parity/beta::End", CalleeRaw: "End", File: "alpha/start.go", Line: 1, Resolution: graph.CallResolutionCHA},
+		{CallerSymbolID: "example.com/parity/alpha::Start", CallerName: "Start", CalleeSymbolID: exactMidID, CalleeRaw: "ExactMid", File: "alpha/start.go", Line: 2, Resolution: graph.CallResolutionStatic},
+		{CallerSymbolID: exactMidID, CallerName: "ExactMid", CalleeSymbolID: "example.com/parity/beta::End", CalleeRaw: "End", File: "beta/middle.go", Line: 3, Resolution: graph.CallResolutionStatic},
+	}
+
+	text := callTool(t, setupHandlers(t, g)["gograph_path"], map[string]any{"from": "Start", "to": "End"})
+	var response struct {
+		Found bool            `json:"found"`
+		Steps []search.Result `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(text), &response); err != nil {
+		t.Fatalf("decode ranked MCP path: %v\n%s", err, text)
+	}
+	if !response.Found || len(response.Steps) != 3 || response.Steps[1].Name != "ExactMid" {
+		t.Fatalf("MCP did not prefer exact ranked path: %+v", response)
+	}
+}
+
 func TestMCPCallersExactMermaidAvoidsSubstringCollisions(t *testing.T) {
 	g := &graph.Graph{
 		Root: t.TempDir(),

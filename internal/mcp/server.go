@@ -357,6 +357,11 @@ func NewServer(
 				"precision": "possible dispatch is excluded from exact impact and deep traversal; synthetic forwarders are crossed transparently",
 				"parity":    "CLI explore and MCP gograph_explore return the same native gograph.explore.v1 value for equivalent mode, exact, query, and limit inputs",
 			},
+			"path_ranking": map[string]any{
+				"order":       []string{"exact before ambiguous/possible", "shorter paths", "production before tests", "typed resolution before heuristics", "fewer cross-repository transitions"},
+				"tie_breaker": "canonical relationship identity and provenance",
+				"scope":       "shared by CLI path, gograph_path, workspace path, and gograph_workspace_path",
+			},
 			"refresh_persistence": map[string]any{
 				"enabled":            selectedOptions.PersistRefresh,
 				"artifact_directory": ".gograph",
@@ -424,7 +429,7 @@ func NewServer(
 				{"name": "gograph_hotspot", "purpose": "Functions ranked by fan-in (incoming call count). High fan-in = highest-risk change target."},
 				{"name": "gograph_httpcalls", "purpose": "All outbound HTTP client calls via net/http (Get, Post, PostForm, Head). Filter by method or URL."},
 				{"name": "gograph_changes", "purpose": "Symbols modified/added/deleted. Deleted includes files absent from the current safely selected inventory. Without git_ref: changes since trusted persisted graph or startup fallback. With git_ref: static diff vs that ref."},
-				{"name": "gograph_path", "purpose": "Shortest BFS call chain between two symbols. Confirms whether a handler reaches a given function."},
+				{"name": "gograph_path", "purpose": "Best call chain between two symbols, ranked by certainty, length, production/test provenance, typed/heuristic resolution, and deterministic identity."},
 				{"name": "gograph_complexity", "purpose": "Cyclomatic complexity per function, sorted highest first. Labels: LOW/MEDIUM/HIGH/VERY HIGH; source that cannot be read or parsed safely is retained as UNKNOWN with score -1."},
 				{"name": "gograph_coupling", "purpose": "Fan-in (Ca), fan-out (Ce), and instability I=Ce/(Ca+Ce) per package. 0=stable, 1=unstable."},
 				{"name": "gograph_returnusage", "purpose": "How each caller uses a function's return value: discarded/assigned/partially_ignored/returned/passed. Run before changing a return signature."},
@@ -1998,7 +2003,7 @@ func initNewTools(
 
 	// Tool: gograph_path
 	pathTool := mcp.NewTool("gograph_path",
-		mcp.WithDescription("Find the shortest BFS call chain from one symbol to another. The MCP server refreshes source analysis before the call. Read-only; no side effects. WHEN TO USE: To confirm reachability between non-adjacent symbols. NOT TO USE: For all transitive upstream callers (use gograph_impact). RETURNS: from, to, found, and steps[]; with mermaid=true, Mermaid flowchart text."),
+		mcp.WithDescription("Find the best call chain from one symbol to another. Competing paths rank exact before possible, then shorter, production before tests, typed resolution before heuristics, with a deterministic canonical tie-breaker. The MCP server refreshes source analysis before the call. Read-only; no side effects. WHEN TO USE: To confirm reachability between non-adjacent symbols. NOT TO USE: For all transitive upstream callers (use gograph_impact). RETURNS: from, to, found, and steps[]; with mermaid=true, Mermaid flowchart text."),
 		mcp.WithString("from", mcp.Required(), mcp.Description("The starting symbol name")),
 		mcp.WithString("to", mcp.Required(), mcp.Description("The target symbol name")),
 		mcp.WithBoolean("mermaid", mcp.Description("Return Mermaid flowchart text instead of structured JSON")),

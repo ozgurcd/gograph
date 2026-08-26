@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/pathrank"
 )
 
 type QueryResult struct {
@@ -32,6 +33,7 @@ type VirtualEdge struct {
 	Line             int              `json:"line,omitempty"`
 	ResolutionStatus ResolutionStatus `json:"resolution_status"`
 	EvidenceOrigin   EvidenceOrigin   `json:"evidence_origin"`
+	heuristic        bool
 }
 
 type PathResponse struct {
@@ -134,24 +136,42 @@ func Path(workspace *LoadedWorkspace, scope ScopeOverlay, fromQuery, toQuery str
 		node NodeRef
 		path []VirtualEdge
 	}
-	queue := []state{{node: from}}
-	visited := map[string]bool{nodeKey(from): true}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
+	var queue pathrank.Queue[state]
+	initialRank := pathrank.Rank{Tie: "seed:" + nodeKey(from)}
+	queue.Push(state{node: from}, initialRank)
+	best := map[string]pathrank.Rank{nodeKey(from) + "\x00" + initialRank.ClassKey(): initialRank}
+	for {
+		current, rank, ok := queue.Pop()
+		if !ok {
+			break
+		}
+		stateKey := nodeKey(current.node) + "\x00" + rank.ClassKey()
+		if best[stateKey] != rank {
+			continue
+		}
 		if nodeKey(current.node) == nodeKey(to) {
 			response.Found = true
 			response.Steps = current.path
 			return response, nil
 		}
 		for _, edge := range adjacency[nodeKey(current.node)] {
-			key := nodeKey(edge.To)
-			if visited[key] {
+			certainty := pathrank.Exact
+			switch edge.ResolutionStatus {
+			case ResolutionAmbiguous:
+				certainty = pathrank.Ambiguous
+			case ResolutionPossible:
+				certainty = pathrank.Possible
+			}
+			crossRepository := edge.From.RepositoryID != edge.To.RepositoryID
+			edgeTie := nodeKey(edge.From) + "\x00" + edge.Kind + "\x00" + nodeKey(edge.To) + "\x00" + string(edge.ResolutionStatus) + "\x00" + string(edge.EvidenceOrigin) + "\x00" + edge.File + fmt.Sprintf("\x00%09d", edge.Line)
+			nextRank := rank.Extend(certainty, true, pathrank.IsTestPath(edge.File), edge.heuristic, crossRepository, edgeTie)
+			key := nodeKey(edge.To) + "\x00" + nextRank.ClassKey()
+			if previous, exists := best[key]; exists && !nextRank.Less(previous) {
 				continue
 			}
-			visited[key] = true
+			best[key] = nextRank
 			nextPath := append(append([]VirtualEdge(nil), current.path...), edge)
-			queue = append(queue, state{node: edge.To, path: nextPath})
+			queue.Push(state{node: edge.To, path: nextPath}, nextRank)
 		}
 	}
 	return response, nil
@@ -270,7 +290,7 @@ func VirtualEdges(workspace *LoadedWorkspace, scope ScopeOverlay, includePossibl
 					continue
 				}
 				for _, target := range localCallCandidates(member, call.CalleeRaw) {
-					edges = append(edges, VirtualEdge{From: from, To: target, Kind: "calls", File: call.File, Line: call.Line, ResolutionStatus: ResolutionPossible, EvidenceOrigin: EvidenceDerived})
+					edges = append(edges, VirtualEdge{From: from, To: target, Kind: "calls", File: call.File, Line: call.Line, ResolutionStatus: ResolutionPossible, EvidenceOrigin: EvidenceDerived, heuristic: true})
 				}
 				continue
 			}
@@ -287,7 +307,7 @@ func VirtualEdges(workspace *LoadedWorkspace, scope ScopeOverlay, includePossibl
 					status = ResolutionPossible
 				}
 				if traversable(status, includePossible) {
-					edges = append(edges, VirtualEdge{From: from, To: to, Kind: "calls", File: call.File, Line: call.Line, ResolutionStatus: status, EvidenceOrigin: EvidenceStructural})
+					edges = append(edges, VirtualEdge{From: from, To: to, Kind: "calls", File: call.File, Line: call.Line, ResolutionStatus: status, EvidenceOrigin: EvidenceStructural, heuristic: call.Resolution == ""})
 				}
 			}
 		}
@@ -409,14 +429,17 @@ func appendQueryResult(results *[]QueryResult, seen map[string]bool, result Quer
 }
 
 func dedupeVirtualEdges(edges []VirtualEdge) []VirtualEdge {
-	seen := make(map[string]bool)
+	seen := make(map[string]int)
 	result := make([]VirtualEdge, 0, len(edges))
 	for _, edge := range edges {
 		key := nodeKey(edge.From) + "\x00" + nodeKey(edge.To) + "\x00" + edge.Kind + "\x00" + string(edge.ResolutionStatus)
-		if seen[key] {
+		if index, ok := seen[key]; ok {
+			if result[index].heuristic && !edge.heuristic {
+				result[index] = edge
+			}
 			continue
 		}
-		seen[key] = true
+		seen[key] = len(result)
 		result = append(result, edge)
 	}
 	return result

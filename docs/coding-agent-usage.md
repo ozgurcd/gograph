@@ -57,7 +57,7 @@ gograph tests [symbol]          # direct attributed test calls (compatibility mo
 gograph tests <symbol> --transitive [--exact-only] [--package name] # every reaching test with path/depth
 gograph coverage <TestFunc> [--exact-only] [--package name] # transitive product symbols one test statically reaches
 gograph identity <symbol-or-stable-id> [--package name] # print or re-resolve canonical symbol identity
-gograph path <from> <to>        # shortest call chain between two symbols (BFS traversal)
+gograph path <from> <to>        # best deterministically ranked call chain between two symbols
 gograph stale                   # check selected files and build context vs graph.json
 gograph stats                   # compact index health summary: schema/build/production precision/test-resolution status and graph counts
 gograph godobj                  # find god-object struct candidates (default thresholds)
@@ -285,8 +285,13 @@ an in-package test from an external `foo_test` package when their graph IDs
 collide. These remain static graph claims, not proof that a test or branch
 executed.
 
-### 8. Call chain pathfinding
-`gograph path CreateUser sql` performs BFS over the call graph to find the shortest path between two symbols. Example output:
+### 8. Ranked call-chain pathfinding
+
+`gograph path CreateUser sql` selects the best indexed path between two symbols.
+When alternatives exist, both CLI and MCP use the same deterministic order:
+exact before possible, then shorter paths, production before tests, typed
+resolution before heuristics, and finally a canonical relationship key. Example
+output:
 ```
 Call path: CreateUser → sql
   1. [path] CreateUser — calls UserService.Create (handlers/user.go:42)
@@ -943,7 +948,7 @@ The current suite registers 68 MCP endpoints: 64 query, analysis, and workflow t
   the exact current source-policy marker, and cannot supply the trusted root.
 - **`gograph_routes`**: Extract all HTTP REST API routes found in the codebase. Constant nested Gin/Echo/Fiber Group prefixes and Chi Route closure prefixes are composed into final paths; dynamic prefix expressions remain best-effort suffixes. Routes using unresolvable factory handlers (e.g. `promhttp.Handler()`) are annotated with `[dynamic handler]`, setting `DynamicHandler: true`.
 - **`gograph_node`**: AST metadata for a symbol: kind, file, line, signature, doc comment. Lighter than `gograph_source` when you only need metadata.
-- **`gograph_path`**: Shortest BFS call chain between two symbols. Use to confirm whether a handler actually reaches a given function; accepts `mermaid=true` for visual output.
+- **`gograph_path`**: Best deterministically ranked call chain between two symbols. It uses the same certainty, length, production/test, and typed/heuristic ordering as CLI `path`; accepts `mermaid=true` for visual output.
 - **`gograph_changes`**: Symbols modified/added/deleted since the trusted persisted graph, or the startup fallback when no usable artifact exists. Deleted includes files absent from the current safely selected inventory. With `git_ref`, returns symbols in files changed since that ref (MODIFIED only).
 - **`gograph_context`**: Bundles node details, callers, callees, tests, source code, and top-level architectural role into one compact structured response shared with CLI JSON. `node` retains the first match for compatibility, `nodes[]` preserves all ambiguous matches, test names and `test_results[]` preserve test evidence, and `source_error` reports a non-fatal source read failure. Supports exact matching and uncommitted mode.
 - **`gograph_plan`**: Pre-edit planning. Highlights likely affected tests, routes, env reads, SQL touches, and public API impact. Set `with_context=true` to bundle full context for every `inspect_first` symbol — eliminates follow-up `context` calls.

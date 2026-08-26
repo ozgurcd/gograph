@@ -457,3 +457,7 @@ Added additive CLI `explore` and MCP `gograph_explore` over the shared `gograph.
 ## 2026-08-26 — Compact and deep explore responses
 
 Implemented shared CLI/MCP `gograph.explore.v1` response modes: compact preserves discovery, identity/role, complete totals, and explicit omissions at a five-row default; standard remains the ten-row default; deep adds bounded depth-3 exact caller/callee evidence with stable identity/provenance, exact selected-package context, and bounded explanation at a 25-row default. Possible dispatch stays excluded, synthetic forwarding is transparent, ambiguity fails closed for deep expansion, and explicit limits override mode defaults. CLI/MCP native parity, live stdio behavior, focused regressions, precise build/review, and the complete `make verify` gate passed.
+
+## 2026-08-26 — Deterministic ranked relationship paths
+
+Repository and workspace path queries now select one deterministic best route using the shared order: exact/ambiguous/possible certainty, visible length, production before tests, typed resolution before heuristics, cross-repository transitions, then canonical provenance. Existing singular CLI/MCP response contracts and workspace exact-only defaults remain compatible. Updated project, workflow, and workspace-v1 durable contracts.

@@ -41,7 +41,7 @@ func runExplore(args []string) int {
 			limit = search.NormalizeExploreLimit(value)
 		default:
 			if strings.HasPrefix(argument, "-") {
-				return failCommandf("explore", "unknown flag: %s", argument)
+				return failCommandf("explore", "explore: unknown flag: %s", argument)
 			}
 			termParts = append(termParts, argument)
 		}

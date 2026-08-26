@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/ozgurcd/gograph/internal/buildctx"
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/pathrank"
 	"github.com/ozgurcd/gograph/internal/scanner"
 	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
@@ -36,12 +38,13 @@ func isFullyQualifiedID(s string) bool {
 	return strings.Contains(s, "::")
 }
 
-// Path finds the shortest call chain from symbol `from` to symbol `to` using
-// BFS over the call graph edges. It returns the chain as a slice of Result
-// values ordered from source to destination. An empty slice means no path was
-// found. Both names are matched case-insensitively as substrings so partial
-// names (e.g. "ValidateUser" instead of "(AuthService).ValidateUser") work.
-// Package-qualified names like "cli.Run" are normalized to just "Run".
+// Path finds the best call chain from symbol `from` to symbol `to`. Competing
+// paths are ranked by certainty, visible length, production/test provenance,
+// typed/heuristic resolution, and a canonical tie-breaker. It returns the
+// selected chain as Result values ordered from source to destination. An empty
+// slice means no path was found. Both names are matched case-insensitively as
+// substrings so partial names work; package-qualified names like "cli.Run" are
+// normalized to just "Run".
 func Path(g *graph.Graph, from, to string, includeTests bool) []Result {
 	fl := normalizeSymbolName(from)
 	tl := normalizeSymbolName(to)
@@ -89,25 +92,36 @@ func Path(g *graph.Graph, from, to string, includeTests bool) []Result {
 		}
 	}
 
-	// Seed BFS from all nodes matching "from".
-	visited := make(map[string]bool)
+	// Search all relevant rank classes instead of returning the first BFS hit.
+	// A later possible/test/heuristic edge can erase a prefix's categorical
+	// advantage, so each node retains one best path per categorical class.
 	type state struct {
 		node string
 		path []graph.CallEdge
 	}
-	var queue []state
+	var queue pathrank.Queue[state]
+	best := make(map[string]pathrank.Rank)
+	push := func(next state, rank pathrank.Rank) {
+		key := next.node + "\x00" + rank.ClassKey()
+		if previous, ok := best[key]; ok && !rank.Less(previous) {
+			return
+		}
+		best[key] = rank
+		queue.Push(next, rank)
+	}
+	seed := func(node string) {
+		push(state{node: node}, pathrank.Rank{Tie: "seed:" + node})
+	}
 	for _, c := range g.Calls {
 		seedByName := matchesFromName(c.CallerName)
 		seedByID := fromFQ && c.CallerSymbolID == from
-		if (seedByName || seedByID) && !visited[c.CallerName] {
-			visited[c.CallerName] = true
-			queue = append(queue, state{node: c.CallerName})
+		if seedByName || seedByID {
+			seed(c.CallerName)
 		}
 		// When the FROM query is an FQ ID, also seed by that exact ID so
 		// the BFS can walk via adjByID without name conflation.
-		if seedByID && !visited[c.CallerSymbolID] {
-			visited[c.CallerSymbolID] = true
-			queue = append(queue, state{node: c.CallerSymbolID})
+		if seedByID {
+			seed(c.CallerSymbolID)
 		}
 	}
 	for _, s := range g.Symbols {
@@ -117,21 +131,38 @@ func Path(g *graph.Graph, from, to string, includeTests bool) []Result {
 				node = s.ID[idx+1:]
 			}
 		}
-		if matchesFromName(node) && !visited[node] {
-			visited[node] = true
-			queue = append(queue, state{node: node})
+		if matchesFromName(node) {
+			seed(node)
 		}
-		if fromFQ && s.ID == from && !visited[s.ID] {
-			visited[s.ID] = true
-			queue = append(queue, state{node: s.ID})
+		if fromFQ && s.ID == from {
+			seed(s.ID)
 		}
 	}
 
-	// enqueueEdge appends a follow-on state to the queue for an outgoing
-	// edge. It also visits the edge's CalleeSymbolID (when present) so a
-	// later iteration can pick the node up via adjByID and walk forward
-	// exactly — no name conflation across symbols that share a short name.
-	enqueueEdge := func(cur state, edge graph.CallEdge) {
+	edgeKey := func(edge graph.CallEdge) string {
+		return edge.CallerSymbolID + "\x00" + edge.CallerName + "\x00" + edge.CalleeSymbolID + "\x00" + edge.CalleeRaw + "\x00" + string(edge.Resolution) + fmt.Sprintf("\x00%t\x00%t", edge.Synthetic, edge.Precise) + "\x00" + edge.File + fmt.Sprintf("\x00%09d\x00%09d", edge.Line, edge.Column)
+	}
+	outgoing := func(node string) []graph.CallEdge {
+		candidates := append([]graph.CallEdge(nil), adj[node]...)
+		candidates = append(candidates, adjByID[node]...)
+		candidates = append(candidates, adjLower[strings.ToLower(node)]...)
+		byKey := make(map[string]graph.CallEdge, len(candidates))
+		for _, edge := range candidates {
+			byKey[edgeKey(edge)] = edge
+		}
+		keys := make([]string, 0, len(byKey))
+		for key := range byKey {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		result := make([]graph.CallEdge, 0, len(keys))
+		for _, key := range keys {
+			result = append(result, byKey[key])
+		}
+		return result
+	}
+
+	enqueueEdge := func(cur state, rank pathrank.Rank, edge graph.CallEdge) {
 		nextNode := edge.CalleeRaw
 		if strings.Contains(nextNode, ".") {
 			normalized := normalizeSymbolName(nextNode)
@@ -141,30 +172,32 @@ func Path(g *graph.Graph, from, to string, includeTests bool) []Result {
 		newPath := make([]graph.CallEdge, len(cur.path)+1)
 		copy(newPath, cur.path)
 		newPath[len(cur.path)] = edge
-
-		if !visited[nextNode] {
-			visited[nextNode] = true
-			if _, exists := adj[nextNode]; exists || strings.Contains(nextNode, "(") {
-				visited[edge.CalleeRaw] = true
-			}
-			queue = append(queue, state{node: nextNode, path: newPath})
-			if _, exists := adj[nextNode]; !exists {
-				queue = append(queue, state{node: edge.CalleeRaw, path: newPath})
-			}
+		certainty := pathrank.Exact
+		if edge.Resolution == graph.CallResolutionCHA || edge.CalleeSymbolID == "" {
+			certainty = pathrank.Possible
 		}
-		// Also enqueue the precise CalleeSymbolID as a node so the next
-		// hop can walk adjByID exactly — this is the Bug 6 fix: a chain
-		// reaching (*A).Validate will not accidentally continue into
-		// (*B).Validate's callees on the next hop.
-		if edge.CalleeSymbolID != "" && !visited[edge.CalleeSymbolID] {
-			visited[edge.CalleeSymbolID] = true
-			queue = append(queue, state{node: edge.CalleeSymbolID, path: newPath})
+		nextRank := rank.Extend(certainty, !edge.Synthetic, isTestFile(edge.File), edge.Resolution == "", false, edgeKey(edge))
+		nodes := []string{nextNode, edge.CalleeRaw, edge.CalleeSymbolID}
+		seen := make(map[string]bool, len(nodes))
+		for _, node := range nodes {
+			if node == "" || seen[node] {
+				continue
+			}
+			seen[node] = true
+			candidateRank := nextRank
+			candidateRank.Tie += "\x1f" + node
+			push(state{node: node, path: newPath}, candidateRank)
 		}
 	}
 
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
+	for {
+		cur, rank, ok := queue.Pop()
+		if !ok {
+			break
+		}
+		if current := best[cur.node+"\x00"+rank.ClassKey()]; current != rank {
+			continue
+		}
 
 		// Termination: either the current node name matches (legacy fuzzy
 		// match) OR the last edge's CalleeSymbolID matches an FQ to-query.
@@ -211,36 +244,8 @@ func Path(g *graph.Graph, from, to string, includeTests bool) []Result {
 			return chain
 		}
 
-		for _, edge := range adj[cur.node] {
-			enqueueEdge(cur, edge)
-		}
-		// ID-keyed adjacency: when cur.node is a SymbolNode.ID (because a
-		// previous hop seeded it via edge.CalleeSymbolID), walking via
-		// adjByID gives exact-identity expansion — no conflation with
-		// other symbols sharing the short name.
-		for _, edge := range adjByID[cur.node] {
-			enqueueEdge(cur, edge)
-		}
-		for _, edge := range adjLower[strings.ToLower(cur.node)] {
-			nextNode := edge.CalleeRaw
-			if strings.Contains(nextNode, ".") {
-				normalized := normalizeSymbolName(nextNode)
-				parts := strings.Split(normalized, ".")
-				nextNode = parts[len(parts)-1]
-			}
-			if !visited[nextNode] {
-				visited[nextNode] = true
-				if _, exists := adj[nextNode]; exists || strings.Contains(nextNode, "(") {
-					visited[edge.CalleeRaw] = true
-				}
-				newPath := make([]graph.CallEdge, len(cur.path)+1)
-				copy(newPath, cur.path)
-				newPath[len(cur.path)] = edge
-				queue = append(queue, state{node: nextNode, path: newPath})
-				if _, exists := adj[nextNode]; !exists {
-					queue = append(queue, state{node: edge.CalleeRaw, path: newPath})
-				}
-			}
+		for _, edge := range outgoing(cur.node) {
+			enqueueEdge(cur, rank, edge)
 		}
 	}
 	return nil

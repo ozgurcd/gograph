@@ -113,6 +113,11 @@ For `gograph_callers`, `gograph_callees`, `gograph_impact`,
 `gograph_coupling`, set `mermaid=true` to request Markdown-fenced Mermaid
 instead of the tool's normal response.
 
+CLI `path` and MCP `gograph_path` share deterministic best-path selection:
+exact before possible, then shorter, production before tests, typed resolution
+before heuristics, and a canonical tie-breaker. Workspace path adds fewer
+cross-repository transitions as the final semantic preference.
+
 ## Privacy
 
 Graph artifacts and MCP transport are local. Indexing asks the installed Go
