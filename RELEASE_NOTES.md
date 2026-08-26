@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+No changes yet.
+
+## v1.6.7 — 2026-08-27
+
 ### Seamless, explicit graph freshness
 
 - Repository graph-backed CLI JSON envelopes now include additive
