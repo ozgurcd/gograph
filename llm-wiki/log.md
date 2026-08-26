@@ -465,3 +465,9 @@ Repository and workspace path queries now select one deterministic best route us
 ## 2026-08-26 — Seamless explicit graph freshness
 
 Added shared `gograph.graph-state.v1` provenance to repository CLI JSON and project MCP results without changing native functional payloads. MCP now serves explicitly marked current in-memory precise fallbacks or trusted stale artifacts after eligible refresh failures, while mismatched Go build contexts remain fail-closed and degraded graphs are never silently published. Refresh and persistence have independent bounded diagnostics; later publication failures retain the fresh in-memory result for retry. Snapshot `stale`, default `changes`, and `stats` report the exact persisted artifact or startup fallback they inspect.
+
+## [2026-08-27] maintenance | Publish v1.6.7 exploration and freshness release
+
+- Released gograph v1.6.7 from tag commit `9622779cf7b2ce73eb21f7f2d7b2fb98bac8f330`, incorporating bounded CLI/MCP explore with compact/deep modes, deterministic ranked repository/workspace paths, and explicit CLI/MCP graph freshness.
+- Local and hosted release gates passed uncached unit/race tests, vet, lint/static analysis, source/binary/archive vulnerability scans, deterministic six-MCPB verification and 68-tool smoke initialization, documentation rendering, and exact archive validation.
+- Release workflow `33021904814` published and independently verified all 14 GitHub assets, Homebrew cask 1.6.7, and active/latest official MCP Registry version 1.6.7; CI and Hugo deployment also succeeded.
