@@ -172,7 +172,7 @@ for the schemas, freshness rules, and completeness requirements.
 
 ### explore
 ```bash
-gograph explore <term...> [--limit N] [--exact] [--json]
+gograph explore <term...> [--compact|--deep] [--limit N] [--exact] [--json]
 ```
 Performs bounded first-call discovery by composing ranked broad lexical matches
 with one explicitly disclosed selected symbol's node metadata, source, direct
@@ -184,16 +184,31 @@ bounded impact section. Use focused `impact` for broader fallback traversal.
   `ranked_lexical_match`, or `none`; `ambiguous` remains true when the selected
   symbol resolves to several nodes. Question-like input is tokenized
   lexically and is not interpreted by a model.
-- **Bounds**: `--limit` applies independently to every returned list, defaults
-  to 10, and is clamped to 1-100. `totals` reports complete section sizes and
-  `truncated_sections` identifies every bounded section. Use the focused
-  `query`, `context`, or `impact` command when a complete section is required.
-- **Exact mode**: `--exact` requires exact resolution for deep symbol context;
+- **Response modes**: Standard mode preserves the original response and
+  defaults to 10 rows. `--compact` defaults to 5 rows and keeps ranked matches,
+  selected node/role, full totals, and `omitted_sections` while omitting source,
+  caller, callee, test, and impact bodies. `--deep` defaults to 25 rows, retains
+  the standard response, and adds bounded depth-3 exact identity
+  callers/callees, selected package context, and explanation. Compact and deep
+  are mutually exclusive.
+- **Bounds**: An explicit `--limit` overrides the mode default, applies
+  independently to every returned list, and is clamped to 1-100. `totals`
+  reports complete section sizes and `truncated_sections` identifies every
+  bounded section. Deep also carries its own totals and explanation truncation
+  metadata. Use the focused `query`, `context`, or `impact` command when a
+  complete section is required.
+- **Deep precision**: Deep traversal excludes possible dispatch and crosses
+  synthetic forwarders transparently. Caller/callee rows carry `stable_id`,
+  call-site provenance, and declaration location when the target is indexed.
+  An ambiguous selected symbol omits the deep expansion until an exact
+  fully-qualified identity is supplied.
+- **Exact mode**: `--exact` requires exact resolution for selected-symbol context;
   broad lexical matches remain visible but are not promoted automatically.
 - **JSON/MCP parity**: CLI `--json` places the native
   `gograph.explore.v1` value in its generic `results` envelope. MCP
   `gograph_explore` returns that same native value as JSON text, with required
-  `query` and matching optional `limit` and `exact` parameters.
+  `query`; optional `limit` and `exact`; and mutually exclusive typed `compact`
+  and `deep` booleans.
 
 ### query
 ```bash

@@ -138,6 +138,10 @@ func TestGographCapabilities(t *testing.T) {
 		"different effective GOWORK",
 		"gograph doctor --json",
 		"obsolete generator-owned package pages",
+		"explore_response_modes",
+		"compact=true",
+		"deep=true",
+		"same native gograph.explore.v1 value",
 	} {
 		if !strings.Contains(toolsStr, want) {
 			t.Errorf("capabilities prerequisite omits %q", want)

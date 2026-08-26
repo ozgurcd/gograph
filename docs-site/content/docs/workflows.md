@@ -41,9 +41,11 @@ When opening an unfamiliar Go repository, use this workflow to get oriented in s
 Before changing the signature or behavior of any function, method, or struct, follow this cycle:
 
 If the relevant symbol is not known yet, start with
-`gograph explore <term...>` (or MCP `gograph_explore`) for bounded ranked
-discovery, then use the disclosed selected symbol or a more specific focused
-query. `explore` does not replace the required plan step.
+`gograph explore <term...> --compact` (or MCP `gograph_explore` with
+`compact=true`) for low-token ranked discovery. Use standard mode for source
+and direct evidence, or `--deep`/`deep=true` for bounded depth-3 exact evidence,
+package context, and explanation. Then use the disclosed selected symbol or a
+more specific focused query. `explore` does not replace the required plan step.
 
 ```
 [ plan <sym> ] ──► [ context <sym> ] ──► [ Edit Code ] ──► [ build . --precise ] ──► [ review --uncommitted ]

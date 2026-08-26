@@ -9,6 +9,7 @@ import (
 
 	protocol "github.com/mark3labs/mcp-go/mcp"
 	"github.com/ozgurcd/gograph/internal/graph"
+	mcppkg "github.com/ozgurcd/gograph/internal/mcp"
 	"github.com/ozgurcd/gograph/internal/search"
 )
 
@@ -96,5 +97,94 @@ func TestMCPExploreClampsExplicitLimitToOne(t *testing.T) {
 	}
 	if result.Limit != 1 {
 		t.Fatalf("explicit zero limit = %d, want clamp to 1", result.Limit)
+	}
+}
+
+func TestMCPExploreCompactAndDeepModes(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "target.go"), []byte("package sample\n\nfunc Target() {}\n\nfunc Caller() { Target() }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g := &graph.Graph{
+		Root:     root,
+		Packages: []graph.PackageNode{{ID: "sample", Name: "sample", ImportPathBestEffort: "example.com/explore", Dir: ".", Files: []string{"target.go"}}},
+		Files:    []graph.FileNode{{ID: "target.go", Path: "target.go", PackageName: "sample"}},
+		Symbols: []graph.SymbolNode{
+			{ID: "example.com/explore::Target", Name: "Target", Kind: graph.KindFunction, PackageName: "sample", File: "target.go", Line: 3, EndLine: 3},
+			{ID: "example.com/explore::Caller", Name: "Caller", Kind: graph.KindFunction, PackageName: "sample", File: "target.go", Line: 5, EndLine: 5},
+		},
+		Calls: []graph.CallEdge{{CallerName: "Caller", CallerSymbolID: "example.com/explore::Caller", CalleeRaw: "Target", CalleeSymbolID: "example.com/explore::Target", File: "target.go", Line: 5, Resolution: graph.CallResolutionStatic}},
+	}
+	handler := setupHandlers(t, g)["gograph_explore"]
+
+	compactText := callTool(t, handler, map[string]any{"query": "Target", "compact": true})
+	wantCompact, err := json.MarshalIndent(search.Explore(g, root, "Target", search.ExploreOptions{Mode: search.ExploreModeCompact}), "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compactText != string(wantCompact) {
+		t.Fatalf("compact MCP/CLI-core parity mismatch\nMCP:\n%s\nshared:\n%s", compactText, wantCompact)
+	}
+	var compact search.ExploreResult
+	if err := json.Unmarshal([]byte(compactText), &compact); err != nil {
+		t.Fatalf("compact MCP explore returned invalid JSON: %v\n%s", err, compactText)
+	}
+	if compact.Mode != search.ExploreModeCompact || compact.Limit != search.CompactExploreLimit || compact.Context == nil || compact.Context.Source != "" || len(compact.Impact) != 0 {
+		t.Fatalf("compact MCP result = %#v", compact)
+	}
+
+	deepText := callTool(t, handler, map[string]any{"query": "Target", "deep": true})
+	wantDeep, err := json.MarshalIndent(search.Explore(g, root, "Target", search.ExploreOptions{Mode: search.ExploreModeDeep}), "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deepText != string(wantDeep) {
+		t.Fatalf("deep MCP/CLI-core parity mismatch\nMCP:\n%s\nshared:\n%s", deepText, wantDeep)
+	}
+	var deep search.ExploreResult
+	if err := json.Unmarshal([]byte(deepText), &deep); err != nil {
+		t.Fatalf("deep MCP explore returned invalid JSON: %v\n%s", err, deepText)
+	}
+	if deep.Mode != search.ExploreModeDeep || deep.Limit != search.DeepExploreLimit || deep.Deep == nil || deep.Deep.Explanation == nil {
+		t.Fatalf("deep MCP result = %#v", deep)
+	}
+}
+
+func TestMCPExploreRejectsConflictingModes(t *testing.T) {
+	handler := setupHandlers(t, &graph.Graph{})["gograph_explore"]
+	request := protocol.CallToolRequest{}
+	request.Params.Arguments = map[string]any{"query": "Target", "compact": true, "deep": true}
+	result, err := handler(t.Context(), request)
+	if err != nil {
+		t.Fatalf("handler returned protocol error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("conflicting MCP explore modes unexpectedly succeeded: %#v", result)
+	}
+	text := result.Content[0].(protocol.TextContent).Text
+	if !strings.Contains(text, "mutually exclusive") {
+		t.Fatalf("unexpected conflict error: %s", text)
+	}
+}
+
+func TestMCPExploreAdvertisesBooleanModeParameters(t *testing.T) {
+	g := &graph.Graph{}
+	server := mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), mockBuildBaseline(), "dev")
+	registered, ok := server.ListTools()["gograph_explore"]
+	if !ok {
+		t.Fatal("gograph_explore is not registered")
+	}
+	for _, name := range []string{"compact", "deep"} {
+		property, ok := registered.Tool.InputSchema.Properties[name]
+		if !ok {
+			t.Fatalf("gograph_explore does not advertise %q", name)
+		}
+		encoded, err := json.Marshal(property)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(encoded), `"type":"boolean"`) {
+			t.Fatalf("gograph_explore %s schema = %s, want boolean", name, encoded)
+		}
 	}
 }

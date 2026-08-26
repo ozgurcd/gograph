@@ -337,6 +337,10 @@ func classifyRole(r *ExplainResult) string {
 
 // renderNarrative produces a human-readable prose paragraph from the structured data.
 func renderNarrative(displayName string, r *ExplainResult) string {
+	return renderNarrativeWithCallerCounts(displayName, r, len(r.ProdCallers), len(r.TestCallers))
+}
+
+func renderNarrativeWithCallerCounts(displayName string, r *ExplainResult, prodCallerCount, testCallerCount int) string {
 	var sb strings.Builder
 
 	// Opening sentence: identity
@@ -348,9 +352,9 @@ func renderNarrative(displayName string, r *ExplainResult) string {
 
 	// Fan-in
 	if r.CallerCount > 0 {
-		fmt.Fprintf(&sb, " It is called by %d production caller(s)", len(r.ProdCallers))
-		if len(r.TestCallers) > 0 {
-			fmt.Fprintf(&sb, " and %d test caller(s)", len(r.TestCallers))
+		fmt.Fprintf(&sb, " It is called by %d production caller(s)", prodCallerCount)
+		if testCallerCount > 0 {
+			fmt.Fprintf(&sb, " and %d test caller(s)", testCallerCount)
 		}
 		sb.WriteString(".")
 	} else if r.Kind == "function" || r.Kind == "method" {

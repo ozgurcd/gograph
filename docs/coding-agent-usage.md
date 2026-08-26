@@ -32,7 +32,7 @@ capabilities, or build-context diagnostic are visible before any MCP result is
 trusted.
 
 ```sh
-gograph explore <term...>       # bounded ranked discovery + selected symbol context + impact
+gograph explore <term...> [--compact|--deep] # bounded discovery at the response depth the agent needs
 gograph query <term>            # symbol/package/file/import/call substring search (works great for finding specific test names!)
 gograph focus <package>         # isolate context for a specific package
 gograph callers <function|Interface.Method> [--no-tests] [--depth N] [--exact] # who calls it; interface-qualified queries expand precise CHA targets
@@ -200,7 +200,7 @@ search from the start.
 - Session start: read `llm-wiki/index.md` → `llm-wiki/project.md` → `llm-wiki/agent-rules.md` → `llm-wiki/agent-contract.md` (if these maintained pages exist). Treat `agent-rules.md` as protected policy and use the repository's governed draft workflow for proposed changes.
 - If generated pages are missing: `gograph build . --precise && gograph wiki`
 - Graph freshness: `gograph stats` + `gograph stale`
-- Start from an unfamiliar term: `gograph explore <term...>` (bounded ranked matches plus disclosed symbol selection, source, callers, callees, tests, and exact identity impact)
+- Start from an unfamiliar term: `gograph explore <term...> --compact` for low-token identity/counts, standard `explore` for source/direct evidence, or `--deep` for bounded depth-3 exact evidence, package context, and explanation
 - Understand a known symbol: `gograph context <symbol>` (raw data) or `gograph explain <symbol>` (narrative — use when you need to understand purpose and architecture)
 - Before editing: `gograph plan <symbol>` (callers, tests, SQL/env/route risk)
 - Before a package refactor: `gograph dependents <pkg>` (indexed import consumers)
@@ -405,17 +405,35 @@ graph                                                         3       8  0.27
 
 ### Bounded first-call exploration
 
-`gograph explore <term...> [--limit N] [--exact]` combines broad lexical
+`gograph explore <term...> [--compact|--deep] [--limit N] [--exact]` combines broad lexical
 discovery with a selected symbol's source, nodes, direct callers, direct
 callees, attributed tests, and exact identity-resolved transitive upstream
 impact. Possible dispatch edges are excluded from that bounded impact section. It reports
 `selection_basis`, `ambiguous`, complete section totals, and
 `truncated_sections` so a ranked match is never presented as an undisclosed
 exact choice. Question-like input is tokenized lexically; no model interprets
-the question. The default limit is 10 rows per section and values are clamped
-to 1-100. Use `query`, `context`, or `impact` when a complete focused section
-is required. CLI `--json` wraps the same `gograph.explore.v1` native value
-returned by MCP `gograph_explore`. Use focused `impact` when broader
+the question.
+
+Response modes are mutually exclusive:
+
+- Standard (no mode flag) preserves the original response and defaults to 10
+  rows per section.
+- `--compact` defaults to 5 rows. It keeps ranked matches, the selected
+  node/role, complete pre-omission totals, and `omitted_sections`, but omits
+  source, caller, callee, test, and impact bodies.
+- `--deep` defaults to 25 rows. It retains the standard response and adds a
+  `deep` object containing bounded depth-3 exact identity callers/callees,
+  selected package context, an explanation, full totals, and truncation
+  metadata. Possible dispatch is excluded and synthetic forwarders are crossed
+  transparently; caller/callee rows include stable identity, call-site
+  provenance, and declaration location when indexed. Deep expansion is omitted
+  for an ambiguous selection; retry with a fully-qualified symbol identity.
+
+An explicit `--limit` overrides the selected mode's default and is clamped to
+1-100. Use `query`, `context`, or `impact` when a complete focused section is
+required. CLI `--json` wraps the same `gograph.explore.v1` native value returned
+by MCP `gograph_explore`, whose typed `compact` and `deep` booleans have the same
+mutual-exclusion and limit behavior. Use focused `impact` when broader
 short-name fallback traversal is required.
 
 ### 15. Symbol context bundle (primary token saver)
@@ -908,7 +926,7 @@ The current suite registers 68 MCP endpoints: 64 query, analysis, and workflow t
 - **`gograph_session_audit`**: Review and grade agent compliance and tool success rates. IDs accept only letters, digits, and underscore; logs must be regular repository-confined files.
 - **`gograph_session_cleanup`**: Delete stale inactive regular session logs without following linked directories or files; the active log is preserved.
 - **`gograph_query`**: Accepts `term` or a `terms` array; multiple terms use the CLI's OR semantics.
-- **`gograph_explore`**: Bounded first-call discovery matching CLI `explore`. Required `query` accepts a symbol, fully-qualified ID, lexical term, or short question-like phrase; optional `limit` is clamped to 1-100 and `exact` prevents fuzzy promotion into deep context. Returns `gograph.explore.v1` with ranked matches, explicit selection basis and ambiguity, source, callers, callees, tests, exact identity impact, complete totals, and truncation metadata.
+- **`gograph_explore`**: Bounded first-call discovery matching CLI `explore`. Required `query` accepts a symbol, fully-qualified ID, lexical term, or short question-like phrase; optional `limit` is clamped to 1-100 and `exact` prevents fuzzy promotion into symbol context. Mutually exclusive typed booleans `compact` and `deep` select the same native modes as CLI: compact defaults to 5 and returns identity/role plus complete counts and omissions; standard defaults to 10; deep defaults to 25 and adds bounded depth-3 exact callers/callees, selected package context, and explanation. Returns the shared `gograph.explore.v1` value.
 - **`gograph_focus`**
 - **`gograph_callers`**: Supports `depth` (1-10), `no_tests`, exact matching, and optional Mermaid presentation, equivalent to the CLI traversal options. In a precise graph, `Interface.Method` resolves through every recorded implementer while returning a shared source call site once.
 - **`gograph_callees`**: Supports `depth` (1-10), `no_tests`, and optional Mermaid presentation, equivalent to the CLI traversal options.

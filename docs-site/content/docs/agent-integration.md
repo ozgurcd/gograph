@@ -183,11 +183,14 @@ by default; `transitive=true` maps to CLI `tests --transitive` and returns the
 same `gograph.tests.v1` exact/possible paths. `gograph_untested.exclude[]` is the
 typed equivalent of repeatable CLI `--exclude` globs; its rows include full
 stable IDs, corresponding to CLI `untested --wide` presentation.
-`gograph_explore` is the bounded first-call option: it returns ranked lexical
-matches plus an explicitly disclosed selected symbol's source, callers,
-callees, tests, and exact identity-resolved transitive impact; possible
-dispatch is excluded from that impact section. Its native
-`gograph.explore.v1` JSON is
+`gograph_explore` is the bounded first-call option. Its mutually exclusive
+typed `compact` and `deep` booleans select the same modes as CLI: compact keeps
+ranked discovery, selected node/role, complete counts, and explicit omissions;
+standard adds source/direct evidence and exact identity impact; deep also adds
+bounded depth-3 exact callers/callees, selected package context, and an
+explanation. Their defaults are 5, 10, and 25 rows respectively, while an
+explicit `limit` overrides the selected default. Possible dispatch is excluded
+from exact impact and deep traversal. Its native `gograph.explore.v1` JSON is
 the same value wrapped by CLI `explore --json`; use focused tools when a
 complete unbounded section is required.
 

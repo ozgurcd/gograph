@@ -24,7 +24,8 @@ gograph build . --precise --tags=integration # include tagged files/tests
 gograph stats             # verify build health and analysis precision
 gograph summary           # repository overview; no symbol name required
 gograph hotspot --top 5   # choose a real symbol for context or plan
-gograph explore YourSymbol # ranked matches + selected symbol context + bounded exact identity impact
+gograph explore YourSymbol --compact # low-token discovery and complete evidence counts
+gograph explore YourSymbol --deep    # bounded depth-3 exact evidence, package context, explanation
 gograph flow --no-tests   # potential production source-to-sink paths
 ```
 

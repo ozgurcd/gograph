@@ -70,7 +70,9 @@ Choose a real function or method shown by `summary`, `hotspot`, or
 `gograph complexity`, then substitute its name below:
 
 ```bash
-gograph explore "YourSymbol" # ranked matches + source + callers/callees + tests + exact identity impact
+gograph explore "YourSymbol" --compact # low-token discovery, identity/role, and complete evidence counts
+gograph explore "YourSymbol"           # standard source + callers/callees + tests + exact identity impact
+gograph explore "YourSymbol" --deep    # standard response + depth-3 exact evidence, package context, explanation
 gograph context "YourSymbol" # source + callers + callees + tests
 
 # For compilable repositories, enrich the graph before a major refactor

@@ -14,12 +14,13 @@ import (
 
 // Result is a single match returned by any search function.
 type Result struct {
-	Kind   string `json:"kind"`
-	Name   string `json:"name"`
-	File   string `json:"file,omitempty"`
-	Line   int    `json:"line,omitempty"`
-	Detail string `json:"detail,omitempty"`
-	Score  int    `json:"-"` // internal ranking only, not serialised
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+	StableID string `json:"stable_id,omitempty"`
+	File     string `json:"file,omitempty"`
+	Line     int    `json:"line,omitempty"`
+	Detail   string `json:"detail,omitempty"`
+	Score    int    `json:"-"` // internal ranking only, not serialised
 
 	// CallSiteFile, CallSiteLine, and CallSiteColumn carry the location of the call
 	// expression that produced this result (callers/callees). Empty for

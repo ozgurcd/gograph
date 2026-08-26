@@ -189,8 +189,10 @@ Choose a real function or method reported by `summary`, `hotspot`, or
 `gograph complexity`, then replace `YourSymbol` below with that name:
 
 ```bash
-# Start with bounded ranked discovery and an explicit selected symbol
+# Start with low-token discovery, then request the detail you need
+gograph explore YourSymbol --compact
 gograph explore YourSymbol
+gograph explore YourSymbol --deep
 
 # Read its source and surrounding graph context
 gograph source YourSymbol
@@ -209,10 +211,13 @@ gograph impact YourSymbol
 gograph plan YourSymbol
 ```
 
-`explore` is additive: it limits each section (10 by default), reports complete
-totals and truncation, and shares `gograph.explore.v1` with MCP
-`gograph_explore`. Use the focused commands shown above when you need an
-unbounded section.
+`explore` is additive and shares `gograph.explore.v1` with MCP
+`gograph_explore`. Compact defaults to 5 rows and returns discovery,
+identity/role, complete counts, and explicit omissions. Standard defaults to 10
+and includes source/direct evidence plus exact impact. Deep defaults to 25 and
+adds bounded depth-3 exact callers/callees, package context, and explanation.
+An explicit limit overrides these defaults. Use the focused commands shown
+above when you need an unbounded section.
 
 ### Example: Reading Symbol Source Code
 

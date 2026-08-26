@@ -13,7 +13,7 @@ user-invocable: true
 
 # gograph: Go Repository Intelligence
 
-`gograph` is a local, AST-aware Go code intelligence engine that exposes 64 query, analysis, and workflow capabilities over the Model Context Protocol (68 endpoints including session lifecycle). It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) a structural view backed by a persisted or in-memory graph. `gograph_explore` combines ranked lexical discovery with an explicit selected symbol, source, callers, callees, tests, and bounded exact identity impact; `gograph_context` remains the focused known-symbol bundle. Actual savings depend on the task.
+`gograph` is a local, AST-aware Go code intelligence engine that exposes 64 query, analysis, and workflow capabilities over the Model Context Protocol (68 endpoints including session lifecycle). It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) a structural view backed by a persisted or in-memory graph. `gograph_explore` offers compact, standard, and deep bounded discovery over one shared native result: compact preserves identity/role and complete counts, standard includes source/direct evidence and exact impact, and deep adds depth-3 exact evidence, package context, and explanation. `gograph_context` remains the focused known-symbol bundle. Actual savings depend on the task.
 
 `gopls` provides live compiler-backed navigation, diagnostics, implementations,
 refactoring, and experimental MCP support. `gograph` complements it with a
@@ -65,7 +65,7 @@ Packaged and generated registrations keep refresh persistence off by default.
    `gograph build . --precise --strict` when CI must fail on fallback. If
    compilation prevents precision during exploratory work, use CLI
    `gograph build .` and explain the fallback.
-3. **For unfamiliar structural questions, invoke `gograph_explore` first; for complete structural symbol / type / function discovery, use `gograph_query` instead of `grep`, `rg`, `find`, or glob.** `gograph_explore` is bounded and discloses lexical selection, ambiguity, totals, and truncation; follow with a focused tool when a complete section is needed. Text search also matches comments and string literals; `gograph_query` returns AST-derived matches. Continue to use text search for literal strings, documentation, ordinary non-sensitive configuration, and non-Go files.
+3. **For unfamiliar structural questions, invoke `gograph_explore` first; for complete structural symbol / type / function discovery, use `gograph_query` instead of `grep`, `rg`, `find`, or glob.** Start with `compact=true` when identity and evidence counts are enough; use standard mode for direct evidence or `deep=true` for bounded depth-3 exact evidence, package context, and explanation. Compact/deep are mutually exclusive and default to 5/25 rows versus standard's 10; an explicit limit overrides the mode default. `gograph_explore` discloses lexical selection, ambiguity, totals, truncation, and omissions; follow with a focused tool when a complete section is needed. Text search also matches comments and string literals; `gograph_query` returns AST-derived matches. Continue to use text search for literal strings, documentation, ordinary non-sensitive configuration, and non-Go files.
 4. **Before editing any Go symbol**, invoke `gograph_plan` with
    `symbol=<symbol>`. The plan returns callers, tests connected to the symbol,
    and a blast-radius estimate. Edit decisions should reference the plan.
@@ -84,7 +84,7 @@ Packaged and generated registrations keep refresh persistence off by default.
 | Tool | Use case |
 |---|---|
 | `gograph_capabilities` | Discover what the connected server exposes |
-| `gograph_explore` with `query=<term-or-symbol>` | Bounded ranked discovery + disclosed symbol source/callers/callees/tests/exact identity impact |
+| `gograph_explore` with `query=<term-or-symbol>` | Compact/standard/deep bounded discovery with shared CLI semantics; start compact and deepen only when needed |
 | `gograph_query` with `term=<term>` or `terms=[...]` | AST-derived structural symbol search |
 | `gograph_context` with `symbol=<symbol>` | Node + source + callers + callees + tests in one call |
 | `gograph_plan` with `symbol=<symbol>` | Pre-edit blast radius + callers + tests |

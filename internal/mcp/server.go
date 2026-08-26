@@ -349,6 +349,14 @@ func NewServer(
 				"cli_only_operations":    []string{"build", "validate", "doctor", "gate", "snapshot", "add-claude-plugin", "hook-guard", "mcp startup", "workspace build/member refresh", "workspace mcp startup", "help", "version"},
 				"presentation":           "CLI flags/envelopes and typed MCP arguments/content may differ; paired operations share functional semantics.",
 			},
+			"explore_response_modes": map[string]any{
+				"standard":  "default limit 10; ranked matches plus selected source, direct callers/callees/tests, and exact identity impact",
+				"compact":   "compact=true; default limit 5; ranked matches, selected node/role, complete totals, and explicit omissions without evidence bodies",
+				"deep":      "deep=true; default limit 25; standard response plus bounded depth-3 exact callers/callees with stable identity and provenance, selected package context, and explanation",
+				"selection": "compact and deep are mutually exclusive; an explicit 1-100 limit overrides the selected mode default; ambiguous selections omit deep expansion until an exact identity is supplied",
+				"precision": "possible dispatch is excluded from exact impact and deep traversal; synthetic forwarders are crossed transparently",
+				"parity":    "CLI explore and MCP gograph_explore return the same native gograph.explore.v1 value for equivalent mode, exact, query, and limit inputs",
+			},
 			"refresh_persistence": map[string]any{
 				"enabled":            selectedOptions.PersistRefresh,
 				"artifact_directory": ".gograph",
@@ -384,7 +392,7 @@ func NewServer(
 				{"name": "gograph_session_audit", "purpose": "Review and grade agent compliance (Plan rule, Review rule, Composability/Efficiency) and tool success rates."},
 				{"name": "gograph_session_cleanup", "purpose": "Delete stale inactive regular session logs without following linked repository paths; preserves the active log."},
 				{"name": "gograph_query", "purpose": "Search symbols, packages, files, and imports by one term or an OR-combined terms array."},
-				{"name": "gograph_explore", "purpose": "Bounded first-call discovery: ranked lexical matches plus an explicitly selected symbol's source, callers, callees, tests, and exact identity-resolved transitive impact."},
+				{"name": "gograph_explore", "purpose": "Bounded first-call discovery with compact, standard, and deep response modes; compact preserves identity/counts, while deep adds depth-3 exact evidence, package context, and explanation."},
 				{"name": "gograph_focus", "purpose": "Full structural summary of one package: files, symbols, internal call edges, and imports. Use before editing an unfamiliar package."},
 				{"name": "gograph_context", "purpose": "Pre-flight bundle: first node plus all ambiguous nodes, source/source_error, callers, callees, structured tests, and top-level role. Use uncommitted=true for all modified symbols."},
 				{"name": "gograph_plan", "purpose": "Pre-edit plan: symbols to inspect first, tests, routes, env, and risk flags. Set with_context=true to inline the same complete context bundles."},
@@ -448,7 +456,7 @@ func NewServer(
 			},
 			"recommended_workflows": map[string][]string{
 				"session_start":   {"READ llm-wiki/index.md", "READ llm-wiki/project.md", "READ llm-wiki/agent-rules.md", "READ llm-wiki/agent-contract.md", "CLI gograph doctor --json", "gograph_summary", "gograph_stale"},
-				"initial_explore": {"gograph_explore", "gograph_focus or a specialized tool when a complete section is needed"},
+				"initial_explore": {"gograph_explore with compact=true", "retry gograph_explore in standard or deep=true mode only when more evidence is needed", "gograph_focus or a specialized tool when a complete section is needed"},
 				"before_edit":     {"gograph_context", "gograph_plan"},
 				"after_edit":      {"gograph_review", "gograph_risk", "gograph_api", "gograph_boundaries"},
 				"error_changes":   {"gograph_errorflow", "gograph_review"},
@@ -513,10 +521,12 @@ func NewServer(
 
 	// Tool: gograph_explore
 	exploreTool := mcp.NewTool("gograph_explore",
-		mcp.WithDescription("Explore a lexical term or Go symbol in one bounded call. Combines ranked broad matches with an explicitly disclosed selected symbol, source, node metadata, direct callers, direct callees, attributed tests, and exact identity-resolved transitive upstream impact; possible dispatch edges are excluded from impact. The MCP server refreshes source analysis before the call. Read-only; no persistent side effects. Question-like text is tokenized for deterministic lexical matching and is not interpreted by a model. WHEN TO USE: As the first structural call when you want both discovery and a useful symbol context without choosing several specialized tools. NOT TO USE: When you need a complete unbounded section or broader fallback traversal (use gograph_query, gograph_context, or gograph_impact); for package-wide orientation (use gograph_focus). RETURNS: gograph.explore.v1 with selection_basis, ambiguity, complete section totals, bounded arrays, and explicit truncated_sections."),
+		mcp.WithDescription("Explore a lexical term or Go symbol in one bounded call. Standard mode combines ranked matches with selected-symbol source, direct callers/callees, tests, and exact impact. compact=true returns discovery, selected-node metadata, role, complete counts, and explicit omitted_sections while suppressing token-heavy bodies (default limit 5). deep=true retains standard evidence and adds bounded depth-3 exact identity callers/callees, package context, and explanation (default limit 25). compact and deep are mutually exclusive; an explicit limit overrides their defaults. Possible dispatch is excluded from bundled identity impact and deep traversals. The MCP server refreshes source analysis before the call. Read-only; no persistent side effects. Question-like text is lexical, not model-interpreted. Focused tools remain authoritative for complete output. RETURNS: shared gograph.explore.v1 with mode, selection_basis, ambiguity, totals, truncation, and omission metadata."),
 		mcp.WithString("query", mcp.Required(), mcp.Description("A symbol, fully-qualified ID, lexical feature term, or short question-like phrase to explore")),
-		mcp.WithInteger("limit", mcp.Description("Maximum rows returned per section, clamped to 1-100 (default 10)")),
-		mcp.WithBoolean("exact", mcp.Description("Require exact symbol resolution for deep context; broad lexical matches remain visible")),
+		mcp.WithInteger("limit", mcp.Description("Maximum rows returned per section, clamped to 1-100; defaults to 5 compact, 10 standard, or 25 deep")),
+		mcp.WithBoolean("exact", mcp.Description("Require exact resolution for selected-symbol context; broad lexical matches remain visible")),
+		mcp.WithBoolean("compact", mcp.Description("Low-token response: matches, selected node/role, complete counts, and explicit omissions; mutually exclusive with deep")),
+		mcp.WithBoolean("deep", mcp.Description("Expanded response: standard evidence plus bounded depth-3 exact callers/callees, package context, and explanation; mutually exclusive with compact")),
 	)
 	addTool(exploreTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -532,13 +542,25 @@ func NewServer(
 		if !ok || strings.TrimSpace(query) == "" {
 			return mcp.NewToolResultError("query must be a non-empty string"), nil
 		}
-		limit, err := intArg(args, "limit", search.DefaultExploreLimit, 1, search.MaxExploreLimit)
+		compact := boolArg(args, "compact")
+		deep := boolArg(args, "deep")
+		if compact && deep {
+			return mcp.NewToolResultError("compact and deep are mutually exclusive"), nil
+		}
+		mode := search.ExploreModeStandard
+		if compact {
+			mode = search.ExploreModeCompact
+		} else if deep {
+			mode = search.ExploreModeDeep
+		}
+		limit, err := intArg(args, "limit", search.DefaultExploreLimitForMode(mode), 1, search.MaxExploreLimit)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		result := search.Explore(g, graphRoot(g), query, search.ExploreOptions{
 			Limit: limit,
 			Exact: boolArg(args, "exact"),
+			Mode:  mode,
 		})
 		data, err := json.MarshalIndent(result, "", "  ")
 		if err != nil {

@@ -453,3 +453,7 @@ Released gograph v1.6.5 from `a5bf0d2aa81e16c4e8d3b186deaaec0a42b2e73c`, incorpo
 ## [2026-08-26] feature | Added bounded CLI/MCP explore parity
 
 Added additive CLI `explore` and MCP `gograph_explore` over the shared `gograph.explore.v1` result without removing focused methods. Selection is deterministic and disclosed, arrays report totals and truncation, and bundled impact follows exact identity edges through hidden synthetic forwarding while excluding possible dispatch. Updated help, capabilities, public docs, release notes, skill/plugin metadata, and durable contracts. Verified focused parity tests, fresh precise live CLI/MCP calls, clean MCP stdout framing, and the complete `make verify` gate.
+
+## 2026-08-26 — Compact and deep explore responses
+
+Implemented shared CLI/MCP `gograph.explore.v1` response modes: compact preserves discovery, identity/role, complete totals, and explicit omissions at a five-row default; standard remains the ten-row default; deep adds bounded depth-3 exact caller/callee evidence with stable identity/provenance, exact selected-package context, and bounded explanation at a 25-row default. Possible dispatch stays excluded, synthetic forwarding is transparent, ambiguity fails closed for deep expansion, and explicit limits override mode defaults. CLI/MCP native parity, live stdio behavior, focused regressions, precise build/review, and the complete `make verify` gate passed.

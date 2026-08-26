@@ -478,7 +478,7 @@ transport-specific (CLI flags/envelopes versus typed MCP arguments/content).
 
 ━━━ COMMON WORKFLOWS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Start of any session         → doctor --json, stale, summary  (installation + graph health + briefing)
-  Explore an unfamiliar term   → explore <term>  (ranked matches + selected symbol context + exact impact)
+  Explore an unfamiliar term   → explore <term> [--compact|--deep]  (bounded discovery at the needed detail)
   Onboard to unfamiliar repo   → hotspot, skeleton, focus <pkg>
   Find where X is defined      → query <term>  then  source <sym> to read body
   Understand a symbol (raw)    → context <sym>  (callers+callees+source+tests in one call)
@@ -504,7 +504,7 @@ transport-specific (CLI flags/envelopes versus typed MCP arguments/content).
 
 ━━━ WHEN TO USE WHAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FINDING THINGS — four different scopes:
-  explore <term>    bounded first call: ranked matches + disclosed symbol selection + context + exact identity impact
+  explore <term>    bounded first call; add --compact for counts/identity or --deep for depth-3 evidence
   query <term>      broad: searches symbol names, file paths, package names, import paths, call sites
   node <sym>        exact: AST metadata for one named symbol (kind, file, line, signature, doc)
   source <sym>      body: extracts the actual source code block — use instead of reading the file
@@ -519,7 +519,7 @@ CALL GRAPH — two different depths:
     and interface expansion require a --precise build for full effect.
 
 SYMBOL UNDERSTANDING — three different outputs:
-  explore <term>   discovery plus bounded symbol context and exact identity impact in one response
+  explore <term>   discovery plus bounded symbol context; compact/default/deep control response detail
   context <sym>   structured data: node + source + callers + callees + tests — fast, token-efficient
   explain <sym>   narrative: role classification, prod vs test split, complexity, SQL, env, routes, interfaces
                   → use context when you need lists to act on; use explain when you need to understand purpose
@@ -695,11 +695,14 @@ changes              : symbols modified/new/deleted since the trusted persisted 
                        deleted includes files absent from the safe selected inventory
 changes --git <ref>  : symbols in files changed since a git ref (e.g. main, HEAD~5, v1.4.50)
 constructors <struct>: factory functions returning this struct
-explore <term...> [--limit N] [--exact]
+explore <term...> [--compact|--deep] [--limit N] [--exact]
                      : bounded ranked lexical matches plus an explicitly selected symbol's
                        source, callers, callees, tests, and exact identity-resolved transitive impact. Question-like
                        text is lexical, not model-interpreted; selection_basis, ambiguity,
-                       totals, and truncation are explicit; default limit 10, maximum 100.
+                       totals, and truncation are explicit. Standard defaults to 10 rows;
+                       compact defaults to 5 and returns identity/role plus complete counts;
+                       deep defaults to 25 and adds depth-3 exact evidence, package context,
+                       and explanation. Explicit limits override those defaults (maximum 100).
 literals <struct>    : composite literal sites Foo{...} — run before adding/removing a required field
 usages <type>        : where a type appears in signatures and fields (param/return/field/iface method)
 returnusage <fn>     : how each caller uses the return value of fn (discarded/assigned/returned/passed)
@@ -2745,15 +2748,19 @@ AGENT WORKFLOW RULES (CRITICAL)
      to verify test coverage, complexity, and that no unintended risks were introduced.
 
 SEARCH & NAVIGATION
-  explore <term...> [--limit N] [--exact]
+  explore <term...> [--compact|--deep] [--limit N] [--exact]
                              Bounded first-call discovery: ranked lexical matches plus
                              selected symbol node/source/callers/callees/tests and
                              exact identity-resolved transitive impact. Possible dispatch is excluded.
                              Reports selection basis, ambiguity,
                              complete totals, and truncated sections. Question-like
-                             input is lexical, not model-interpreted. Default limit 10;
-                             values are clamped to 1-100. --exact disables promotion
-                             of a fuzzy lexical match into deep symbol context.
+                             input is lexical, not model-interpreted. Standard defaults to
+                             10 rows. --compact defaults to 5 and omits evidence bodies;
+                             --deep defaults to 25 and adds bounded depth-3 exact callers/
+                             callees, package context, and explanation. Explicit --limit
+                             overrides mode defaults and clamps to 1-100; response modes
+                             are mutually exclusive. --exact disables promotion
+                             of a fuzzy lexical match into selected-symbol context.
   query <term...>            Search across symbols, packages, files, imports, and
                              call sites. Case-insensitive, OR logic across terms.
   focus <package>            Show all symbols, imports, and call edges for one

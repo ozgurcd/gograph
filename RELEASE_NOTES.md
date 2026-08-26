@@ -4,7 +4,7 @@
 
 ### Bounded first-call exploration
 
-- Added CLI `gograph explore <term...> [--limit N] [--exact] [--json]` and
+- Added CLI `gograph explore <term...> [--compact|--deep] [--limit N] [--exact] [--json]` and
   project-MCP `gograph_explore`. Both use one shared `gograph.explore.v1`
   result that combines ranked lexical matches with an explicitly disclosed
   selected symbol's source, nodes, direct callers, direct callees, attributed
@@ -16,7 +16,19 @@
   commands remain available for complete focused output.
 - Question-like input is deterministically tokenized for lexical search and is
   not presented as model-interpreted understanding. Exact mode retains broad
-  matches while refusing to promote a fuzzy result into deep symbol context.
+  matches while refusing to promote a fuzzy result into selected-symbol context.
+- Added mutually exclusive compact and deep response modes with CLI/MCP parity.
+  Compact defaults to five rows and keeps ranked discovery, selected node/role,
+  complete section totals, and explicit omitted-section metadata while omitting
+  token-heavy evidence bodies. Deep defaults to 25 rows and retains the standard
+  response while adding bounded depth-3 exact identity callers/callees, selected
+  package context, and an explanation. An explicit limit overrides the mode
+  default and remains clamped to 1-100.
+- Deep call traversal excludes possible dispatch and transparently crosses
+  synthetic forwarders. Its caller/callee rows include stable identities,
+  call-site provenance, and indexed declaration locations. Ambiguous selected
+  symbols do not receive a deep expansion until the caller supplies an exact
+  fully-qualified identity.
 - Updated CLI help/capabilities, MCP capabilities, transport counts, README,
   agent guidance, public command reference, integrations, and durable project
   context. The project MCP server now exposes 64 CLI-equivalent capabilities
