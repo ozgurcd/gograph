@@ -238,7 +238,7 @@ func dispatch(args []string) int {
 	case "identity":
 		return runIdentity(args[1:])
 	case "routes":
-		return runRoutes()
+		return runRoutes(args[1:])
 	case "sql":
 		return runSQL(args[1:])
 	case "errors":
@@ -488,7 +488,9 @@ gograph_session_create/end/audit/cleanup. That project server exposes 68 tools:
 Workspace status, query, path, and impact use the separate four-tool workspace
 MCP server described above. CLI-only process, host, CI, and artifact operations
 are build, validate, doctor, gate, snapshot, add-claude-plugin, hook-guard,
-project/workspace MCP startup, workspace build/member refresh, help, and version.
+project/workspace MCP startup, workspace build/member refresh, and help. The
+standalone version command remains CLI-only, while gograph_capabilities exposes
+the running MCP server version directly.
 These boundaries describe callable functionality; output presentation remains
 transport-specific (CLI flags/envelopes versus typed MCP arguments/content).
 
@@ -505,6 +507,7 @@ transport-specific (CLI flags/envelopes versus typed MCP arguments/content).
   Before a package refactor    → dependents <pkg>  (every consumer of this package)
   Full blast radius of change  → impact <sym>  or  impact --uncommitted  or  impact --since <ref>
   PR / branch scope review     → changes --git main
+  HTTP route census            → routes [term] [--module MODULE] [--include-tests]
   HTTP endpoint deep-dive      → endpoint <handler>  (route + call chain + SQL + env)
   Error root-cause trace       → errorflow <err_str>
   Security source/sink scan    → flow [term] [--source kind] [--sink kind]
@@ -697,7 +700,13 @@ orphans              : symbols unreachable via BFS from main/init, test, route, 
 path <from> <to>     : best ranked call chain between two symbols
 public <pkg>         : exported symbols only
 query <term...>      : broad OR search — symbols, files, packages, imports, call sites
-routes               : all HTTP REST routes. Annotates unresolvable handlers.
+routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor CURSOR]
+                     : deterministic HTTP route pages. Production only by default;
+                       term matches method/path, handler, or file; module accepts
+                       an exact module path/directory or unique directory basename.
+                       Defaults to 100 rows, maximum 200, with a 64 KiB page budget.
+                       Continue a truncated result with its cursor and the same filters.
+                       --files-only follows all pages and emits the complete file set.
 source <sym>         : confined exact source for function/method/struct/interface/
                        type/variable/constant — USE THIS instead of reading files
 sql [term]           : raw SQL queries mapped to their functions; optional keyword/table filter
@@ -2893,7 +2902,9 @@ CLI / MCP TRANSPORT COVERAGE
                              gograph_workspace_* tools listed under WORKSPACES.
   CLI-only operations        build, validate, doctor, gate, snapshot,
                              add-claude-plugin, hook-guard, project/workspace MCP
-                             startup, workspace build/member refresh, help, and version.
+                             startup, workspace build/member refresh, and help.
+                             The standalone version command has no MCP tool;
+                             gograph_capabilities reports the running server version.
                              CLI envelopes/flags and MCP typed content may differ, but
                              paired operations share their functional implementation.
 
@@ -3073,15 +3084,10 @@ CODE QUALITY
                              [--include-tests]
                              Input: route pattern ("POST /api/users"), path
                              fragment ("/users"), or handler symbol name.
-                             ROUTE-GROUPING LIMITATION: gograph reads route
-                             paths from AST literals only. Grouped routers
-                             (Gin Group, Echo Group, Chi) concatenate paths
-                             at runtime — the prefix is not a literal and is
-                             NOT recorded. Searching "POST /api/v1/users"
-                             fails in a grouped codebase.
-                             WORKAROUND: always prefer handler symbol name:
-                               gograph endpoint "CreateUser"  (always works)
-                             To find handler names: gograph routes
+                             Constant Gin/Echo/Fiber Group prefixes and Chi Route
+                             closure prefixes are composed. Dynamic prefix expressions
+                             remain unresolved; use the handler symbol in that case.
+                             To find handler names: gograph routes [term] [--module MODULE]
   deps <pkg> [--transitive]  Direct import dependencies of a package.
                              Add --transitive for the full closure (BFS).
   dependents <pkg>           Packages that import the named package (inverse of deps).
@@ -3115,7 +3121,16 @@ CODE QUALITY
                              Run 'gograph build . --precise' before this for best results.
 
 EXTRACTION
-  routes                     All HTTP REST API routes and their handler functions. Annotates unresolvable handlers.
+  routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor CURSOR]
+                             Deterministic gograph.routes.v1 pages. Production routes
+                             only by default; term matches method/path, handler, or file.
+                             Module accepts an exact path/directory or unique basename.
+                             Defaults to 100 rows, maximum 200, with a 64 KiB result
+                             budget. Reuse the same filters with next_cursor to continue.
+                             --files-only follows all pages for a complete file census.
+                             Gin/Fiber use the final variadic argument as handler;
+                             Echo uses the handler immediately after the path.
+                             Unresolved factories remain marked dynamic.
   sql [term]                 Raw SQL queries mapped to the functions that run them.
                              Filter by SQL keyword or table-name substring.
   httpcalls [term]           All outbound HTTP client calls via net/http.
@@ -3139,7 +3154,8 @@ EXTRACTION
 
 AGENT INTEGRATION
   capabilities               Token-optimized cheat sheet for AI agents. Run this
-                             first so the agent knows how to use gograph.
+                             first so the agent knows how to use gograph. Its MCP
+                             counterpart also reports the running server version.
   wiki [--output <dir>]      Generate llm-wiki/ — machine-first markdown pages
                              from the static graph. Covers: overview, architecture,
                              hotspots, routes, env, errors, concurrency, api-surface,
@@ -4213,14 +4229,88 @@ func runImpactSince(g *graph.Graph, ref string) int {
 	return printResults("impact", "--since "+ref, results, fmt.Sprintf("No callers found in blast radius of changes since %q.", ref))
 }
 
-// runRoutes lists all HTTP REST API routes and their handler functions.
-func runRoutes() int {
+// runRoutes lists a bounded page of HTTP REST API routes and their handlers.
+func runRoutes(args []string) int {
+	query := search.RouteQuery{Limit: search.DefaultRoutesLimit}
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--include-tests":
+			query.IncludeTests = true
+		case "--module":
+			if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+				return failCommand("routes", "--module requires a module path, directory, or unique directory basename")
+			}
+			i++
+			query.Module = args[i]
+		case "--limit":
+			value, err := parseIntegerFlag(args, &i)
+			if err != nil {
+				return failCommand("routes", err.Error())
+			}
+			query.Limit = value
+		case "--cursor":
+			if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+				return failCommand("routes", "--cursor requires the opaque next_cursor from a previous routes result")
+			}
+			i++
+			query.Cursor = args[i]
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				return failCommandf("routes", "unknown flag: %s", args[i])
+			}
+			positionals = append(positionals, args[i])
+		}
+	}
+	if len(positionals) > 1 {
+		return failCommand("routes", "usage: gograph routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor CURSOR]")
+	}
+	if len(positionals) == 1 {
+		query.Term = positionals[0]
+	}
+
 	g, err := loadGraph(".")
 	if err != nil {
 		return failCommand("routes", err.Error())
 	}
-	results := search.Routes(g)
-	return printResults("routes", "", results, "No HTTP routes found.")
+	page, err := search.QueryRoutes(g, query)
+	if err != nil {
+		return failCommand("routes", err.Error())
+	}
+	if jsonMode {
+		return PrintJSON(okEnvelope("routes", query.Term, page, page.Returned))
+	}
+	if filesOnlyMode {
+		seenFiles := make(map[string]bool)
+		for {
+			for _, result := range page.Routes {
+				if result.File != "" && !seenFiles[result.File] {
+					fmt.Println(result.File)
+					seenFiles[result.File] = true
+				}
+			}
+			if !page.Truncated {
+				break
+			}
+			query.Cursor = page.NextCursor
+			page, err = search.QueryRoutes(g, query)
+			if err != nil {
+				return failCommand("routes", err.Error())
+			}
+		}
+		return 0
+	}
+	if len(page.Routes) == 0 {
+		fmt.Println("No HTTP routes found.")
+		return 0
+	}
+	for _, result := range page.Routes {
+		fmt.Println(result.String())
+	}
+	if page.Truncated {
+		fmt.Printf("\nShowing %d of %d matching routes. Continue with --cursor %s and the same filters.\n", page.Returned, page.Total, page.NextCursor)
+	}
+	return 0
 }
 
 // runSQL lists raw SQL queries mapped to the functions that run them.

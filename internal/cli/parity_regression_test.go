@@ -157,6 +157,66 @@ func TestCLIEndpointDepthIsClampedFromOneToTwenty(t *testing.T) {
 	}
 }
 
+func TestCLIRoutesUsesTheSharedFilteredPageContract(t *testing.T) {
+	g := &graph.Graph{
+		Modules: []graph.ModuleNode{
+			{Path: "example.com/auth", Dir: "auth-service"},
+			{Path: "example.com/idp", Dir: "identuum-idp"},
+		},
+		Routes: []graph.HTTPRoute{
+			{Method: "GET", Path: "/users", Handler: "ListUsers", File: "auth-service/routes.go", Line: 1},
+			{Method: "POST", Path: "/users", Handler: "CreateUser", File: "auth-service/routes.go", Line: 2},
+			{Method: "DELETE", Path: "/users", Handler: "DeleteFixture", File: "auth-service/routes_test.go", Line: 3},
+			{Method: "POST", Path: "/token", Handler: "IssueToken", File: "identuum-idp/routes.go", Line: 1},
+		},
+	}
+	root := writeCLIParityGraph(t, g)
+
+	runRoutesPage := func(args ...string) search.RoutePage {
+		stdout, stderr, code := runCLIParityInDir(t, root, func() int {
+			return Run(append([]string{"routes"}, args...))
+		})
+		if code != 0 {
+			t.Fatalf("routes %v failed with code %d: %s", args, code, stderr)
+		}
+		var envelope struct {
+			Results search.RoutePage `json:"results"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+			t.Fatalf("routes %v did not return JSON: %v\n%s", args, err, stdout)
+		}
+		return envelope.Results
+	}
+
+	production := runRoutesPage("--json")
+	if production.Total != 3 || production.IncludeTests {
+		t.Fatalf("default route page = %+v", production)
+	}
+	first := runRoutesPage("users", "--module", "auth-service", "--include-tests", "--limit", "1", "--json")
+	if first.Total != 3 || first.Returned != 1 || first.NextCursor == "" {
+		t.Fatalf("first filtered route page = %+v", first)
+	}
+	second := runRoutesPage("users", "--module", "auth-service", "--include-tests", "--limit", "1", "--cursor", first.NextCursor, "--json")
+	if second.Total != first.Total || second.Returned != 1 || second.Routes[0] == first.Routes[0] {
+		t.Fatalf("second filtered route page = %+v; first = %+v", second, first)
+	}
+
+	large := &graph.Graph{Modules: []graph.ModuleNode{{Path: "example.com/large", Dir: "."}}}
+	for i := 0; i < 205; i++ {
+		large.Routes = append(large.Routes, graph.HTTPRoute{
+			Method: "GET", Path: fmt.Sprintf("/route/%03d", i), Handler: "Handle",
+			File: fmt.Sprintf("routes-%03d.go", i), Line: i + 1,
+		})
+	}
+	largeRoot := writeCLIParityGraph(t, large)
+	stdout, stderr, code := runCLIParityInDir(t, largeRoot, func() int {
+		return Run([]string{"routes", "--files-only"})
+	})
+	if code != 0 || len(strings.Fields(stdout)) != 205 {
+		t.Fatalf("routes --files-only must preserve the complete file census: code=%d files=%d stderr=%s", code, len(strings.Fields(stdout)), stderr)
+	}
+}
+
 func TestCLIBoundariesJSONStillExitsNonzeroOnViolations(t *testing.T) {
 	g := &graph.Graph{
 		Packages: []graph.PackageNode{

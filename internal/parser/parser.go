@@ -119,6 +119,7 @@ func parseSource(fset *token.FileSet, path string, src any, relPath, pkgImportPa
 
 	// Extract HTTP Routes
 	routePrefixes := resolveRoutePrefixes(f)
+	echoRouters := resolveEchoRouters(f)
 	ast.Inspect(f, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
@@ -137,7 +138,13 @@ func parseSource(fset *token.FileSet, path string, src any, relPath, pkgImportPa
 				inlineBody := ""
 				handlerAppended := false
 				if len(call.Args) >= 2 {
-					switch h := call.Args[1].(type) {
+					// Gin and Fiber put the terminal handler after variadic
+					// middleware. Echo puts the handler immediately after the path
+					// and appends middleware after it, so retain the framework origin
+					// while choosing the candidate instead of applying one argument
+					// order to every router API.
+					handlerArg := routeHandlerArg(call, selector.X, echoRouters)
+					switch h := handlerArg.(type) {
 					case *ast.FuncLit:
 						// Inline anonymous function — not a named symbol.
 						// Record a descriptive label so callers know it is a closure
@@ -184,7 +191,7 @@ func parseSource(fset *token.FileSet, path string, src any, relPath, pkgImportPa
 							handlerAppended = true
 						}
 					default:
-						handler = typeString(call.Args[1])
+						handler = typeString(handlerArg)
 					}
 				}
 				if !handlerAppended {
@@ -210,6 +217,157 @@ func parseSource(fset *token.FileSet, path string, src any, relPath, pkgImportPa
 // key the environment so shadowed router variables do not contaminate one
 // another. A small fixed-point pass handles declarations and nested Route
 // closures regardless of traversal order.
+type echoRouterResolution struct {
+	objects   map[any]bool
+	aliases   map[string]bool
+	dotImport bool
+}
+
+func routeHandlerArg(call *ast.CallExpr, receiver ast.Expr, echoRouters echoRouterResolution) ast.Expr {
+	if isEchoRouterExpr(receiver, echoRouters) {
+		return call.Args[1]
+	}
+	return call.Args[len(call.Args)-1]
+}
+
+// resolveEchoRouters records the lexical objects that are provably Echo router
+// values. Echo's route-registration order is path, handler, middleware..., the
+// inverse of the Gin/Fiber convention this parser otherwise uses for variadic
+// registrations. The resolver deliberately requires an Echo import and a
+// structural type/constructor/group relationship; names such as "echo" alone
+// are not treated as evidence.
+func resolveEchoRouters(file *ast.File) echoRouterResolution {
+	aliases, dotImport := echoImportAliases(file)
+	resolution := echoRouterResolution{
+		objects:   make(map[any]bool),
+		aliases:   aliases,
+		dotImport: dotImport,
+	}
+	if len(aliases) == 0 && !dotImport {
+		return resolution
+	}
+
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch value := node.(type) {
+		case *ast.Field:
+			if !isEchoRouterType(value.Type, aliases, dotImport) {
+				return true
+			}
+			for _, name := range value.Names {
+				if name.Obj != nil {
+					resolution.objects[name.Obj] = true
+				}
+			}
+		case *ast.ValueSpec:
+			if value.Type == nil || !isEchoRouterType(value.Type, aliases, dotImport) {
+				return true
+			}
+			for _, name := range value.Names {
+				if name.Obj != nil {
+					resolution.objects[name.Obj] = true
+				}
+			}
+		}
+		return true
+	})
+
+	for changed := true; changed; {
+		changed = false
+		ast.Inspect(file, func(node ast.Node) bool {
+			assign := func(names []*ast.Ident, values []ast.Expr) {
+				for index, name := range names {
+					if name.Obj == nil || index >= len(values) || resolution.objects[name.Obj] {
+						continue
+					}
+					if isEchoRouterExpr(values[index], resolution) {
+						resolution.objects[name.Obj] = true
+						changed = true
+					}
+				}
+			}
+
+			switch value := node.(type) {
+			case *ast.AssignStmt:
+				for index, lhs := range value.Lhs {
+					name, ok := lhs.(*ast.Ident)
+					if !ok || index >= len(value.Rhs) {
+						continue
+					}
+					assign([]*ast.Ident{name}, []ast.Expr{value.Rhs[index]})
+				}
+			case *ast.ValueSpec:
+				assign(value.Names, value.Values)
+			}
+			return true
+		})
+	}
+
+	return resolution
+}
+
+func echoImportAliases(file *ast.File) (map[string]bool, bool) {
+	aliases := make(map[string]bool)
+	dotImport := false
+	for _, imp := range file.Imports {
+		importPath := strings.Trim(imp.Path.Value, `"`)
+		if importPath != "github.com/labstack/echo" && importPath != "github.com/labstack/echo/v4" {
+			continue
+		}
+		if imp.Name == nil {
+			aliases["echo"] = true
+			continue
+		}
+		switch imp.Name.Name {
+		case ".":
+			dotImport = true
+		case "_":
+		default:
+			aliases[imp.Name.Name] = true
+		}
+	}
+	return aliases, dotImport
+}
+
+func isEchoRouterType(expr ast.Expr, aliases map[string]bool, dotImport bool) bool {
+	if pointer, ok := expr.(*ast.StarExpr); ok {
+		return isEchoRouterType(pointer.X, aliases, dotImport)
+	}
+	switch value := expr.(type) {
+	case *ast.SelectorExpr:
+		alias, ok := value.X.(*ast.Ident)
+		return ok && alias.Obj == nil && aliases[alias.Name] && (value.Sel.Name == "Echo" || value.Sel.Name == "Group")
+	case *ast.Ident:
+		return dotImport && value.Obj == nil && (value.Name == "Echo" || value.Name == "Group")
+	}
+	return false
+}
+
+func isEchoRouterExpr(expr ast.Expr, resolution echoRouterResolution) bool {
+	switch value := expr.(type) {
+	case *ast.Ident:
+		if value.Obj != nil && resolution.objects[value.Obj] {
+			return true
+		}
+		return resolution.dotImport && value.Obj == nil && value.Name == "New"
+	case *ast.ParenExpr:
+		return isEchoRouterExpr(value.X, resolution)
+	case *ast.CallExpr:
+		if constructor, ok := value.Fun.(*ast.Ident); ok {
+			return resolution.dotImport && constructor.Obj == nil && constructor.Name == "New"
+		}
+		selector, ok := value.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return false
+		}
+		if selector.Sel.Name == "New" {
+			alias, ok := selector.X.(*ast.Ident)
+			return ok && alias.Obj == nil && resolution.aliases[alias.Name]
+		}
+		return selector.Sel.Name == "Group" && isEchoRouterExpr(selector.X, resolution)
+	}
+	return false
+}
+
 func resolveRoutePrefixes(file *ast.File) map[any]string {
 	prefixes := make(map[any]string)
 	for changed := true; changed; {
@@ -1519,7 +1677,7 @@ func calleeString(call *ast.CallExpr) string {
 func extractHandlerRefs(call *ast.CallExpr) []string {
 	var refs []string
 	for _, a := range call.Args {
-		collectRefs(a, &refs, false)
+		collectRefs(a, &refs, true)
 	}
 	return refs
 }

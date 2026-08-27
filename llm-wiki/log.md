@@ -471,3 +471,9 @@ Added shared `gograph.graph-state.v1` provenance to repository CLI JSON and proj
 - Released gograph v1.6.7 from tag commit `9622779cf7b2ce73eb21f7f2d7b2fb98bac8f330`, incorporating bounded CLI/MCP explore with compact/deep modes, deterministic ranked repository/workspace paths, and explicit CLI/MCP graph freshness.
 - Local and hosted release gates passed uncached unit/race tests, vet, lint/static analysis, source/binary/archive vulnerability scans, deterministic six-MCPB verification and 68-tool smoke initialization, documentation rendering, and exact archive validation.
 - Release workflow `33021904814` published and independently verified all 14 GitHub assets, Homebrew cask 1.6.7, and active/latest official MCP Registry version 1.6.7; CI and Hugo deployment also succeeded.
+
+## 2026-08-27 — Bounded, accurate route census
+
+CLI `routes` and MCP `gograph_routes` now share deterministic `gograph.routes.v1` pages with production-only defaults, term/module filters, explicit test inclusion, 100/200 row limits, a 64 KiB compact-result budget, and opaque continuation cursors. Variadic Gin/Fiber registrations use the final argument as handler, Echo retains its handler-before-middleware order, and MCP capabilities expose the running binary version. Pagination was chosen over whole-result refusal so large multi-module censuses remain completely enumerable without spill files or silent truncation.
+
+The maintained project, agent-workflow, and contributor contracts were synchronized with the same CLI/MCP boundary and route semantics.

@@ -431,13 +431,25 @@ constants of a package.
 
 ### routes
 ```bash
-gograph routes
+gograph routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor CURSOR]
 ```
-Extracts HTTP REST API routes from Gin, Chi, Echo, Fiber, and net/http-style
-registration calls. Constant nested Gin/Echo/Fiber `Group` prefixes and Chi
-`Route` closure prefixes are composed into final paths. Dynamically computed
-prefix expressions remain unresolved, so those routes retain their known
-literal suffix.
+Returns a deterministic `gograph.routes.v1` page of HTTP REST API routes from
+Gin, Chi, Echo, Fiber, and net/http-style registration calls. Production routes
+are included by default; `--include-tests` adds registrations from `_test.go`.
+The optional term matches method/path, handler, or file, and `--module` accepts
+an exact module path/directory or a unique directory basename. Pages default to
+100 rows, accept 1-200, and stay within a 64 KiB compact-JSON budget; use the
+returned cursor with unchanged filters to continue a truncated census.
+CLI `--files-only` follows every page locally and emits the complete
+deduplicated file set; normal text and JSON return one bounded page.
+
+Constant nested Gin/Echo/Fiber `Group` prefixes and Chi `Route` closure prefixes
+are composed into final paths. Dynamically computed prefix expressions remain
+unresolved, so those routes retain their known literal suffix. Variadic
+Gin/Fiber registration uses the final argument as the terminal handler. Echo
+uses `path, handler, middleware...`, and gograph retains that ordering. Handler
+factories remain marked dynamic when their returned closure cannot be
+statically resolved.
 
 ### sql
 ```bash
@@ -906,8 +918,9 @@ four exact pairs:
 The only CLI operations without callable MCP equivalents are process-, host-,
 CI-, or artifact-lifecycle operations: `build`, `validate`, `doctor`, `gate`,
 `snapshot`, `add-claude-plugin`, `hook-guard`, project/workspace MCP startup,
-`workspace build`/member refresh, help, and version. CLI flags/envelopes and
-typed MCP arguments/content are transport-specific; paired operations share
+`workspace build`/member refresh, and help. The standalone `version` command
+has no dedicated MCP tool, but `gograph_capabilities` exposes the running server
+version. CLI flags/envelopes and typed MCP arguments/content are transport-specific; paired operations share
 their functional implementation and documented filters, ordering, evidence,
 and result semantics.
 
@@ -934,7 +947,10 @@ it diagnoses the host process and installation selected before MCP startup.
 ```bash
 gograph capabilities
 ```
-Prints the token-optimized AI agent cheat sheet detailing common workflows and commands. Useful for bootstrapping context in an LLM system prompt.
+Prints the token-optimized AI agent cheat sheet detailing common workflows and
+commands. The MCP counterpart, `gograph_capabilities`, also includes a top-level
+`version` identifying the running server binary, so MCP-only clients can record
+the analysis instrument. Useful for bootstrapping context in an LLM system prompt.
 
 ### mcp
 ```bash

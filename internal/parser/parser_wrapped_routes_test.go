@@ -33,8 +33,10 @@ func TestParseFile_RouteExtractor_UnwrapsMiddleware(t *testing.T) {
 	// distinct URL paths for each registration shape so the assertions
 	// can be unambiguous.
 	handlers := map[string]string{}
+	dynamic := map[string]bool{}
 	for _, r := range result.Routes {
 		handlers[r.Path] = r.Handler
+		dynamic[r.Path] = r.DynamicHandler
 	}
 
 	cases := []struct {
@@ -46,6 +48,7 @@ func TestParseFile_RouteExtractor_UnwrapsMiddleware(t *testing.T) {
 		{"/wrapped", "licenses", "single wrapper: guard(h.licenses) → 'licenses', NOT 'guard'"},
 		{"/nested", "downloadLic", "nested wrappers: cors(guard(h.downloadLic)) → 'downloadLic'"},
 		{"/bare", "PlainHandler", "bare function through wrapper: guard(PlainHandler) → 'PlainHandler'"},
+		{"/variadic", "Handler", "variadic middleware: the final Handler(deps) argument wins over RequireScopes(ScopeOrgsUpdate)"},
 	}
 
 	for _, tc := range cases {
@@ -70,5 +73,11 @@ func TestParseFile_RouteExtractor_UnwrapsMiddleware(t *testing.T) {
 					tc.note, tc.path, got)
 			}
 		})
+	}
+	if handlers["/variadic"] == "ScopeOrgsUpdate" || strings.Contains(handlers["/variadic"], "RequireScopes") {
+		t.Fatalf("variadic route selected middleware as handler: %q", handlers["/variadic"])
+	}
+	if !dynamic["/variadic"] {
+		t.Fatal("Handler(deps) should retain the truthful dynamic-factory annotation")
 	}
 }

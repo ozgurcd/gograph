@@ -385,7 +385,7 @@ func NewServer(
 
 	// Tool: gograph_capabilities
 	capabilitiesTool := mcp.NewTool("gograph_capabilities",
-		mcp.WithDescription("List all available gograph MCP tools, their purposes, and recommended agent workflows. Once the project-scoped MCP server has started, this tool has no additional graph-state prerequisite. Read-only; no side effects. WHEN TO USE: Call once per session to orient before issuing analytical queries. NOT TO USE: Do not repeat after capabilities are cached in context. RETURNS: Structured JSON with every registered tool name, one-line purposes, recommended workflow sequences, and known static-analysis limitations."),
+		mcp.WithDescription("List the running gograph server version, all available MCP tools, their purposes, and recommended agent workflows. Once the project-scoped MCP server has started, this tool has no additional graph-state prerequisite. Read-only; no side effects. WHEN TO USE: Call once per session to record the analysis instrument and orient before issuing analytical queries. NOT TO USE: Do not repeat after capabilities are cached in context. RETURNS: Structured JSON with version, every registered tool name, one-line purposes, recommended workflow sequences, and known static-analysis limitations."),
 	)
 	addTool(capabilitiesTool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		startupGraph := "auto-builds an in-memory graph when it is missing, unreadable, unsafe, or uses an unsupported source policy"
@@ -394,6 +394,7 @@ func NewServer(
 		}
 		resp := map[string]any{
 			"summary":      "gograph MCP capabilities",
+			"version":      version,
 			"prerequisite": "The MCP server loads only a regular, repository-confined .gograph/graph.json with the current source-policy marker and " + startupGraph + ". Whole graph, saved-baseline, validation, MCP-reload, and workspace-overlay JSON reads reject artifacts larger than 512 MiB before allocation; startup recovery rebuilds an oversized graph from source. Its serialized root is ignored. Source-analysis tools compare selected-file content digests and the build/module fingerprint per call, then incrementally rebuild changed package ASTs after edits using the latest requested analysis mode and build tags selected at MCP startup; precise CHA/SSA enrichment remains repository-wide for selected project packages but does not build dependency SSA bodies, and separately attempts typed test-call attribution without making test compilation a prerequisite for production precision. Typed-only test targets are recomputed rather than restored as parser facts. Every refresh-backed result preserves its compatibility text payload and adds gograph.graph-state.v1 metadata plus gograph.mcp-result.v1 structured content. A failed precise enrichment can therefore serve an explicitly marked in-memory fallback, and an operational refresh failure can serve the last trusted stale graph. Neither degraded state is silently published. A persisted graph from a different effective GOWORK or build selection is never served after a failed refresh. gograph_stale, gograph_changes without git_ref, and gograph_stats inspect that trusted persisted index, or the startup auto-build fallback when no usable artifact exists. Linked directories and linked or special files recognized as Go build inputs are excluded, while unrelated regular-file or dangling links with non-Go extensions do not block precision. Linked/non-regular Go tool metadata (go.mod, go.sum, go.work, go.work.sum, and vendor/modules.txt) is rejected before toolchain use. Applicable go.work members may be sibling modules beneath the nearest real Git checkout; without that boundary they remain confined beneath the workspace directory. Each member directory, go.mod, and optional go.sum is validated before cmd/go. Use the current binary for untrusted repositories because older binaries do not enforce this contract. Run `gograph build . --precise --tags=integration` for type-checked CHA/SSA enrichment of an explicitly tagged selection; MCP accepts the same --tags selector, adopts a newer precise graph, and re-runs precision after source changes without silently changing that context. `gograph doctor --json` reports persisted-artifact diagnostics. On constrained hosts, project MCP startup accepts `--memory-mode=low --max-memory=1GiB`; analysis_memory reports the requested/effective soft Go runtime memory target, which is not a hard RSS cap. Session lifecycle tools write local telemetry, gograph_session_cleanup deletes stale logs, gograph_boundaries_create writes configuration, and gograph_wiki writes documentation; wiki regeneration prunes only obsolete generator-owned package pages and preserves custom pages plus packages/README.md. Their repository-controlled paths use rooted regular-file operations that reject descendant links. When an audit session is active, non-session MCP calls append observational command telemetry even when their analysis contract is read-only. Saved graph baselines must be regular files inside the project root, have no linked path component, and carry the exact current source-policy marker; their serialized root is ignored. gograph_doc rejects filesystem-shaped queries and source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees; .git and .gograph are excluded from that preflight. It invokes the local Go toolchain after repository source/metadata validation and is annotated open-world because dependency resolution follows the user's Go environment.",
 			"transport_contract": map[string]any{
 				"project_server_tools": 68,
@@ -410,7 +411,8 @@ func NewServer(
 				},
 				"workspace_server_tools": []string{"gograph_workspace_status", "gograph_workspace_query", "gograph_workspace_path", "gograph_workspace_impact"},
 				"workspace_server_note":  "The four workspace tools are exposed by `gograph workspace mcp`, not this project-scoped server; they share native result implementations with CLI workspace status/query/path/impact.",
-				"cli_only_operations":    []string{"build", "validate", "doctor", "gate", "snapshot", "add-claude-plugin", "hook-guard", "mcp startup", "workspace build/member refresh", "workspace mcp startup", "help", "version"},
+				"cli_only_operations":    []string{"build", "validate", "doctor", "gate", "snapshot", "add-claude-plugin", "hook-guard", "mcp startup", "workspace build/member refresh", "workspace mcp startup", "help"},
+				"version_source":         "The top-level version field records the running MCP server binary; the standalone CLI version command has no separate MCP tool.",
 				"presentation":           "CLI flags/envelopes and typed MCP arguments/content may differ; paired operations share functional semantics.",
 			},
 			"explore_response_modes": map[string]any{
@@ -464,7 +466,7 @@ func NewServer(
 				"tools":     []string{"gograph_callers", "gograph_callees", "gograph_impact", "gograph_endpoint", "gograph_dependents", "gograph_deps", "gograph_path", "gograph_coupling"},
 			},
 			"tools": []map[string]string{
-				{"name": "gograph_capabilities", "purpose": "List all available tools and recommended workflows once the MCP server has started; no additional graph-state prerequisite."},
+				{"name": "gograph_capabilities", "purpose": "Record the running server version and list all available tools and recommended workflows once the MCP server has started; no additional graph-state prerequisite."},
 				{"name": "gograph_stale", "purpose": "Check whether trusted persisted graph.json, or the startup fallback when no usable artifact exists, is outdated versus selected source files or the effective Go build context."},
 				{"name": "gograph_session_create", "purpose": "Start a telemetry audit session for tracking agent compliance and tool success metrics."},
 				{"name": "gograph_session_end", "purpose": "End the active telemetry session cleanly and write end-of-session logs."},
@@ -490,7 +492,7 @@ func NewServer(
 				{"name": "gograph_boundaries_create", "purpose": "Create a regular, repository-rooted boundaries.json; refuses linked paths and overwrite."},
 				{"name": "gograph_endpoint", "purpose": "Full vertical slice for one HTTP route: handler, 1-20-depth BFS call chain, SQL, and env reads. include_tests adds routes registered in *_test.go; mermaid selects flowchart output."},
 				{"name": "gograph_api", "purpose": "API drift against a Git ref or regular non-linked in-project .json graph with the exact current source-policy marker; serialized roots are ignored."},
-				{"name": "gograph_routes", "purpose": "All HTTP routes in the codebase: method, path, handler. Use before gograph_endpoint."},
+				{"name": "gograph_routes", "purpose": "Bounded HTTP route pages with term/module filters, production-only default, optional tests, and deterministic next_cursor pagination. Use before gograph_endpoint."},
 				{"name": "gograph_flow", "purpose": "Find potential paths from HTTP requests, decoded JSON, or environment values to SQL query text, process execution, filesystem access, or outbound HTTP."},
 				{"name": "gograph_errorflow", "purpose": "Trace error sentinel propagation: definition sites, return sites, and upstream call chains to entry points."},
 				{"name": "gograph_imports", "purpose": "All files and packages that import a specific package by exact import path."},
@@ -552,7 +554,7 @@ func NewServer(
 				"Ambiguous short names can be disambiguated in MCP tools whose symbol argument advertises standard Go dot-separated package qualification or fully-qualified IDs. gograph_callers additionally supports Interface.Method and expands every recorded precise implementation.",
 				"Precise interface dispatch uses conservative CHA unless SSA proves one concrete dynamic receiver type at the call site. A single visible implementation is never enough to claim exactness. Open invokes retain every valid named in-repository implementation, including promoted methods through hidden traversal-only wrapper edges; reflection, unsafe, plugins, unresolved function values, test-only packages, unnamed concrete types, and module-external implementations can remain incomplete.",
 				"Test-call attribution is independent from production precision. AST graphs use selector-name heuristics; precise builds bind direct calls and single-assignment non-escaping concrete interface locals exactly while retaining open interface candidates as possible. typed_partial means some tests stayed heuristic. Transitive tests/untested propagate uncertainty, and static attribution never proves runtime coverage.",
-				"Constant Gin/Echo/Fiber Group prefixes and Chi Route closure prefixes are composed statically, including nested groups. Dynamically computed prefixes remain unresolved; search those routes by their known suffix or handler symbol.",
+				"Constant Gin/Echo/Fiber Group prefixes and Chi Route closure prefixes are composed statically, including nested groups. Variadic Gin/Fiber registrations use the final argument as the terminal handler; Echo retains its path, handler, middleware ordering. Dynamically computed prefixes remain unresolved; search those routes by their known suffix or handler symbol.",
 			},
 		}
 		data, err := json.MarshalIndent(resp, "", "  ")
@@ -1073,16 +1075,69 @@ func NewServer(
 
 	// Tool: gograph_routes
 	routesTool := mcp.NewTool("gograph_routes",
-		mcp.WithDescription("List all HTTP routes registered in the codebase with their HTTP methods, URL patterns, and handler function names. Constant nested Gin/Echo/Fiber Group prefixes and Chi Route closure prefixes are composed into final paths; dynamically computed prefixes remain unresolved. The MCP server checks content-digest freshness before this call and incrementally refreshes changed package ASTs in the current requested analysis mode; precise and precise_fallback graphs retry repository-wide CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: To get the complete API surface of a service before deep-diving into a specific route with gograph_endpoint. NOT TO USE: For full call chain analysis of a route (use gograph_endpoint instead). RETURNS: Structured table of method/path/handler triples; empty when no HTTP routes are registered in the graph."),
+		mcp.WithDescription("List a deterministic bounded page of HTTP routes with methods, URL patterns, handler names, and source locations. Production routes are returned by default; include_tests=true adds *_test.go registrations. Optional term matches method/path, handler, or file, and module selects an exact module path/directory or unique directory basename. limit defaults to 100 and is restricted to 1-200; next_cursor continues the same filtered census. Each page is also bounded to 64 KiB so the result stays directly consumable instead of spilling to an out-of-band file. Constant nested Gin/Echo/Fiber Group prefixes and Chi Route closure prefixes are composed; Gin/Fiber use the final variadic argument as the terminal handler, while Echo uses the handler immediately after the path. Dynamically computed prefixes remain unresolved. The MCP server refreshes source analysis before this call. Read-only; no side effects. WHEN TO USE: To inventory one service/module or find a route before gograph_endpoint. NOT TO USE: For a handler's downstream call chain (use gograph_endpoint). RETURNS: gograph.routes.v1 JSON with total, returned, truncated, routes[], and next_cursor when more matches exist."),
+		mcp.WithString("term", mcp.Description("Optional case-insensitive substring matched against method/path, handler, or file")),
+		mcp.WithString("module", mcp.Description("Optional exact module path/directory or unique module-directory basename (for example identuum-idp)")),
+		mcp.WithBoolean("include_tests", mcp.Description("Include routes registered in *_test.go files; false by default")),
+		mcp.WithInteger("limit", mcp.Description("Maximum rows in this page, 1-200 (default: 100); the 64 KiB byte budget may return fewer")),
+		mcp.WithString("cursor", mcp.Description("Opaque next_cursor from the previous gograph_routes result; reuse the same filters")),
 	)
-	addTool(routesTool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	addTool(routesTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
 			g = newG
 		} else {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
 		}
-		results := search.Routes(g)
-		return formatResults(results), nil
+		args := map[string]any{}
+		if request.Params.Arguments != nil {
+			var ok bool
+			args, ok = request.Params.Arguments.(map[string]any)
+			if !ok {
+				return mcp.NewToolResultError("invalid arguments"), nil
+			}
+		}
+		stringOption := func(name string) (string, error) {
+			value, exists := args[name]
+			if !exists {
+				return "", nil
+			}
+			text, ok := value.(string)
+			if !ok {
+				return "", fmt.Errorf("%s must be a string", name)
+			}
+			return text, nil
+		}
+		term, err := stringOption("term")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		module, err := stringOption("module")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		cursor, err := stringOption("cursor")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		limit, err := integerArg(args, "limit", search.DefaultRoutesLimit)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		page, err := search.QueryRoutes(g, search.RouteQuery{
+			Term:         term,
+			Module:       module,
+			IncludeTests: boolArg(args, "include_tests"),
+			Limit:        limit,
+			Cursor:       cursor,
+		})
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		data, err := json.Marshal(page)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultText(string(data)), nil
 	})
 
 	// Tool: gograph_context

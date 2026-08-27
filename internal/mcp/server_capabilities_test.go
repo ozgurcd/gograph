@@ -32,6 +32,9 @@ func TestGographCapabilities(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &out); err != nil {
 		t.Fatalf("expected JSON, got: %v", err)
 	}
+	if got, _ := out["version"].(string); got != "dev" {
+		t.Fatalf("capabilities version = %q, want running server version dev", got)
+	}
 
 	// 1. Output includes every registered tool exactly once.
 	tools, ok := out["tools"].([]any)
@@ -155,6 +158,9 @@ func TestGographCapabilities(t *testing.T) {
 		"gograph.graph-state.v1",
 		"persisted|in_memory|unknown",
 		"mismatched Go build context still fails closed",
+		"production-only default",
+		"next_cursor",
+		"version_source",
 	} {
 		if !strings.Contains(toolsStr, want) {
 			t.Errorf("capabilities prerequisite omits %q", want)

@@ -2,7 +2,7 @@
 title: Contributing Guidelines
 type: workflow
 status: current
-updated: 2026-08-21
+updated: 2026-08-27
 sources:
   - SRC-20260614-gograph-legacy-contributing
 ---
@@ -22,7 +22,7 @@ gograph intentionally analyzes Go repositories; other-language parsers are a non
 5. Add CLI and MCP regression coverage, including schemas, error behavior, freshness, and transport-specific output. Keep `internal/cli/output_modes.go` synchronized with every supported CLI presentation.
 6. Update live help/capabilities, README, maintained guides, public site, integrations, release notes, and affected wiki pages.
 
-Query, analysis, and workflow features belong on both CLI and MCP, including workspace status/query/path/impact on the separate workspace server. The normal mapping is `<command>` to `gograph_<command>`; aliases, boundary creation, and session lifecycle retain their documented special mappings. The complete CLI-only boundary is `build`, `validate`, `doctor`, `gate`, `snapshot`, plugin/hook installation, project/workspace MCP startup, workspace build/member refresh, help, and version. Session CLI actions map to four `gograph_session_*` endpoints. Output presentation may differ: CLI `--json` and `--files-only` map to structured MCP content, while CLI `--mermaid` maps to `mermaid=true` for callers, callees, impact, endpoint, dependents, deps, path, and coupling. Registry-backed tests must prove every canonical CLI command and every project/workspace MCP tool remains documented.
+Query, analysis, and workflow features belong on both CLI and MCP, including workspace status/query/path/impact on the separate workspace server. The normal mapping is `<command>` to `gograph_<command>`; aliases, boundary creation, and session lifecycle retain their documented special mappings. The complete CLI-only boundary is `build`, `validate`, `doctor`, `gate`, `snapshot`, plugin/hook installation, project/workspace MCP startup, workspace build/member refresh, and help. The standalone `version` command has no dedicated MCP tool, while `gograph_capabilities.version` exposes the running server binary. Session CLI actions map to four `gograph_session_*` endpoints. Output presentation may differ: CLI `--json` and `--files-only` map to structured MCP content, while CLI `--mermaid` maps to `mermaid=true` for callers, callees, impact, endpoint, dependents, deps, path, and coupling. Registry-backed tests must prove every canonical CLI command and every project/workspace MCP tool remains documented.
 
 ## Package boundaries and style
 
@@ -33,7 +33,7 @@ Query, analysis, and workflow features belong on both CLI and MCP, including wor
 - `internal/cli` and `internal/mcp`: transport, process, persistence, and integration wiring.
 - Keep deterministic ordering and explicit AST/precise/fallback semantics.
 - Freshness changes require byte-digest tests that preserve mtimes, legacy-index fallback coverage, and changed-package versus unchanged-package reuse assertions. Precise incremental tests must prove repository-wide enrichment is reconstructed without duplicate or missing edges.
-- Route extraction changes require grouped/nested parser fixtures and explicit CLI/MCP parity coverage; constant prefixes may be composed, while dynamic expressions must remain conservative.
+- Route extraction changes require grouped/nested and variadic-middleware parser fixtures plus explicit CLI/MCP parity coverage; constant prefixes may be composed, dynamic expressions must remain conservative, Gin/Fiber use the final variadic argument as handler, and Echo retains the handler before middleware. Route census changes must preserve the shared bounded `gograph.routes.v1` filtering and cursor contract.
 - Surface errors directly, serialize successful empty collections as `[]` with count zero, preserve command-aware JSON error envelopes, and test ambiguous symbol names.
 - For Go 1.27, use explicit `encoding/json/v2` semantics at strict, closed-schema trust boundaries. Keep established public JSON output on `encoding/json` unless a deliberate compatibility change is approved; Go 1.27 already backs that API with the v2 implementation while preserving v1 behavior. Add ML-DSA, ML-KEM, or other cryptography only for a concrete protocol requirement, and do not replace an upstream-owned transitive dependency with a local wrapper solely because a similarly named standard package exists.
 - Document local I/O, Go-toolchain/network behavior, audit telemetry, and artifact mutation accurately.

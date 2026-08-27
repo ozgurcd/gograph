@@ -2,7 +2,24 @@
 
 ## Unreleased
 
-No changes yet.
+### Bounded, accurate route censuses
+
+- CLI `routes` and MCP `gograph_routes` now share deterministic
+  `gograph.routes.v1` pages. Both accept term and module filters, exclude
+  `_test.go` registrations by default, allow an explicit test opt-in, and use
+  opaque cursor pagination with a 100-row default, 200-row maximum, and 64 KiB
+  compact-result budget. CLI `--files-only` retains its complete deduplicated
+  census by following every page locally.
+- Variadic Gin/Fiber registrations now identify the final argument as the
+  handler, while Echo retains its handler-before-middleware ordering. This
+  prevents middleware and scope constants from being reported as handlers
+  without changing Echo semantics. Unresolvable factories remain dynamic.
+- `gograph_capabilities` now includes the running MCP server version, allowing
+  MCP-only consumers to record the exact analysis instrument.
+- Existing MCP processes do not hot-reload a replaced executable. After
+  installing this update, stop and restart each project/workspace MCP server
+  (or restart the hosting client), then confirm the new top-level `version` in
+  `gograph_capabilities` before relying on the new route contract.
 
 ## v1.6.7 — 2026-08-27
 

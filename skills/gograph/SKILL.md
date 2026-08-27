@@ -93,7 +93,7 @@ CLI graph-backed `--json` responses expose the same
 
 | Tool | Use case |
 |---|---|
-| `gograph_capabilities` | Discover what the connected server exposes |
+| `gograph_capabilities` | Record the running server version and discover what it exposes |
 | `gograph_explore` with `query=<term-or-symbol>` | Compact/standard/deep bounded discovery with shared CLI semantics; start compact and deepen only when needed |
 | `gograph_query` with `term=<term>` or `terms=[...]` | AST-derived structural symbol search |
 | `gograph_context` with `symbol=<symbol>` | Node + source + callers + callees + tests in one call |
@@ -102,7 +102,7 @@ CLI graph-backed `--json` responses expose the same
 | `gograph_impact` with `symbol=<symbol>` | What breaks if this changes |
 | `gograph_callers` / `gograph_callees` with `function=<symbol>` | Explicit call-graph traversal |
 | `gograph_implementers` with `interface=<interface>` | All types implementing an interface |
-| `gograph_routes` | HTTP route discovery across handler / service / repository layers |
+| `gograph_routes` with optional `term`, `module`, `include_tests`, `limit`, `cursor` | Bounded production-first HTTP route pages; follow `next_cursor` for a complete census |
 | `gograph_sql` | SQL query inventory across the codebase |
 | `gograph_complexity` | Cyclomatic complexity per function |
 | `gograph_godobj` | God-object detection |

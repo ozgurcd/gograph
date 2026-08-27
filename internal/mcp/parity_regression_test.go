@@ -35,13 +35,25 @@ func register(router *Router) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cliResults := search.Routes(g)
-	if len(cliResults) != 1 || cliResults[0].Name != "POST /api/v1/users/:id" {
-		t.Fatalf("CLI route results = %#v", cliResults)
+	cliPage, err := search.QueryRoutes(g, search.RouteQuery{})
+	if err != nil {
+		t.Fatal(err)
 	}
 	mcpText := callTool(t, setupHandlers(t, g)["gograph_routes"], nil)
-	if !strings.Contains(mcpText, cliResults[0].Name) || !strings.Contains(mcpText, "UpdateUser") {
-		t.Fatalf("MCP route output does not match CLI route evidence:\n%s", mcpText)
+	var mcpPage search.RoutePage
+	if err := json.Unmarshal([]byte(mcpText), &mcpPage); err != nil {
+		t.Fatalf("decode MCP route page: %v\n%s", err, mcpText)
+	}
+	cliJSON, err := json.Marshal(cliPage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mcpJSON, err := json.Marshal(mcpPage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cliPage.Routes) != 1 || cliPage.Routes[0].Name != "POST /api/v1/users/:id" || string(mcpJSON) != string(cliJSON) {
+		t.Fatalf("CLI/MCP route pages differ:\nCLI: %+v\nMCP: %+v", cliPage, mcpPage)
 	}
 }
 

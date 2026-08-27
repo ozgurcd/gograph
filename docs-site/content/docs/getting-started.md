@@ -265,9 +265,10 @@ can make `check --json` exit 1 while still returning its structured report.
 `dependents`. Empty files-only results write zero lines.
 
 Composed-analysis commands also support JSON where documented. Operational
-commands (`build`, `wiki`, `gate`, `snapshot`, installation, help, and version)
-remain text. Session create/end/cleanup are text; `session audit` additionally
-supports raw JSON.
+commands (`build`, `wiki`, `gate`, `snapshot`, installation, and help) remain
+text. `version --json` emits its dedicated `gograph.version.v1` document, and
+`gograph_capabilities` exposes the running MCP server version. Session
+create/end/cleanup are text; `session audit` additionally supports raw JSON.
 
 `--mermaid` is a global CLI output flag for `callers`, `callees`, `impact`,
 `endpoint`, `dependents`, `deps`, `path`, and `coupling`. Bare

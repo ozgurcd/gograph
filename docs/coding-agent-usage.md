@@ -45,7 +45,7 @@ gograph impact <symbol>         # find downstream callers (blast radius)
 gograph impact --uncommitted    # find blast radius of all uncommitted code changes
 gograph impact --since main     # blast radius of all symbols changed since main (PR-level)
 gograph orphans                 # functions unreachable via BFS from main/init, test, route, and eligible public roots — stricter than a 0-call check
-gograph routes                  # extract all HTTP REST API routes
+gograph routes [term] --module <module>  # bounded production HTTP route page; add --include-tests when needed
 gograph imports <pkg>           # trace external/internal package usage
 gograph sql [term]              # map raw SQL queries to their execution functions; optionally filter by keyword/table
 gograph errors                  # custom error variables and panics mapped to their source
@@ -705,10 +705,25 @@ suffix. Query a constant final path when available, or use the handler symbol
 for dynamic cases:
 
 ```bash
-gograph routes
+gograph routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor CURSOR]
 gograph endpoint "POST /api/v1/users/"
 gograph endpoint "CreateUser"
 ```
+
+`routes` returns a deterministic `gograph.routes.v1` page: production routes
+only by default, 100 rows by default, at most 200 rows, and never more than
+64 KiB of compact JSON. `term` matches method/path, handler, or file;
+`--module` accepts an exact module path/directory or a unique directory
+basename. Continue with the returned cursor and exactly the same filters.
+CLI `--files-only` follows all pages locally and keeps the legacy complete,
+deduplicated file census; text and JSON expose one bounded page at a time.
+
+For variadic Gin/Fiber registration, middleware precedes the terminal handler,
+so gograph treats the final registration argument as the handler. Echo uses
+`path, handler, middleware...`, and gograph retains that ordering. For example,
+`group.POST("/x", RequireScopes(...), Handler(deps))` records `Handler` rather
+than a scope constant or middleware function; the factory remains marked
+dynamic when its returned closure cannot be resolved statically.
 
 ---
 
@@ -924,7 +939,7 @@ non-read-only because a request may publish artifacts.
 ### Registered MCP Tools
 
 The current suite registers 68 MCP endpoints: 64 query, analysis, and workflow tools plus four session lifecycle tools. The live `gograph_capabilities` payload is tested against the server registry. The optional `mermaid=true` parameter on `callers`, `callees`, `impact`, `endpoint`, `dependents`, `deps`, `path`, and `coupling` returns the same Markdown-fenced Mermaid presentation as CLI `--mermaid`; absent or false, each tool retains its normal response format.
-- **`gograph_capabilities`**: Discover available tools and workflows.
+- **`gograph_capabilities`**: Record the running MCP server `version` and discover available tools and workflows.
 - **`gograph_stale`**: Check whether trusted persisted `.gograph/graph.json`, or the startup fallback when no usable artifact exists, is outdated relative to selected Go source content digests or the effective build context. The newest mtime fields are diagnostic only. Returns the compatibility JSON fields and attaches the exact inspected `gograph.graph-state.v1` in MCP metadata and structured content without refreshing first.
 - **`gograph_session_create`**: Start a telemetry audit session using a strictly validated ID and regular, repository-confined state under `.gograph/sessions/`; linked storage is refused.
 - **`gograph_session_end`**: End the active session using the same rooted regular-file boundary and remove its active pointer.
@@ -946,7 +961,7 @@ The current suite registers 68 MCP endpoints: 64 query, analysis, and workflow t
   drift against a Git reference or a saved graph path ending in `.json`. Saved
   graphs must be regular non-linked files inside the selected project, require
   the exact current source-policy marker, and cannot supply the trusted root.
-- **`gograph_routes`**: Extract all HTTP REST API routes found in the codebase. Constant nested Gin/Echo/Fiber Group prefixes and Chi Route closure prefixes are composed into final paths; dynamic prefix expressions remain best-effort suffixes. Routes using unresolvable factory handlers (e.g. `promhttp.Handler()`) are annotated with `[dynamic handler]`, setting `DynamicHandler: true`.
+- **`gograph_routes`**: Return a deterministic `gograph.routes.v1` page. Optional `term` matches method/path, handler, or file; `module` accepts an exact module path/directory or unique directory basename; `include_tests` opts into `_test.go` routes. `limit` defaults to 100 and is restricted to 1-200, while a 64 KiB page budget may return fewer. Continue with `next_cursor` as `cursor` and the same filters. Constant nested Gin/Echo/Fiber Group prefixes and Chi Route closure prefixes are composed into final paths; Gin/Fiber use the final variadic argument as the terminal handler, while Echo uses the handler immediately after the path. Unresolvable handler factories remain marked dynamic.
 - **`gograph_node`**: AST metadata for a symbol: kind, file, line, signature, doc comment. Lighter than `gograph_source` when you only need metadata.
 - **`gograph_path`**: Best deterministically ranked call chain between two symbols. It uses the same certainty, length, production/test, and typed/heuristic ordering as CLI `path`; accepts `mermaid=true` for visual output.
 - **`gograph_changes`**: Symbols modified/added/deleted since the trusted persisted graph, or the startup fallback when no usable artifact exists. Deleted includes files absent from the current safely selected inventory. Default mode attaches the exact snapshot state it inspected; with `git_ref`, it refreshes first and attaches that live state while returning symbols in files changed since the ref (MODIFIED only).
@@ -1005,7 +1020,7 @@ its CLI operation:
 - **`gograph_workspace_path`** ↔ `gograph workspace path`
 - **`gograph_workspace_impact`** ↔ `gograph workspace impact`
 
-> **CLI/MCP parity:** Every repository query, analysis, and workflow command, including boundary baseline creation, has a project-MCP equivalent. The normal mapping is `<command>` → `gograph_<command>`; `contract`, `boundaries --create`, and session actions use the special mappings in the [complete transport matrix](../docs-site/content/docs/command-reference.md#cli--mcp-transport-matrix). The intentional CLI-only surface is `build`, `validate`, `doctor`, `gate`, `snapshot`, `add-claude-plugin`, `hook-guard`, project/workspace MCP startup, workspace build/member refresh, `version`, and `help`; these publish artifacts, inspect/configure the host installation, enforce process exit status, or start the host integration. Presentation remains transport-specific: CLI output flags map to MCP parameters or structured content rather than byte-identical output.
+> **CLI/MCP parity:** Every repository query, analysis, and workflow command, including boundary baseline creation, has a project-MCP equivalent. The normal mapping is `<command>` → `gograph_<command>`; `contract`, `boundaries --create`, and session actions use the special mappings in the [complete transport matrix](../docs-site/content/docs/command-reference.md#cli--mcp-transport-matrix). The intentional CLI-only surface is `build`, `validate`, `doctor`, `gate`, `snapshot`, `add-claude-plugin`, `hook-guard`, project/workspace MCP startup, workspace build/member refresh, and `help`; these publish artifacts, inspect/configure the host installation, enforce process exit status, or start the host integration. The standalone `version` command has no MCP tool, but `gograph_capabilities` exposes the running server version. Presentation remains transport-specific: CLI output flags map to MCP parameters or structured content rather than byte-identical output.
 
 ## Recommended project setup
 
