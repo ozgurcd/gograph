@@ -102,7 +102,7 @@ CLI graph-backed `--json` responses expose the same
 | `gograph_impact` with `symbol=<symbol>` | What breaks if this changes |
 | `gograph_callers` / `gograph_callees` with `function=<symbol>` | Explicit call-graph traversal |
 | `gograph_implementers` with `interface=<interface>` | All types implementing an interface |
-| `gograph_routes` with optional `term`, `module`, `include_tests`, `limit`, `cursor` | Bounded production-first HTTP route pages; follow `next_cursor` for a complete census |
+| `gograph_routes` with optional `term`, `module`, `include_tests`, `limit`, `cursor` | Bounded production-first HTTP route pages; root repositories and nested modules accept directory-name selectors; follow `next_cursor` for a complete census |
 | `gograph_sql` | SQL query inventory across the codebase |
 | `gograph_complexity` | Cyclomatic complexity per function |
 | `gograph_godobj` | God-object detection |

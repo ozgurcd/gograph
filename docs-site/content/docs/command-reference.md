@@ -436,10 +436,13 @@ gograph routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor 
 Returns a deterministic `gograph.routes.v1` page of HTTP REST API routes from
 Gin, Chi, Echo, Fiber, and net/http-style registration calls. Production routes
 are included by default; `--include-tests` adds registrations from `_test.go`.
-The optional term matches method/path, handler, or file, and `--module` accepts
-an exact module path/directory or a unique directory basename. Pages default to
-100 rows, accept 1-200, and stay within a 64 KiB compact-JSON budget; use the
-returned cursor with unchanged filters to continue a truncated census.
+The optional term matches method/path, handler, or file. `--module` accepts an
+exact module path/directory, a unique nested-module directory basename, or the
+repository directory name for the root module. Pages default to 100 rows,
+accept 1-200, and stay within a 64 KiB compact-JSON budget; use the returned
+cursor with unchanged filters to continue a truncated census. CLI JSON mirrors
+`total`, `returned`, `truncated`, and `next_cursor` directly on its envelope and
+retains the complete native page under `results`.
 CLI `--files-only` follows every page locally and emits the complete
 deduplicated file set; normal text and JSON return one bounded page.
 

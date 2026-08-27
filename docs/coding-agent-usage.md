@@ -713,8 +713,11 @@ gograph endpoint "CreateUser"
 `routes` returns a deterministic `gograph.routes.v1` page: production routes
 only by default, 100 rows by default, at most 200 rows, and never more than
 64 KiB of compact JSON. `term` matches method/path, handler, or file;
-`--module` accepts an exact module path/directory or a unique directory
-basename. Continue with the returned cursor and exactly the same filters.
+`--module` accepts an exact module path/directory, a unique nested-module
+directory basename, or the repository directory name for the root module.
+Continue with the returned cursor and exactly the same filters. CLI JSON mirrors
+`total`, `returned`, `truncated`, and `next_cursor` on the outer envelope while
+retaining the complete native `gograph.routes.v1` page under `results`.
 CLI `--files-only` follows all pages locally and keeps the legacy complete,
 deduplicated file census; text and JSON expose one bounded page at a time.
 
@@ -961,7 +964,7 @@ The current suite registers 68 MCP endpoints: 64 query, analysis, and workflow t
   drift against a Git reference or a saved graph path ending in `.json`. Saved
   graphs must be regular non-linked files inside the selected project, require
   the exact current source-policy marker, and cannot supply the trusted root.
-- **`gograph_routes`**: Return a deterministic `gograph.routes.v1` page. Optional `term` matches method/path, handler, or file; `module` accepts an exact module path/directory or unique directory basename; `include_tests` opts into `_test.go` routes. `limit` defaults to 100 and is restricted to 1-200, while a 64 KiB page budget may return fewer. Continue with `next_cursor` as `cursor` and the same filters. Constant nested Gin/Echo/Fiber Group prefixes and Chi Route closure prefixes are composed into final paths; Gin/Fiber use the final variadic argument as the terminal handler, while Echo uses the handler immediately after the path. Unresolvable handler factories remain marked dynamic.
+- **`gograph_routes`**: Return a deterministic `gograph.routes.v1` page. Optional `term` matches method/path, handler, or file; `module` accepts an exact module path/directory, a unique nested-module directory basename, or the repository directory name for a root module; `include_tests` opts into `_test.go` routes. `limit` defaults to 100 and is restricted to 1-200, while a 64 KiB page budget may return fewer. Continue with `next_cursor` as `cursor` and the same filters. Constant nested Gin/Echo/Fiber Group prefixes and Chi Route closure prefixes are composed into final paths; Gin/Fiber use the final variadic argument as the terminal handler, while Echo uses the handler immediately after the path. Unresolvable handler factories remain marked dynamic.
 - **`gograph_node`**: AST metadata for a symbol: kind, file, line, signature, doc comment. Lighter than `gograph_source` when you only need metadata.
 - **`gograph_path`**: Best deterministically ranked call chain between two symbols. It uses the same certainty, length, production/test, and typed/heuristic ordering as CLI `path`; accepts `mermaid=true` for visual output.
 - **`gograph_changes`**: Symbols modified/added/deleted since the trusted persisted graph, or the startup fallback when no usable artifact exists. Deleted includes files absent from the current safely selected inventory. Default mode attaches the exact snapshot state it inspected; with `git_ref`, it refreshes first and attaches that live state while returning symbols in files changed since the ref (MODIFIED only).

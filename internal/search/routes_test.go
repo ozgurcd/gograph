@@ -11,6 +11,7 @@ import (
 
 func TestQueryRoutesFiltersTestsTermsAndModules(t *testing.T) {
 	g := &graph.Graph{
+		Root: "/workspace/identuum-idp",
 		Modules: []graph.ModuleNode{
 			{ID: "example.com/root", Path: "example.com/root", Dir: "."},
 			{ID: "example.com/auth", Path: "example.com/auth", Dir: "services/auth"},
@@ -56,6 +57,13 @@ func TestQueryRoutesFiltersTestsTermsAndModules(t *testing.T) {
 	}
 	if root.Total != 1 || root.Routes[0].Name != "GET /health" {
 		t.Fatalf("root module page = %+v, want only root-owned route", root)
+	}
+	rootByRepositoryName, err := QueryRoutes(g, RouteQuery{Module: "identuum-idp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rootByRepositoryName.Total != 1 || rootByRepositoryName.Routes[0].Name != "GET /health" {
+		t.Fatalf("root module basename page = %+v, want only root-owned route", rootByRepositoryName)
 	}
 
 	filtered, err := QueryRoutes(g, RouteQuery{Term: "issueTOKEN"})

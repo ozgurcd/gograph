@@ -177,7 +177,7 @@ func resolveRouteModule(g *graph.Graph, selector string) (int, error) {
 	}
 	matches := []int{}
 	for index, module := range g.Modules {
-		for _, alias := range routeModuleAliases(module) {
+		for _, alias := range routeModuleAliases(g, module) {
 			if selector == alias {
 				matches = append(matches, index)
 				break
@@ -226,10 +226,15 @@ func boundedRouteModuleList(candidates []string) string {
 	return fmt.Sprintf("%s ... (%d more)", strings.Join(listed, ", "), len(candidates)-len(listed))
 }
 
-func routeModuleAliases(module graph.ModuleNode) []string {
+func routeModuleAliases(g *graph.Graph, module graph.ModuleNode) []string {
 	dir := normalizeRouteModuleDir(module.Dir)
 	aliases := []string{module.ID, module.Path, dir}
-	if dir != "." {
+	if dir == "." {
+		repositoryName := filepath.Base(filepath.Clean(g.Root))
+		if repositoryName != "" && repositoryName != "." && repositoryName != string(filepath.Separator) {
+			aliases = append(aliases, repositoryName)
+		}
+	} else {
 		aliases = append(aliases, path.Base(dir))
 	}
 	return aliases

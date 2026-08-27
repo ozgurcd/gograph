@@ -703,9 +703,11 @@ query <term...>      : broad OR search — symbols, files, packages, imports, ca
 routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor CURSOR]
                      : deterministic HTTP route pages. Production only by default;
                        term matches method/path, handler, or file; module accepts
-                       an exact module path/directory or unique directory basename.
+                       an exact module path/directory, unique nested basename, or
+                       the repository directory name for a root module.
                        Defaults to 100 rows, maximum 200, with a 64 KiB page budget.
                        Continue a truncated result with its cursor and the same filters.
+                       JSON mirrors total/returned/truncated/next_cursor on its envelope.
                        --files-only follows all pages and emits the complete file set.
 source <sym>         : confined exact source for function/method/struct/interface/
                        type/variable/constant — USE THIS instead of reading files
@@ -3125,8 +3127,10 @@ EXTRACTION
                              Deterministic gograph.routes.v1 pages. Production routes
                              only by default; term matches method/path, handler, or file.
                              Module accepts an exact path/directory or unique basename.
+                             The repository directory name selects a root module.
                              Defaults to 100 rows, maximum 200, with a 64 KiB result
                              budget. Reuse the same filters with next_cursor to continue.
+                             JSON mirrors pagination fields on the outer envelope.
                              --files-only follows all pages for a complete file census.
                              Gin/Fiber use the final variadic argument as handler;
                              Echo uses the handler immediately after the path.
@@ -4278,7 +4282,12 @@ func runRoutes(args []string) int {
 		return failCommand("routes", err.Error())
 	}
 	if jsonMode {
-		return PrintJSON(okEnvelope("routes", query.Term, page, page.Returned))
+		envelope := okEnvelope("routes", query.Term, page, page.Returned)
+		envelope.Total = &page.Total
+		envelope.Returned = &page.Returned
+		envelope.Truncated = &page.Truncated
+		envelope.NextCursor = &page.NextCursor
+		return PrintJSON(envelope)
 	}
 	if filesOnlyMode {
 		seenFiles := make(map[string]bool)

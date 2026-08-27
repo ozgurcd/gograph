@@ -40,6 +40,13 @@ type Envelope struct {
 	Count   int         `json:"count"`
 	Results interface{} `json:"results,omitempty"`
 	Error   string      `json:"error,omitempty"`
+	// Route-page metadata is mirrored at the envelope level so callers can
+	// detect and continue a bounded routes result without knowing the nested
+	// results representation. Other commands leave these fields nil/empty.
+	Total      *int    `json:"total,omitempty"`
+	Returned   *int    `json:"returned,omitempty"`
+	Truncated  *bool   `json:"truncated,omitempty"`
+	NextCursor *string `json:"next_cursor,omitempty"`
 	// GraphState is additive request provenance for repository graph-backed
 	// JSON commands. It is omitted for host, lifecycle, and hard-error results.
 	GraphState *graphstate.State `json:"graph_state,omitempty"`

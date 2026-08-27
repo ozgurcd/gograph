@@ -10,6 +10,13 @@
   opaque cursor pagination with a 100-row default, 200-row maximum, and 64 KiB
   compact-result budget. CLI `--files-only` retains its complete deduplicated
   census by following every page locally.
+- CLI `routes --json` now mirrors `total`, `returned`, `truncated`, and
+  `next_cursor` directly on its standard envelope as well as retaining the
+  complete native page under `results`, so a bounded result cannot look
+  complete or become impossible to continue.
+- A root module may be selected by the containing repository directory name in
+  addition to its full module path or `.`; nested modules retain unique
+  directory-basename selection.
 - Variadic Gin/Fiber registrations now identify the final argument as the
   handler, while Echo retains its handler-before-middleware ordering. This
   prevents middleware and scope constants from being reported as handlers

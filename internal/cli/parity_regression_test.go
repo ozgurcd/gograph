@@ -172,33 +172,57 @@ func TestCLIRoutesUsesTheSharedFilteredPageContract(t *testing.T) {
 	}
 	root := writeCLIParityGraph(t, g)
 
-	runRoutesPage := func(args ...string) search.RoutePage {
+	type routeEnvelope struct {
+		Count      int              `json:"count"`
+		Total      *int             `json:"total"`
+		Returned   *int             `json:"returned"`
+		Truncated  *bool            `json:"truncated"`
+		NextCursor *string          `json:"next_cursor"`
+		Results    search.RoutePage `json:"results"`
+	}
+	runRoutesPage := func(args ...string) routeEnvelope {
 		stdout, stderr, code := runCLIParityInDir(t, root, func() int {
 			return Run(append([]string{"routes"}, args...))
 		})
 		if code != 0 {
 			t.Fatalf("routes %v failed with code %d: %s", args, code, stderr)
 		}
-		var envelope struct {
-			Results search.RoutePage `json:"results"`
-		}
+		var envelope routeEnvelope
 		if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
 			t.Fatalf("routes %v did not return JSON: %v\n%s", args, err, stdout)
 		}
-		return envelope.Results
+		return envelope
 	}
 
-	production := runRoutesPage("--json")
+	productionEnvelope := runRoutesPage("--json")
+	production := productionEnvelope.Results
 	if production.Total != 3 || production.IncludeTests {
 		t.Fatalf("default route page = %+v", production)
 	}
-	first := runRoutesPage("users", "--module", "auth-service", "--include-tests", "--limit", "1", "--json")
+	firstEnvelope := runRoutesPage("users", "--module", "auth-service", "--include-tests", "--limit", "1", "--json")
+	first := firstEnvelope.Results
 	if first.Total != 3 || first.Returned != 1 || first.NextCursor == "" {
 		t.Fatalf("first filtered route page = %+v", first)
 	}
-	second := runRoutesPage("users", "--module", "auth-service", "--include-tests", "--limit", "1", "--cursor", first.NextCursor, "--json")
+	if firstEnvelope.Total == nil || *firstEnvelope.Total != first.Total ||
+		firstEnvelope.Returned == nil || *firstEnvelope.Returned != first.Returned ||
+		firstEnvelope.Truncated == nil || *firstEnvelope.Truncated != first.Truncated ||
+		firstEnvelope.NextCursor == nil || *firstEnvelope.NextCursor != first.NextCursor ||
+		firstEnvelope.Count != first.Returned {
+		t.Fatalf("CLI route envelope does not expose the MCP pagination contract: envelope=%+v page=%+v", firstEnvelope, first)
+	}
+	secondEnvelope := runRoutesPage("users", "--module", "auth-service", "--include-tests", "--limit", "1", "--cursor", first.NextCursor, "--json")
+	second := secondEnvelope.Results
 	if second.Total != first.Total || second.Returned != 1 || second.Routes[0] == first.Routes[0] {
 		t.Fatalf("second filtered route page = %+v; first = %+v", second, first)
+	}
+	thirdEnvelope := runRoutesPage("users", "--module", "auth-service", "--include-tests", "--limit", "1", "--cursor", second.NextCursor, "--json")
+	third := thirdEnvelope.Results
+	if third.Total != first.Total || third.Returned != 1 || third.Truncated || third.NextCursor != "" {
+		t.Fatalf("terminal filtered route page = %+v", third)
+	}
+	if thirdEnvelope.NextCursor == nil || *thirdEnvelope.NextCursor != "" {
+		t.Fatalf("terminal CLI route envelope must expose an empty next_cursor: %+v", thirdEnvelope)
 	}
 
 	large := &graph.Graph{Modules: []graph.ModuleNode{{Path: "example.com/large", Dir: "."}}}
