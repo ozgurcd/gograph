@@ -7,10 +7,11 @@
 - `AGENTS.md` plus wiki workflow, schema, and security pages are the agent schema.
 - [project.md](project.md) — Project identity, correctness model, analysis modes, and MCP refresh/publication contract.
 - [workspace-v1.md](workspace-v1.md) — Federated workspace architecture, trust boundaries, resolution semantics, and P0 scope.
+- [sql-census-v1.md](sql-census-v1.md) — Shared CLI/MCP PostgreSQL static SQL classification, filtering, and pagination contract.
 - [agent-contract.md](agent-contract.md) — Workflow lifecycle, verification, CLI/MCP parity, context fidelity, and auditing.
 - [agent-rules.md](agent-rules.md) — Workflow guidelines and rules for development.
 - [scrinium-guide.md](scrinium-guide.md) — Conditional, token-conscious Scrinium usage and governance limits.
-- [mcp-registry.md](mcp-registry.md) — Live v1.6.8 Registry identity, MCPB representation, release invariants, and preview limits.
+- [mcp-registry.md](mcp-registry.md) — Live v1.6.9 Registry identity, MCPB representation, release invariants, and preview limits.
 
 ## Canonical Claims
 

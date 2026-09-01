@@ -484,3 +484,10 @@ The maintained project, agent-workflow, and contributor contracts were synchroni
 - Real identuum workspace acceptance found the old and patched censuses had the same 232 production `identuum-idp` route identities; the root-module filter excluded only one `sdk/go` row, and all 124 formerly `domain.Scope*`-attributed rows remained present with corrected handlers.
 - Local and hosted release gates passed uncached unit/race tests, vet, lint/static analysis, source/binary/archive vulnerability scans, deterministic six-MCPB verification and 68-tool smoke initialization, documentation rendering, and exact archive validation.
 - Release workflow `33091738629` published and independently verified all 14 GitHub assets, Homebrew cask 1.6.8, and active/latest official MCP Registry version 1.6.8; CI run `33091740780` and Hugo deployment `33091740740` also succeeded.
+
+## [2026-09-01] maintenance | Publish v1.6.9 PostgreSQL SQL census release
+
+- Released gograph v1.6.9 from tag commit `ef414a4e3cf33d350bddbce76bc262bf793f7392`; implementation commit `e75e578` adds shared CLI/MCP `gograph.sql.v1` PostgreSQL classification, filters, and bounded pagination.
+- Real `identuum-idp` acceptance enumerated all 252 persisted static queries over three CLI and MCP pages, verified root-module selection and combined table/verb/access/function filtering, and kept every native MCP page beneath 64 KiB.
+- Local and hosted gates passed uncached unit/race tests, lint/static/vulnerability checks, classifier fuzzing, CodeQL, precise self-analysis, docs, deterministic six-MCPB verification, GoReleaser artifacts, and exact archive scans.
+- Release workflow `33540733522` published and independently verified all 14 GitHub assets, Homebrew cask 1.6.9, and active/latest official MCP Registry version 1.6.9; CI `33540733508` and Hugo deployment `33540733419` also succeeded.
