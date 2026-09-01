@@ -1284,25 +1284,6 @@ func ExternalImports(g *graph.Graph, pkg string) []Result {
 }
 
 // SQL extracts all database SQL queries found in the codebase.
-func SQL(g *graph.Graph, term string) []Result {
-	var results []Result
-	nl := strings.ToLower(term)
-	for _, sql := range g.SQLs {
-		if term == "" || strings.Contains(strings.ToLower(sql.Query), nl) {
-			results = append(results, Result{
-				Kind:   "sql",
-				Name:   sql.Query,
-				File:   sql.File,
-				Line:   sql.Line,
-				Detail: "executed by " + sql.Function,
-				Score:  10,
-			})
-		}
-	}
-	sortResults(results)
-	return results
-}
-
 // Errors extracts all custom error messages and panics.
 // Set includeTests to false to exclude errors from test files.
 func Errors(g *graph.Graph, term string, includeTests bool) []Result {

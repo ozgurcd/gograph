@@ -64,11 +64,18 @@ func GenerateSQL(g *graph.Graph) string {
 		sb.WriteString("_No SQL queries detected._\n\n")
 		return sb.String()
 	}
-	sb.WriteString("| Query | Function | File | Line |\n|-------|----------|------|------|\n")
+	sb.WriteString("| Query | Verb | Access | Tables | Classification | Function | File | Line |\n")
+	sb.WriteString("|-------|------|--------|--------|----------------|----------|------|------|\n")
 	for _, sql := range g.SQLs {
 		cleanQuery := strings.ReplaceAll(sql.Query, "\n", " ")
 		cleanQuery = strings.ReplaceAll(cleanQuery, "\r", "")
-		fmt.Fprintf(&sb, "| `%s` | `%s` | `%s` | %d |\n", cleanQuery, sql.Function, sql.File, sql.Line)
+		tables := make([]string, 0, len(sql.Tables))
+		for _, table := range sql.Tables {
+			tables = append(tables, table.Name+" ("+table.Access+")")
+		}
+		fmt.Fprintf(&sb, "| `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | %d |\n",
+			cleanQuery, sql.Verb, sql.Access, strings.Join(tables, ", "), sql.Classification,
+			sql.Function, sql.File, sql.Line)
 	}
 	sb.WriteString("\n")
 	return sb.String()

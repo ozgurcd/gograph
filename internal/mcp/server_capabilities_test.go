@@ -161,6 +161,11 @@ func TestGographCapabilities(t *testing.T) {
 		"production-only default",
 		"next_cursor",
 		"version_source",
+		"sql_static_classification",
+		"gograph.sql.v1",
+		"PostgreSQL static SQL literals",
+		"tests remain included unless no_tests=true",
+		"CLI sql and MCP gograph_sql execute QuerySQL",
 	} {
 		if !strings.Contains(toolsStr, want) {
 			t.Errorf("capabilities prerequisite omits %q", want)

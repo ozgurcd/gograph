@@ -76,6 +76,16 @@ func TestParseFile_Features(t *testing.T) {
 		if !foundQuery {
 			t.Error("expected to find SQL execution call via QueryRow")
 		}
+		if len(result.SQLs) != 1 {
+			t.Fatalf("expected one classified SQL query, got %+v", result.SQLs)
+		}
+		sql := result.SQLs[0]
+		if sql.Verb != "SELECT" || sql.Access != "read" || sql.Classification != "exact" {
+			t.Fatalf("SQL classification = %+v", sql)
+		}
+		if len(sql.Tables) != 1 || sql.Tables[0].Name != "admins" || sql.Tables[0].Access != "read" {
+			t.Fatalf("SQL tables = %+v", sql.Tables)
+		}
 	})
 
 	t.Run("Return Usage Classified", func(t *testing.T) {
@@ -120,4 +130,19 @@ func TestParseFile_Features(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestParseSourceClassifiesEscapedPostgreSQLLiteral(t *testing.T) {
+	source := []byte("package example\nfunc load(db interface{ Query(string) }) {\n\tdb.Query(\"SELECT id\\nFROM public.users\")\n}\n")
+	result, err := parser.ParseSource(token.NewFileSet(), "query.go", source, "query.go", "example.com/query")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.SQLs) != 1 {
+		t.Fatalf("SQLs = %+v", result.SQLs)
+	}
+	query := result.SQLs[0]
+	if query.Query != "SELECT id\nFROM public.users" || query.Verb != "SELECT" || len(query.Tables) != 1 || query.Tables[0].Name != "public.users" {
+		t.Fatalf("escaped SQL literal classification = %+v", query)
+	}
 }

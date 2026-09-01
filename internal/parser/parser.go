@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/sqlquery"
 )
 
 // FileResult holds everything extracted from one source file.
@@ -1230,8 +1231,10 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 
 					for _, arg := range call.Args {
 						if lit, ok := arg.(*ast.BasicLit); ok && lit.Kind == token.STRING {
-							queryStr = strings.Trim(lit.Value, "`\"")
-							found = true
+							if value, err := strconv.Unquote(lit.Value); err == nil {
+								queryStr = value
+								found = true
+							}
 							break
 						} else if id, ok := arg.(*ast.Ident); ok {
 							if val, ok := resolveStringLiteral(d.Body, id.Name); ok {
@@ -1243,17 +1246,21 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 					}
 
 					if found {
-						upperQ := strings.ToUpper(queryStr)
-						if strings.Contains(upperQ, "SELECT ") || strings.Contains(upperQ, "INSERT ") ||
-							strings.Contains(upperQ, "UPDATE ") || strings.Contains(upperQ, "DELETE ") ||
-							strings.Contains(upperQ, "WITH ") || strings.Contains(upperQ, "CREATE ") ||
-							strings.Contains(upperQ, "ALTER ") || strings.Contains(upperQ, "DROP ") {
-
+						classification := sqlquery.ClassifyPostgreSQL(queryStr)
+						if classification.Verb != "" {
+							tables := make([]graph.SQLTableRef, 0, len(classification.Tables))
+							for _, table := range classification.Tables {
+								tables = append(tables, graph.SQLTableRef{Name: table.Name, Access: table.Access})
+							}
 							result.SQLs = append(result.SQLs, graph.SQLEdge{
-								Query:    queryStr,
-								Function: callerName,
-								File:     relPath,
-								Line:     callPos.Line,
+								Query:          queryStr,
+								Function:       callerName,
+								File:           relPath,
+								Line:           callPos.Line,
+								Verb:           classification.Verb,
+								Access:         classification.Access,
+								Classification: classification.Status,
+								Tables:         tables,
 							})
 						}
 					}
@@ -2006,9 +2013,11 @@ func resolveStringLiteral(body *ast.BlockStmt, identName string) (string, bool) 
 				if i < len(assign.Rhs) {
 					rhs := assign.Rhs[i]
 					if lit, isLit := rhs.(*ast.BasicLit); isLit && lit.Kind == token.STRING {
-						found = strings.Trim(lit.Value, "`\"")
-						ok = true
-						return false
+						if value, err := strconv.Unquote(lit.Value); err == nil {
+							found = value
+							ok = true
+							return false
+						}
 					}
 				}
 			}

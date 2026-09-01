@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+_No unreleased changes._
+
+## v1.6.9 — 2026-09-01
+
+### PostgreSQL static SQL census
+
+- CLI `sql` and MCP `gograph_sql` now share deterministic `gograph.sql.v1`
+  pages. Optional table, verb, access, function, module, test, limit, and cursor
+  filters compose identically across transports; the original positional raw
+  SQL substring remains compatible.
+- Static PostgreSQL classification records the actual operation, statement
+  access class, referenced tables and per-table access, with explicit
+  `exact`/`partial`/`unknown` status. CTEs resolve to their terminal operation,
+  data-modifying CTEs retain write access/table evidence,
+  quoted/schema-qualified identifiers remain distinct, and
+  `INSERT ... ON CONFLICT` remains `INSERT`. Runtime-generated SQL is not
+  presented as classified static evidence.
+- Tests remain included by default; `--no-tests`/`no_tests=true` provides a
+  production-only census. Pages default to 100 rows, allow at most 200, stay
+  within 64 KiB, expose continuation metadata in both CLI and MCP, and make
+  `--files-only` enumerate all pages.
+- Added parser, PostgreSQL lexer/classifier, filter-composition, module,
+  compatibility, pagination, result-budget, CLI-envelope, MCP-schema, and
+  CLI/MCP native-contract regressions. Updated help, capabilities, README,
+  generated SQL reports, public docs, coding-agent guidance, integrations, and
+  the bundled skill.
+- Running MCP servers keep the tool schema they registered at startup. After
+  installing v1.6.9, restart each project MCP server (or its hosting client)
+  before using the new `gograph_sql` parameters.
+
+## v1.6.8 — 2026-08-27
+
 ### Bounded, accurate route censuses
 
 - CLI `routes` and MCP `gograph_routes` now share deterministic

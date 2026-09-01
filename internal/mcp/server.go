@@ -423,6 +423,18 @@ func NewServer(
 				"precision": "possible dispatch is excluded from exact impact and deep traversal; synthetic forwarders are crossed transparently",
 				"parity":    "CLI explore and MCP gograph_explore return the same native gograph.explore.v1 value for equivalent mode, exact, query, and limit inputs",
 			},
+			"sql_static_classification": map[string]any{
+				"schema":             search.SQLSchemaVersion,
+				"dialect":            "PostgreSQL static SQL literals; not runtime-generated SQL and not full syntax validation",
+				"filters":            []string{"raw term substring", "repeatable tables", "repeatable verbs", "repeatable accesses", "function substring", "module", "no_tests"},
+				"composition":        "different categories AND-compose; repeated tables, verbs, and accesses OR-compose",
+				"classification":     "operation/access/table metadata reports exact, partial, or unknown instead of inventing unsupported facts; CTEs resolve to the actual operation, data-modifying CTEs elevate access and retain write tables, and ON CONFLICT remains INSERT",
+				"compatibility":      "tests remain included unless no_tests=true; legacy artifacts are classified at query time",
+				"pagination":         "default 100, maximum 200, 64 KiB page budget, opaque next_cursor with unchanged filters",
+				"transport_parity":   "CLI sql and MCP gograph_sql execute QuerySQL and return the same gograph.sql.v1 native page; CLI JSON adds its generic envelope and mirrors pagination fields",
+				"supported_verbs":    []string{"SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "CREATE", "ALTER", "DROP", "TRUNCATE"},
+				"supported_accesses": []string{"read", "write", "ddl"},
+			},
 			"path_ranking": map[string]any{
 				"order":       []string{"exact before ambiguous/possible", "shorter paths", "production before tests", "typed resolution before heuristics", "fewer cross-repository transitions"},
 				"tie_breaker": "canonical relationship identity and provenance",
@@ -515,7 +527,7 @@ func NewServer(
 				{"name": "gograph_godobj", "purpose": "God Object candidates scored by method count, field count, and outgoing calls. Exceeding any enabled threshold qualifies a candidate."},
 				{"name": "gograph_skeleton", "purpose": "Full repo API signatures with bodies stripped. WARNING: can be very large on big repos."},
 				{"name": "gograph_mutate", "purpose": "Struct-field and package-global mutations; precise mode adds ++/+=, aliases, atomic/sync/wrapper calls, and channel evidence."},
-				{"name": "gograph_sql", "purpose": "SQL literals embedded in Go source with enclosing function context. Filter by keyword or table name."},
+				{"name": "gograph_sql", "purpose": "Bounded PostgreSQL static SQL pages with table, verb, access, function, module, test, and cursor filters plus explicit classification."},
 				{"name": "gograph_errors", "purpose": "All error and panic sites: errors.New, fmt.Errorf, sentinel declarations, and panic calls. Filter by message substring."},
 				{"name": "gograph_embeds", "purpose": "All structs that embed the named struct via anonymous field composition."},
 				{"name": "gograph_public", "purpose": "Exported symbols of a specific package: functions, methods, types/interfaces, variables, and constants."},
@@ -1551,8 +1563,16 @@ func NewServer(
 
 	// Tool: gograph_sql
 	sqlTool := mcp.NewTool("gograph_sql",
-		mcp.WithDescription("Find all SQL query literals embedded in Go source code, with their enclosing function context and file/line locations. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. Optional `term` filters by SQL keyword or table name (e.g., \"SELECT\", \"users\"). WHEN TO USE: When auditing database interactions, reviewing queries for performance issues, or locating all queries that touch a specific table. NOT TO USE: For ORM struct-to-table mappings (use gograph_schema); for env-based configuration (use gograph_envs). RETURNS: List of SQL string literals with file, line, and enclosing function name; empty when no matches found."),
-		mcp.WithString("term", mcp.Description("Optional SQL keyword or table name to filter database queries (e.g., 'SELECT', 'users')")),
+		mcp.WithDescription("Return one bounded gograph.sql.v1 page of static PostgreSQL query literals with operation, read/write/DDL access, referenced tables, enclosing function, module ownership, and source location. The MCP server checks freshness before this call and refreshes in the current requested analysis mode. Read-only; no side effects. Filters in different categories AND-compose; repeated values within tables, verbs, and accesses OR-compose. Tests remain included by default for backward compatibility; set no_tests=true for production-only results. CTEs resolve to their actual operation, data-modifying CTEs retain write access/table evidence, PostgreSQL UPSERT remains INSERT, and unsupported classification is explicit rather than guessed. WHEN TO USE: Audit database interactions, write paths, or queries touching a table. NOT TO USE: For ORM struct mappings (use gograph_schema) or runtime-generated SQL that is not a static literal. RETURNS: A deterministic page with total/returned/truncated/next_cursor and queries[]."),
+		mcp.WithString("term", mcp.Description("Optional case-insensitive raw SQL substring filter"), mcp.MaxLength(4096)),
+		mcp.WithArray("tables", mcp.Description("Optional PostgreSQL table selectors; values OR-compose and may be table or schema.table"), mcp.WithStringItems(mcp.MinLength(1), mcp.MaxLength(256)), mcp.MaxItems(32)),
+		mcp.WithArray("verbs", mcp.Description("Optional PostgreSQL operation filters; values OR-compose"), mcp.WithStringItems(mcp.Enum("SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "CREATE", "ALTER", "DROP", "TRUNCATE")), mcp.MaxItems(32)),
+		mcp.WithArray("accesses", mcp.Description("Optional statement access classes; values OR-compose"), mcp.WithStringItems(mcp.Enum("read", "write", "ddl")), mcp.MaxItems(32)),
+		mcp.WithString("function", mcp.Description("Optional case-insensitive enclosing-function substring"), mcp.MaxLength(1024)),
+		mcp.WithString("module", mcp.Description("Optional exact module path/directory, unique nested basename, or repository basename for a root module"), mcp.MaxLength(1024)),
+		mcp.WithBoolean("no_tests", mcp.Description("Exclude SQL facts from *_test.go files; tests are included by default")),
+		mcp.WithInteger("limit", mcp.Description("Page size from 1 to 200; defaults to 100"), mcp.Min(1), mcp.Max(200)),
+		mcp.WithString("cursor", mcp.Description("Opaque next_cursor from the previous gograph_sql page; reuse the same filters"), mcp.MaxLength(1024)),
 	)
 	addTool(sqlTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if newG, err := rebuild(); err == nil {
@@ -1560,14 +1580,70 @@ func NewServer(
 		} else {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
 		}
-		term := ""
-		if args, ok := request.Params.Arguments.(map[string]any); ok {
-			if t, ok := args["term"].(string); ok {
-				term = t
+		args := map[string]any{}
+		if request.Params.Arguments != nil {
+			var ok bool
+			args, ok = request.Params.Arguments.(map[string]any)
+			if !ok {
+				return mcp.NewToolResultError("invalid arguments"), nil
 			}
 		}
-		results := search.SQL(g, term)
-		return formatResults(results), nil
+		stringOption := func(name string) (string, error) {
+			value, exists := args[name]
+			if !exists {
+				return "", nil
+			}
+			text, ok := value.(string)
+			if !ok {
+				return "", fmt.Errorf("%s must be a string", name)
+			}
+			return text, nil
+		}
+		term, err := stringOption("term")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		function, err := stringOption("function")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		module, err := stringOption("module")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		cursor, err := stringOption("cursor")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		tables, err := stringSliceArg(args, "tables")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		verbs, err := stringSliceArg(args, "verbs")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		accesses, err := stringSliceArg(args, "accesses")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		limit, err := integerArg(args, "limit", search.DefaultSQLLimit)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		page, err := search.QuerySQL(g, search.SQLQuery{
+			Term: term, Tables: tables, Verbs: verbs, Accesses: accesses,
+			Function: function, Module: module, NoTests: boolArg(args, "no_tests"),
+			Limit: limit, Cursor: cursor,
+		})
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		data, err := json.MarshalIndent(page, "", "  ")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultText(string(data)), nil
 	})
 
 	// Tool: gograph_errors

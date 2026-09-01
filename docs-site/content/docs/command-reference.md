@@ -456,9 +456,43 @@ statically resolved.
 
 ### sql
 ```bash
-gograph sql [term]
+gograph sql [term] \
+  [--table TABLE]... [--verb VERB]... [--access read|write|ddl]... \
+  [--function NAME] [--module MODULE] [--no-tests] \
+  [--limit N] [--cursor CURSOR]
 ```
-Extracts and maps raw SQL string queries to the functions that execute them. The optional term filters by SQL keyword or table-name substring.
+
+Returns deterministic `gograph.sql.v1` pages for static PostgreSQL statements,
+including the actual operation, statement access class, referenced tables,
+enclosing Go function, module ownership, and source location. The positional
+term remains a case-insensitive raw-query substring for compatibility.
+
+`--table` accepts either `table` or `schema.table`; `--verb` accepts `SELECT`,
+`INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE`, `ALTER`, `DROP`, or
+`TRUNCATE`; and `--access` accepts `read`, `write`, or `ddl`. These three flags
+are repeatable: values within one category OR-compose, while different filter
+categories AND-compose. `--function` is a case-insensitive enclosing-function
+substring. `--module` accepts an exact module path/directory, a unique nested
+directory basename, or the repository basename for a root module.
+
+Tests remain included by default to preserve existing behavior;
+`--no-tests` excludes `_test.go`. Pages default to 100 rows, permit at most
+200, and stay within 64 KiB. Continue with `next_cursor` and the same filters.
+CLI `--json` mirrors `total`, `returned`, `truncated`, and `next_cursor` on the
+outer envelope; `--files-only` follows every page for a complete file census.
+
+MCP `gograph_sql` executes the same native query. Its typed parameters are
+`term`, `tables[]`, `verbs[]`, `accesses[]`, `function`, `module`, `no_tests`,
+`limit`, and `cursor`, and its JSON text is the same `gograph.sql.v1` page found
+under CLI `results`.
+
+Classification is deliberately PostgreSQL-specific and static. `WITH` queries
+report their actual terminal operation, and `INSERT ... ON CONFLICT` remains
+`INSERT`. A data-modifying CTE retains its write-table evidence and elevates the
+statement access even when the terminal operation is `SELECT`. Every row reports
+`exact`, `partial`, or `unknown`; runtime-generated SQL and unsupported constructs
+are not presented as confidently classified. Rebuilt `graph-sql.md` reports expose
+the same persisted operation, access, table, and classification metadata.
 
 ### errors
 ```bash

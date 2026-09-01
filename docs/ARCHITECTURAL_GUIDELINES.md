@@ -27,7 +27,7 @@ This document outlines the core architectural philosophy, constraints, and devel
   `cmd/go` precedence and replace `GOFLAGS -tags`; absence preserves inherited
   behavior. The effective selection is fingerprinted, and MCP capabilities
   disclose requested/effective tags.
-- **Navigation Aids, Not Proofs:** Heuristic extractors (such as REST route mappers, SQL query extractors, or test edge mappers) are strictly navigation aids for AI agents. They are not guaranteed to find every dynamic invocation. Do not use hyperbolic language (e.g., "cryptographic proof") to describe AST analysis.
+- **Navigation Aids, Not Proofs:** Heuristic extractors (such as REST route mappers, PostgreSQL static-query classification, or test edge mappers) are strictly navigation aids for AI agents. SQL metadata must distinguish exact, partial, and unknown classification and must not imply coverage of runtime-generated queries. These analyses are not guaranteed to find every dynamic invocation. Do not use hyperbolic language (e.g., "cryptographic proof") to describe AST analysis.
 - **Security Flow Contract:** Flow analysis may be interprocedural but must remain bounded, deterministic, tolerant of broken code, and explicit about path insensitivity and call-context limits. Persist reusable AST facts in the graph and apply sanitizer policy at query time. Report confidence and never describe a finding as proof of exploitability.
 
 ## 3. Package Architecture

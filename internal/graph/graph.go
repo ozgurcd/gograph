@@ -28,7 +28,7 @@ const CurrentSourcePolicyVersion = 2
 // CurrentAnalysisCacheVersion identifies graphs whose file-level records can
 // be decomposed back into parser output and safely reused by an incremental
 // build. Bump this whenever parser/precise provenance changes.
-const CurrentAnalysisCacheVersion = 3
+const CurrentAnalysisCacheVersion = 4
 
 // MaxArtifactBytes bounds whole-artifact JSON decoding. Repository graphs are
 // intentionally in-memory query artifacts; accepting an unbounded serialized
@@ -295,10 +295,19 @@ type ImplementsEdge struct {
 
 // SQLEdge represents an extracted SQL query.
 type SQLEdge struct {
-	Query    string `json:"query"`
-	Function string `json:"function"`
-	File     string `json:"file"`
-	Line     int    `json:"line"`
+	Query          string        `json:"query"`
+	Function       string        `json:"function"`
+	File           string        `json:"file"`
+	Line           int           `json:"line"`
+	Verb           string        `json:"verb,omitempty"`
+	Access         string        `json:"access,omitempty"`
+	Classification string        `json:"classification,omitempty"`
+	Tables         []SQLTableRef `json:"tables,omitempty"`
+}
+
+type SQLTableRef struct {
+	Name   string `json:"name"`
+	Access string `json:"access"`
 }
 
 // ErrorEdge represents an extracted error message or panic.

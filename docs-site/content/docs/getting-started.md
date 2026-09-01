@@ -183,6 +183,8 @@ Compares the current selected-file inventory, effective Go build context, and SH
 gograph summary
 gograph hotspot --top 5
 gograph flow --no-tests
+gograph sql --access write --no-tests
+gograph sql --table users --verb SELECT
 ```
 
 Choose a real function or method reported by `summary`, `hotspot`, or

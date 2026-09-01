@@ -127,7 +127,7 @@ closure or persisting its source-less wrapper edges.
 | Functions, methods, structs, interfaces, types, variables, constants | AST `FuncDecl`, `TypeSpec`, `ValueSpec` |
 | Call edges (caller → callee, with call-site file and line) | AST `CallExpr` |
 | HTTP routes (method + path + handler) | `gin`, `echo`, `chi`, `http.Handle*` literal patterns; bounded production-first pages with term/module filters and test opt-in |
-| SQL queries | String literal heuristics on `db.Query`, `db.Exec`, etc. |
+| SQL queries | Static PostgreSQL literals on `db.Query`, `db.Exec`, etc.; bounded CLI/MCP pages classify operation, read/write/DDL access, and referenced tables with explicit exact/partial/unknown status |
 | Environment reads | `os.Getenv`, `os.LookupEnv`, supported Viper `Get*` |
 | Struct-field and package-global mutations | Direct assignments plus precise alias, compound, atomic/sync/wrapper, and channel evidence |
 | Error and panic sites | `errors.New`, `fmt.Errorf`, sentinel declarations, `panic` |

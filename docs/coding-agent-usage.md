@@ -47,7 +47,7 @@ gograph impact --since main     # blast radius of all symbols changed since main
 gograph orphans                 # functions unreachable via BFS from main/init, test, route, and eligible public roots — stricter than a 0-call check
 gograph routes [term] --module <module>  # bounded production HTTP route page; add --include-tests when needed
 gograph imports <pkg>           # trace external/internal package usage
-gograph sql [term]              # map raw SQL queries to their execution functions; optionally filter by keyword/table
+gograph sql [term] --table <table> --verb <verb> --no-tests # bounded PostgreSQL static SQL page; filters are optional/repeatable
 gograph errors                  # custom error variables and panics mapped to their source
 gograph embeds <struct>         # find which structs embed a target struct
 gograph public <pkg>            # list only the exported API surface of a package
@@ -982,7 +982,7 @@ The current suite registers 68 MCP endpoints: 64 query, analysis, and workflow t
 - **`gograph_tests`**: Direct attributed test calls by default. Set `transitive=true` with `symbol` to receive `gograph.tests.v1`, listing every reaching test with exact/possible resolution, depth, and a representative stable-ID path. Optional `exact_only` filters uncertain paths and `package` disambiguates the selected product symbol. CLI uses the equivalent `--transitive`, `--exact-only`, and `--package` flags.
 - **`gograph_coverage`**: Transitive product symbols statically reachable from one unambiguous test, with stable-ID paths and exact/possible propagation. Parameters: required `test`; optional `exact_only` and exact `package` disambiguator. Equivalent to CLI `coverage`.
 - **`gograph_identity`**: Resolve an exact symbol spelling or stable ID. Returns exact, ambiguous, or not_found without silently choosing a candidate; optional `package` disambiguates an external-test collision. Equivalent to CLI `identity`.
-- **`gograph_sql`**: SQL literals mapped to their executing functions. Optional `term` filters by keyword or table-name substring.
+- **`gograph_sql`**: Bounded `gograph.sql.v1` PostgreSQL static SQL census. Optional `term` is a raw-query substring; `tables[]`, `verbs[]`, and `accesses[]` OR-compose within their category and AND-compose across categories. `function`, `module`, `no_tests`, `limit`, and `cursor` match CLI `--function`, `--module`, `--no-tests`, `--limit`, and `--cursor`. Tests remain included by default. Rows expose operation, read/write/DDL access, referenced tables, `exact`/`partial`/`unknown` classification, function, and source. Follow `next_cursor` with unchanged filters.
 - **`gograph_errors`**: Error constructors, sentinels, and panic sites; supports a term filter and `no_tests`.
 - **`gograph_embeds`**
 - **`gograph_public`**

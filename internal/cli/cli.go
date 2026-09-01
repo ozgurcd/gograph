@@ -711,7 +711,12 @@ routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor CURSOR]
                        --files-only follows all pages and emits the complete file set.
 source <sym>         : confined exact source for function/method/struct/interface/
                        type/variable/constant — USE THIS instead of reading files
-sql [term]           : raw SQL queries mapped to their functions; optional keyword/table filter
+sql [term] [--table T] [--verb V] [--access read|write|ddl] [--function F]
+                     [--module M] [--no-tests] [--limit N] [--cursor C]
+                     : bounded gograph.sql.v1 PostgreSQL static SQL census. Table/verb/access flags repeat
+                       with OR semantics; different filter categories AND-compose. Tests
+                       remain included unless --no-tests is set. Pages default to 100,
+                       allow at most 200, and expose total/returned/truncated/next_cursor.
 tests [sym] [--transitive] [--exact-only] [--package <name>]
                      : direct attributed test calls by default. --transitive returns every
                        test with an exact/possible stable-ID path to one product symbol.
@@ -3135,8 +3140,26 @@ EXTRACTION
                              Gin/Fiber use the final variadic argument as handler;
                              Echo uses the handler immediately after the path.
                              Unresolved factories remain marked dynamic.
-  sql [term]                 Raw SQL queries mapped to the functions that run them.
-                             Filter by SQL keyword or table-name substring.
+  sql [term] [--table TABLE] [--verb VERB] [--access read|write|ddl] [--function NAME] [--module MODULE] [--no-tests] [--limit N] [--cursor CURSOR]
+                             Deterministic gograph.sql.v1 pages of static PostgreSQL
+                             statements. The positional term remains a case-insensitive
+                             raw SQL substring. Repeat --table, --verb, or --access to
+                             OR values within that category; categories AND-compose.
+                             Table accepts table or schema.table. Verbs: SELECT, INSERT,
+                             UPDATE, DELETE, MERGE, CREATE, ALTER, DROP, TRUNCATE.
+                             Access: read, write, ddl. Rows classify as exact, partial, or
+                             unknown. --function is a case-insensitive
+                             enclosing-function substring. --module uses the same exact
+                             path/directory and unique/root basename rules as routes.
+                             Tests remain included for compatibility; --no-tests excludes
+                             *_test.go. Defaults to 100 rows, maximum 200, within 64 KiB.
+                             Reuse the same filters with next_cursor to continue. JSON
+                             mirrors total/returned/truncated/next_cursor on its envelope;
+                             --files-only follows every page. PostgreSQL CTEs resolve to
+                             their actual operation; data-modifying CTEs elevate access and
+                             retain write tables; ON CONFLICT remains INSERT. Dynamic
+                             or unsupported SQL is not invented and classification status
+                             is exact, partial, or unknown.
   httpcalls [term]           All outbound HTTP client calls via net/http.
                              Filter by method or URL substring.
   errorflow <term> [--no-tests]
@@ -4324,19 +4347,122 @@ func runRoutes(args []string) int {
 
 // runSQL lists raw SQL queries mapped to the functions that run them.
 func runSQL(args []string) int {
-	if !hasOptionalTarget(args) {
-		return failCommand("sql", "usage: gograph sql [term]")
+	query := search.SQLQuery{Limit: search.DefaultSQLLimit}
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--table":
+			value, ok := sqlStringFlag(args, &i)
+			if !ok {
+				return failCommand("sql", "--table requires a PostgreSQL table or schema.table selector")
+			}
+			query.Tables = append(query.Tables, value)
+		case "--verb":
+			value, ok := sqlStringFlag(args, &i)
+			if !ok {
+				return failCommand("sql", "--verb requires SELECT, INSERT, UPDATE, DELETE, MERGE, CREATE, ALTER, DROP, or TRUNCATE")
+			}
+			query.Verbs = append(query.Verbs, value)
+		case "--access":
+			value, ok := sqlStringFlag(args, &i)
+			if !ok {
+				return failCommand("sql", "--access requires read, write, or ddl")
+			}
+			query.Accesses = append(query.Accesses, value)
+		case "--function":
+			value, ok := sqlStringFlag(args, &i)
+			if !ok {
+				return failCommand("sql", "--function requires an enclosing-function substring")
+			}
+			query.Function = value
+		case "--module":
+			value, ok := sqlStringFlag(args, &i)
+			if !ok {
+				return failCommand("sql", "--module requires a module path, directory, or unique directory basename")
+			}
+			query.Module = value
+		case "--no-tests":
+			query.NoTests = true
+		case "--limit":
+			value, err := parseIntegerFlag(args, &i)
+			if err != nil {
+				return failCommand("sql", err.Error())
+			}
+			query.Limit = value
+		case "--cursor":
+			value, ok := sqlStringFlag(args, &i)
+			if !ok {
+				return failCommand("sql", "--cursor requires the opaque next_cursor from a previous sql result")
+			}
+			query.Cursor = value
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				return failCommandf("sql", "unknown flag: %s", args[i])
+			}
+			positionals = append(positionals, args[i])
+		}
 	}
-	term := ""
-	if len(args) > 0 {
-		term = args[0]
+	if len(positionals) > 1 {
+		return failCommand("sql", "usage: gograph sql [term] [--table TABLE] [--verb VERB] [--access read|write|ddl] [--function NAME] [--module MODULE] [--no-tests] [--limit N] [--cursor CURSOR]")
+	}
+	if len(positionals) == 1 {
+		query.Term = positionals[0]
 	}
 	g, err := loadGraph(".")
 	if err != nil {
 		return failCommand("sql", err.Error())
 	}
-	results := search.SQL(g, term)
-	return printResults("sql", term, results, "No SQL queries found.")
+	page, err := search.QuerySQL(g, query)
+	if err != nil {
+		return failCommand("sql", err.Error())
+	}
+	if jsonMode {
+		envelope := okEnvelope("sql", query.Term, page, page.Returned)
+		envelope.Total = &page.Total
+		envelope.Returned = &page.Returned
+		envelope.Truncated = &page.Truncated
+		envelope.NextCursor = &page.NextCursor
+		return PrintJSON(envelope)
+	}
+	if filesOnlyMode {
+		seenFiles := make(map[string]bool)
+		for {
+			for _, result := range page.Queries {
+				if result.File != "" && !seenFiles[result.File] {
+					fmt.Println(result.File)
+					seenFiles[result.File] = true
+				}
+			}
+			if !page.Truncated {
+				break
+			}
+			query.Cursor = page.NextCursor
+			page, err = search.QuerySQL(g, query)
+			if err != nil {
+				return failCommand("sql", err.Error())
+			}
+		}
+		return 0
+	}
+	if len(page.Queries) == 0 {
+		fmt.Println("No SQL queries found.")
+		return 0
+	}
+	for _, result := range page.Queries {
+		fmt.Println(result.String())
+	}
+	if page.Truncated {
+		fmt.Printf("\nShowing %d of %d matching SQL queries. Continue with --cursor %s and the same filters.\n", page.Returned, page.Total, page.NextCursor)
+	}
+	return 0
+}
+
+func sqlStringFlag(args []string, index *int) (string, bool) {
+	if *index+1 >= len(args) || args[*index+1] == "" || strings.HasPrefix(args[*index+1], "-") {
+		return "", false
+	}
+	*index++
+	return args[*index], true
 }
 
 // runErrors lists custom error variables and panics mapped to their source.
