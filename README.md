@@ -266,6 +266,19 @@ normal response format.
 | **Untested** | `untested [--pkg name] [--top N] [--exclude glob] [--wide] [--json]` | Called production symbols without an exact transitive test path. Precise builds devirtualize only proven concrete receivers; open interface paths remain `test_resolution=possible`. JSON includes `stable_id`; `--wide` prints it without truncation. |
 | **Doc** | `doc <pkg[.Symbol]> [--json]` | `go doc` wrapper — signature + doc comment for any stdlib or third-party symbol. No graph required. Closes the gap when call chains leave the project. |
 
+Precise `implementers` results merge type-checked production types with
+AST-discovered test-file fakes; `--test-only`/MCP `test_only=true` returns only
+the latter. Direct `tests` lookup accepts `Receiver.Method` (including pointer
+receivers) or a stable ID. `usages` covers signature/field/interface references
+and `Foo{...}` construction; `literals` remains the focused construction-only
+view.
+
+SQL extraction includes direct literals and statically resolvable local or
+same-file package `const`/`var` declarations, straight-line assignments, and
+bounded string concatenations. Runtime-generated SQL remains excluded. Route and SQL JSON are
+paged row censuses; `--files-only` follows all pages but emits a complete
+deduplicated **file** census, not every row.
+
 > Full command reference with examples: [gograph.identuum.ai/docs/command-reference](https://gograph.identuum.ai/docs/command-reference/)
 
 <details>
@@ -280,7 +293,11 @@ Define boundaries in `.gograph/boundaries.json`:
   ]
 }
 ```
-Run `gograph boundaries` — exits with code 1 on violation. Works in CI/CD.
+Run `gograph stale` (and rebuild when stale) before `gograph boundaries`; the
+CLI evaluates the persisted graph and exits with code 1 on violation. The
+default policy is `.gograph/boundaries.json`; use `--config PATH` for another
+regular, repository-confined policy. MCP uses the same evaluation after its
+normal source refresh. Works in CI/CD.
 </details>
 
 <details>

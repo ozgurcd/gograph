@@ -738,6 +738,7 @@ func Implementers(g *graph.Graph, interfaceName string) []Result {
 	nl := strings.ToLower(interfaceName)
 	var iface *graph.SymbolNode
 	var results []Result
+	seen := make(map[string]bool)
 
 	for i, s := range g.Symbols {
 		if s.Kind == graph.KindInterface && MatchSymbol(s, interfaceName) {
@@ -765,28 +766,29 @@ func Implementers(g *graph.Graph, interfaceName string) []Result {
 						concreteMatches = s.Name == edge.Concrete
 					}
 					if s.Kind == graph.KindStruct && concreteMatches {
-						results = append(results, Result{
+						result := Result{
 							Kind:   "struct",
 							Name:   s.Name,
 							File:   s.File,
 							Line:   s.Line,
 							Detail: "implements " + iface.Name + " (type-checked)",
 							Score:  10,
-						})
+						}
+						appendUniqueResult(&results, seen, result)
 					}
 				}
 			}
 		}
-		if len(results) > 0 {
-			sortResults(results)
-			return results
-		}
 	}
 
-	// 2. AST Heuristic Fallback (duck-typing)
+	// 2. AST heuristic fallback (duck-typing). Precise package loading does not
+	// include test variants, so merge test-file implementations even when the
+	// type-checked production fast path found results. If precise resolution did
+	// not find anything, retain the historical all-symbol heuristic fallback.
+	preciseResults := len(results) > 0
 	var structs []graph.SymbolNode
 	for _, s := range g.Symbols {
-		if s.Kind == graph.KindStruct {
+		if s.Kind == graph.KindStruct && (!preciseResults || isTestFile(s.File)) {
 			structs = append(structs, s)
 		}
 	}
@@ -794,13 +796,13 @@ func Implementers(g *graph.Graph, interfaceName string) []Result {
 	methodsByReceiver := make(map[string][]graph.SymbolNode)
 	for _, s := range g.Symbols {
 		if s.Kind == graph.KindMethod && s.Receiver != "" {
-			recv := strings.TrimPrefix(s.Receiver, "*")
+			recv := implementerReceiverKey(s)
 			methodsByReceiver[recv] = append(methodsByReceiver[recv], s)
 		}
 	}
 
 	for _, str := range structs {
-		methods := methodsByReceiver[str.Name]
+		methods := methodsByReceiver[implementerReceiverKey(str)]
 		if len(methods) < len(iface.InterfaceMethods) {
 			continue
 		}
@@ -816,12 +818,16 @@ func Implementers(g *graph.Graph, interfaceName string) []Result {
 		}
 
 		if implemented == len(iface.InterfaceMethods) {
-			results = append(results, Result{
+			detail := "implements " + iface.Name
+			if preciseResults && isTestFile(str.File) {
+				detail += " (AST test heuristic)"
+			}
+			appendUniqueResult(&results, seen, Result{
 				Kind:   "struct",
 				Name:   str.Name,
 				File:   str.File,
 				Line:   str.Line,
-				Detail: "implements " + iface.Name,
+				Detail: detail,
 				Score:  10,
 			})
 		}
@@ -829,6 +835,29 @@ func Implementers(g *graph.Graph, interfaceName string) []Result {
 
 	sortResults(results)
 	return results
+}
+
+func implementerReceiverKey(s graph.SymbolNode) string {
+	pkg := s.PackageName
+	if idx := strings.Index(s.ID, "::"); idx > 0 {
+		pkg = s.ID[:idx]
+	} else if idx := strings.LastIndex(s.File, "/"); idx >= 0 {
+		pkg = s.File[:idx] + "::" + pkg
+	}
+	receiver := s.Name
+	if s.Receiver != "" {
+		receiver = strings.TrimPrefix(s.Receiver, "*")
+	}
+	return strings.ToLower(pkg + "::" + receiver)
+}
+
+func appendUniqueResult(results *[]Result, seen map[string]bool, result Result) {
+	key := strings.ToLower(fmt.Sprintf("%s:%d:%s", result.File, result.Line, result.Name))
+	if seen[key] {
+		return
+	}
+	seen[key] = true
+	*results = append(*results, result)
 }
 
 // MatchSymbol checks if a SymbolNode matches a user query string (case-insensitively).
@@ -952,6 +981,15 @@ func matchTestTarget(target, testFunc, term string) bool {
 	targetLower := strings.ToLower(target)
 	testFuncLower := strings.ToLower(testFunc)
 
+	// Precise test attribution stores method targets as stable IDs such as
+	// "example.com/p::(*Service).Login". Accept the natural Receiver.Method
+	// query form without broadening it to another receiver with the same method.
+	if wanted, wantedOK := receiverMethodSelector(tl); wantedOK {
+		if actual, actualOK := receiverMethodSelector(targetLower); actualOK {
+			return actual == wanted
+		}
+	}
+
 	if strings.Contains(targetLower, tl) || strings.Contains(testFuncLower, tl) {
 		return true
 	}
@@ -981,6 +1019,18 @@ func matchTestTarget(target, testFunc, term string) bool {
 		}
 	}
 	return false
+}
+
+func receiverMethodSelector(value string) (string, bool) {
+	if idx := strings.LastIndex(value, "::"); idx >= 0 {
+		value = value[idx+2:]
+	}
+	value = strings.NewReplacer("(", "", ")", "", "*", "").Replace(strings.TrimSpace(value))
+	parts := strings.Split(value, ".")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", false
+	}
+	return parts[0] + "." + parts[1], true
 }
 
 // Source extracts exact source lines for a named function, method, struct,

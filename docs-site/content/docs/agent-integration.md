@@ -46,7 +46,7 @@ Replacing broad text searches with AST-derived, symbol-focused responses reduces
 | Objective | Text-search route (`grep`, `find`) | The `gograph` route | Typical output shape | Analysis caveat |
 |---|---|---|---|---|
 | **Find callers of a method** | `grep -rn "Update" .` <br>*(Scans mocks, comments, other types)* | `gograph callers UserStore.Update` or `gograph callers Repository.Update` <br>*(AST-derived; interface-qualified queries use precise CHA targets)* | Broad source context vs. compact caller rows | Default AST evidence; conservative multi-target CHA when precise |
-| **Find interface implementers** | Multi-step searches of method receivers and method sets | `gograph implementers Connection` | Many file reads vs. concrete type rows | Heuristic AST mode; package-qualified precise mode when available |
+| **Find interface implementers** | Multi-step searches of method receivers and method sets | `gograph implementers Connection` | Many file reads vs. concrete type rows | Precise production results merge AST test fakes; `--test-only` isolates them |
 | **Trace wrapped errors** | String searches inside formatting blocks | `gograph errorflow "invalid token"` | Broad scans vs. structured candidate paths | Navigation heuristic, not SSA data-flow proof |
 | **Review untrusted-data paths** | Repeated searches for request reads and sensitive APIs | `gograph flow --no-tests` | One structured source-to-sink report | Interprocedural heuristic with explicit confidence, not exploitability proof |
 
@@ -192,7 +192,8 @@ sink, severity, confidence, and path data.
 attribution, and `gograph_identity` matches CLI `identity` for durable symbol
 references. Both accept an optional exact `package` disambiguator for an
 in-package/external-test ID collision. `gograph_tests` preserves direct results
-by default; `transitive=true` maps to CLI `tests --transitive` and returns the
+by default and accepts `Receiver.Method` or a stable ID without conflating a
+different receiver's same-named method; `transitive=true` maps to CLI `tests --transitive` and returns the
 same `gograph.tests.v1` exact/possible paths. `gograph_untested.exclude[]` is the
 typed equivalent of repeatable CLI `--exclude` globs; its rows include full
 stable IDs, corresponding to CLI `untested --wide` presentation.

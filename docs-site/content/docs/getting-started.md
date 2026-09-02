@@ -187,6 +187,12 @@ gograph sql --access write --no-tests
 gograph sql --table users --verb SELECT
 ```
 
+The SQL census includes direct literals and statically resolvable local or
+same-file package declarations, straight-line assignments, and bounded
+concatenations. Runtime-generated SQL
+is not classified. Table, verb, and access filters operate on the same rows as
+the positional term census.
+
 Choose a real function or method reported by `summary`, `hotspot`, or
 `gograph complexity`, then replace `YourSymbol` below with that name:
 
@@ -265,6 +271,10 @@ can make `check --json` exit 1 while still returning its structured report.
 `orphans`, `mutate`, `constructors`, `literals`, `usages`, `returnusage`,
 `schema`, `globals`, `mocks`, `fixtures`, `boundaries`, `httpcalls`, and
 `dependents`. Empty files-only results write zero lines.
+
+For paged `routes` and `sql`, files-only follows every page but intentionally
+returns the complete deduplicated file set—not a complete row dump. Use JSON
+pagination and `next_cursor` when every route or statement row is required.
 
 Composed-analysis commands also support JSON where documented. Operational
 commands (`build`, `wiki`, `gate`, `snapshot`, installation, and help) remain

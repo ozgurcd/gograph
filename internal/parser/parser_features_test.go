@@ -146,3 +146,98 @@ func TestParseSourceClassifiesEscapedPostgreSQLLiteral(t *testing.T) {
 		t.Fatalf("escaped SQL literal classification = %+v", query)
 	}
 }
+
+func TestParseSourceResolvesStaticSQLDeclarations(t *testing.T) {
+	source := []byte(`package example
+
+const packageQuery = "SELECT id FROM accounts"
+
+func localConst(db interface{ Exec(string, ...any) }) {
+	const q = ` + "`" + `
+		INSERT INTO oauth_refresh_tokens (
+			id, validator_hash, scope
+		) VALUES ($1, $2, $3)
+		RETURNING id
+	` + "`" + `
+	db.Exec(q)
+}
+
+func localVar(db interface{ Exec(string, ...any) }) {
+	var q = "UPDATE users SET active = true"
+	db.Exec(q)
+}
+
+func shortDeclaration(db interface{ Exec(string, ...any) }) {
+	q := "DELETE FROM sessions"
+	db.Exec(q)
+}
+
+func ordinaryAssignment(db interface{ Exec(string, ...any) }) {
+	var q string
+	q = "TRUNCATE TABLE audit_events"
+	db.Exec(q)
+}
+
+func packageConstant(db interface{ Query(string, ...any) }) {
+	db.Query(packageQuery)
+}
+
+func concatenated(db interface{ Query(string, ...any) }) {
+	const prefix = "SELECT id FROM "
+	const q = prefix + "users"
+	db.Query(q)
+}
+
+func contextQuery(db interface{ QueryContext(any, string, ...any) }, ctx any) {
+	const q = "SELECT id FROM profiles"
+	db.QueryContext(ctx, q, "DELETE FROM decoy")
+}
+
+func dynamic(db interface{ Exec(string, ...any) }, buildQuery func() string) {
+	db.Exec(buildQuery(), "SELECT id FROM decoy_bind_value")
+}
+
+func conditionalAssignment(db interface{ Exec(string, ...any) }, enabled bool) {
+	var q string
+	if enabled {
+		q = "DELETE FROM conditional_rows"
+	}
+	db.Exec(q)
+}
+
+func reassigned(db interface{ Exec(string, ...any) }) {
+	q := "SELECT id FROM first_table"
+	q = "DELETE FROM second_table"
+	db.Exec(q)
+}
+`)
+	result, err := parser.ParseSource(token.NewFileSet(), "query.go", source, "query.go", "example.com/query")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]struct {
+		verb  string
+		table string
+	}{
+		"localConst":         {verb: "INSERT", table: "oauth_refresh_tokens"},
+		"localVar":           {verb: "UPDATE", table: "users"},
+		"shortDeclaration":   {verb: "DELETE", table: "sessions"},
+		"ordinaryAssignment": {verb: "TRUNCATE", table: "audit_events"},
+		"packageConstant":    {verb: "SELECT", table: "accounts"},
+		"concatenated":       {verb: "SELECT", table: "users"},
+		"contextQuery":       {verb: "SELECT", table: "profiles"},
+	}
+	if len(result.SQLs) != len(want) {
+		t.Fatalf("SQL count = %d, want %d: %+v", len(result.SQLs), len(want), result.SQLs)
+	}
+	for _, edge := range result.SQLs {
+		expected, ok := want[edge.Function]
+		if !ok {
+			t.Fatalf("unexpected SQL edge: %+v", edge)
+		}
+		if edge.Verb != expected.verb || len(edge.Tables) != 1 || edge.Tables[0].Name != expected.table {
+			t.Fatalf("SQL edge for %s = %+v, want verb=%s table=%s", edge.Function, edge, expected.verb, expected.table)
+		}
+	}
+}

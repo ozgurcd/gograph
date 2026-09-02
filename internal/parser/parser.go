@@ -1166,6 +1166,7 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 			callerName = fmt.Sprintf("(%s).%s", receiver, d.Name.Name)
 		}
 		isTestFunc := strings.HasPrefix(d.Name.Name, "Test") || strings.HasPrefix(d.Name.Name, "Benchmark")
+		contextNames := functionContextNames(d)
 
 		// Concurrency: inspect go statements and channel sends.
 		ast.Inspect(d.Body, func(n ast.Node) bool {
@@ -1227,22 +1228,13 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 
 				if isSQLMethod && len(call.Args) > 0 {
 					var queryStr string
+					queryIndex := 0
+					if strings.HasSuffix(method, "Context") || len(call.Args) > 1 && isContextArgument(call.Args[0], contextNames) {
+						queryIndex = 1
+					}
 					var found bool
-
-					for _, arg := range call.Args {
-						if lit, ok := arg.(*ast.BasicLit); ok && lit.Kind == token.STRING {
-							if value, err := strconv.Unquote(lit.Value); err == nil {
-								queryStr = value
-								found = true
-							}
-							break
-						} else if id, ok := arg.(*ast.Ident); ok {
-							if val, ok := resolveStringLiteral(d.Body, id.Name); ok {
-								queryStr = val
-								found = true
-								break
-							}
-						}
+					if queryIndex < len(call.Args) {
+						queryStr, found = resolveStaticStringLiteral(d.Body, call.Args[queryIndex], call.Pos())
 					}
 
 					if found {
@@ -1444,6 +1436,39 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 			})
 			return true
 		})
+	}
+}
+
+func functionContextNames(d *ast.FuncDecl) map[string]bool {
+	names := make(map[string]bool)
+	if d == nil || d.Type == nil || d.Type.Params == nil {
+		return names
+	}
+	for _, field := range d.Type.Params.List {
+		fieldType := strings.ToLower(typeString(field.Type))
+		if fieldType != "context.context" && !strings.HasSuffix(fieldType, ".context") {
+			continue
+		}
+		for _, name := range field.Names {
+			names[name.Name] = true
+		}
+	}
+	return names
+}
+
+func isContextArgument(expr ast.Expr, contextNames map[string]bool) bool {
+	switch value := expr.(type) {
+	case *ast.Ident:
+		return contextNames[value.Name] || strings.EqualFold(value.Name, "ctx") || strings.EqualFold(value.Name, "context")
+	case *ast.SelectorExpr:
+		return strings.EqualFold(value.Sel.Name, "ctx") || strings.EqualFold(value.Sel.Name, "context")
+	case *ast.CallExpr:
+		callee := strings.ToLower(calleeString(value))
+		return strings.HasSuffix(callee, ".context") || callee == "context.background" || callee == "context.todo"
+	case *ast.ParenExpr:
+		return isContextArgument(value.X, contextNames)
+	default:
+		return false
 	}
 }
 
@@ -1994,35 +2019,183 @@ func extractStaticSegments(rawURL string) []string {
 	return strings.Split(path, "/")
 }
 
-func resolveStringLiteral(body *ast.BlockStmt, identName string) (string, bool) {
-	if body == nil {
+const (
+	maxStaticStringDepth = 64
+	maxStaticStringBytes = 1 << 20
+)
+
+// resolveStaticStringLiteral resolves strings that the Go parser can prove from
+// syntax alone. Object identity is used instead of identifier spelling so a
+// shadowed local cannot accidentally inherit the value of another declaration.
+// staticStringObject deliberately uses parser-provided object identity for
+// plain identifiers. The general go/ast object model is deprecated because it
+// cannot resolve type-dependent syntax, but these SQL bindings are limited to
+// lexical identifier declarations and assignments where that ambiguity does
+// not exist. Object identity keeps shadowed variables distinct without adding
+// a type-checking dependency to the AST fallback parser.
+//
+//lint:ignore SA1019 See the bounded plain-identifier use described above.
+type staticStringObject = ast.Object //nolint:staticcheck // See the bounded plain-identifier use described above.
+
+func resolveStaticStringLiteral(body *ast.BlockStmt, expr ast.Expr, before token.Pos) (string, bool) {
+	if expr == nil {
 		return "", false
 	}
-	var found string
-	var ok bool
+	return evalStaticString(body, expr, before, make(map[*staticStringObject]bool), 0)
+}
+
+func evalStaticString(body *ast.BlockStmt, expr ast.Expr, before token.Pos, resolving map[*staticStringObject]bool, depth int) (string, bool) {
+	if expr == nil || depth >= maxStaticStringDepth {
+		return "", false
+	}
+
+	switch value := expr.(type) {
+	case *ast.BasicLit:
+		if value.Kind != token.STRING {
+			return "", false
+		}
+		decoded, err := strconv.Unquote(value.Value)
+		if err != nil || len(decoded) > maxStaticStringBytes {
+			return "", false
+		}
+		return decoded, true
+	case *ast.ParenExpr:
+		return evalStaticString(body, value.X, before, resolving, depth+1)
+	case *ast.BinaryExpr:
+		if value.Op != token.ADD {
+			return "", false
+		}
+		left, leftOK := evalStaticString(body, value.X, before, resolving, depth+1)
+		right, rightOK := evalStaticString(body, value.Y, before, resolving, depth+1)
+		if !leftOK || !rightOK || len(left) > maxStaticStringBytes-len(right) {
+			return "", false
+		}
+		return left + right, true
+	case *ast.Ident:
+		if value.Obj == nil || resolving[value.Obj] {
+			return "", false
+		}
+		candidate, candidatePos, ok := staticStringDeclaration(value.Obj)
+		if ok && staticStringReassigned(body, value.Obj, candidatePos, before) {
+			return "", false
+		}
+		if !ok {
+			candidate, candidatePos, ok = directStaticAssignment(body, value.Obj, before)
+		}
+		if !ok || candidatePos >= before {
+			return "", false
+		}
+		resolving[value.Obj] = true
+		resolved, resolvedOK := evalStaticString(body, candidate, candidatePos, resolving, depth+1)
+		delete(resolving, value.Obj)
+		return resolved, resolvedOK
+	default:
+		return "", false
+	}
+}
+
+func staticStringReassigned(body *ast.BlockStmt, obj *staticStringObject, after, before token.Pos) bool {
+	if body == nil {
+		return false
+	}
+	reassigned := false
 	ast.Inspect(body, func(n ast.Node) bool {
-		if ok {
+		if reassigned {
 			return false
 		}
-		assign, isAssign := n.(*ast.AssignStmt)
-		if !isAssign {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok || assign.Pos() <= after || assign.Pos() >= before {
 			return true
 		}
-		for i, lhs := range assign.Lhs {
-			if id, isId := lhs.(*ast.Ident); isId && id.Name == identName {
-				if i < len(assign.Rhs) {
-					rhs := assign.Rhs[i]
-					if lit, isLit := rhs.(*ast.BasicLit); isLit && lit.Kind == token.STRING {
-						if value, err := strconv.Unquote(lit.Value); err == nil {
-							found = value
-							ok = true
-							return false
-						}
-					}
-				}
+		for _, lhs := range assign.Lhs {
+			if id, isIdent := lhs.(*ast.Ident); isIdent && id.Obj == obj {
+				reassigned = true
+				return false
 			}
 		}
 		return true
 	})
-	return found, ok
+	return reassigned
+}
+
+func directStaticAssignment(body *ast.BlockStmt, obj *staticStringObject, before token.Pos) (ast.Expr, token.Pos, bool) {
+	block := innermostBlockAt(body, before)
+	if block == nil {
+		return nil, token.NoPos, false
+	}
+	var candidate ast.Expr
+	var candidatePos token.Pos
+	count := 0
+	for _, statement := range block.List {
+		if statement.Pos() >= before {
+			break
+		}
+		assign, ok := statement.(*ast.AssignStmt)
+		if !ok {
+			continue
+		}
+		for i, lhs := range assign.Lhs {
+			id, isIdent := lhs.(*ast.Ident)
+			if !isIdent || id.Obj != obj {
+				continue
+			}
+			value, hasValue := expressionAt(assign.Rhs, i, len(assign.Lhs))
+			if !hasValue {
+				return nil, token.NoPos, false
+			}
+			candidate = value
+			candidatePos = assign.Pos()
+			count++
+		}
+	}
+	return candidate, candidatePos, count == 1
+}
+
+func innermostBlockAt(body *ast.BlockStmt, pos token.Pos) *ast.BlockStmt {
+	var selected *ast.BlockStmt
+	ast.Inspect(body, func(n ast.Node) bool {
+		block, ok := n.(*ast.BlockStmt)
+		if !ok {
+			return true
+		}
+		if block.Pos() <= pos && pos <= block.End() {
+			selected = block
+			return true
+		}
+		return false
+	})
+	return selected
+}
+
+func staticStringDeclaration(obj *staticStringObject) (ast.Expr, token.Pos, bool) {
+	switch decl := obj.Decl.(type) {
+	case *ast.ValueSpec:
+		for i, name := range decl.Names {
+			if name.Obj != obj {
+				continue
+			}
+			value, ok := expressionAt(decl.Values, i, len(decl.Names))
+			return value, decl.Pos(), ok
+		}
+	case *ast.AssignStmt:
+		for i, lhs := range decl.Lhs {
+			id, isIdent := lhs.(*ast.Ident)
+			if !isIdent || id.Obj != obj {
+				continue
+			}
+			value, ok := expressionAt(decl.Rhs, i, len(decl.Lhs))
+			return value, decl.Pos(), ok
+		}
+	}
+	return nil, token.NoPos, false
+}
+
+func expressionAt(values []ast.Expr, index, names int) (ast.Expr, bool) {
+	if len(values) == names && index < len(values) {
+		return values[index], true
+	}
+	if len(values) == 1 && names == 1 {
+		return values[0], true
+	}
+	return nil, false
 }

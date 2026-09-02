@@ -20,7 +20,18 @@ func TestQuerySQLFiltersPostgreSQLFactsAndPaginates(t *testing.T) {
 			{Query: "DELETE FROM public.users WHERE id = $1", Function: "DeleteFixture", File: "auth-service/users_test.go", Line: 30},
 			{Query: "INSERT INTO audit.events (id) SELECT id FROM public.users", Function: "ArchiveUsers", File: "audit-service/archive.go", Line: 40},
 			{Query: "CREATE INDEX users_email_idx ON public.users (email)", Function: "Migrate", File: "auth-service/migrations.go", Line: 50},
+			{Query: "\nINSERT INTO oauth_refresh_tokens (id, scope)\nVALUES ($1, $2)\nRETURNING id", Function: "InsertRefreshToken", File: "auth-service/tokens.go", Line: 60},
 		},
+	}
+
+	insert, err := search.QuerySQL(g, search.SQLQuery{
+		Tables: []string{"oauth_refresh_tokens"}, Verbs: []string{"insert"}, Accesses: []string{"write"}, NoTests: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if insert.Total != 1 || len(insert.Queries) != 1 || insert.Queries[0].Function != "InsertRefreshToken" || insert.Queries[0].Classification != "exact" {
+		t.Fatalf("multiline INSERT table/access filter = %+v", insert)
 	}
 
 	page, err := search.QuerySQL(g, search.SQLQuery{

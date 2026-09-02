@@ -4,6 +4,48 @@
 
 _No unreleased changes._
 
+## v1.6.10 — 2026-09-02
+
+### Trustworthy SQL, test, and type-usage lookup
+
+- Static SQL extraction now resolves direct literals plus statically provable
+  local or same-file package `const`/`var` declarations, straight-line
+  assignments, and bounded string concatenations. This fixes local `const q = ...` statements
+  missing from both the positional census and table/verb/access filters,
+  including multiline PostgreSQL `INSERT ... RETURNING` queries. Runtime-built
+  SQL remains excluded. The parser analysis-cache version is bumped so a new
+  build cannot reuse incomplete SQL facts from an older artifact.
+- Direct `tests Receiver.Method` lookup now matches canonical pointer- or
+  value-receiver test targets without conflating another receiver's same-named
+  method. CLI and MCP regressions cover the same shared resolver.
+- Precise `implementers` now merges type-checked production implementations
+  with package-qualified AST implementations from test files. `--test-only`
+  and MCP `test_only=true` therefore find mocks/fakes even when a production
+  implementation already populated the precise fast path.
+- `usages <type>` now includes composite-literal construction sites in addition
+  to signatures, fields, and interface methods. The existing `literals` command
+  remains the focused construction-only view. CLI and MCP regressions cover the
+  additive result.
+
+### Clearer operational contracts
+
+- CLI boundary help and missing-policy diagnostics now name the default
+  `.gograph/boundaries.json`, show `--config PATH`, and state that CLI boundary
+  checks read the persisted graph. MCP keeps the same boundary evaluation after
+  its documented source refresh.
+- Route documentation now distinguishes a cursor-paged route-row census from
+  CLI `--files-only`, which follows pages to return a complete deduplicated file
+  census. The 100-row default and cursor contract are unchanged.
+- Updated CLI help, `capabilities`, MCP tool descriptions, README, public docs,
+  coding-agent guidance, architecture-boundary guidance, integration docs, and
+  the bundled skill. Added parser/search plus CLI/MCP behavior regressions and
+  verified the previously missing OAuth table writes against the real
+  multi-module repository.
+- Rebuild repository graphs after upgrading so the new SQL and literal-usage
+  facts are present. Running MCP servers do not hot-reload a replaced binary;
+  restart each server (or its hosting client) and confirm v1.6.10 through
+  `gograph_capabilities`.
+
 ## v1.6.9 — 2026-09-01
 
 ### PostgreSQL static SQL census

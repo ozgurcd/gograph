@@ -37,7 +37,7 @@ gograph query <term>            # symbol/package/file/import/call substring sear
 gograph focus <package>         # isolate context for a specific package
 gograph callers <function|Interface.Method> [--no-tests] [--depth N] [--exact] # who calls it; interface-qualified queries expand precise CHA targets
 gograph callees <function> [--no-tests] [--depth N] # what it calls; --depth 2-10 expands N hops down
-gograph implementers <interface> # which structs implement an interface
+gograph implementers <interface> # precise production types plus test-file fakes; add --test-only for only fakes
 gograph interfaces <struct>     # which interfaces a struct satisfies (precise if --precise used)
 gograph fields <struct>         # extract fields and types of a struct
 gograph source <symbol>         # extract the indexed declaration's source block
@@ -47,13 +47,13 @@ gograph impact --since main     # blast radius of all symbols changed since main
 gograph orphans                 # functions unreachable via BFS from main/init, test, route, and eligible public roots — stricter than a 0-call check
 gograph routes [term] --module <module>  # bounded production HTTP route page; add --include-tests when needed
 gograph imports <pkg>           # trace external/internal package usage
-gograph sql [term] --table <table> --verb <verb> --no-tests # bounded PostgreSQL static SQL page; filters are optional/repeatable
+gograph sql [term] --table <table> --verb <verb> --no-tests # bounded PostgreSQL static SQL page; declared static strings are resolved; filters are optional/repeatable
 gograph errors                  # custom error variables and panics mapped to their source
 gograph embeds <struct>         # find which structs embed a target struct
 gograph public <pkg>            # list only the exported API surface of a package
 gograph envs [term]             # list indexed environment reads
 gograph concurrency [term]      # map goroutines, channel sends, mutexes, waitgroups, sync.Once
-gograph tests [symbol]          # direct attributed test calls (compatibility mode)
+gograph tests [symbol]          # direct attributed test calls; accepts Receiver.Method or stable ID
 gograph tests <symbol> --transitive [--exact-only] [--package name] # every reaching test with path/depth
 gograph coverage <TestFunc> [--exact-only] [--package name] # transitive product symbols one test statically reaches
 gograph identity <symbol-or-stable-id> [--package name] # print or re-resolve canonical symbol identity
@@ -97,7 +97,7 @@ gograph arity --min 5            # find functions with many arguments (long para
 gograph skeleton                 # output the whole repository's API signatures (bodies stripped)
 gograph constructors <struct>    # find factory functions returning a named struct
 gograph literals <struct>        # all Foo{...} composite literal sites — run before adding/removing a required field
-gograph usages <type>            # indexed param/return/field/interface-method uses — review before changing an interface
+gograph usages <type>            # indexed signature/field/interface-method/composite-literal uses
 gograph returnusage <function>   # how each caller uses the return value (discarded/assigned/partially_ignored/returned/passed) — run before changing a return signature
 gograph schema <table>           # find structs mapped to a database table or schema via tags
 gograph globals <pkg>            # find pkg-level vars, consts, and functions mutating them
@@ -719,7 +719,8 @@ Continue with the returned cursor and exactly the same filters. CLI JSON mirrors
 `total`, `returned`, `truncated`, and `next_cursor` on the outer envelope while
 retaining the complete native `gograph.routes.v1` page under `results`.
 CLI `--files-only` follows all pages locally and keeps the legacy complete,
-deduplicated file census; text and JSON expose one bounded page at a time.
+deduplicated file census—not a complete route-row dump; text and JSON expose
+one bounded page at a time.
 
 For variadic Gin/Fiber registration, middleware precedes the terminal handler,
 so gograph treats the final registration argument as the handler. Echo uses
@@ -840,9 +841,14 @@ You can configure `gograph` to actively enforce clean architecture by defining b
 ```
 Run the enforcement check:
 ```bash
+gograph stale                    # rebuild first when this exits 2
 gograph boundaries
 ```
-*If a violation is found (e.g., `handler` imports `internal/repository` directly), it will exit with code 1 and print the exact file that violated the rule. Extremely useful for CI/CD or Agent workflows!*
+The CLI reads the persisted graph and defaults to
+`.gograph/boundaries.json`; use `--config PATH` for another confined policy.
+If a violation is found (e.g., `handler` imports `internal/repository`
+directly), it exits with code 1 and prints the exact file that violated the
+rule. MCP refreshes before applying the same evaluation.
 
 ### 21. API / Contract Drift
 `gograph api --since <ref|graph.json>` compares the public-facing contract and
@@ -953,18 +959,19 @@ The current suite registers 68 MCP endpoints: 64 query, analysis, and workflow t
 - **`gograph_focus`**
 - **`gograph_callers`**: Supports `depth` (1-10), `no_tests`, exact matching, and optional Mermaid presentation, equivalent to the CLI traversal options. In a precise graph, `Interface.Method` resolves through every recorded implementer while returning a shared source call site once.
 - **`gograph_callees`**: Supports `depth` (1-10), `no_tests`, and optional Mermaid presentation, equivalent to the CLI traversal options.
-- **`gograph_implementers`**
+- **`gograph_implementers`**: Merges type-checked production implementers with
+  AST-discovered test-file fakes; `test_only=true` returns only test/mock types.
 - **`gograph_fields`**
 - **`gograph_source`**: Repository-confined source for a named function, method, struct, interface, type, variable, or constant. It errors only when the symbol is absent or no matching block can be read safely; an ambiguous query may return its safe matches.
 - **`gograph_orphans`**
 - **`gograph_impact`**: Blast radius analysis. Supports three modes: single symbol, `uncommitted=true` for uncommitted changes, and `since=<ref>` for all changes since a git ref. `mermaid=true` applies to all three modes.
-- **`gograph_boundaries`**: Verifies package architecture constraints from a regular, non-linked file inside the selected project. Returns structured output.
+- **`gograph_boundaries`**: Verifies package architecture constraints from a regular, non-linked file inside the selected project (default `.gograph/boundaries.json`, override with `config`). MCP refreshes source analysis before evaluation; CLI reads the persisted graph and should be preceded by `stale`/`build`. Returns structured output.
 - **`gograph_boundaries_create`**: Creates a regular repository-rooted baseline boundary config, rejecting linked ancestors/finals and overwrite; equivalent to CLI `boundaries --create`.
 - **`gograph_api`**: Compares public-facing contract and integration surface
   drift against a Git reference or a saved graph path ending in `.json`. Saved
   graphs must be regular non-linked files inside the selected project, require
   the exact current source-policy marker, and cannot supply the trusted root.
-- **`gograph_routes`**: Return a deterministic `gograph.routes.v1` page. Optional `term` matches method/path, handler, or file; `module` accepts an exact module path/directory, a unique nested-module directory basename, or the repository directory name for a root module; `include_tests` opts into `_test.go` routes. `limit` defaults to 100 and is restricted to 1-200, while a 64 KiB page budget may return fewer. Continue with `next_cursor` as `cursor` and the same filters. Constant nested Gin/Echo/Fiber Group prefixes and Chi Route closure prefixes are composed into final paths; Gin/Fiber use the final variadic argument as the terminal handler, while Echo uses the handler immediately after the path. Unresolvable handler factories remain marked dynamic.
+- **`gograph_routes`**: Return a deterministic `gograph.routes.v1` page. Optional `term` matches method/path, handler, or file; `module` accepts an exact module path/directory, a unique nested-module directory basename, or the repository directory name for a root module; `include_tests` opts into `_test.go` routes. `limit` defaults to 100 and is restricted to 1-200, while a 64 KiB page budget may return fewer. Continue with `next_cursor` as `cursor` and the same filters. CLI `--files-only` follows pages for a complete file census, not a route-row dump. Constant nested Gin/Echo/Fiber Group prefixes and Chi Route closure prefixes are composed into final paths; Gin/Fiber use the final variadic argument as the terminal handler, while Echo uses the handler immediately after the path. Unresolvable handler factories remain marked dynamic.
 - **`gograph_node`**: AST metadata for a symbol: kind, file, line, signature, doc comment. Lighter than `gograph_source` when you only need metadata.
 - **`gograph_path`**: Best deterministically ranked call chain between two symbols. It uses the same certainty, length, production/test, and typed/heuristic ordering as CLI `path`; accepts `mermaid=true` for visual output.
 - **`gograph_changes`**: Symbols modified/added/deleted since the trusted persisted graph, or the startup fallback when no usable artifact exists. Deleted includes files absent from the current safely selected inventory. Default mode attaches the exact snapshot state it inspected; with `git_ref`, it refreshes first and attaches that live state while returning symbols in files changed since the ref (MODIFIED only).
@@ -979,10 +986,10 @@ The current suite registers 68 MCP endpoints: 64 query, analysis, and workflow t
 - **`gograph_endpoint`**: Full vertical slice for one HTTP route: handler, BFS call chain (default depth 5; clamped to 1-20), SQL, and env reads. Query by route pattern, path fragment, or handler name. `include_tests` includes routes registered in `_test.go` files; `mermaid` selects flowchart output.
 - **`gograph_interfaces`**: Interfaces satisfied by a named struct — inverse of `gograph_implementers`. Use before refactoring a method to know which contracts break.
 - **`gograph_mutate`**: Struct-field and package-global mutation sites. AST mode reports direct assignments; precise mode adds `++`/`+=`, pointer aliases, atomic/sync/wrapper calls, and channel evidence. Use before adding field validation or changing shared state.
-- **`gograph_tests`**: Direct attributed test calls by default. Set `transitive=true` with `symbol` to receive `gograph.tests.v1`, listing every reaching test with exact/possible resolution, depth, and a representative stable-ID path. Optional `exact_only` filters uncertain paths and `package` disambiguates the selected product symbol. CLI uses the equivalent `--transitive`, `--exact-only`, and `--package` flags.
+- **`gograph_tests`**: Direct attributed test calls by default; `symbol` accepts `Receiver.Method` (including pointer receivers) or a stable ID without matching another receiver's same-named method. Set `transitive=true` to receive `gograph.tests.v1`, listing every reaching test with exact/possible resolution, depth, and a representative stable-ID path. Optional `exact_only` filters uncertain paths and `package` disambiguates the selected product symbol. CLI uses the equivalent `--transitive`, `--exact-only`, and `--package` flags.
 - **`gograph_coverage`**: Transitive product symbols statically reachable from one unambiguous test, with stable-ID paths and exact/possible propagation. Parameters: required `test`; optional `exact_only` and exact `package` disambiguator. Equivalent to CLI `coverage`.
 - **`gograph_identity`**: Resolve an exact symbol spelling or stable ID. Returns exact, ambiguous, or not_found without silently choosing a candidate; optional `package` disambiguates an external-test collision. Equivalent to CLI `identity`.
-- **`gograph_sql`**: Bounded `gograph.sql.v1` PostgreSQL static SQL census. Optional `term` is a raw-query substring; `tables[]`, `verbs[]`, and `accesses[]` OR-compose within their category and AND-compose across categories. `function`, `module`, `no_tests`, `limit`, and `cursor` match CLI `--function`, `--module`, `--no-tests`, `--limit`, and `--cursor`. Tests remain included by default. Rows expose operation, read/write/DDL access, referenced tables, `exact`/`partial`/`unknown` classification, function, and source. Follow `next_cursor` with unchanged filters.
+- **`gograph_sql`**: Bounded `gograph.sql.v1` PostgreSQL static SQL census. Direct literals and statically resolvable local or same-file package declarations, straight-line assignments, and bounded concatenations are indexed. Optional `term` is a raw-query substring; `tables[]`, `verbs[]`, and `accesses[]` OR-compose within their category and AND-compose across categories. `function`, `module`, `no_tests`, `limit`, and `cursor` match CLI `--function`, `--module`, `--no-tests`, `--limit`, and `--cursor`. Tests remain included by default. Rows expose operation, read/write/DDL access, referenced tables, `exact`/`partial`/`unknown` classification, function, and source. Follow `next_cursor` with unchanged filters.
 - **`gograph_errors`**: Error constructors, sentinels, and panic sites; supports a term filter and `no_tests`.
 - **`gograph_embeds`**
 - **`gograph_public`**

@@ -553,9 +553,12 @@ STRUCT / TYPE — five different angles:
   embeds <struct>        which structs embed this struct?
   constructors <struct>  which functions return this struct? (New*, factory functions)
   literals <struct>      where is this struct initialized as Foo{...}? (run before adding a required field)
-  implementers <iface>   which structs satisfy this interface?
+  implementers <iface>   which structs satisfy this interface? Precise production results
+                         merge AST-discovered test-file fakes; add --test-only for only fakes.
   interfaces <struct>    which interfaces does this struct satisfy? (inverse of implementers)
-  usages <type>          where is this type used? (param/return types, struct fields, iface methods)
+  usages <type>          where is this type used? (param/return types, struct fields,
+                         iface methods, and composite Foo{...} construction)
+                         Use literals <type> for only the construction subset.
                          → use before changing any interface or type — shows the full blast radius
 
 PACKAGE vs SYMBOL scope:
@@ -672,8 +675,9 @@ validate --repo PATH --binding-json JSON --json
                        current persisted graph; never builds or refreshes
 
 QUERY COMMANDS:
-boundaries [--config] : verify package architecture constraints using boundaries.json
-boundaries --create   : auto-generate a baseline boundaries.json from the current repo
+boundaries [--config PATH] : verify the persisted graph against .gograph/boundaries.json by default;
+                       run stale/build first, or select another confined policy with --config PATH
+boundaries --create [--config PATH] : auto-generate a baseline boundaries config from the current graph
 callees <fn> [--no-tests] [--depth N]: what fn calls (depth=1 direct; --depth 2+ expands N hops, max 10)
 callers <fn> [--no-tests] [--depth N] [--exact]: who calls fn (depth=1 direct; max 10)
   complexity [sym]     : cyclomatic complexity estimate per function (highest first;
@@ -708,17 +712,22 @@ routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor CURSOR]
                        Defaults to 100 rows, maximum 200, with a 64 KiB page budget.
                        Continue a truncated result with its cursor and the same filters.
                        JSON mirrors total/returned/truncated/next_cursor on its envelope.
-                       --files-only follows all pages and emits the complete file set.
+                       --files-only follows all pages and emits the complete file set,
+                       not a complete route-row dump.
 source <sym>         : confined exact source for function/method/struct/interface/
                        type/variable/constant — USE THIS instead of reading files
 sql [term] [--table T] [--verb V] [--access read|write|ddl] [--function F]
                      [--module M] [--no-tests] [--limit N] [--cursor C]
-                     : bounded gograph.sql.v1 PostgreSQL static SQL census. Table/verb/access flags repeat
+                     : bounded gograph.sql.v1 PostgreSQL static SQL census. Direct literals plus
+                       statically resolvable local or same-file package const/var declarations,
+                       straight-line assignments,
+                       and bounded concatenations are indexed. Table/verb/access flags repeat
                        with OR semantics; different filter categories AND-compose. Tests
                        remain included unless --no-tests is set. Pages default to 100,
                        allow at most 200, and expose total/returned/truncated/next_cursor.
 tests [sym] [--transitive] [--exact-only] [--package <name>]
-                     : direct attributed test calls by default. --transitive returns every
+                     : direct attributed test calls by default; Receiver.Method and stable IDs
+                       are accepted. --transitive returns every
                        test with an exact/possible stable-ID path to one product symbol.
 
 TOKEN SAVERS (COMPOSED COMMANDS — each replaces 3-8 separate calls):
@@ -741,7 +750,8 @@ explore <term...> [--compact|--deep] [--limit N] [--exact]
                        deep defaults to 25 and adds depth-3 exact evidence, package context,
                        and explanation. Explicit limits override those defaults (maximum 100).
 literals <struct>    : composite literal sites Foo{...} — run before adding/removing a required field
-usages <type>        : where a type appears in signatures and fields (param/return/field/iface method)
+usages <type>        : where a type appears in signatures, fields, interface methods,
+                       or composite literals; use literals <type> for only Foo{...} sites
 returnusage <fn>     : how each caller uses the return value of fn (discarded/assigned/returned/passed)
 risk <sym>           : risk evaluation — blast radius, complexity, tests, SQL/env (0-100 score + verdict)
 risk --uncommitted   : risk evaluation for all uncommitted changes
@@ -2984,6 +2994,8 @@ CALL GRAPH
 INTERFACES & TYPES
   implementers <interface> [--test-only]
                              Structs that implement the named interface (duck-typing).
+                             Precise production results are merged with AST-discovered
+                             test-file fakes because typed production loading excludes tests.
                              --test-only limits results to structs defined in test/mock files.
   interfaces <struct>        Interfaces satisfied by the named struct (duck-typing).
   constructors <struct>      Find factory functions returning the named struct.
@@ -2994,7 +3006,9 @@ INTERFACES & TYPES
                              Run before changing a return signature — finds callers that silently
                              discard a value that will carry different semantics after the change.
   usages <type>              Find every place a type is referenced in a function signature
-                             (param or return type), struct field, or interface method signature.
+                             (param or return type), struct field, interface method signature,
+                             or composite-literal construction. Use 'literals <type>' when
+                             only Foo{...} sites are needed.
                              Run before changing an interface — shows the full consumption blast radius.
   schema <table>             Find structs mapped to a database table/schema via tags.
   globals <pkg>              Find pkg-level vars, consts, and mutators.
@@ -3020,8 +3034,12 @@ CODE QUALITY
   snapshot <subcmd>          Capture and diff architectural metrics (save, diff, list, drop).
                              Subcommands: save <name>, diff <name>, list, drop <name>.
                              Snapshot files/directories must be real repository entries.
-  boundaries [--config]      Verify package architecture constraints using boundaries.json.
-  boundaries --create        Auto-generate a baseline boundaries.json from the current repo;
+  boundaries [--config PATH]  Verify package architecture constraints. The default policy file is
+                             .gograph/boundaries.json; use --config PATH for another
+                             repository-confined policy file.
+                             Reads the persisted graph; run stale/build before enforcement.
+  boundaries --create [--config PATH]
+                             Auto-generate a baseline boundaries.json from the current repo;
                              refuses linked output paths and overwrite.
   flow [term] [--source kind] [--sink kind] [--config path] [--no-tests]
                              Find potential untrusted-data paths to SQL query text,
@@ -3136,7 +3154,8 @@ EXTRACTION
                              Defaults to 100 rows, maximum 200, with a 64 KiB result
                              budget. Reuse the same filters with next_cursor to continue.
                              JSON mirrors pagination fields on the outer envelope.
-                             --files-only follows all pages for a complete file census.
+                             --files-only follows all pages for a complete file census,
+                             not a complete route-row dump.
                              Gin/Fiber use the final variadic argument as handler;
                              Echo uses the handler immediately after the path.
                              Unresolved factories remain marked dynamic.
@@ -3155,7 +3174,10 @@ EXTRACTION
                              *_test.go. Defaults to 100 rows, maximum 200, within 64 KiB.
                              Reuse the same filters with next_cursor to continue. JSON
                              mirrors total/returned/truncated/next_cursor on its envelope;
-                             --files-only follows every page. PostgreSQL CTEs resolve to
+                             --files-only follows every page. Direct literals and statically
+                             resolvable local or same-file package const/var declarations,
+                             straight-line assignments,
+                             and bounded string concatenations are indexed. PostgreSQL CTEs resolve to
                              their actual operation; data-modifying CTEs elevate access and
                              retain write tables; ON CONFLICT remains INSERT. Dynamic
                              or unsupported SQL is not invented and classification status
@@ -3174,6 +3196,8 @@ EXTRACTION
                              Direct attributed test calls by default. --transitive requires
                              one product symbol and returns gograph.tests.v1 with every
                              reaching test, exact/possible propagation, depth, and stable-ID path.
+                             Direct lookup accepts Receiver.Method, including pointer receivers,
+                             as well as a full stable symbol ID.
   coverage <test> [--exact-only] [--package name]
                              Reverse test attribution with exact/possible transitive paths.
   identity <symbol-or-stable-id> [--package name]
@@ -4757,7 +4781,7 @@ func runBoundaries(args []string) int {
 
 	results, err := search.Boundaries(g, configPath)
 	if err != nil {
-		return failCommandf("boundaries", "Boundaries error: %v", err)
+		return failCommandf("boundaries", "Boundaries error for %q: %v (default: .gograph/boundaries.json; override with --config PATH)", configPath, err)
 	}
 	code := printResults("boundaries", configPath, results, "No boundary violations found. Architecture is clean!")
 	if len(results) > 0 {

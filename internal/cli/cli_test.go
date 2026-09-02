@@ -612,6 +612,32 @@ func TestHelpDocumentsEveryCanonicalCommand(t *testing.T) {
 	}
 }
 
+func TestHelpDocumentsBoundariesConfigDefault(t *testing.T) {
+	binary := buildTestBinary(t)
+	cmd := exec.Command(binary, "--help")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("gograph --help: %v\n%s", err, out)
+	}
+	help := string(out)
+	for _, want := range []string{"boundaries [--config PATH]", ".gograph/boundaries.json", "boundaries --create [--config PATH]"} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("gograph --help does not contain %q", want)
+		}
+	}
+
+	cmd = exec.Command(binary, "boundaries", "--help")
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("gograph boundaries --help: %v\n%s", err, out)
+	}
+	commandHelp := string(out)
+	wantUsage := "USAGE\n  gograph boundaries [--config PATH]\n\nDESCRIPTION\n  Verify package architecture constraints."
+	if !strings.Contains(commandHelp, wantUsage) {
+		t.Fatalf("gograph boundaries --help has a malformed usage/description split:\n%s", commandHelp)
+	}
+}
+
 func TestHelpDocumentsImplementedModes(t *testing.T) {
 	cmd := exec.Command(buildTestBinary(t), "--help")
 	out, err := cmd.CombinedOutput()
@@ -732,6 +758,12 @@ func TestCapabilitiesDocumentsImplementedModes(t *testing.T) {
 		"sql [term]",
 		"--table T] [--verb V] [--access read|write|ddl] [--function F]",
 		"bounded gograph.sql.v1 PostgreSQL static SQL census",
+		"statically resolvable local or same-file package const/var declarations",
+		"Receiver.Method and stable IDs",
+		"AST-discovered test-file fakes",
+		"composite Foo{...} construction",
+		"not a complete route-row dump",
+		".gograph/boundaries.json by default",
 		"remain included unless --no-tests is set",
 		"total/returned/truncated/next_cursor",
 		"flow [term] [--source kind] [--sink kind] [--config path] [--no-tests]",

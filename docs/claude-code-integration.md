@@ -125,7 +125,7 @@ Here is how Claude Code behaves before and after `gograph`:
 ### Scenario: Auditing PostgreSQL access
 
 1. Claude runs `gograph sql --table users --access write --no-tests` or invokes `gograph_sql` with `tables=["users"]`, `accesses=["write"]`, and `no_tests=true`.
-2. The shared bounded result reports the PostgreSQL operation, referenced tables, enclosing function, module, source, and exact/partial/unknown classification.
+2. The shared bounded result reports the PostgreSQL operation, referenced tables, enclosing function, module, source, and exact/partial/unknown classification. Direct literals and statically resolvable local or same-file package declarations, straight-line assignments, and bounded concatenations participate in the same table/access filters.
 3. Claude follows `next_cursor` with the same filters, then uses `gograph source <function>` for any query requiring review. Runtime-generated SQL remains outside this static census.
 
 ## 5. MCP Integration

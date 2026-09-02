@@ -79,6 +79,11 @@ func Usages(g *graph.Graph, typeName string) []Result {
 		}
 	}
 
+	// Composite construction is a type usage too. Keep the focused literals
+	// command, but merge its rows here so a broad usages query does not omit
+	// dependency-injection/config structs initialized as Foo{...}.
+	results = append(results, Literals(g, typeName)...)
+
 	sortResults(results)
 	return results
 }

@@ -192,6 +192,27 @@ func TestTests_FilterBySymbol(t *testing.T) {
 	}
 }
 
+func TestTests_FilterByReceiverQualifiedMethod(t *testing.T) {
+	g := &graph.Graph{TestEdges: []graph.TestEdge{
+		{TestFunc: "TestLocalLogin", Target: "svc.Login", TargetSymbolID: "example.com/auth::(*LocalLoginService).Login", File: "auth/login_test.go", Line: 12},
+		{TestFunc: "TestOtherLogin", Target: "svc.Login", TargetSymbolID: "example.com/auth::(*OtherService).Login", File: "auth/other_test.go", Line: 20},
+		{TestFunc: "TestPrefixedLogin", Target: "svc.Login", TargetSymbolID: "example.com/auth::(*OtherLocalLoginService).Login", File: "auth/prefixed_test.go", Line: 24},
+		{TestFunc: "TestIssue", Target: "svc.Issue", TargetSymbolID: "example.com/token::(IDTokenService).Issue", File: "token/id_test.go", Line: 9},
+	}}
+
+	for _, query := range []string{"LocalLoginService.Login", "(*LocalLoginService).Login"} {
+		results := search.Tests(g, query)
+		if len(results) != 1 || results[0].Name != "TestLocalLogin" {
+			t.Fatalf("tests %q = %+v, want only TestLocalLogin", query, results)
+		}
+	}
+
+	results := search.Tests(g, "IDTokenService.Issue")
+	if len(results) != 1 || results[0].Name != "TestIssue" {
+		t.Fatalf("value-receiver tests = %+v, want TestIssue", results)
+	}
+}
+
 func TestTests_NoMatch(t *testing.T) {
 	g := buildRichGraph()
 	res := search.Tests(g, "NonExistentSymbol")

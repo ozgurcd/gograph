@@ -540,6 +540,9 @@ func buildUsagesGraph() *graph.Graph {
 				Signature: "func WrapService(impl AuthServiceImpl) AuthService",
 			},
 		},
+		Literals: []graph.LiteralEdge{
+			{TypeName: "AuthService", Function: "NewRouter", File: "internal/api/router.go", Line: 44},
+		},
 	}
 }
 
@@ -559,6 +562,9 @@ func TestUsages_ParamType(t *testing.T) {
 	}
 	if kinds["field"] == 0 {
 		t.Error("expected at least one field usage")
+	}
+	if kinds["literal"] != 1 {
+		t.Errorf("expected one composite-literal usage, got %+v", results)
 	}
 }
 

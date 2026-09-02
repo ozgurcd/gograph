@@ -322,6 +322,9 @@ Finds structs that anonymously embed the named type.
 gograph implementers <interface> [--test-only]
 ```
 Finds structs that implement the named interface (duck-typing).
+- Type-checked production results are merged with AST-discovered test-file
+  implementations because production package loading does not include test
+  variants.
 - **Flags**:
   - `--test-only`: Restricts results strictly to structs defined in test or mock files.
 
@@ -354,7 +357,10 @@ Traces how each caller handles the return values of the specified function.
 ```bash
 gograph usages <type>
 ```
-Finds every place where a named type appears in parameter/return lists, struct fields, or interface methods. Essential for tracing the impact of a type change.
+Finds every place where a named type appears in parameter/return lists, struct
+fields, interface methods, or composite-literal construction. Use
+`gograph literals <type>` for the focused `Foo{...}` construction-only subset.
+Essential for tracing the impact of a type change.
 
 ### schema
 ```bash
@@ -444,7 +450,8 @@ cursor with unchanged filters to continue a truncated census. CLI JSON mirrors
 `total`, `returned`, `truncated`, and `next_cursor` directly on its envelope and
 retains the complete native page under `results`.
 CLI `--files-only` follows every page locally and emits the complete
-deduplicated file set; normal text and JSON return one bounded page.
+deduplicated file set, not a complete route-row dump; normal text and JSON
+return one bounded page.
 
 Constant nested Gin/Echo/Fiber `Group` prefixes and Chi `Route` closure prefixes
 are composed into final paths. Dynamically computed prefix expressions remain
@@ -466,6 +473,12 @@ Returns deterministic `gograph.sql.v1` pages for static PostgreSQL statements,
 including the actual operation, statement access class, referenced tables,
 enclosing Go function, module ownership, and source location. The positional
 term remains a case-insensitive raw-query substring for compatibility.
+
+Extraction covers direct literals plus statically resolvable local and
+same-file package `const`/`var` declarations, straight-line assignments, and
+bounded string concatenations.
+This includes multiline `INSERT ... RETURNING` statements before table/access
+filtering; runtime-generated SQL remains outside the static census.
 
 `--table` accepts either `table` or `schema.table`; `--verb` accepts `SELECT`,
 `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE`, `ALTER`, `DROP`, or
@@ -557,7 +570,9 @@ Finds potential paths from untrusted inputs to security-sensitive operations. Te
 gograph tests [symbol] [--json]
 gograph tests <symbol> --transitive [--exact-only] [--package name] [--json]
 ```
-Default mode lists direct attributed test edges for compatibility. Transitive
+Default mode lists direct attributed test edges for compatibility and accepts
+`Receiver.Method` (including pointer-receiver stable targets) or a full stable
+symbol ID without conflating another receiver's same-named method. Transitive
 mode requires one product symbol and returns `gograph.tests.v1`: every test with
 a representative stable-ID path to that symbol, path depth, and `exact` or
 `possible` resolution. `--exact-only` removes paths containing parser/CHA
@@ -766,6 +781,10 @@ Enforces package modularity boundaries.
   - `--create`: Exclusively creates a starting boundary map at that path from
     current package imports. Only real parent directories are created; links,
     special files, traversal outside the graph root, and overwrite are refused.
+
+The CLI reads the trusted persisted graph, so run `gograph stale` and rebuild
+before enforcing the policy. MCP `gograph_boundaries` applies the same boundary
+evaluation after its normal source refresh.
 
 ### complexity
 ```bash

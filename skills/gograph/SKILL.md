@@ -101,9 +101,10 @@ CLI graph-backed `--json` responses expose the same
 | `gograph_review` with `uncommitted=true` | Post-edit coverage check |
 | `gograph_impact` with `symbol=<symbol>` | What breaks if this changes |
 | `gograph_callers` / `gograph_callees` with `function=<symbol>` | Explicit call-graph traversal |
-| `gograph_implementers` with `interface=<interface>` | All types implementing an interface |
-| `gograph_routes` with optional `term`, `module`, `include_tests`, `limit`, `cursor` | Bounded production-first HTTP route pages; root repositories and nested modules accept directory-name selectors; follow `next_cursor` for a complete census |
-| `gograph_sql` with optional `term`, `tables[]`, `verbs[]`, `accesses[]`, `function`, `module`, `no_tests`, `limit`, `cursor` | Bounded PostgreSQL static SQL pages with explicit operation/table classification; follow `next_cursor` for a complete census |
+| `gograph_implementers` with `interface=<interface>` | Type-checked production implementers plus AST-discovered test fakes; set `test_only=true` for only fakes |
+| `gograph_usages` with `type=<type>` | Signature, field, interface-method, and composite-literal uses; use `gograph_literals` for only construction sites |
+| `gograph_routes` with optional `term`, `module`, `include_tests`, `limit`, `cursor` | Bounded production-first HTTP route pages; root repositories and nested modules accept directory-name selectors; follow `next_cursor` for all rows (CLI `--files-only` is a file census) |
+| `gograph_sql` with optional `term`, `tables[]`, `verbs[]`, `accesses[]`, `function`, `module`, `no_tests`, `limit`, `cursor` | Bounded PostgreSQL static SQL pages, including statically resolved declarations/concatenations, with explicit operation/table classification; follow `next_cursor` for a complete census |
 | `gograph_complexity` | Cyclomatic complexity per function |
 | `gograph_godobj` | God-object detection |
 | `gograph_coupling` | Package coupling / instability scores |
@@ -112,7 +113,7 @@ CLI graph-backed `--json` responses expose the same
 | `gograph_errorflow` with `query=<term>` | Error propagation paths |
 | `gograph_flow` | Potential HTTP/JSON/env paths to SQL, process, filesystem, and outbound HTTP sinks |
 | `gograph_changes` | Diff source against the trusted persisted graph, or MCP startup fallback when no usable artifact exists |
-| `gograph_tests` with `symbol=<symbol>, transitive=true` | Every test statically reaching a symbol, with exact/possible path and depth; omit `transitive` for direct edges |
+| `gograph_tests` with `symbol=<symbol>, transitive=true` | Every test statically reaching a symbol, with exact/possible path and depth; omit `transitive` for direct edges, where `Receiver.Method` and stable IDs are accepted |
 | `gograph_coverage` with `test=<TestFunc>` | Transitive product symbols one unambiguous test statically reaches; exact/possible paths; optional `package` disambiguation |
 | `gograph_identity` with `symbol=<symbol-or-stable-id>` | Print or re-resolve canonical symbol identity without silently choosing ambiguity; optional `package` disambiguation |
 | `gograph_check` | Policy checks, including changed-route tests, coverage, orphans, API drift, arity, and complexity |

@@ -110,6 +110,7 @@ func TestCLISQLHelpDocumentsEveryFilterAndContract(t *testing.T) {
 	for _, text := range []string{
 		"gograph.sql.v1", "PostgreSQL", "--table", "--verb", "--access", "--function",
 		"--module", "--no-tests", "--limit", "--cursor", "next_cursor", "partial", "unknown",
+		"statically", "local or same-file package const/var",
 	} {
 		if !strings.Contains(stdout, text) {
 			t.Errorf("sql --help omits %q:\n%s", text, stdout)

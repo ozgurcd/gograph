@@ -166,6 +166,12 @@ func TestGographCapabilities(t *testing.T) {
 		"PostgreSQL static SQL literals",
 		"tests remain included unless no_tests=true",
 		"CLI sql and MCP gograph_sql execute QuerySQL",
+		"statically resolvable local or same-file package const/var declarations",
+		"Receiver.Method and stable-ID selectors",
+		"AST-discovered test-file fakes",
+		"composite-literal construction",
+		"not a route-row dump",
+		"default .gograph/boundaries.json",
 	} {
 		if !strings.Contains(toolsStr, want) {
 			t.Errorf("capabilities prerequisite omits %q", want)

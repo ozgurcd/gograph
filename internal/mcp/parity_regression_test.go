@@ -107,6 +107,57 @@ func TestCLIAndMCPTransitiveTestsParity(t *testing.T) {
 	}
 }
 
+func TestMCPDirectTestsAcceptsReceiverQualifiedMethod(t *testing.T) {
+	g := attributionParityGraph()
+	g.TestEdges = append(g.TestEdges, graph.TestEdge{
+		TestFunc:       "TestLogin",
+		Target:         "svc.Login",
+		TargetSymbolID: "example.com/parity::(*LocalLoginService).Login",
+		File:           "login_test.go",
+		Line:           42,
+		Resolution:     graph.CallResolutionStatic,
+	})
+	text := callTool(t, setupHandlers(t, g)["gograph_tests"], map[string]any{
+		"symbol": "LocalLoginService.Login",
+	})
+	if !strings.Contains(text, "TestLogin") || strings.Contains(text, "TestOtherLogin") {
+		t.Fatalf("MCP direct tests result = %q, want only TestLogin", text)
+	}
+}
+
+func TestMCPImplementersIncludesPreciseProductionAndTestFake(t *testing.T) {
+	g := &graph.Graph{
+		Symbols: []graph.SymbolNode{
+			{ID: "example.com/parity::Reader", Name: "Reader", Kind: graph.KindInterface, InterfaceMethods: map[string]string{"Read": "func()"}, File: "reader.go"},
+			{ID: "example.com/parity::Store", Name: "Store", Kind: graph.KindStruct, File: "store.go"},
+			{ID: "example.com/parity::FakeReader", Name: "FakeReader", Kind: graph.KindStruct, File: "store_test.go"},
+			{ID: "example.com/parity::(*FakeReader).Read", Name: "Read", Kind: graph.KindMethod, Receiver: "*FakeReader", MethodSignature: "func()", File: "store_test.go"},
+		},
+		Implements: []graph.ImplementsEdge{{Interface: "Reader", Concrete: "Store", InterfaceID: "example.com/parity::Reader", ConcreteID: "example.com/parity::Store"}},
+	}
+	handler := setupHandlers(t, g)["gograph_implementers"]
+	all := callTool(t, handler, map[string]any{"interface": "Reader"})
+	if !strings.Contains(all, "Store") || !strings.Contains(all, "FakeReader") {
+		t.Fatalf("MCP implementers = %q, want production and test implementations", all)
+	}
+	testOnly := callTool(t, handler, map[string]any{"interface": "Reader", "test_only": true})
+	if !strings.Contains(testOnly, "FakeReader") || strings.Contains(testOnly, "Store —") {
+		t.Fatalf("MCP test-only implementers = %q, want only FakeReader", testOnly)
+	}
+}
+
+func TestMCPUsagesIncludesCompositeLiterals(t *testing.T) {
+	g := &graph.Graph{Literals: []graph.LiteralEdge{
+		{TypeName: "UsersHandlerDeps", Function: "NewRouter", File: "internal/api/router.go", Line: 88},
+	}}
+	text := callTool(t, setupHandlers(t, g)["gograph_usages"], map[string]any{
+		"type": "UsersHandlerDeps",
+	})
+	if !strings.Contains(text, "[literal] UsersHandlerDeps") || !strings.Contains(text, "internal/api/router.go:88") {
+		t.Fatalf("MCP usages = %q, want composite literal", text)
+	}
+}
+
 func attributionParityGraph() *graph.Graph {
 	const (
 		testID    = "example.com/parity::TestRouter"

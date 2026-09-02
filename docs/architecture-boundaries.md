@@ -4,6 +4,12 @@
 current graph. It acts as an automated guardrail against new indexed imports
 that violate the repository's configured layers.
 
+The default policy path is `.gograph/boundaries.json`; pass `--config PATH` to
+select another regular, repository-confined policy. The CLI deliberately reads
+the trusted persisted graph, so run `gograph stale` and rebuild before
+enforcement. MCP `gograph_boundaries` performs the same evaluation after its
+normal source refresh.
+
 ## Why Use It?
 
 AI coding agents (and human developers under a deadline) often take the path of least resistance. For example, if a handler needs data, an AI might inject an SQL query directly into the HTTP layer rather than calling the repository layer. 
@@ -102,6 +108,7 @@ To prevent the JSON file from becoming an unreadable mess, `gograph` uses intell
 For maximum effectiveness, add the check to your `Makefile` or CI pipeline:
 
 ```bash
+gograph stale
 gograph build .
 gograph boundaries
 ```

@@ -273,6 +273,19 @@ func TestCLIBoundariesJSONStillExitsNonzeroOnViolations(t *testing.T) {
 	}
 }
 
+func TestCLIBoundariesMissingDefaultExplainsConfigOverride(t *testing.T) {
+	root := writeCLIParityGraph(t, &graph.Graph{})
+	stdout, stderr, code := runCLIParityInDir(t, root, func() int {
+		return Run([]string{"boundaries"})
+	})
+	if code == 0 {
+		t.Fatalf("boundaries unexpectedly succeeded without a policy file: %s", stdout)
+	}
+	if !strings.Contains(stderr, ".gograph/boundaries.json") || !strings.Contains(stderr, "--config PATH") {
+		t.Fatalf("missing-policy diagnostic does not explain the default and override:\n%s", stderr)
+	}
+}
+
 func TestCLIPlanJSONIncludesRequestedInspectContexts(t *testing.T) {
 	g := &graph.Graph{
 		Packages: []graph.PackageNode{{ID: "sample", Name: "sample", ImportPathBestEffort: "example.com/parity", Dir: ".", Files: []string{"target.go"}}},
@@ -532,6 +545,92 @@ func TestCLITransitiveTestsReturnsVersionedReverseAttribution(t *testing.T) {
 	}
 	if got := envelope.Results.Tests[0]; got.StableID != testID || got.Resolution != "exact" || got.Depth != 2 {
 		t.Fatalf("transitive test = %#v", got)
+	}
+}
+
+func TestCLIDirectTestsAcceptsReceiverQualifiedMethod(t *testing.T) {
+	g := &graph.Graph{
+		TestEdges: []graph.TestEdge{
+			{TestFunc: "TestLogin", Target: "svc.Login", TargetSymbolID: "example.com/parity::(*LocalLoginService).Login", File: "login_test.go", Line: 42, Resolution: graph.CallResolutionStatic},
+			{TestFunc: "TestOtherLogin", Target: "svc.Login", TargetSymbolID: "example.com/parity::(*OtherService).Login", File: "other_test.go", Line: 50, Resolution: graph.CallResolutionStatic},
+		},
+	}
+	root := writeCLIParityGraph(t, g)
+	stdout, stderr, code := runCLIParityInDir(t, root, func() int {
+		return Run([]string{"tests", "LocalLoginService.Login", "--json"})
+	})
+	if code != 0 {
+		t.Fatalf("direct tests exited %d: %s", code, stderr)
+	}
+	var envelope struct {
+		Command string          `json:"command"`
+		Count   int             `json:"count"`
+		Results []search.Result `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+		t.Fatalf("decode direct tests JSON: %v\n%s", err, stdout)
+	}
+	if envelope.Command != "tests" || envelope.Count != 1 || len(envelope.Results) != 1 || envelope.Results[0].Name != "TestLogin" {
+		t.Fatalf("direct tests envelope = %#v", envelope)
+	}
+}
+
+func TestCLIImplementersIncludesPreciseProductionAndTestFake(t *testing.T) {
+	g := &graph.Graph{
+		Symbols: []graph.SymbolNode{
+			{ID: "example.com/parity::Reader", Name: "Reader", Kind: graph.KindInterface, InterfaceMethods: map[string]string{"Read": "func()"}, File: "reader.go"},
+			{ID: "example.com/parity::Store", Name: "Store", Kind: graph.KindStruct, File: "store.go"},
+			{ID: "example.com/parity::FakeReader", Name: "FakeReader", Kind: graph.KindStruct, File: "store_test.go"},
+			{ID: "example.com/parity::(*FakeReader).Read", Name: "Read", Kind: graph.KindMethod, Receiver: "*FakeReader", MethodSignature: "func()", File: "store_test.go"},
+		},
+		Implements: []graph.ImplementsEdge{{Interface: "Reader", Concrete: "Store", InterfaceID: "example.com/parity::Reader", ConcreteID: "example.com/parity::Store"}},
+	}
+	root := writeCLIParityGraph(t, g)
+
+	run := func(args ...string) []search.Result {
+		t.Helper()
+		stdout, stderr, code := runCLIParityInDir(t, root, func() int { return Run(args) })
+		if code != 0 {
+			t.Fatalf("%v exited %d: %s", args, code, stderr)
+		}
+		var envelope struct {
+			Results []search.Result `json:"results"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+			t.Fatalf("decode %v JSON: %v\n%s", args, err, stdout)
+		}
+		return envelope.Results
+	}
+
+	all := run("implementers", "Reader", "--json")
+	if len(all) != 2 {
+		t.Fatalf("CLI implementers = %+v, want production and test implementations", all)
+	}
+	testOnly := run("implementers", "Reader", "--test-only", "--json")
+	if len(testOnly) != 1 || testOnly[0].Name != "FakeReader" {
+		t.Fatalf("CLI test-only implementers = %+v, want FakeReader", testOnly)
+	}
+}
+
+func TestCLIUsagesIncludesCompositeLiterals(t *testing.T) {
+	g := &graph.Graph{Literals: []graph.LiteralEdge{
+		{TypeName: "UsersHandlerDeps", Function: "NewRouter", File: "internal/api/router.go", Line: 88},
+	}}
+	root := writeCLIParityGraph(t, g)
+	stdout, stderr, code := runCLIParityInDir(t, root, func() int {
+		return Run([]string{"usages", "UsersHandlerDeps", "--json"})
+	})
+	if code != 0 {
+		t.Fatalf("usages exited %d: %s", code, stderr)
+	}
+	var envelope struct {
+		Results []search.Result `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+		t.Fatalf("decode usages JSON: %v\n%s", err, stdout)
+	}
+	if len(envelope.Results) != 1 || envelope.Results[0].Kind != "literal" || envelope.Results[0].File != "internal/api/router.go" {
+		t.Fatalf("CLI usages = %+v, want composite literal", envelope.Results)
 	}
 }
 
