@@ -491,3 +491,10 @@ The maintained project, agent-workflow, and contributor contracts were synchroni
 - Real `identuum-idp` acceptance enumerated all 252 persisted static queries over three CLI and MCP pages, verified root-module selection and combined table/verb/access/function filtering, and kept every native MCP page beneath 64 KiB.
 - Local and hosted gates passed uncached unit/race tests, lint/static/vulnerability checks, classifier fuzzing, CodeQL, precise self-analysis, docs, deterministic six-MCPB verification, GoReleaser artifacts, and exact archive scans.
 - Release workflow `33540733522` published and independently verified all 14 GitHub assets, Homebrew cask 1.6.9, and active/latest official MCP Registry version 1.6.9; CI `33540733508` and Hugo deployment `33540733419` also succeeded.
+
+## [2026-09-02] maintenance | Publish v1.6.10 census and lookup repair release
+
+- Released gograph v1.6.10 from tag commit `e156b571b6e56ee406631e25e25abff740098bb9`; implementation commit `24ee9f0` adds bounded static SQL declaration resolution, exact receiver-qualified direct-test lookup, precise-plus-test-fake implementers, composite-literal usages, and clearer persisted-boundary and pagination guidance with CLI/MCP parity.
+- Fresh `identuum-idp-oss` acceptance matched positional and typed SQL write censuses exactly: 10 `oauth_refresh_tokens` writes and 5 `oauth_authorization_codes` writes, each including the previously missing `INSERT`; `oauth_consents` returned its `INSERT`, `SELECT`, and `UPDATE`. Receiver-qualified tests returned 33 and 18 direct rows, type usages returned 31 rows, and 246 production routes round-tripped uniquely over three pages.
+- Local and hosted gates passed uncached unit/race tests, vet, lint/static analysis, source/binary/archive vulnerability scans, documentation rendering, deterministic six-MCPB verification with 68-tool smoke initialization, and exact archive validation.
+- Release workflow `33634449985` published and independently verified all 14 GitHub assets, Homebrew cask 1.6.10, and active/latest official MCP Registry version 1.6.10; CI `33634450098` and Hugo deployment `33634450056` also succeeded.
