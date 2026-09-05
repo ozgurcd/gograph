@@ -2,7 +2,14 @@
 
 ## Unreleased
 
-_No unreleased changes._
+### Fixed
+
+- Homebrew publication now fail-closed rewrites GoReleaser's legacy
+  `postflight` hook to structured `postflight_steps` before updating the tap.
+  This removes the Homebrew deprecation warning while retaining the existing
+  macOS quarantine handling. Already-structured generated casks are accepted
+  unchanged so the release path remains compatible with a future GoReleaser
+  migration.
 
 ## v1.6.10 — 2026-09-02
 

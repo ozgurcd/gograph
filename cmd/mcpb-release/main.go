@@ -91,6 +91,8 @@ func run(ctx context.Context, args []string) error {
 		return runRenderServer(args[1:])
 	case "render-goreleaser":
 		return runRenderGoReleaser(args[1:])
+	case "rewrite-homebrew-cask":
+		return runRewriteHomebrewCask(args[1:])
 	case "smoke":
 		return runSmoke(ctx, args[1:])
 	case "github-release-state":
@@ -406,6 +408,7 @@ commands:
   verify                 validate bundle layout, targets, versions, and hashes
   render-server          render deterministic Registry metadata from bundle hashes
   render-goreleaser      render a safe temporary GoReleaser snapshot configuration
+  rewrite-homebrew-cask  replace GoReleaser's legacy hook with structured postflight_steps
   smoke                  initialize the native bundle and request tools/list
   github-release-state   print missing or matching; fail on divergent assets
   registry-state         print missing or matching; fail on divergent metadata`

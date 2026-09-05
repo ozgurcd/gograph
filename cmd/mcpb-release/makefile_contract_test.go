@@ -196,6 +196,7 @@ func TestReleaseUsesCurrentHomebrewCaskPublishing(t *testing.T) {
 			required: []string{
 				"dist/homebrew/Casks/gograph.rb",
 				"Casks/gograph.rb",
+				"rewrite-homebrew-cask --input \"$cask_path\" --output \"$cask_path\"",
 				"gh auth setup-git",
 				`grep -Fq "/releases/download/v#{version}/$asset" "$cask_path"`,
 				`sed -i "s/sha256 \"$local_hash\"/sha256 \"$published_hash\"/" "$cask_path"`,

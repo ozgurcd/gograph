@@ -235,6 +235,7 @@ jobs:
           set -euo pipefail
           cask_path="dist/homebrew/Casks/gograph.rb"
           test -s "$cask_path"
+          go run ./cmd/mcpb-release rewrite-homebrew-cask --input "$cask_path" --output "$cask_path"
           desired_version="${{ needs.verify.outputs.version }}"
           grep -Fq "version \"$desired_version\"" "$cask_path"
           published_checksums="$RUNNER_TEMP/published-checksums.txt"

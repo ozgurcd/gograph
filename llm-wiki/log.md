@@ -498,3 +498,9 @@ The maintained project, agent-workflow, and contributor contracts were synchroni
 - Fresh `identuum-idp-oss` acceptance matched positional and typed SQL write censuses exactly: 10 `oauth_refresh_tokens` writes and 5 `oauth_authorization_codes` writes, each including the previously missing `INSERT`; `oauth_consents` returned its `INSERT`, `SELECT`, and `UPDATE`. Receiver-qualified tests returned 33 and 18 direct rows, type usages returned 31 rows, and 246 production routes round-tripped uniquely over three pages.
 - Local and hosted gates passed uncached unit/race tests, vet, lint/static analysis, source/binary/archive vulnerability scans, documentation rendering, deterministic six-MCPB verification with 68-tool smoke initialization, and exact archive validation.
 - Release workflow `33634449985` published and independently verified all 14 GitHub assets, Homebrew cask 1.6.10, and active/latest official MCP Registry version 1.6.10; CI `33634450098` and Hugo deployment `33634450056` also succeeded.
+## [2026-09-05] maintenance | Adopt structured Homebrew postflight publication
+
+- Replaced deprecated tap `postflight` stanzas with `postflight_steps` while preserving macOS quarantine removal.
+- Added a fail-closed release transformation because the configured GoReleaser still emits the legacy hook; missing, duplicate, and conflicting forms now abort publication.
+- Verified Gograph and Achta full gates, focused Homebrew style, direct cask transformation, active-tap parsing, and a warning-free `brew doctor` with the patched casks.
+- Recorded canonical claim `GOGRAPH-HOMEBREW-POSTFLIGHT-1`.
