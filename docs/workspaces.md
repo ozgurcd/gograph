@@ -36,6 +36,12 @@ repositories:
     path: idp-ce
   - id: ui
     path: ui
+    http_clients:
+      - base: cfg.IDPURL
+        authority_id: idp-api
+        path_prefix: /v1
+      - base: env:IDP_URL
+        authority_id: idp-api
 
 scopes:
   - id: oss
@@ -149,6 +155,51 @@ client function --calls_http--> HTTP contract --serves_http--> handler
 The HTTP contract identity is logical `authority_id + method + normalized
 path`. Scheme, hostname, and port are evidence qualifiers, so local HTTP and
 deployed HTTPS can represent the same logical API.
+
+### Dynamic HTTP URL bases
+
+Repository facts record imported, unshadowed `net/http.Get`, `Post`, `PostForm`,
+and `Head` calls, plus **possible request construction** through `NewRequest`
+and `NewRequestWithContext`. Request construction alone does not prove dispatch;
+its workspace relation requires `--include-possible` to traverse. Client receiver
+methods (`client.Do`, `client.Get`) and arbitrary URL-builder functions are not
+inferred by this extractor.
+
+Static strings, local constants, and bounded lexical aliases/concatenations are
+recognized. For dynamic URLs such as `cfg.IDPURL + "/items"` or
+`os.Getenv("IDP_URL") + "/items"`, `http_clients` explicitly maps the lexical
+`base` to a logical service `authority_id`. Each base is unique within its member;
+it is an identifier/selector (`cfg.IDPURL`) or an `env:KEY` token. This is a
+repository-wide configuration promise, not discovered runtime configuration.
+Gograph never reads the environment value, executes configuration code, or guesses
+ownership from variable or hostname conventions.
+
+`path_prefix` describes the path portion of the complete base URL (empty by
+default). It must be an absolute URL path without an authority, query, fragment,
+or dot segments. Gograph concatenates prefix and static suffix; it does not
+resolve a suffix as a replacement URL. For example, `/v1` plus `/items` yields
+`/v1/items`. Query/fragment suffixes do not become contract identity. A dynamic
+tail such as `base + "/items/" + id` is not promoted into an exact route.
+Package variables and escaped local strings are not assumed constant.
+
+Mappings participate in the workspace input fingerprint. Their service owner
+must exist in the **selected scope**, so an OSS/CE or other out-of-scope match
+cannot resolve a client. An absent owner leaves diagnostic evidence; it does not
+silently select another scope. Exact configured resolution still needs an exact
+caller identity and a known method; every uncertain dependency degrades traversal.
+
+`workspace query` and `gograph_workspace_query` include a filtered
+`http_unresolved` array alongside node `results`. Search by URL/base, method,
+caller, file, or reason (for example `unconfigured_base`,
+`authority_not_in_scope`, or `dynamic_url_not_bounded`). The persisted scope
+overlay keeps the same evidence. These records are **not edges**, including
+under `--include-possible`. Verified `workspace status` / MCP status reports
+`overlay.http_unresolved_by_scope` counts; unresolved calls do not make a fresh
+artifact stale. Counts are omitted until the overlay has passed verification.
+
+Rebuild member graphs to populate `net_http_v2` extraction facts, then rebuild
+the overlay. `workspace build --refresh-members` performs that explicitly.
+Older overlays become stale because the HTTP resolver is `http-contract-v2`.
 
 Resolution certainty and provenance are independent:
 

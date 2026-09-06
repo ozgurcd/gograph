@@ -180,6 +180,9 @@ func normalizeAndValidateManifest(root string, manifest *Manifest) error {
 			return fmt.Errorf("repository %q configures multiple HTTP services; workspace.v1 requires one HTTP service per repository", repo.ID)
 		}
 		sort.Slice(repo.Services, func(i, j int) bool { return repo.Services[i].ID < repo.Services[j].ID })
+		if err := validateHTTPClients(repo); err != nil {
+			return err
+		}
 	}
 	sort.Slice(manifest.Repositories, func(i, j int) bool { return manifest.Repositories[i].ID < manifest.Repositories[j].ID })
 	if len(manifest.Scopes) == 0 {

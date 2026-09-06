@@ -198,3 +198,34 @@ to publish a required startup auto-build prevents the server from starting.
 - Claude Code records the MCP server entry in your home configuration (`~/.claude.json`) and scopes it to the current project directory.
 - The `.` in `gograph mcp .` tells the server to index whatever specific folder Claude Code is currently operating in.
 - **You must run this command once for each Go project repository** you wish to use it in. This prevents your agent from accidentally querying index databases from other projects!
+
+## Query contracts and upgrades
+
+Common row-list tools now return bounded `gograph.results.v1` pages with
+`total`, `returned`, `truncated`, and `next_cursor`. Default limit is 100,
+maximum 200, with a 16 KiB native budget; follow the cursor on the same snapshot
+and filters to finish a census. Routes and SQL retain their specialized pages.
+Graph changes invalidate cursors; restart the census rather than reuse an offset.
+Do not combine pagination with Mermaid or files-only mode.
+
+Repository impact labels exact/possible paths; `exact_only=true` excludes
+uncertain evidence. Explain returns ambiguity candidates instead of choosing
+a same-named symbol. Changes reports declaration-level new/modified/deleted/
+excluded/unknown status and complete/partial/cannot_evaluate evaluation, reusing
+recorded build selection and detecting current module ownership and source races.
+Native result schemas retain provenance in `_meta` and structured content;
+legacy results use a `gograph.mcp-result.v1` companion. See the
+[shared query contracts](query-contracts.md) before writing a machine gate.
+
+Workspace HTTP base mappings are explicit `http_clients` configuration, not
+runtime environment lookup. Workspace query retains unresolved diagnostics;
+request construction alone is possible evidence. See the
+[workspace guide](workspaces.md#dynamic-http-url-bases).
+
+MCP queries pin immutable graph/state snapshots; refresh is serialized and
+derived indexes are retained per current fingerprint. Cancellation is cooperative
+and reaches Go loading and pre-publication checks, not rollback of a started commit.
+After installing a replacement binary, **restart the running MCP server** and
+check `gograph_capabilities.version`. Existing processes do not hot-reload tool
+schemas. Rebuild old repository graphs for the new declaration/build-selection
+and HTTP facts, then rebuild workspace overlays.

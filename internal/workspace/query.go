@@ -18,11 +18,12 @@ type QueryResult struct {
 }
 
 type QueryResponse struct {
-	SchemaVersion string        `json:"schema_version"`
-	WorkspaceName string        `json:"workspace_name"`
-	Scope         string        `json:"scope"`
-	Query         string        `json:"query"`
-	Results       []QueryResult `json:"results"`
+	SchemaVersion  string           `json:"schema_version"`
+	WorkspaceName  string           `json:"workspace_name"`
+	Scope          string           `json:"scope"`
+	Query          string           `json:"query"`
+	Results        []QueryResult    `json:"results"`
+	HTTPUnresolved []HTTPUnresolved `json:"http_unresolved"`
 }
 
 type VirtualEdge struct {
@@ -77,7 +78,7 @@ func SelectScope(workspace *LoadedWorkspace, requested string) (ScopeOverlay, er
 }
 
 func Query(workspace *LoadedWorkspace, scope ScopeOverlay, term string) QueryResponse {
-	response := QueryResponse{SchemaVersion: QuerySchemaVersion, WorkspaceName: workspace.Manifest.Name, Scope: scope.ID, Query: term, Results: []QueryResult{}}
+	response := QueryResponse{SchemaVersion: QuerySchemaVersion, WorkspaceName: workspace.Manifest.Name, Scope: scope.ID, Query: term, Results: []QueryResult{}, HTTPUnresolved: []HTTPUnresolved{}}
 	needle := strings.ToLower(term)
 	repositories := stringSet(scope.Repositories)
 	seen := make(map[string]bool)
@@ -111,6 +112,16 @@ func Query(workspace *LoadedWorkspace, scope ScopeOverlay, term string) QueryRes
 			appendQueryResult(&response.Results, seen, QueryResult{Node: contractNode(contract.ID), Name: name, Detail: "http_contract"})
 		}
 	}
+	for _, unresolved := range scope.HTTPUnresolved {
+		if !repositories[unresolved.Source.RepositoryID] {
+			continue
+		}
+		text := unresolved.URL + " " + unresolved.Method + " " + unresolved.Base + " " + unresolved.Reason + " " + unresolved.File + " " + displayNode(unresolved.Source)
+		if strings.Contains(strings.ToLower(text), needle) {
+			response.HTTPUnresolved = append(response.HTTPUnresolved, unresolved)
+		}
+	}
+	sortHTTPUnresolved(response.HTTPUnresolved)
 	sort.Slice(response.Results, func(i, j int) bool {
 		return displayNode(response.Results[i].Node) < displayNode(response.Results[j].Node)
 	})

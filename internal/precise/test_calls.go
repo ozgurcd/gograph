@@ -1,6 +1,7 @@
 package precise
 
 import (
+	"context"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -30,11 +31,15 @@ type testCallSite struct {
 // fallback. Successful packages enrich exact and bounded-possible test call
 // targets; omitted or ill-typed tests leave their parser edges unresolved and
 // produce typed_partial capability metadata.
-func enrichTypedTestCalls(absRoot string, g *graph.Graph, config buildctx.Config) (graph.TestCallResolutionMode, error) {
+func enrichTypedTestCalls(ctx context.Context, absRoot string, g *graph.Graph, config buildctx.Config) (graph.TestCallResolutionMode, error) {
+	if err := ctx.Err(); err != nil {
+		return graph.TestCallResolutionPartial, err
+	}
 	if g == nil {
 		return graph.TestCallResolutionPartial, fmt.Errorf("cannot resolve test calls in a nil graph")
 	}
 	cfg := &packages.Config{
+		Context: ctx,
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
 			packages.NeedImports | packages.NeedDeps | packages.NeedTypes |
 			packages.NeedTypesInfo | packages.NeedSyntax,
@@ -44,6 +49,9 @@ func enrichTypedTestCalls(absRoot string, g *graph.Graph, config buildctx.Config
 		Tests:      true,
 	}
 	loaded, loadErr := packages.Load(cfg, "./...")
+	if err := ctx.Err(); err != nil {
+		return graph.TestCallResolutionPartial, err
+	}
 	if loadErr != nil {
 		return graph.TestCallResolutionPartial, fmt.Errorf("load test packages: %w", loadErr)
 	}
@@ -65,6 +73,9 @@ func enrichTypedTestCalls(absRoot string, g *graph.Graph, config buildctx.Config
 	problemSeen := make(map[string]struct{})
 
 	for _, pkg := range loaded {
+		if err := ctx.Err(); err != nil {
+			return graph.TestCallResolutionPartial, err
+		}
 		for _, pkgErr := range pkg.Errors {
 			message := strings.Join(strings.Fields(pkgErr.Msg), " ")
 			if message == "" {

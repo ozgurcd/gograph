@@ -1,13 +1,13 @@
 package search
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
-	"path/filepath"
 	"regexp"
-	"strconv"
+	"sort"
 	"strings"
 
+	"github.com/ozgurcd/gograph/internal/baseline"
 	"github.com/ozgurcd/gograph/internal/graph"
 )
 
@@ -15,123 +15,96 @@ import (
 // Allows alphanumeric characters, dots, slashes, hyphens, tildes, and carets.
 var safeGitRef = regexp.MustCompile(`^[A-Za-z0-9._/\-~^]+$`)
 
-// ChangesByGitRef returns all graph symbols whose source files are reported as
-// changed by "git diff --name-only <ref>". Only ChangeModified status is
-// returned — detecting NEW or DELETED symbols requires a full baseline graph
-// build from that ref, which is out of scope for this command.
+// CurrentChangeSelectionContract is shared by CLI help and MCP discovery.
+const CurrentChangeSelectionContract = "Uncommitted modes compare declarations against HEAD, including selected untracked Go files. Current-graph consumers refuse incomplete comparisons, deleted declarations requiring historical caller evidence, and missing/ambiguous graph identities. Inspect changes --git REF for the declaration census; rebuild before traversing newly added symbols."
+
+// ChangesByGitRef compares current declarations to a confined historical
+// baseline, including additions and deletions inside surviving files. It uses
+// the graph's recorded file selection when available, not ambient build tags.
 //
 // root is the absolute path to the repository root.
 func ChangesByGitRef(g *graph.Graph, root, ref string) (*ChangesResult, error) {
+	return ChangesByGitRefContext(context.Background(), g, root, ref)
+}
+
+// ChangesByGitRefContext compares a safely extracted historical declaration
+// baseline without running dependency downloads, package compilation or hooks.
+func ChangesByGitRefContext(ctx context.Context, g *graph.Graph, root, ref string) (*ChangesResult, error) {
 	if ref == "" || strings.HasPrefix(ref, "-") || !safeGitRef.MatchString(ref) {
-		return nil, fmt.Errorf("invalid git ref %q: must match [A-Za-z0-9._/\\-~^]+", ref)
+		return nil, fmt.Errorf("invalid git ref %q", ref)
 	}
-
-	out, err := exec.Command("git", "-C", root, "diff", "--name-only", ref).Output()
+	before, err := baseline.Build(ctx, root, ref, func(path string) (*graph.Graph, error) {
+		return buildDeclarationBaseline(ctx, path, graphSelection(g))
+	})
 	if err != nil {
-		return nil, fmt.Errorf("git diff --name-only %s: %w", ref, err)
+		return nil, fmt.Errorf("build declaration baseline for %s: %w", ref, err)
 	}
-
-	// Build a set of changed files reported by git (repo-relative paths).
-	changedFiles := make(map[string]bool)
-	var changedList []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || !strings.HasSuffix(line, ".go") {
-			continue
-		}
-		if !changedFiles[line] {
-			changedFiles[line] = true
-			changedList = append(changedList, line)
-		}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	sortStrings(changedList)
-
-	result := &ChangesResult{
-		GraphAge:     g.GeneratedAt,
-		ChangedFiles: changedList,
-	}
-
-	// Map changed files to graph symbols.
-	seen := make(map[string]bool)
-	for _, s := range g.Symbols {
-		// Normalize the symbol's file to a repo-relative path for matching.
-		rel := s.File
-		if abs, err := filepath.Rel(root, s.File); err == nil {
-			rel = abs
-		}
-		rel = filepath.ToSlash(rel)
-		if !changedFiles[rel] {
-			continue
-		}
-		if seen[s.ID] {
-			continue
-		}
-		seen[s.ID] = true
-		result.Symbols = append(result.Symbols, ChangedSymbol{
-			Name:   s.Name,
-			File:   rel,
-			Line:   s.Line,
-			Status: ChangeModified,
-		})
-	}
-
+	result := ChangesContext(ctx, before, root)
+	result.GraphAge = g.GeneratedAt
 	return result, nil
 }
 
-// UncommittedSymbols parses git diff to find modified symbols in the current working directory.
+// UncommittedSymbols compares declarations to HEAD. It refuses incomplete or
+// unrepresentable selections instead of silently losing deleted declarations.
 func UncommittedSymbols(g *graph.Graph) ([]string, error) {
-	var cmd *exec.Cmd
-	if g.Root != "" {
-		cmd = exec.Command("git", "-C", g.Root, "diff", "HEAD", "-U0")
-	} else {
-		cmd = exec.Command("git", "diff", "HEAD", "-U0")
+	return UncommittedSymbolsContext(context.Background(), g)
+}
+
+// UncommittedSymbolsContext uses the same confined declaration comparison as
+// changes --git HEAD, including build selection and current-source validation.
+func UncommittedSymbolsContext(ctx context.Context, g *graph.Graph) ([]string, error) {
+	if g == nil {
+		return nil, fmt.Errorf("graph is unavailable")
 	}
-	out, err := cmd.Output()
+	root := g.Root
+	if root == "" {
+		root = "."
+	}
+	changes, err := ChangesByGitRefContext(ctx, g, root, "HEAD")
 	if err != nil {
-		return nil, fmt.Errorf("error running git diff: %v", err)
+		return nil, err
 	}
+	return CurrentChangedSymbolIDs(g, changes)
+}
 
-	diffStr := string(out)
-	fileLines := make(map[string][]int)
-	var currentFile string
-
-	for _, line := range strings.Split(diffStr, "\n") {
-		if strings.HasPrefix(line, "+++ b/") {
-			currentFile = strings.TrimPrefix(line, "+++ b/")
-		} else if strings.HasPrefix(line, "@@ ") && currentFile != "" {
-			parts := strings.Split(line, " ")
-			if len(parts) >= 3 {
-				plusPart := strings.TrimPrefix(parts[2], "+")
-				sp := strings.Split(plusPart, ",")
-				start, _ := strconv.Atoi(sp[0])
-				count := 1
-				if len(sp) > 1 {
-					count, _ = strconv.Atoi(sp[1])
-				}
-				for i := 0; i < count; i++ {
-					fileLines[currentFile] = append(fileLines[currentFile], start+i)
-				}
-			}
+// CurrentChangedSymbolIDs is the gate for consumers that traverse only the
+// current graph. A historical declaration census can explain deletions; it does
+// not contain historical call edges and cannot prove a deleted symbol's impact.
+func CurrentChangedSymbolIDs(g *graph.Graph, changes *ChangesResult) ([]string, error) {
+	if g == nil || changes == nil {
+		return nil, fmt.Errorf("graph or change evaluation is unavailable")
+	}
+	if changes.Evaluation != "complete" {
+		return nil, fmt.Errorf("cannot traverse incomplete changes: %s", strings.Join(changes.Diagnostics, "; "))
+	}
+	present := make(map[string][]graph.SymbolNode)
+	for _, symbol := range g.Symbols {
+		present[symbol.ID] = append(present[symbol.ID], symbol)
+	}
+	seen := make(map[string]bool)
+	var ids []string
+	for _, change := range changes.Symbols {
+		if change.Status == ChangeDeleted {
+			return nil, fmt.Errorf("deleted declaration %q requires historical caller evidence; inspect changes --git HEAD (or the selected ref); current-graph traversal cannot evaluate deletions", change.StableID)
+		}
+		if change.Status != ChangeNew && change.Status != ChangeModified {
+			return nil, fmt.Errorf("cannot traverse %s declaration %q", change.Status, change.StableID)
+		}
+		matches := present[change.StableID]
+		if change.StableID == "" || len(matches) == 0 {
+			return nil, fmt.Errorf("changed declaration %q is absent from the graph; rebuild the graph and retry", change.StableID)
+		}
+		if len(matches) != 1 || change.PackageName != "" && matches[0].PackageName != change.PackageName {
+			return nil, fmt.Errorf("changed declaration %q has ambiguous graph identity; inspect changes for file/package details", change.StableID)
+		}
+		if !seen[change.StableID] {
+			seen[change.StableID] = true
+			ids = append(ids, change.StableID)
 		}
 	}
-
-	var modifiedSymbolNames []string
-	seenSymbols := make(map[string]bool)
-
-	for file, lines := range fileLines {
-		for _, s := range g.Symbols {
-			if strings.HasSuffix(s.File, file) {
-				for _, line := range lines {
-					if line >= s.Line && line <= s.EndLine {
-						if !seenSymbols[s.ID] {
-							seenSymbols[s.ID] = true
-							modifiedSymbolNames = append(modifiedSymbolNames, s.ID)
-						}
-						break
-					}
-				}
-			}
-		}
-	}
-	return modifiedSymbolNames, nil
+	sort.Strings(ids)
+	return ids, nil
 }

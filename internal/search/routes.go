@@ -53,6 +53,11 @@ type RoutePage struct {
 // are bounded by both row count and serialized size so MCP clients never need
 // an out-of-band spill file to consume an ordinary route census.
 func QueryRoutes(g *graph.Graph, query RouteQuery) (RoutePage, error) {
+	return NewSnapshot(g).QueryRoutes(query)
+}
+
+func (snapshot *Snapshot) QueryRoutes(query RouteQuery) (RoutePage, error) {
+	g := snapshot.g
 	if len(query.Term) > maxRouteTermBytes {
 		return RoutePage{}, fmt.Errorf("route term must not exceed %d bytes", maxRouteTermBytes)
 	}
@@ -70,7 +75,19 @@ func QueryRoutes(g *graph.Graph, query RouteQuery) (RoutePage, error) {
 		return RoutePage{}, fmt.Errorf("route limit must be between 1 and %d", MaxRoutesLimit)
 	}
 
-	offset, err := decodeRouteCursor(query.Cursor)
+	selection := query
+	selection.Cursor, selection.Limit = "", 0
+	selection.Term = strings.ToLower(strings.TrimSpace(selection.Term))
+	selection.Module = strings.TrimSpace(selection.Module)
+	binding, err := snapshot.binding(RoutesSchemaVersion, selection)
+	if err != nil {
+		return RoutePage{}, err
+	}
+	encodedOffset, err := cursorOffset(query.Cursor, binding, "route")
+	if err != nil {
+		return RoutePage{}, err
+	}
+	offset, err := decodeRouteCursor(encodedOffset)
 	if err != nil {
 		return RoutePage{}, err
 	}
@@ -80,7 +97,7 @@ func QueryRoutes(g *graph.Graph, query RouteQuery) (RoutePage, error) {
 	}
 
 	term := strings.ToLower(strings.TrimSpace(query.Term))
-	all := Routes(g)
+	all := snapshot.routeRows()
 	filtered := make([]Result, 0, len(all))
 	for _, result := range all {
 		if !query.IncludeTests && strings.HasSuffix(strings.ToLower(filepath.Base(result.File)), "_test.go") {
@@ -111,7 +128,7 @@ func QueryRoutes(g *graph.Graph, query RouteQuery) (RoutePage, error) {
 	}
 	for index := offset; index < len(filtered) && len(page.Routes) < limit; index++ {
 		page.Routes = append(page.Routes, filtered[index])
-		finalizeRoutePage(&page, offset)
+		finalizeRoutePage(&page, offset, binding)
 		encoded, marshalErr := json.Marshal(page)
 		if marshalErr != nil {
 			return RoutePage{}, fmt.Errorf("encode route page: %w", marshalErr)
@@ -125,7 +142,7 @@ func QueryRoutes(g *graph.Graph, query RouteQuery) (RoutePage, error) {
 		}
 		break
 	}
-	finalizeRoutePage(&page, offset)
+	finalizeRoutePage(&page, offset, binding)
 	encoded, err := json.Marshal(page)
 	if err != nil {
 		return RoutePage{}, fmt.Errorf("encode route page: %w", err)
@@ -136,13 +153,13 @@ func QueryRoutes(g *graph.Graph, query RouteQuery) (RoutePage, error) {
 	return page, nil
 }
 
-func finalizeRoutePage(page *RoutePage, offset int) {
+func finalizeRoutePage(page *RoutePage, offset int, binding string) {
 	page.Returned = len(page.Routes)
 	next := offset + page.Returned
 	page.Truncated = next < page.Total
 	page.NextCursor = ""
 	if page.Truncated {
-		page.NextCursor = encodeRouteCursor(next)
+		page.NextCursor = boundCursor(binding, encodeRouteCursor(next))
 	}
 }
 

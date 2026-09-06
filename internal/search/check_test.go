@@ -182,6 +182,9 @@ func TestCheckChangedRouteMatchesHandlerIdentity(t *testing.T) {
 
 func TestCheckChangedRouteDetectsBodyOnlyGitChange(t *testing.T) {
 	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/api\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(root, "handler.go")
 	if err := os.WriteFile(path, []byte("package api\n\nfunc HandleUsers() { println(1) }\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -197,7 +200,7 @@ func TestCheckChangedRouteDetectsBodyOnlyGitChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	symbol := graph.SymbolNode{ID: "example.com/api::HandleUsers", Name: "HandleUsers", Kind: graph.KindFunction, Signature: "func()", File: "handler.go", Line: 3}
+	symbol := graph.SymbolNode{ID: "example.com/api::HandleUsers", Name: "HandleUsers", PackageName: "api", Kind: graph.KindFunction, Signature: "func()", File: "handler.go", Line: 3}
 	current := &graph.Graph{Root: root, Symbols: []graph.SymbolNode{symbol}, Routes: []graph.HTTPRoute{{Method: "GET", Path: "/users", Handler: "HandleUsers", File: "routes.go", Line: 8}}}
 	baseline := &graph.Graph{Symbols: []graph.SymbolNode{symbol}}
 	report, err := RunChecks(&CheckParams{

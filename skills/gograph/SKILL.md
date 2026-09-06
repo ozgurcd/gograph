@@ -79,8 +79,10 @@ Packaged and generated registrations keep refresh persistence off by default.
    `gograph build . --precise` first. Run the repository's required tests and
    checks separately.
 
-Every refresh-backed MCP response preserves its compatibility text and adds a
-`gograph.mcp-result.v1` `structuredContent` value. Inspect its
+MCP responses carry graph provenance in `_meta` and native structured content
+where supported. Common bounded row lists use `gograph.results.v1`; native
+explain/changes retain their schemas. Other legacy results retain a
+`gograph.mcp-result.v1` structured companion. Inspect the accompanying
 `graph_state` before using an absence or broad impact result: `source`,
 `freshness`, `completeness`, and `precision` are independent. A current
 in-memory fallback and a trusted stale persisted result are intentionally
@@ -91,6 +93,12 @@ CLI graph-backed `--json` responses expose the same
 
 ## High-value tools
 
+Uncommitted modes compare declarations against `HEAD`. Incomplete comparisons,
+deleted declarations needing historical caller evidence, and missing/ambiguous
+current identities are explicit errors, not empty successful reviews. Inspect
+`gograph_changes` with `git_ref=HEAD` for deletions; rebuild before traversing
+new declarations. CLI uses the same rules.
+
 | Tool | Use case |
 |---|---|
 | `gograph_capabilities` | Record the running server version and discover what it exposes |
@@ -99,7 +107,7 @@ CLI graph-backed `--json` responses expose the same
 | `gograph_context` with `symbol=<symbol>` | Node + source + callers + callees + tests in one call |
 | `gograph_plan` with `symbol=<symbol>` | Pre-edit blast radius + callers + tests |
 | `gograph_review` with `uncommitted=true` | Post-edit coverage check |
-| `gograph_impact` with `symbol=<symbol>` | What breaks if this changes |
+| `gograph_impact` with `symbol=<symbol>` | Canonical upstream identities with exact/possible labels; `exact_only=true` excludes uncertain paths |
 | `gograph_callers` / `gograph_callees` with `function=<symbol>` | Explicit call-graph traversal |
 | `gograph_implementers` with `interface=<interface>` | Type-checked production implementers plus AST-discovered test fakes; set `test_only=true` for only fakes |
 | `gograph_usages` with `type=<type>` | Signature, field, interface-method, and composite-literal uses; use `gograph_literals` for only construction sites |
@@ -112,13 +120,33 @@ CLI graph-backed `--json` responses expose the same
 | `gograph_errors` with optional `term=<term>` | Error inventory |
 | `gograph_errorflow` with `query=<term>` | Error propagation paths |
 | `gograph_flow` | Potential HTTP/JSON/env paths to SQL, process, filesystem, and outbound HTTP sinks |
-| `gograph_changes` | Diff source against the trusted persisted graph, or MCP startup fallback when no usable artifact exists |
+| `gograph_changes` | Declaration add/modify/delete/excluded/unknown census against persisted graph or `git_ref`; require `evaluation=complete` before treating the result as exhaustive |
 | `gograph_tests` with `symbol=<symbol>, transitive=true` | Every test statically reaching a symbol, with exact/possible path and depth; omit `transitive` for direct edges, where `Receiver.Method` and stable IDs are accepted |
 | `gograph_coverage` with `test=<TestFunc>` | Transitive product symbols one unambiguous test statically reaches; exact/possible paths; optional `package` disambiguation |
 | `gograph_identity` with `symbol=<symbol-or-stable-id>` | Print or re-resolve canonical symbol identity without silently choosing ambiguity; optional `package` disambiguation |
 | `gograph_check` | Policy checks, including changed-route tests, coverage, orphans, API drift, arity, and complexity |
 
 The live surface is 68 MCP endpoints; `gograph_capabilities` is the tested source of truth. `gograph_flow` is path-insensitive with bounded call-site matching; use it for security review leads, not exploitability proof.
+Common list tools (including query, callers/callees, impact, types/usages,
+errors/envs, and httpcalls) default to 100 rows, maximum 200, within a 16 KiB
+native-page budget. Inspect `total`, `returned`, `truncated`, and `next_cursor`;
+follow cursors with the same snapshot and filters for a complete census.
+Changing page size is allowed. Snapshot or selection changes reject old cursors;
+restart the census. Never combine pagination with `mermaid` or `files_only`.
+Routes and SQL retain their specialized 64 KiB page contracts.
+`gograph_explain` returns ambiguity candidates instead of selecting a name twin.
+`gograph_changes` reuses recorded platform/build tags and rediscovers current
+module ownership; missing legacy selection or a racing source tree makes its
+evaluation incomplete. CLI incomplete changes exit 2.
+
+`gograph_httpcalls` retains bounded lexical URL-base/static-suffix evidence and
+labels `NewRequest`/`NewRequestWithContext` as request construction, not dispatch
+proof. Workspace `http_clients` explicitly maps bases (`cfg.API`, `env:API_URL`)
+to logical authorities in the selected scope; no environment values are read.
+Workspace query retains `http_unresolved` diagnostics; verified status includes
+per-scope unresolved counts. Such diagnostics never participate in traversal.
+The four `gograph_workspace_*` tools require a separate workspace server and
+share native values with CLI workspace status/query/path/impact.
 For `gograph_callers`, `gograph_callees`, `gograph_impact`,
 `gograph_endpoint`, `gograph_dependents`, `gograph_deps`, `gograph_path`, and
 `gograph_coupling`, set `mermaid=true` to request Markdown-fenced Mermaid
@@ -194,6 +222,14 @@ The server must start under the same effective `GOWORK`, `GOFLAGS`, and tag
 selection used by the persisted graph; a mismatch is stale and must refresh
 successfully or return a diagnostic rather than silently serving incompatible
 facts.
+
+Queries pin immutable graph/provenance snapshots while refresh is serialized.
+Cancellation reaches Go loading and pre-publication checks; a started artifact
+commit finishes its set, without promising rollback. Derived indexes are cached
+for the current fingerprint; workspace verification receipts never bypass source
+freshness, path confinement, module ownership, or artifact-byte checks.
+After installing a new binary, restart the MCP server and verify
+`gograph_capabilities.version`; an existing process does not hot-reload schemas.
 
 ## Anti-patterns
 

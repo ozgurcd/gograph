@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+### Query correctness and bounded agent responses
+
+- Common CLI/MCP result lists now share bounded pagination, with explicit
+  totals and continuation fields even on empty results. Cursors bind to graph
+  content and selection. The 16 KiB native-list budget accounts for MCP's
+  duplicated text/structured content and JSON escaping; oversized individual
+  rows fail with guidance instead of being silently shortened. Route and SQL
+  cursors now also reject changed snapshots or filters.
+- Repository impact preserves canonical identities and labels exact/possible
+  paths. CLI `--exact-only` and MCP `exact_only=true` exclude uncertain paths.
+  Impact diagrams preserve identity, use dotted possible edges, and no longer
+  silently stop at 20 hops. Ambiguous `explain` queries return candidates
+  rather than choosing an arbitrary symbol. Explanation facts are confined to
+  the selected declaration and lexical package/import identities; same-named
+  SQL, environment reads, callers, and handlers cannot contaminate the result.
+- Declaration-based changes distinguish edited, added, removed, excluded, and
+  unknown declarations. Git-reference mode uses a confined declaration
+  baseline. Incomplete evaluation is explicit and exits 2 in CLI mode.
+  Comparisons reuse recorded platform/build-tag selection, rediscover module
+  ownership even when Go file bytes are unchanged, distinguish package names,
+  and retain repeated initializers. Detected source/selection races invalidate
+  the comparison; missing legacy selection is explicitly partial.
+  Uncommitted selection uses the same declaration comparison against HEAD,
+  including untracked Go files. Current-graph consumers refuse deletions that
+  need historical caller evidence, missing new symbols, and ambiguous identities
+  instead of silently reporting no impact.
+- MCP queries pin immutable graph/state snapshots while refresh is serialized.
+  Cancellation reaches Go loading and pre-publication checks. Already-started
+  artifact commits finish their set; cancellation does not imply rollback.
+  SQL, routes, calls, and test indexes are reused per current fingerprint.
+  Workspace verification caches bounded positive receipts without bypassing
+  member freshness, source confinement, ownership, or artifact-byte validation.
+- HTTP extraction now preserves bounded lexical URL bases/static suffixes and
+  distinguishes net/http request construction from proven dispatch. Explicit
+  workspace `http_clients` mappings connect bases or `env:KEY` to logical
+  authorities inside the selected scope; no runtime environment values or
+  hostname guesses are used. Unresolved calls remain queryable diagnostics,
+  with verified per-scope counts in status. CLI/MCP share these semantics.
+- Upgrade note: rebuild repository graphs to populate declaration digests and
+  `net_http_v2` HTTP facts, then rebuild workspace overlays (`http-contract-v2`).
+  `workspace build --refresh-members` explicitly refreshes obsolete members.
+  Restart running MCP servers after replacing the binary and check
+  `gograph_capabilities.version`; existing processes do not hot-reload tool
+  schemas. Clients must follow `next_cursor` to obtain a complete row census.
+
 ### Fixed
 
 - Homebrew publication now fail-closed rewrites GoReleaser's legacy

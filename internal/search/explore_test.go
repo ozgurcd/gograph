@@ -288,8 +288,8 @@ func TestExploreDeepPackageContextUsesSelectedPackageInstance(t *testing.T) {
 func TestExploreDeepBoundsExplanationListsAndNarrative(t *testing.T) {
 	g := deepExploreGraph()
 	g.EnvReads = []graph.EnvRead{
-		{Key: "FIRST_KEY", Function: "Target"},
-		{Key: "SECOND_KEY", Function: "Target"},
+		{Key: "FIRST_KEY", Function: "Target", File: "sample.go", Line: 3},
+		{Key: "SECOND_KEY", Function: "Target", File: "sample.go", Line: 3},
 	}
 	result := Explore(g, t.TempDir(), "Target", ExploreOptions{Mode: ExploreModeDeep, Limit: 1})
 	if result.Deep == nil || result.Deep.Explanation == nil {

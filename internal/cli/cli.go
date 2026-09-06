@@ -113,6 +113,11 @@ func Run(args []string) int {
 		}
 	}
 	args = filtered
+	var paginationErr error
+	args, paginationErr = stripListPagination(args)
+	if paginationErr != nil {
+		return failCommand(commandFromArgs(filtered), paginationErr.Error())
+	}
 	if len(args) > 0 && args[0] == "validate" && (filesOnlyMode || mermaidMode) {
 		root, _, _ := parseValidationArgs(args[1:])
 		return writeValidationResult(validation.InvalidRequestResult(Version, root, "validate supports only --json"))
@@ -798,8 +803,11 @@ doc <pkg[.Symbol]>  : "go doc <query>" — signature + doc comment for any stdli
                        module root, or the workspace root and member trees (.git/.gograph excluded),
                        and validating Go tool metadata plus confined workspace members;
                        dependency resolution remains open-world.
-httpcalls [term]     : all outbound HTTP client calls via net/http (Get, Post, PostForm, Head).
-                       Filter by method or URL substring.
+httpcalls [term]     : net/http Get/Post/PostForm/Head calls and possible NewRequest/WithContext construction.
+                       Filter by method, URL/base expression, or function. Includes bounded static suffixes;
+                       workspace http_clients maps lexical bases or env:KEY to logical authorities.
+                       No runtime environment reads; unresolved URLs remain diagnostics in workspace query.
+                       Client receiver methods and arbitrary URL-building functions are not inferred.
 summary              : hotspots + worst instability + top complexity + reachability-orphan/god-object counts
 coverage <test> [--exact-only] [--package <name>] : transitive product symbols statically reached by one unambiguous test.
 identity <sym> [--package <name>] : print or re-resolve canonical stable symbol identity.
@@ -832,6 +840,7 @@ gograph session <action>     : start/end audit sessions (create [word], end, aud
 add-claude-plugin    : install Claude Desktop MCP config + shared rules + Claude Code hook;
                        Claude Code MCP registration uses the printed 'claude mcp add' command
 hook-guard           : PreToolUse hook — redirects indexed-repository Go symbol greps to gograph`)
+	fmt.Println("\nCHANGE SELECTION\n" + search.CurrentChangeSelectionContract)
 	return 0
 }
 
@@ -1002,14 +1011,34 @@ func BuildGraph(absRoot string) (*graph.Graph, error) {
 }
 
 func buildGraphWithTags(absRoot string, tags []string) (*graph.Graph, error) {
-	buildConfig, configErr := resolveBuildConfigWithTags(absRoot, tags)
+	return buildGraphWithTagsContext(context.Background(), absRoot, tags)
+}
+
+func buildGraphWithTagsContext(ctx context.Context, absRoot string, tags []string) (*graph.Graph, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	buildConfig, configErr := buildctx.ResolveOrDefaultWithOptions(ctx, absRoot, buildctx.ResolveOptions{BuildTags: tags})
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	previous, _ := loadGraph(absRoot)
-	return buildGraphWithConfig(absRoot, buildConfig, configErr, previous)
+	return buildGraphWithConfigContext(ctx, absRoot, buildConfig, configErr, previous)
 }
 
 func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr error, previousGraphs ...*graph.Graph) (*graph.Graph, error) {
+	return buildGraphWithConfigContext(context.Background(), absRoot, buildConfig, configErr, previousGraphs...)
+}
+
+func buildGraphWithConfigContext(ctx context.Context, absRoot string, buildConfig buildctx.Config, configErr error, previousGraphs ...*graph.Graph) (*graph.Graph, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	files, selectionFingerprint, walkErrs := scanner.WalkWithConfigAndFingerprint(absRoot, buildConfig)
-	sourceIdentity, fingerprintErr := repositoryfingerprint.Compute(context.Background(), absRoot, buildConfig, files)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	sourceIdentity, fingerprintErr := repositoryfingerprint.Compute(ctx, absRoot, buildConfig, files)
 	if fingerprintErr != nil {
 		walkErrs = append(walkErrs, fmt.Errorf("compute repository source fingerprint: %w", fingerprintErr))
 	}
@@ -1024,6 +1053,7 @@ func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr
 		AnalysisCacheVersion:    graph.CurrentAnalysisCacheVersion,
 		BuildContextFingerprint: selectionFingerprint,
 		SourceFingerprint:       sourceIdentity.Fingerprint,
+		Selection:               graph.CaptureBuildSelection(buildConfig.BuildContext()),
 	}
 	for _, e := range walkErrs {
 		fmt.Fprintf(os.Stderr, "  warning: %v\n", e)
@@ -1050,6 +1080,9 @@ func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr
 	// the import path is available when generating stable symbol IDs below.
 	dirToImportPath := make(map[string]string)
 	for _, path := range files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		rel, err := filepath.Rel(absRoot, path)
 		if err != nil {
 			continue
@@ -1076,6 +1109,9 @@ func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr
 	selected := make([]selectedSource, 0, len(files))
 	currentFiles := make(map[string]selectedSource, len(files))
 	for _, path := range files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		rel, err := filepath.Rel(absRoot, path)
 		if err != nil {
 			rel = path
@@ -1134,6 +1170,9 @@ func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr
 
 	fset := token.NewFileSet()
 	for _, item := range selected {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		pkgImportPath := dirToImportPath[item.dir]
 		if reuseEligible && !changedDirs[item.dir] {
 			if result, exists := reusableResults[item.rel]; exists {
@@ -1189,6 +1228,9 @@ func buildGraphWithConfig(absRoot string, buildConfig buildctx.Config, configErr
 	} else {
 		g.Modules = modules
 		buildMetadata.WorkspaceFactsVersion = graph.CurrentWorkspaceFactsVersion
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	sortGraph(g)
 	return g, nil
@@ -1359,6 +1401,13 @@ func enrichGraphPreciselyWithConfig(absRoot string, g *graph.Graph, buildConfig 
 }
 
 func enrichGraphPreciselyWithMemory(absRoot string, g *graph.Graph, buildConfig buildctx.Config, configErr error, policy memorylimit.Policy) error {
+	return enrichGraphPreciselyWithMemoryContext(context.Background(), absRoot, g, buildConfig, configErr, policy)
+}
+
+func enrichGraphPreciselyWithMemoryContext(ctx context.Context, absRoot string, g *graph.Graph, buildConfig buildctx.Config, configErr error, policy memorylimit.Policy) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if g.Build == nil {
 		g.Build = &graph.BuildMetadata{}
 	}
@@ -1366,7 +1415,10 @@ func enrichGraphPreciselyWithMemory(absRoot string, g *graph.Graph, buildConfig 
 	if configErr != nil {
 		err = fmt.Errorf("build context resolution failed: %w", configErr)
 	} else {
-		err = precise.EnrichWithOptions(absRoot, g, buildConfig, precise.Options{LowMemory: policy.Mode == memorylimit.ModeLow})
+		err = precise.EnrichWithOptions(absRoot, g, buildConfig, precise.Options{Context: ctx, LowMemory: policy.Mode == memorylimit.ModeLow})
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	if err != nil {
 		g.Build.Precision = graph.PrecisionFallback
@@ -1390,13 +1442,23 @@ func buildPreciseGraphWithMemory(absRoot string, policy memorylimit.Policy) (*gr
 }
 
 func buildPreciseGraphWithMemoryAndTags(absRoot string, policy memorylimit.Policy, tags []string) (*graph.Graph, error) {
-	buildConfig, configErr := resolveBuildConfigWithTags(absRoot, tags)
+	return buildPreciseGraphWithMemoryAndTagsContext(context.Background(), absRoot, policy, tags)
+}
+
+func buildPreciseGraphWithMemoryAndTagsContext(ctx context.Context, absRoot string, policy memorylimit.Policy, tags []string) (*graph.Graph, error) {
+	buildConfig, configErr := buildctx.ResolveOrDefaultWithOptions(ctx, absRoot, buildctx.ResolveOptions{BuildTags: tags})
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	previous, _ := loadGraph(absRoot)
-	g, err := buildGraphWithConfig(absRoot, buildConfig, configErr, previous)
+	g, err := buildGraphWithConfigContext(ctx, absRoot, buildConfig, configErr, previous)
 	if err != nil {
 		return nil, err
 	}
-	if err := enrichGraphPreciselyWithMemory(absRoot, g, buildConfig, configErr, policy); err != nil {
+	if err := enrichGraphPreciselyWithMemoryContext(ctx, absRoot, g, buildConfig, configErr, policy); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		fmt.Fprintf(os.Stderr, "warning: precise MCP refresh fell back to AST analysis: %v\n", err)
 		return g, fmt.Errorf("precise MCP refresh failed; graph is precise_fallback: %w", err)
 	}
@@ -1461,9 +1523,6 @@ func potentialCallName(raw string) string {
 // emptyMsg is printed when results are empty in text mode.
 // Returns the exit code (always 0 for empty results).
 func printResults(cmd, query string, results []search.Result, emptyMsg string) int {
-	if jsonMode {
-		return PrintJSON(okEnvelope(cmd, query, results, len(results)))
-	}
 	if filesOnlyMode {
 		seenFiles := make(map[string]bool)
 		for _, r := range results {
@@ -1474,12 +1533,38 @@ func printResults(cmd, query string, results []search.Result, emptyMsg string) i
 		}
 		return 0
 	}
+	// Legacy list commands share the same bounded row contract with MCP.
+	// Specialized commands (for example tests) retain their native schema.
+	var page *search.ResultPage
+	if search.SupportsListPagination(cmd) {
+		value, err := listPage(cmd, results)
+		if err != nil {
+			return failCommand(cmd, err.Error())
+		}
+		page = &value
+		results = results[value.Offset : value.Offset+value.Returned]
+	}
+	if jsonMode {
+		envelope := okEnvelope(cmd, query, results, len(results))
+		if page != nil {
+			envelope.Total = &page.Total
+			envelope.Returned = &page.Returned
+			envelope.Truncated = &page.Truncated
+			envelope.NextCursor = &page.NextCursor
+			envelope.Limit = page.Limit
+			envelope.Offset = &page.Offset
+		}
+		return PrintJSON(envelope)
+	}
 	if len(results) == 0 {
 		fmt.Println(emptyMsg)
 		return 0
 	}
 	for _, r := range results {
 		fmt.Println(r.String())
+	}
+	if page != nil && page.Truncated {
+		fmt.Printf("\nReturned %d of %d results. Continue with the same filters and --cursor %s\n", page.Returned, page.Total, page.NextCursor)
 	}
 	return 0
 }
@@ -1946,11 +2031,33 @@ func graphRefresherWithServingState(
 	serveDegraded bool,
 	publishers ...func(*graph.Graph) (graphPublication, error),
 ) (func() (*graph.Graph, error), func() graphstate.State) {
+	var contextPublishers []func(context.Context, *graph.Graph) (graphPublication, error)
+	for _, publisher := range publishers {
+		contextPublishers = append(contextPublishers, func(_ context.Context, g *graph.Graph) (graphPublication, error) { return publisher(g) })
+	}
+	refresh, state := graphRefresherWithServingStateContext(initial, initialState, root,
+		func(_ context.Context, root string) (*graph.Graph, error) { return buildAST(root) },
+		func(_ context.Context, root string) (*graph.Graph, error) { return buildPrecise(root) },
+		func(_ context.Context, g *graph.Graph, root string) search.StaleResult { return freshness(g, root) },
+		serveDegraded, contextPublishers...)
+	return func() (*graph.Graph, error) { return refresh(context.Background()) }, state
+}
+
+func graphRefresherWithServingStateContext(
+	initial *graph.Graph,
+	initialState graphstate.State,
+	root string,
+	buildAST func(context.Context, string) (*graph.Graph, error),
+	buildPrecise func(context.Context, string) (*graph.Graph, error),
+	freshness func(context.Context, *graph.Graph, string) search.StaleResult,
+	serveDegraded bool,
+	publishers ...func(context.Context, *graph.Graph) (graphPublication, error),
+) (func(context.Context) (*graph.Graph, error), func() graphstate.State) {
 	latest := initial
 	latestSource := initialState.Source
 	artifactPath := filepath.Join(root, graphFile)
 	artifactInfo := graphArtifactInfo(artifactPath)
-	var publisher func(*graph.Graph) (graphPublication, error)
+	var publisher func(context.Context, *graph.Graph) (graphPublication, error)
 	if len(publishers) > 0 {
 		publisher = publishers[0]
 	}
@@ -1977,12 +2084,15 @@ func graphRefresherWithServingState(
 		return graphstate.New(candidate, source, freshnessState, refresh, persistence(source, persistenceOutcome, persistenceDiagnostic))
 	}
 
-	publishLatest := func(refreshOutcome string, refreshAttempted bool) (*graph.Graph, error) {
+	publishLatest := func(ctx context.Context, refreshOutcome string, refreshAttempted bool) (*graph.Graph, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if publisher == nil {
 			tracker.set(stateFor(latest, latestSource, false, graphstate.Refresh{Policy: "automatic", Attempted: refreshAttempted, Outcome: refreshOutcome}, "", ""))
 			return latest, nil
 		}
-		publication, err := publisher(latest)
+		publication, err := publisher(ctx, latest)
 		if err != nil {
 			pendingPublication = true
 			tracker.set(stateFor(latest, latestSource, false, graphstate.Refresh{Policy: "automatic", Attempted: refreshAttempted, Outcome: refreshOutcome}, "failed", err.Error()))
@@ -2004,7 +2114,10 @@ func graphRefresherWithServingState(
 		return latest, nil
 	}
 
-	refresh := func() (*graph.Graph, error) {
+	refresh := func(ctx context.Context) (*graph.Graph, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		currentArtifactInfo := graphArtifactInfo(artifactPath)
 		if graphArtifactChanged(artifactInfo, currentArtifactInfo) {
 			if persisted, err := loadGraph(root); err == nil {
@@ -2015,13 +2128,13 @@ func graphRefresherWithServingState(
 					latest = persisted
 					latestSource = graphstate.SourcePersisted
 					pendingPublication = false
-					stale := freshness(latest, root).IsStale
+					stale := freshness(ctx, latest, root).IsStale
 					tracker.set(stateFor(latest, latestSource, stale, graphstate.Refresh{Policy: "automatic", Attempted: true, Outcome: "adopted"}, "persisted", ""))
 				}
 			}
 		}
 
-		if latest != nil && !freshness(latest, root).IsStale {
+		if latest != nil && !freshness(ctx, latest, root).IsStale {
 			if err := precisionFallbackError(latest); err != nil {
 				tracker.set(stateFor(latest, latestSource, false, graphstate.Refresh{Policy: "automatic", Attempted: false, Outcome: "fallback", Diagnostic: err.Error()}, "skipped_degraded", ""))
 				if serveDegraded {
@@ -2030,7 +2143,10 @@ func graphRefresherWithServingState(
 				return nil, err
 			}
 			if pendingPublication {
-				published, err := publishLatest("not_needed", false)
+				published, err := publishLatest(ctx, "not_needed", false)
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
 				if err != nil && serveDegraded {
 					return latest, nil
 				}
@@ -2046,18 +2162,24 @@ func graphRefresherWithServingState(
 		const maxAttempts = 2
 		var stale search.StaleResult
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			build := buildAST
 			if latest != nil && latest.Build.PreciseRequested() {
 				build = buildPrecise
 			}
-			refreshed, err := build(root)
+			refreshed, err := build(ctx, root)
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			if refreshed != nil {
 				latest = refreshed
 				latestSource = graphstate.SourceInMemory
 			}
 			if err != nil {
 				if latest != nil {
-					stale = freshness(latest, root)
+					stale = freshness(ctx, latest, root)
 					outcome := "failed"
 					persistenceOutcome := ""
 					if latest.Build != nil && latest.Build.EffectivePrecision() == graph.PrecisionFallback {
@@ -2074,7 +2196,7 @@ func graphRefresherWithServingState(
 			if latest == nil {
 				return nil, errors.New("graph refresh returned no graph")
 			}
-			stale = freshness(latest, root)
+			stale = freshness(ctx, latest, root)
 			if !stale.IsStale {
 				if err := precisionFallbackError(latest); err != nil {
 					tracker.set(stateFor(latest, latestSource, false, graphstate.Refresh{Policy: "automatic", Attempted: true, Outcome: "fallback", Diagnostic: err.Error()}, "skipped_degraded", ""))
@@ -2083,7 +2205,10 @@ func graphRefresherWithServingState(
 					}
 					return nil, err
 				}
-				published, err := publishLatest("refreshed", true)
+				published, err := publishLatest(ctx, "refreshed", true)
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
 				if err != nil && serveDegraded {
 					return latest, nil
 				}
@@ -2286,31 +2411,35 @@ func runMCP(args []string) int {
 	if configErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: MCP build context resolution failed: %v\n", configErr)
 	}
-	buildAST := func(root string) (*graph.Graph, error) {
-		return buildGraphWithTags(root, options.Tags)
+	buildASTContext := func(ctx context.Context, root string) (*graph.Graph, error) {
+		return buildGraphWithTagsContext(ctx, root, options.Tags)
 	}
-	freshness := func(candidate *graph.Graph, root string) search.StaleResult {
-		config, _ := resolveBuildConfigWithTags(root, options.Tags)
+	buildAST := func(root string) (*graph.Graph, error) {
+		return buildASTContext(context.Background(), root)
+	}
+	freshness := func(ctx context.Context, candidate *graph.Graph, root string) search.StaleResult {
+		config, _ := buildctx.ResolveOrDefaultWithOptions(ctx, root, buildctx.ResolveOptions{BuildTags: options.Tags})
 		return search.StaleWithConfig(candidate, root, config)
 	}
 
-	var publishers []func(*graph.Graph) (graphPublication, error)
+	var publishers []func(context.Context, *graph.Graph) (graphPublication, error)
 	if options.PersistRefresh {
-		publishers = append(publishers, func(candidate *graph.Graph) (graphPublication, error) {
-			return publishGraphArtifactsWithFreshness(absRoot, candidate, refreshArtifactPublication, freshness)
+		publishers = append(publishers, func(ctx context.Context, candidate *graph.Graph) (graphPublication, error) {
+			return publishGraphArtifactsWithFreshnessContext(ctx, absRoot, candidate, refreshArtifactPublication, func(g *graph.Graph, root string) search.StaleResult { return freshness(ctx, g, root) })
 		})
 	}
-	preciseBuilder := func(root string) (*graph.Graph, error) {
+	preciseBuilder := func(ctx context.Context, root string) (*graph.Graph, error) {
 		controller.Reclaim()
-		built, buildErr := buildPreciseGraphWithMemoryAndTags(root, options.Memory, options.Tags)
+		built, buildErr := buildPreciseGraphWithMemoryAndTagsContext(ctx, root, options.Memory, options.Tags)
 		controller.Reclaim()
 		return built, buildErr
 	}
-	rebuild, graphState := graphRefresherWithServingState(g, initialState, absRoot, buildAST, preciseBuilder, freshness, true, publishers...)
+	refreshContext, graphState := graphRefresherWithServingStateContext(g, initialState, absRoot, buildASTContext, preciseBuilder, freshness, true, publishers...)
 	buildBaseline := func(ctx context.Context, ref string) (*graph.Graph, error) {
-		return baseline.Build(ctx, absRoot, ref, buildAST)
+		return baseline.Build(ctx, absRoot, ref, func(root string) (*graph.Graph, error) { return buildASTContext(ctx, root) })
 	}
 
+	rebuild := func() (*graph.Graph, error) { return refreshContext(context.Background()) }
 	if err := mcp.Serve(g, rebuild, buildAST, buildBaseline, Version, mcp.ServerOptions{
 		PersistRefresh:          options.PersistRefresh,
 		MemoryMode:              string(options.Memory.Mode),
@@ -2319,6 +2448,7 @@ func runMCP(args []string) int {
 		RequestedBuildTags:      append([]string(nil), options.Tags...),
 		EffectiveBuildTags:      buildConfig.BuildContext().BuildTags,
 		GraphState:              graphState,
+		RefreshContext:          refreshContext,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
 		return 1
@@ -2872,9 +3002,12 @@ WORKSPACES
                              refreshed member; max-memory remains a soft runtime memory target.
   workspace status [path] [--tags=<tag[,tag...]>]
                             Report member availability/freshness/capabilities and
-                             overlay input/artifact fingerprints.
+                             overlay input/artifact fingerprints and verified per-scope
+                             unresolved HTTP counts (not a freshness failure).
   workspace query [--scope id] [--workspace path] [--tags=<tag[,tag...]>] <term...>
-                             Search symbols, packages, modules, and HTTP contracts.
+                             Search symbols, packages, modules, HTTP contracts, and
+                             unresolved HTTP diagnostics. Manifest http_clients maps
+                             base expressions or env:KEY to logical authority_id.
   workspace path [--scope id] [--workspace path] [--tags=<tag[,tag...]>] [--include-possible] <from> <to>
                              Find the best ranked path in the virtual federated graph.
   workspace impact [--scope id] [--workspace path] [--tags=<tag[,tag...]>] [--include-possible] <target>
@@ -2976,16 +3109,21 @@ CALL GRAPH
                              implementation and return a shared source site once.
                              --depth 2-10 expands N hops up (callers-of-callers).
   callees <function> [--no-tests] [--depth N]    find functions that a target function calls; --depth 2-10 expands N hops down
-  impact <name>              Full upstream blast radius (all transitive callers).
-  impact --uncommitted       Blast radius of all uncommitted modified symbols.
-  impact --since <ref>       Blast radius of all symbols changed since a git ref (e.g. main, HEAD~5).
+  impact <name> [--exact-only] Full upstream blast radius (all transitive callers).
+  impact --uncommitted [--exact-only]
+                             Blast radius of all uncommitted modified symbols.
+  impact --since <ref> [--exact-only]
+                             Blast radius of all symbols changed since a git ref (e.g. main, HEAD~5).
                              Composes changes --git <ref> + impact into one call.
+                             Results retain canonical identities and exact/possible certainty.
+                             --exact-only excludes every path depending on possible evidence.
+                             Mermaid uses dotted edges for possible paths; no silent hop cutoff.
   path <from> <to>           Best ranked call chain between two symbols.
                              For callers/callees/impact/path: the symbol argument can be a short
                              name ("Validate" — fuzzy substring), concrete dot-notation,
                              interface notation ("Repository.Delete" for callers), or a fully-qualified ID
                              ("pkg/path::(*S).Validate" — exact match, no same-name conflation).
-                             Use the FQ form to disambiguate overloads. Requires --precise build.
+                             Use the FQ form to disambiguate overloads. --precise improves resolution.
   trace <err_str>            Find the origin of an error and trace backwards to entry points.
   orphans                    Functions unreachable from runtime/test/route/public entry
                              points via BFS, including dead chains with internal callers.
@@ -3082,6 +3220,8 @@ CODE QUALITY
                              complexity, SQL, env, routes, concurrency, tests,
                              interface satisfaction, and an opinionated role
                              classification into one prompt-ready text block.
+                             Ambiguous names return sorted candidates, not an arbitrary narrative.
+                             Select a canonical ID to request gograph.explain.v1 for one symbol.
   hotspot [--top N] [--include-tests]
                              Rank functions by incoming call count (fan-in).
                              Shows the most-depended-on code to study first.
@@ -3117,13 +3257,20 @@ CODE QUALITY
                              Add --transitive for the full closure (BFS).
   dependents <pkg>           Packages that import the named package (inverse of deps).
                              Essential before any package-level refactor.
-  changes                    Symbols modified/added/deleted since the trusted persisted graph.
-                             Deleted includes files absent from the current safely selected
-                             inventory (gone, ignored, build-inactive, or unsafe).
-  changes --git <ref>        Symbols in files changed since a git ref (MODIFIED
-                             only). Useful for PR review and release scoping.
-                             NEW and DELETED detection requires a full baseline
-                             build. Ref must match [A-Za-z0-9._/\-~^]+.
+  changes                    Declaration-level changes since the trusted persisted graph.
+                             Compares declaration fingerprints, not every symbol in an edited file.
+                             Reuses recorded platform/build tags and rediscovers current
+                             module ownership. Missing legacy selection is partial.
+                             Package names distinguish test twins; repeated init declarations
+                             and initialization-order changes are retained. Racing source
+                             invalidates the result; retry on a stable checkout.
+                             Removed declarations are deleted; existing but deselected files
+                             are excluded. Unsafe paths and parse failures are diagnostics,
+                             never proof of deletion. Legacy missing digests produce unknown.
+  changes --git <ref>        Added, modified, and deleted declarations against a Git reference.
+                             Builds a confined declaration baseline without compiling Go code.
+                             gograph.changes.v1 reports complete/partial/cannot_evaluate;
+                             incomplete CLI evaluations exit 2. Ref must match [A-Za-z0-9._/\-~^]+.
                              Examples: --git main  --git HEAD~5  --git v1.4.50
   godobj [flags]             God-object struct candidates scored by method count,
                              field count, and outgoing calls.
@@ -3152,7 +3299,8 @@ EXTRACTION
                              Module accepts an exact path/directory or unique basename.
                              The repository directory name selects a root module.
                              Defaults to 100 rows, maximum 200, with a 64 KiB result
-                             budget. Reuse the same filters with next_cursor to continue.
+                             budget. Reuse the same snapshot and filters with next_cursor to continue.
+                             A refresh invalidates old cursors; restart without --cursor.
                              JSON mirrors pagination fields on the outer envelope.
                              --files-only follows all pages for a complete file census,
                              not a complete route-row dump.
@@ -3172,7 +3320,8 @@ EXTRACTION
                              path/directory and unique/root basename rules as routes.
                              Tests remain included for compatibility; --no-tests excludes
                              *_test.go. Defaults to 100 rows, maximum 200, within 64 KiB.
-                             Reuse the same filters with next_cursor to continue. JSON
+                             Reuse the same snapshot and filters with next_cursor to continue.
+                             A refresh invalidates old cursors; restart without --cursor. JSON
                              mirrors total/returned/truncated/next_cursor on its envelope;
                              --files-only follows every page. Direct literals and statically
                              resolvable local or same-file package const/var declarations,
@@ -3182,8 +3331,13 @@ EXTRACTION
                              retain write tables; ON CONFLICT remains INSERT. Dynamic
                              or unsupported SQL is not invented and classification status
                              is exact, partial, or unknown.
-  httpcalls [term]           All outbound HTTP client calls via net/http.
-                             Filter by method or URL substring.
+  httpcalls [term]           net/http Get/Post/PostForm/Head and possible request construction
+                             (NewRequest/NewRequestWithContext). Filter by method, URL,
+                             base expression, or function. Static constants and bounded
+                             base + suffix expressions are recorded. Runtime environment
+                             values are never read; workspace http_clients supplies explicit
+                             authority mappings. Client receiver methods and arbitrary
+                             URL builders are not inferred. Construction is not dispatch proof.
   errorflow <term> [--no-tests]
                              Trace likely error paths up to entry points (AST heuristic, NO SSA).
                              --no-tests excludes test-file references from related-test collection.
@@ -3234,6 +3388,10 @@ AGENT INTEGRATION
                              Failed enrichment may serve a marked in-memory fallback; an
                              ordinary refresh failure may serve the last trusted stale graph.
                              Build-context mismatches still fail closed.
+                             Requests pin immutable graph/state snapshots; only refresh is serialized.
+                             Request cancellation reaches Go loading and checks before publication.
+                             A started artifact commit finishes its set; cancellation is not rollback.
+                             Derived query indexes are retained for the current fingerprint only.
                              --persist-refresh is opt-in and publishes the latest successful
                              refresh to .gograph; it is not a multi-branch graph cache.
                              Memory options apply the same low-memory policy to startup
@@ -3279,6 +3437,8 @@ OUTPUTS (after 'build')
 
 func printHelp() {
 	fmt.Print(helpText)
+	printListPaginationHelp("")
+	fmt.Println("\nCHANGE SELECTION\n  " + search.CurrentChangeSelectionContract)
 }
 
 func printCommandHelp(cmd string) {
@@ -3306,6 +3466,12 @@ func printCommandHelp(cmd string) {
 	}
 	if !found {
 		printHelp()
+	} else {
+		printListPaginationHelp(cmd)
+		switch cmd {
+		case "impact", "context", "plan", "review", "risk", "check", "changes":
+			fmt.Println("\nCHANGE SELECTION\n  " + search.CurrentChangeSelectionContract)
+		}
 	}
 }
 
@@ -4029,7 +4195,6 @@ func runDependents(args []string) int {
 // runChanges reports symbols modified/added/deleted since the persisted graph,
 // or — when --git <ref> is provided — symbols in files changed since that git ref.
 func runChanges(args []string) int {
-	// Parse --git <ref> flag.
 	var gitRef string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -4043,84 +4208,67 @@ func runChanges(args []string) int {
 			return failCommandf("changes", "unknown argument: %s", args[i])
 		}
 	}
-
 	g, err := loadGraph(".")
 	if err != nil {
 		return failCommand("changes", err.Error())
 	}
-	root := graphRoot(g)
-
-	// --- git-ref mode ---
+	var result *search.ChangesResult
 	if gitRef != "" {
-		result, err := search.ChangesByGitRef(g, root, gitRef)
+		result, err = search.ChangesByGitRef(g, graphRoot(g), gitRef)
 		if err != nil {
 			return failCommand("changes", err.Error())
 		}
-		if jsonMode {
-			return PrintJSON(okEnvelope("changes", gitRef, result, len(result.ChangedFiles)+len(result.Symbols)))
-		}
-		if len(result.ChangedFiles) == 0 && len(result.Symbols) == 0 {
-			fmt.Printf("No Go file changes detected since %s.\n", gitRef)
-			return 0
-		}
-		fmt.Printf("Changes since %s (git-ref mode — MODIFIED only):\n\n", gitRef)
-		if len(result.ChangedFiles) > 0 {
-			fmt.Printf("Modified files (%d):\n", len(result.ChangedFiles))
-			for _, f := range result.ChangedFiles {
-				fmt.Printf("  %s\n", f)
-			}
-			fmt.Println()
-		}
-		fmt.Printf("Affected symbols: %d modified\n", len(result.Symbols))
-		fmt.Println("Note: NEW and DELETED detection requires a full baseline build from that ref.")
-		fmt.Println()
-		for _, sym := range result.Symbols {
-			fmt.Printf("[MODIFIED] %s  (%s:%d)\n", sym.Name, sym.File, sym.Line)
-		}
-		return 0
+	} else {
+		result = search.Changes(g, graphRoot(g))
 	}
-
-	// --- default mode: content digests vs graph.json ---
-	result := search.Changes(g, root)
+	exitCode := 0
+	if result.Evaluation != "complete" {
+		exitCode = 2
+	}
 	if jsonMode {
-		return PrintJSON(okEnvelope("changes", "", result, len(result.ChangedFiles)+len(result.Symbols)))
+		envelope := okEnvelope("changes", gitRef, result, len(result.ChangedFiles)+len(result.Symbols))
+		if exitCode != 0 {
+			envelope.Status = result.Evaluation
+		}
+		if code := PrintJSON(envelope); code != 0 {
+			return code
+		}
+		return exitCode
 	}
-
+	label := "persisted graph"
+	if gitRef != "" {
+		label = gitRef
+	}
+	fmt.Printf("Changes since %s — evaluation: %s\n", label, result.Evaluation)
+	for _, diagnostic := range result.Diagnostics {
+		fmt.Printf("  warning: %s\n", diagnostic)
+	}
 	if len(result.ChangedFiles) == 0 && len(result.Symbols) == 0 {
-		fmt.Printf("No changes detected (graph generated: %s).\n",
-			result.GraphAge.Format("2006-01-02 15:04:05 UTC"))
-		return 0
-	}
-
-	fmt.Printf("Changes since persisted graph (%s):\n\n",
-		result.GraphAge.Format("2006-01-02 15:04:05 UTC"))
-
-	if len(result.ChangedFiles) > 0 {
-		fmt.Printf("Modified files (%d):\n", len(result.ChangedFiles))
-		for _, f := range result.ChangedFiles {
-			fmt.Printf("  %s\n", f)
+		if exitCode == 0 {
+			fmt.Println("No changes detected.")
+		} else {
+			fmt.Println("No definitive changes available; evaluation is incomplete.")
 		}
-		fmt.Println()
+		return exitCode
 	}
-
+	fmt.Printf("\nChanged files (%d):\n", len(result.ChangedFiles))
+	for _, file := range result.ChangedFiles {
+		fmt.Printf("  %s\n", file)
+	}
 	counts := map[search.ChangeStatus]int{}
-	for _, s := range result.Symbols {
-		counts[s.Status]++
+	for _, symbol := range result.Symbols {
+		counts[symbol.Status]++
 	}
-	fmt.Printf("Affected symbols: %d modified, %d new, %d deleted\n\n",
-		counts[search.ChangeModified], counts[search.ChangeNew], counts[search.ChangeDeleted])
-
-	for _, sym := range result.Symbols {
-		switch sym.Status {
-		case search.ChangeNew:
-			fmt.Printf("[NEW     ] %s  (%s:%d)\n", sym.Name, sym.File, sym.Line)
-		case search.ChangeDeleted:
-			fmt.Printf("[DELETED ] %s  (%s)\n", sym.Name, sym.File)
-		case search.ChangeModified:
-			fmt.Printf("[MODIFIED] %s  (%s:%d)\n", sym.Name, sym.File, sym.Line)
+	fmt.Printf("\nAffected symbols: %d modified, %d new, %d deleted, %d excluded, %d unknown\n\n",
+		counts[search.ChangeModified], counts[search.ChangeNew], counts[search.ChangeDeleted], counts[search.ChangeExcluded], counts[search.ChangeUnknown])
+	for _, symbol := range result.Symbols {
+		name := symbol.StableID
+		if name == "" {
+			name = symbol.Name
 		}
+		fmt.Printf("[%-8s] %s  (%s:%d)\n", strings.ToUpper(string(symbol.Status)), name, symbol.File, symbol.Line)
 	}
-	return 0
+	return exitCode
 }
 
 // runSource extracts the raw source code of a named symbol.
@@ -4199,6 +4347,19 @@ func runImports(args []string) int {
 
 // runImpact traverses the call graph backwards to find all symbols that eventually call the target.
 func runImpact(args []string) int {
+	options := search.ImpactOptions{IncludeTests: true}
+	filtered := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "--exact-only" {
+			if options.ExactOnly {
+				return failCommand("impact", "--exact-only must not be repeated")
+			}
+			options.ExactOnly = true
+		} else {
+			filtered = append(filtered, arg)
+		}
+	}
+	args = filtered
 	if len(args) == 0 {
 		return failCommand("impact", "usage: gograph impact <symbol>\n       gograph impact --uncommitted\n       gograph impact --since <ref>")
 	}
@@ -4221,24 +4382,24 @@ func runImpact(args []string) int {
 	}
 
 	if args[0] == "--uncommitted" {
-		return runImpactUncommitted(g)
+		return runImpactUncommittedWithOptions(g, options)
 	}
 
 	if args[0] == "--since" {
-		return runImpactSince(g, args[1])
+		return runImpactSinceWithOptions(g, args[1], options)
 	}
 
 	term := args[0]
 	if mermaidMode {
-		fmt.Println(search.ImpactToMermaid(g, term, true))
+		fmt.Println(search.NewSnapshot(g).ImpactMermaid([]string{term}, options))
 		return 0
 	}
-	results := search.Impact(g, term, true)
+	results := search.ImpactWithOptions(g, []string{term}, "downstream impact of "+term, options)
 	return printResults("impact", term, results, fmt.Sprintf("No callers found in blast radius of %q.", args[0]))
 }
 
 // runImpactUncommitted parses git diff to find modified symbols, then computes their blast radius.
-func runImpactUncommitted(g *graph.Graph) int {
+func runImpactUncommittedWithOptions(g *graph.Graph, options search.ImpactOptions) int {
 	modifiedSymbolNames, err := search.UncommittedSymbols(g)
 	if err != nil {
 		return failCommand("impact", err.Error())
@@ -4249,34 +4410,37 @@ func runImpactUncommitted(g *graph.Graph) int {
 	}
 
 	if mermaidMode {
-		fmt.Println(search.ImpactMultipleToMermaid(g, modifiedSymbolNames, true))
+		fmt.Println(search.NewSnapshot(g).ImpactMermaid(modifiedSymbolNames, options))
 		return 0
 	}
 	reason := fmt.Sprintf("downstream impact of uncommitted changes (%d symbols)", len(modifiedSymbolNames))
-	results := search.ImpactMultiple(g, modifiedSymbolNames, reason, true)
+	results := search.ImpactWithOptions(g, modifiedSymbolNames, reason, options)
 	return printResults("impact", "--uncommitted", results, "No callers found in blast radius of uncommitted changes.")
 }
 
 // runImpactSince computes the blast radius of all symbols changed since a git ref.
-func runImpactSince(g *graph.Graph, ref string) int {
+func runImpactSinceWithOptions(g *graph.Graph, ref string, options search.ImpactOptions) int {
 	root := graphRoot(g)
 	changes, err := search.ChangesByGitRef(g, root, ref)
 	if err != nil {
 		return failCommand("impact", err.Error())
 	}
+	if changes.Evaluation != "complete" {
+		return failCommand("impact", "cannot evaluate impact from incomplete changes: "+strings.Join(changes.Diagnostics, "; "))
+	}
 	if len(changes.Symbols) == 0 {
 		return printResults("impact", "--since "+ref, nil, fmt.Sprintf("No Go symbol changes found since %q.", ref))
 	}
-	names := make([]string, 0, len(changes.Symbols))
-	for _, s := range changes.Symbols {
-		names = append(names, s.Name)
+	names, err := search.CurrentChangedSymbolIDs(g, changes)
+	if err != nil {
+		return failCommand("impact", err.Error())
 	}
 	if mermaidMode {
-		fmt.Println(search.ImpactMultipleToMermaid(g, names, true))
+		fmt.Println(search.NewSnapshot(g).ImpactMermaid(names, options))
 		return 0
 	}
 	reason := fmt.Sprintf("downstream impact of changes since %s (%d symbols)", ref, len(names))
-	results := search.ImpactMultiple(g, names, reason, true)
+	results := search.ImpactWithOptions(g, names, reason, options)
 	return printResults("impact", "--since "+ref, results, fmt.Sprintf("No callers found in blast radius of changes since %q.", ref))
 }
 
@@ -4324,7 +4488,8 @@ func runRoutes(args []string) int {
 	if err != nil {
 		return failCommand("routes", err.Error())
 	}
-	page, err := search.QueryRoutes(g, query)
+	snapshot := search.NewSnapshot(g)
+	page, err := snapshot.QueryRoutes(query)
 	if err != nil {
 		return failCommand("routes", err.Error())
 	}
@@ -4349,7 +4514,7 @@ func runRoutes(args []string) int {
 				break
 			}
 			query.Cursor = page.NextCursor
-			page, err = search.QueryRoutes(g, query)
+			page, err = snapshot.QueryRoutes(query)
 			if err != nil {
 				return failCommand("routes", err.Error())
 			}
@@ -4436,7 +4601,8 @@ func runSQL(args []string) int {
 	if err != nil {
 		return failCommand("sql", err.Error())
 	}
-	page, err := search.QuerySQL(g, query)
+	snapshot := search.NewSnapshot(g)
+	page, err := snapshot.QuerySQL(query)
 	if err != nil {
 		return failCommand("sql", err.Error())
 	}
@@ -4461,7 +4627,7 @@ func runSQL(args []string) int {
 				break
 			}
 			query.Cursor = page.NextCursor
-			page, err = search.QuerySQL(g, query)
+			page, err = snapshot.QuerySQL(query)
 			if err != nil {
 				return failCommand("sql", err.Error())
 			}
@@ -5131,7 +5297,19 @@ func runExplain(args []string) int {
 		return 0
 	}
 	if jsonMode {
-		return PrintJSON(okEnvelope("explain", term, result, 1))
+		envelope := okEnvelope("explain", term, result, 1)
+		if result.Status == "ambiguous" {
+			envelope.Status = "ambiguous"
+			envelope.Count = len(result.Candidates)
+		}
+		return PrintJSON(envelope)
+	}
+	if result.Status == "ambiguous" {
+		fmt.Println(result.Narrative)
+		for _, candidate := range result.Candidates {
+			fmt.Printf("  %s (%s:%d)\n", candidate.StableID, candidate.File, candidate.Line)
+		}
+		return 0
 	}
 	fmt.Printf("=== EXPLAIN: %s ===\n\n%s\n", result.Symbol, result.Narrative)
 	return 0

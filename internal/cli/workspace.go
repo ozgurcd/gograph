@@ -87,9 +87,25 @@ MANIFEST
     - id: api
       path: services/api
       precision: precise
+      services:
+        - id: api-service
+          http:
+            authorities: [api.internal]
+    - id: client
+      path: services/client
+      http_clients:
+        - base: env:API_URL
+          authority_id: api-service
+          path_prefix: /v1
   scopes:
     - id: oss
-      repositories: [api]
+      repositories: [api, client]
+
+  http_clients explicitly maps lexical URL bases (cfg.API or env:API_URL) to
+  logical service IDs. No environment values are read. Bounded static suffixes
+  resolve only inside the selected scope; request construction is possible,
+  not dispatch proof. Query returns http_unresolved diagnostics; status reports
+  verified per-scope counts. Unresolved records are never traversable edges.
 
   See docs/workspaces.md in the source tree, or:
   https://gograph.identuum.ai/docs/command-reference/#federated-workspaces
@@ -311,6 +327,11 @@ func runWorkspaceStatus(args []string) int {
 		overlayState = "fresh"
 	}
 	fmt.Printf("  overlay: %s\n", overlayState)
+	for _, scope := range manifest.Scopes {
+		if count, verified := status.Overlay.HTTPUnresolvedByScope[scope.ID]; verified {
+			fmt.Printf("    %s: %d unresolved HTTP call(s)\n", scope.ID, count)
+		}
+	}
 	return 0
 }
 
@@ -406,7 +427,10 @@ func runWorkspaceQuery(args []string) int {
 	}
 	response := workspacegraph.Query(loaded, scope, term)
 	if jsonMode {
-		return PrintJSON(okEnvelope("workspace query", term, response, len(response.Results)))
+		return PrintJSON(okEnvelope("workspace query", term, response, len(response.Results)+len(response.HTTPUnresolved)))
+	}
+	for _, unresolved := range response.HTTPUnresolved {
+		fmt.Printf("unresolved HTTP: %s %s — %s (%s:%s:%d)\n", unresolved.Method, unresolved.URL, unresolved.Reason, unresolved.Source.RepositoryID, unresolved.File, unresolved.Line)
 	}
 	for _, result := range response.Results {
 		fmt.Printf("%s", workspaceDisplayNode(result.Node))

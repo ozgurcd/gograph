@@ -162,7 +162,7 @@ func TestCallersToMermaidExactAvoidsSubstringCollisions(t *testing.T) {
 	}
 }
 
-func TestCallersAndImpactMermaidUseTheirOwnDepthBounds(t *testing.T) {
+func TestCallersDepthIsBoundedButImpactDoesNotSilentlyStop(t *testing.T) {
 	g := &graph.Graph{}
 	for i := 0; i <= 21; i++ {
 		name := fmt.Sprintf("Hop%02d", i)
@@ -184,8 +184,8 @@ func TestCallersAndImpactMermaidUseTheirOwnDepthBounds(t *testing.T) {
 		t.Fatalf("public callers diagram did not clamp depth to 10:\n%s", callers)
 	}
 	impact := search.ImpactToMermaid(g, "Hop00", true)
-	if !strings.Contains(impact, `["Hop20"]`) || strings.Contains(impact, `["Hop21"]`) {
-		t.Fatalf("impact diagram did not traverse exactly its 20-hop bound:\n%s", impact)
+	if !strings.Contains(impact, `["Hop20"]`) || !strings.Contains(impact, `["Hop21"]`) {
+		t.Fatalf("impact diagram silently truncated transitive reachability:\n%s", impact)
 	}
 }
 

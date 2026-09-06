@@ -81,9 +81,19 @@ func TestMutateHonorsQualifiedType(t *testing.T) {
 
 func TestImpact(t *testing.T) {
 	g := buildCoverageGraph()
+	// Impact requires real caller identities. The old empty-ID fixture
+	// accidentally passed by returning the unrelated last symbol, init.
+	for i := range g.Symbols {
+		if g.Symbols[i].Name == "Start" {
+			g.Symbols[i].ID = "example/api::(*Server).Start"
+		}
+	}
+	g.Symbols = append(g.Symbols, graph.SymbolNode{ID: "example::main", Name: "main", Kind: graph.KindFunction})
+	g.Calls[1].CallerSymbolID = "example::main"
+	g.Calls[1].CalleeSymbolID = "example/api::(*Server).Start"
 	res := search.Impact(g, "(*Server).Start", true)
-	if len(res) == 0 {
-		t.Error("expected Impact to return results for '(*Server).Start'")
+	if len(res) != 1 || res[0].Name != "main" {
+		t.Errorf("expected only main to be impacted, got %+v", res)
 	}
 }
 

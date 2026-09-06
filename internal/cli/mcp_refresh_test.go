@@ -588,8 +588,9 @@ func TestRunningMCPHandlerAdoptsNewerPersistedPreciseGraph(t *testing.T) {
 		t.Fatalf("gograph_callers returned an error result: %s", mcpResultText(t, result))
 	}
 	text := mcpResultText(t, result)
-	if count := strings.Count(text, "[caller]"); count != 1 || !strings.Contains(text, "Purge") || !strings.Contains(text, "service/purge.go:12:20") {
-		t.Fatalf("running handler did not adopt the precise interface graph once: callers=%d\n%s", count, text)
+	rows := decodeCLIResultRows(t, text)
+	if len(rows) != 1 || rows[0].Name != "Purge" || rows[0].CallSiteFile != "service/purge.go" || rows[0].CallSiteLine != 12 || rows[0].CallSiteColumn != 20 {
+		t.Fatalf("running handler did not adopt the precise interface graph once: callers=%d\n%s", len(rows), text)
 	}
 	if builds != 0 {
 		t.Fatalf("newer precise artifact triggered %d in-memory build(s), want 0", builds)

@@ -17,6 +17,7 @@ import (
 	protocol "github.com/mark3labs/mcp-go/mcp"
 	"github.com/ozgurcd/gograph/internal/graph"
 	mcppkg "github.com/ozgurcd/gograph/internal/mcp"
+	workspacegraph "github.com/ozgurcd/gograph/internal/workspace"
 )
 
 type workspaceQueryResult struct {
@@ -67,6 +68,10 @@ func Call() {
 func HTTPOnly() {
     _, _ = http.Get("https://api.internal/items")
 }
+type Config struct { API string }
+func Configured(cfg Config) { _, _ = http.Get(cfg.API + "/items") }
+func RequestOnly(cfg Config) { _, _ = http.NewRequest(http.MethodGet, cfg.API + "/items", nil) }
+func Unknown(cfg Config, id string) { _, _ = http.Get(cfg.API + "/items/" + id) }
 `
 	writeWorkspaceTestFile(t, filepath.Join(client, "client.go"), clientSource)
 	writeWorkspaceTestFile(t, filepath.Join(root, ".gograph-workspace.yml"), `schema_version: gograph.workspace-manifest.v1
@@ -75,6 +80,9 @@ default_scope: production
 repositories:
   - id: client
     path: client
+    http_clients:
+      - base: cfg.API
+        authority_id: api
   - id: server
     path: server
     services:
@@ -214,7 +222,7 @@ scopes:
 		t.Fatalf("workspace overlay status omitted identity: %+v", statusEnvelope.Results.Overlay)
 	}
 	for _, member := range statusEnvelope.Results.Members {
-		if !member.Available || !member.Fresh || member.ArtifactFingerprint == "" || member.SourceFingerprint == "" || member.BuildContextFingerprint == "" || member.AnalysisMode != "ast" || !member.Capabilities.ASTComplete || member.Capabilities.CallResolution != "ast_heuristic" || member.Capabilities.TestCallResolution != "ast_heuristic" || member.Capabilities.HTTPExtraction != "net_http_v1" || member.Capabilities.RPCExtraction != "unavailable" || member.Capabilities.TopicExtraction != "unavailable" {
+		if !member.Available || !member.Fresh || member.ArtifactFingerprint == "" || member.SourceFingerprint == "" || member.BuildContextFingerprint == "" || member.AnalysisMode != "ast" || !member.Capabilities.ASTComplete || member.Capabilities.CallResolution != "ast_heuristic" || member.Capabilities.TestCallResolution != "ast_heuristic" || member.Capabilities.HTTPExtraction != "net_http_v2" || member.Capabilities.RPCExtraction != "unavailable" || member.Capabilities.TopicExtraction != "unavailable" {
 			t.Fatalf("workspace member status omitted capabilities or fingerprints: %+v", member)
 		}
 	}
@@ -262,7 +270,37 @@ scopes:
 	}
 
 	assertWorkspaceCLIMCPParity(t, bin, root)
+	unknownRaw := runWorkspaceCLIResult(t, bin, root, "workspace", "query", "Unknown")
+	var unknownResponse workspacegraph.QueryResponse
+	if err := json.Unmarshal(unknownRaw, &unknownResponse); err != nil || len(unknownResponse.HTTPUnresolved) != 1 || unknownResponse.HTTPUnresolved[0].Reason != "dynamic_url_not_bounded" {
+		t.Fatalf("unresolved HTTP evidence lost: %v %s", err, unknownRaw)
+	}
+	statusRaw := runWorkspaceCLIResult(t, bin, root, "workspace", "status")
+	var httpStatus workspacegraph.Status
+	if err := json.Unmarshal(statusRaw, &httpStatus); err != nil || !httpStatus.Overlay.Fresh || httpStatus.Overlay.HTTPUnresolvedByScope["production"] != 1 {
+		t.Fatalf("unresolved HTTP status: %v %s", err, statusRaw)
+	}
+	for _, name := range []string{"Configured", "RequestOnly"} {
+		for _, includePossible := range []bool{false, true} {
+			args := []string{"workspace", "path", "client:" + name, "server:Handle"}
+			if includePossible {
+				args = append(args, "--include-possible")
+			}
+			raw := runWorkspaceCLIResult(t, bin, root, args...)
+			var response workspacegraph.PathResponse
+			wantFound := name == "Configured" || includePossible
+			if err := json.Unmarshal(raw, &response); err != nil || response.Found != wantFound {
+				t.Fatalf("HTTP path %v = %v %s", args, err, raw)
+			}
+		}
+	}
 	assertWorkspaceMCPStdio(t, bin, root)
+	// Warm the in-process verification cache used by long-running MCP servers.
+	for range 2 {
+		if _, err := workspacegraph.LoadWithBuildTags(context.Background(), root, nil); err != nil {
+			t.Fatalf("warm workspace verification: %v", err)
+		}
+	}
 	for name, argsAndWant := range map[string]struct {
 		args []string
 		want string
@@ -287,6 +325,9 @@ scopes:
 	}
 
 	writeWorkspaceTestFile(t, filepath.Join(client, "client.go"), clientSource+"\n// stale workspace member\n")
+	if _, err := workspacegraph.LoadWithBuildTags(context.Background(), root, nil); err == nil {
+		t.Fatal("warm overlay verification bypassed member source freshness")
+	}
 	staleStatusRaw := runWorkspaceCLIResult(t, bin, root, "workspace", "status")
 	if !bytes.Contains(staleStatusRaw, []byte(`"aggregate_state":"partial"`)) && !bytes.Contains(staleStatusRaw, []byte(`"aggregate_state": "partial"`)) {
 		t.Fatalf("stale workspace status was not partial: %s", staleStatusRaw)
@@ -321,6 +362,9 @@ scopes:
 	if err := os.WriteFile(clientGraphPath, append(forgedBytes, '\n'), 0o640); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := workspacegraph.LoadWithBuildTags(context.Background(), root, nil); err == nil || !strings.Contains(err.Error(), "verify graph module ownership") {
+		t.Fatalf("warm overlay verification bypassed module ownership: %v", err)
+	}
 	statusCommand = exec.Command(bin, "workspace", "status", "--json")
 	statusCommand.Dir = root
 	output, err = statusCommand.Output()
@@ -341,6 +385,9 @@ scopes:
 	}
 	if err := os.WriteFile(artifactPath, tampered, 0o640); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := workspacegraph.LoadWithBuildTags(context.Background(), root, nil); err == nil || !strings.Contains(err.Error(), "does not match the deterministic overlay") {
+		t.Fatalf("warm overlay verification accepted changed artifact bytes: %v", err)
 	}
 	queryAfterTamper := exec.Command(bin, "workspace", "query", "Call", "--json")
 	queryAfterTamper.Dir = root
@@ -650,6 +697,10 @@ func assertWorkspaceCLIMCPParity(t *testing.T, binary, root string) {
 	}{
 		{name: "status", tool: "gograph_workspace_status", cliArgs: []string{"workspace", "status"}, arguments: map[string]any{}},
 		{name: "query", tool: "gograph_workspace_query", cliArgs: []string{"workspace", "query", "Handle"}, arguments: map[string]any{"term": "Handle"}},
+		{name: "unresolved_http", tool: "gograph_workspace_query", cliArgs: []string{"workspace", "query", "Unknown"}, arguments: map[string]any{"term": "Unknown"}},
+		{name: "configured_http", tool: "gograph_workspace_path", cliArgs: []string{"workspace", "path", "client:Configured", "server:Handle"}, arguments: map[string]any{"from": "client:Configured", "to": "server:Handle"}},
+		{name: "request_only_excluded", tool: "gograph_workspace_path", cliArgs: []string{"workspace", "path", "client:RequestOnly", "server:Handle"}, arguments: map[string]any{"from": "client:RequestOnly", "to": "server:Handle"}},
+		{name: "request_only_possible", tool: "gograph_workspace_path", cliArgs: []string{"workspace", "path", "--include-possible", "client:RequestOnly", "server:Handle"}, arguments: map[string]any{"from": "client:RequestOnly", "to": "server:Handle", "include_possible": true}},
 		{name: "query_scope", tool: "gograph_workspace_query", cliArgs: []string{"workspace", "query", "--scope", "production", "Handle"}, arguments: map[string]any{"scope": "production", "term": "Handle"}},
 		{name: "path", tool: "gograph_workspace_path", cliArgs: []string{"workspace", "path", "client:HTTPOnly", "server:Handle"}, arguments: map[string]any{"from": "client:HTTPOnly", "to": "server:Handle"}},
 		{name: "path_possible", tool: "gograph_workspace_path", cliArgs: []string{"workspace", "path", "--include-possible", "client:Call", "server:Handle"}, arguments: map[string]any{"from": "client:Call", "to": "server:Handle", "include_possible": true}},

@@ -386,6 +386,9 @@ func checkChangedSymbols(p *CheckParams) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("identify symbols changed since %q: %w", p.SinceRef, err)
 		}
+		if _, err := CurrentChangedSymbolIDs(p.CurrentGraph, changes); err != nil {
+			return nil, fmt.Errorf("identify symbols changed since %q: %w", p.SinceRef, err)
+		}
 		for _, s := range changes.Symbols {
 			changed = append(changed, s.Name)
 		}

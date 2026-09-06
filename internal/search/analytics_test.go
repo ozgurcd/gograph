@@ -790,7 +790,7 @@ func TestChanges_NoChanges(t *testing.T) {
 	}
 }
 
-func TestChanges_ModifiedSymbol(t *testing.T) {
+func TestChanges_LegacyBaselineReportsUnknownSymbol(t *testing.T) {
 	dir := t.TempDir()
 	graphTime := time.Now().Add(-time.Hour) // graph is OLD
 
@@ -811,14 +811,14 @@ func TestChanges_ModifiedSymbol(t *testing.T) {
 		t.Fatal("expected at least one changed file")
 	}
 
-	foundModified := false
+	foundUnknown := false
 	for _, sym := range result.Symbols {
-		if sym.Name == "HandleRequest" && sym.Status == search.ChangeModified {
-			foundModified = true
+		if sym.Name == "HandleRequest" && sym.Status == search.ChangeUnknown {
+			foundUnknown = true
 		}
 	}
-	if !foundModified {
-		t.Errorf("expected HandleRequest to be reported as modified, got: %+v", result.Symbols)
+	if !foundUnknown || result.Evaluation != "partial" || len(result.Diagnostics) == 0 {
+		t.Errorf("legacy baseline must not claim a confirmed declaration modification: %+v", result)
 	}
 }
 

@@ -120,7 +120,7 @@ func TestRefreshBackedResultReportsGraphStateWithoutChangingTextPayload(t *testi
 	if err := json.Unmarshal(encoded, &structured); err != nil {
 		t.Fatalf("decode structured result: %v", err)
 	}
-	if structured.SchemaVersion != "gograph.mcp-result.v1" || structured.GraphState != state {
+	if structured.SchemaVersion != "gograph.results.v1" || structured.GraphState != state {
 		t.Fatalf("structured result = %+v", structured)
 	}
 }

@@ -194,6 +194,11 @@ func Coverage(g *graph.Graph, query string, exactOnly bool) CoverageReport {
 // CoverageInPackage applies an optional exact package-name qualifier to the
 // test seed before traversing product calls.
 func CoverageInPackage(g *graph.Graph, query, packageName string, exactOnly bool) CoverageReport {
+	return NewSnapshot(g).Coverage(query, packageName, exactOnly)
+}
+
+func (snapshot *Snapshot) Coverage(query, packageName string, exactOnly bool) CoverageReport {
+	g := snapshot.g
 	report := CoverageReport{
 		SchemaVersion:      CoverageSchemaVersion,
 		Query:              strings.TrimSpace(query),
@@ -230,14 +235,7 @@ func CoverageInPackage(g *graph.Graph, query, packageName string, exactOnly bool
 	report.Status = "exact"
 	test := report.MatchedTests[0]
 
-	symbols := make(map[string]graph.SymbolNode, len(g.Symbols))
-	for _, s := range g.Symbols {
-		symbols[s.ID] = s
-	}
-	adjacency := make(map[string][]graph.CallEdge)
-	for _, call := range g.Calls {
-		adjacency[call.CallerSymbolID] = append(adjacency[call.CallerSymbolID], call)
-	}
+	symbols, adjacency := snapshot.callIndex()
 
 	best := make(map[string]coverageState)
 	queue := make([]coverageState, 0)
@@ -329,6 +327,11 @@ func TransitiveTests(g *graph.Graph, query string, exactOnly bool) TestsReport {
 // TransitiveTestsInPackage applies an optional exact package-name qualifier to
 // the selected product symbol before traversing the reverse call graph.
 func TransitiveTestsInPackage(g *graph.Graph, query, packageName string, exactOnly bool) TestsReport {
+	return NewSnapshot(g).TransitiveTests(query, packageName, exactOnly)
+}
+
+func (snapshot *Snapshot) TransitiveTests(query, packageName string, exactOnly bool) TestsReport {
+	g := snapshot.g
 	report := TestsReport{
 		SchemaVersion:      TestsSchemaVersion,
 		Query:              strings.TrimSpace(query),
@@ -365,19 +368,7 @@ func TransitiveTestsInPackage(g *graph.Graph, query, packageName string, exactOn
 	report.Status = "exact"
 	target := report.MatchedSymbols[0]
 
-	attribution := buildAttributionGraph(g)
-	reverse := make(map[string][]attributionLink)
-	for _, link := range attribution.links {
-		reverse[link.to] = append(reverse[link.to], link)
-	}
-	for id := range reverse {
-		sort.Slice(reverse[id], func(i, j int) bool {
-			if reverse[id][i].from != reverse[id][j].from {
-				return reverse[id][i].from < reverse[id][j].from
-			}
-			return reverse[id][i].resolution < reverse[id][j].resolution
-		})
-	}
+	attribution, reverse := snapshot.attributionIndex()
 
 	best := map[string]reverseAttributionState{
 		target.StableID: {id: target.StableID, resolution: "exact"},
@@ -590,11 +581,12 @@ func buildAttributionGraph(g *graph.Graph) attributionGraphData {
 	return attributionGraphData{links: links, tests: tests}
 }
 
-func allTestReachability(g *graph.Graph) map[string]symbolTestReach {
+func (snapshot *Snapshot) computeTestReachability() map[string]symbolTestReach {
+	g := snapshot.g
 	if g == nil {
 		return map[string]symbolTestReach{}
 	}
-	attribution := buildAttributionGraph(g)
+	attribution, _ := snapshot.attributionIndex()
 	adjacency := make(map[string][]attributionLink)
 	for _, link := range attribution.links {
 		adjacency[link.from] = append(adjacency[link.from], link)

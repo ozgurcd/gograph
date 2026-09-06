@@ -28,7 +28,7 @@ const CurrentSourcePolicyVersion = 2
 // CurrentAnalysisCacheVersion identifies graphs whose file-level records can
 // be decomposed back into parser output and safely reused by an incremental
 // build. Bump this whenever parser/precise provenance changes.
-const CurrentAnalysisCacheVersion = 5
+const CurrentAnalysisCacheVersion = 7
 
 // MaxArtifactBytes bounds whole-artifact JSON decoding. Repository graphs are
 // intentionally in-memory query artifacts; accepting an unbounded serialized
@@ -41,7 +41,7 @@ const MaxArtifactBytes int64 = 512 << 20
 // local module and interaction facts required by workspace resolution. It is
 // independent of the repository graph wire version so existing repository
 // consumers continue to accept additive graph-v2 fields.
-const CurrentWorkspaceFactsVersion = 1
+const CurrentWorkspaceFactsVersion = 2
 
 // Graph is the top-level data structure written to .gograph/graph.json.
 type Graph struct {
@@ -108,6 +108,9 @@ type BuildMetadata struct {
 	// inputs, including nested module boundaries. The historical JSON field
 	// name is retained for schema-v2 compatibility.
 	BuildContextFingerprint string `json:"build_context_fingerprint,omitempty"`
+	// Selection reproduces Go file selection for declaration comparisons without
+	// trusting serialized roots, environment values, or filesystem callbacks.
+	Selection *BuildSelection `json:"selection,omitempty"`
 	// SourceFingerprint binds the graph to exact selected source and recognized
 	// build-selection metadata bytes without depending on repository location.
 	SourceFingerprint string `json:"source_fingerprint,omitempty"`
@@ -251,6 +254,12 @@ type HTTPCallEdge struct {
 	URL            string   `json:"url"`
 	StaticSegments []string `json:"staticSegments"`
 	HasDynamic     bool     `json:"hasDynamic"`
+	// URLBase is a lexical expression or env:KEY, never a runtime value.
+	URLBase         string `json:"urlBase,omitempty"`
+	URLSuffix       string `json:"urlSuffix,omitempty"`
+	URLSuffixStatic bool   `json:"urlSuffixStatic,omitempty"`
+	// RequestOnly records construction without proof of dispatch.
+	RequestOnly bool `json:"requestOnly,omitempty"`
 }
 
 // FlowFunction contains the compact, AST-derived facts used by security-flow
@@ -414,18 +423,21 @@ const (
 // SymbolNode represents a named function, method, struct, interface, type,
 // variable, or constant.
 type SymbolNode struct {
-	ID               string            `json:"id"`
-	Kind             SymbolKind        `json:"kind"`
-	Name             string            `json:"name"`
-	Receiver         string            `json:"receiver,omitempty"`
-	PackageName      string            `json:"package_name"`
-	File             string            `json:"file"`
-	Line             int               `json:"line"`
-	EndLine          int               `json:"end_line"`
-	Doc              string            `json:"doc,omitempty"`
-	Signature        string            `json:"signature,omitempty"`
-	MethodSignature  string            `json:"method_signature,omitempty"`
-	InterfaceMethods map[string]string `json:"interface_methods,omitempty"`
+	// DeclarationDigest fingerprints declaration tokens independently of line
+	// positions and formatting. Empty on artifacts built before this feature.
+	DeclarationDigest string            `json:"declaration_digest,omitempty"`
+	ID                string            `json:"id"`
+	Kind              SymbolKind        `json:"kind"`
+	Name              string            `json:"name"`
+	Receiver          string            `json:"receiver,omitempty"`
+	PackageName       string            `json:"package_name"`
+	File              string            `json:"file"`
+	Line              int               `json:"line"`
+	EndLine           int               `json:"end_line"`
+	Doc               string            `json:"doc,omitempty"`
+	Signature         string            `json:"signature,omitempty"`
+	MethodSignature   string            `json:"method_signature,omitempty"`
+	InterfaceMethods  map[string]string `json:"interface_methods,omitempty"`
 	// DeclaredInterfaceMethods retains parser-owned declarations before precise
 	// enrichment adds methods inherited through embedded interfaces.
 	DeclaredInterfaceMethods map[string]string `json:"declared_interface_methods,omitempty"`

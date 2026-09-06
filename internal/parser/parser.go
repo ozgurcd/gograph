@@ -845,14 +845,19 @@ func extractGenDecl(fset *token.FileSet, d *ast.GenDecl, relPath, pkgName, pkgIm
 					}
 
 					sym := graph.SymbolNode{
-						ID:          fmt.Sprintf("%s::%s", pkgImportPath, name.Name),
-						Kind:        symKind,
-						Name:        name.Name,
-						PackageName: pkgName,
-						File:        relPath,
-						Line:        pos.Line,
-						EndLine:     endPos.Line,
-						Doc:         strings.TrimSpace(doc),
+						DeclarationDigest: declarationDigest(fset, vs),
+						ID:                fmt.Sprintf("%s::%s", pkgImportPath, name.Name),
+						Kind:              symKind,
+						Name:              name.Name,
+						PackageName:       pkgName,
+						File:              relPath,
+						Line:              pos.Line,
+						EndLine:           endPos.Line,
+						Doc:               strings.TrimSpace(doc),
+					}
+					if d.Tok == token.CONST {
+						// iota and omitted expressions depend on the enclosing group.
+						sym.DeclarationDigest = declarationDigest(fset, d)
 					}
 					result.Symbols = append(result.Symbols, sym)
 				}
@@ -985,6 +990,7 @@ func extractGenDecl(fset *token.FileSet, d *ast.GenDecl, relPath, pkgName, pkgIm
 		}
 
 		sym := graph.SymbolNode{
+			DeclarationDigest:        declarationDigest(fset, ts),
 			ID:                       fmt.Sprintf("%s::%s", pkgImportPath, ts.Name.Name),
 			Kind:                     kind,
 			Name:                     ts.Name.Name,
@@ -1141,18 +1147,19 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 	}
 
 	sym := graph.SymbolNode{
-		ID:              id,
-		Kind:            kind,
-		Name:            d.Name.Name,
-		Receiver:        receiver,
-		PackageName:     pkgName,
-		File:            relPath,
-		Line:            pos.Line,
-		EndLine:         endPos.Line,
-		Doc:             strings.TrimSpace(doc),
-		Signature:       sig,
-		MethodSignature: methodSig,
-		Arity:           arity,
+		DeclarationDigest: declarationDigest(fset, d),
+		ID:                id,
+		Kind:              kind,
+		Name:              d.Name.Name,
+		Receiver:          receiver,
+		PackageName:       pkgName,
+		File:              relPath,
+		Line:              pos.Line,
+		EndLine:           endPos.Line,
+		Doc:               strings.TrimSpace(doc),
+		Signature:         sig,
+		MethodSignature:   methodSig,
+		Arity:             arity,
 	}
 	result.Symbols = append(result.Symbols, sym)
 
@@ -1274,38 +1281,13 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 				}
 			}
 
-			// HTTP Client Call Extraction
-			if method, ok := extractHTTPMethod(callee, call); ok && len(call.Args) >= 1 {
-				urlExpr := call.Args[0]
-				var urlStr string
-				hasDynamic := false
-
-				if lit, ok2 := urlExpr.(*ast.BasicLit); ok2 && lit.Kind == token.STRING {
-					urlStr = strings.Trim(lit.Value, "\"")
-				} else {
-					urlStr = exprName(urlExpr)
-					if urlStr == "" {
-						urlStr = "<dynamic>"
-					}
-					hasDynamic = true
-				}
-
-				var staticSegments []string
-				if !hasDynamic {
-					staticSegments = extractStaticSegments(urlStr)
-				}
-
-				result.HTTPCalls = append(result.HTTPCalls, graph.HTTPCallEdge{
-					SourceFile:     relPath,
-					SourceLine:     callPos.Line,
-					FunctionName:   callerName,
-					Method:         method,
-					URL:            urlStr,
-					StaticSegments: staticSegments,
-					HasDynamic:     hasDynamic,
-				})
+			// HTTP Client Call Extraction (including possible request construction).
+			if method, urlIndex, requestOnly, ok := httpClientCall(resolver, d.Body, call); ok {
+				fact := extractHTTPURL(d.Body, call.Args[urlIndex], call.Pos(), resolver)
+				fact.SourceFile, fact.SourceLine = relPath, callPos.Line
+				fact.FunctionName, fact.Method, fact.RequestOnly = callerName, method, requestOnly
+				result.HTTPCalls = append(result.HTTPCalls, fact)
 			}
-
 			// Test edge: record which production symbols a test calls.
 			if isTestFunc && callee != "" && !strings.HasPrefix(callee, "t.") && !strings.HasPrefix(callee, "b.") {
 				result.TestEdges = append(result.TestEdges, graph.TestEdge{
@@ -1992,20 +1974,6 @@ func envRead(call *ast.CallExpr, callee string, line int, file, fn string) (grap
 // because they cannot be reliably distinguished from other types' methods
 // without go/types type information. Support for those may be added in a
 // future --precise mode enhancement.
-func extractHTTPMethod(callee string, call *ast.CallExpr) (string, bool) {
-	switch callee {
-	case "http.Get":
-		return "GET", true
-	case "http.Post":
-		return "POST", true
-	case "http.PostForm":
-		return "POST", true
-	case "http.Head":
-		return "HEAD", true
-	}
-	return "", false
-}
-
 // extractStaticSegments parses a URL string and returns non-empty path segments.
 func extractStaticSegments(rawURL string) []string {
 	u, err := url.Parse(rawURL)

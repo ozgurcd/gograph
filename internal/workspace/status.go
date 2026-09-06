@@ -44,6 +44,8 @@ type OverlayStatus struct {
 	ArtifactFingerprint string            `json:"artifact_fingerprint,omitempty"`
 	ResolverVersions    map[string]string `json:"resolver_versions,omitempty"`
 	Diagnostics         []string          `json:"diagnostics"`
+	// Counts are reported only after deterministic artifact verification.
+	HTTPUnresolvedByScope map[string]int `json:"http_unresolved_by_scope,omitempty"`
 }
 
 type Status struct {
@@ -130,6 +132,10 @@ func InspectStatusWithBuildTags(ctx context.Context, root string, manifest Manif
 					status.Overlay.Diagnostics = append(status.Overlay.Diagnostics, encodeErr.Error())
 				} else if exactArtifactFingerprint(expectedBytes) == fingerprint {
 					status.Overlay.Fresh = true
+					status.Overlay.HTTPUnresolvedByScope = make(map[string]int, len(expected.Scopes))
+					for _, scope := range expected.Scopes {
+						status.Overlay.HTTPUnresolvedByScope[scope.ID] = len(scope.HTTPUnresolved)
+					}
 				} else {
 					status.Overlay.Diagnostics = append(status.Overlay.Diagnostics, "workspace artifact differs from the deterministic overlay for its current inputs")
 				}

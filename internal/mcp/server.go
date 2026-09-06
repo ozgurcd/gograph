@@ -185,6 +185,9 @@ type ServerOptions struct {
 	RequestedBuildTags      []string
 	EffectiveBuildTags      []string
 	GraphState              func() graphstate.State
+	// RefreshContext supersedes the legacy rebuild callback when provided.
+	// A published graph must never be mutated in place by a later refresh.
+	RefreshContext func(context.Context) (*graph.Graph, error)
 }
 
 func resolveServerOptions(options []ServerOptions) ServerOptions {
@@ -246,6 +249,16 @@ func attachGraphState(result *mcp.CallToolResult, state graphstate.State) {
 		result.Meta.AdditionalFields["gograph_graph_state"] = state
 	}
 
+	if result.StructuredContent != nil {
+		// Preserve the native analysis fields while adding request provenance.
+		data, err := json.Marshal(result.StructuredContent)
+		var fields map[string]any
+		if err == nil && json.Unmarshal(data, &fields) == nil && fields != nil {
+			fields["graph_state"] = state
+			result.StructuredContent = fields
+		}
+		return
+	}
 	result.StructuredContent = graphStateResult{
 		SchemaVersion: "gograph.mcp-result.v1",
 		GraphState:    state,
@@ -323,9 +336,31 @@ func NewServer(
 		"gograph_session_cleanup":   {readOnly: false, destructive: true, idempotent: true},
 		"gograph_wiki":              {readOnly: false, destructive: true, idempotent: true},
 	}
-	var handlerMu sync.Mutex
+	refreshContext := selectedOptions.RefreshContext
+	if refreshContext == nil {
+		refreshContext = func(ctx context.Context) (*graph.Graph, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return rebuild()
+		}
+	}
+	snapshots := newSnapshotManager(refreshContext, graphState)
+	writeGate := make(chan struct{}, 1)
+	var telemetryMu sync.Mutex
 
 	addTool := func(tool mcp.Tool, handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+		switch tool.Name {
+		case "gograph_impact", "gograph_context", "gograph_plan", "gograph_review", "gograph_risk", "gograph_check", "gograph_changes":
+			tool.Description += " " + search.CurrentChangeSelectionContract
+		}
+		if search.SupportsListPagination(strings.TrimPrefix(tool.Name, "gograph_")) {
+			if tool.InputSchema.Properties == nil {
+				tool.InputSchema.Properties = make(map[string]any)
+			}
+			tool.InputSchema.Properties["limit"] = map[string]any{"type": "integer", "default": search.DefaultResultsLimit, "minimum": 1, "maximum": search.MaxResultsLimit, "description": "Maximum rows per page; the byte budget may return fewer."}
+			tool.InputSchema.Properties["cursor"] = map[string]any{"type": "string", "maxLength": 128, "description": "Opaque next_cursor for the same graph snapshot and result selection."}
+		}
 		behavior, ok := toolBehaviors[tool.Name]
 		if !ok {
 			behavior = toolBehavior{readOnly: true, idempotent: true}
@@ -350,31 +385,63 @@ func NewServer(
 		// calls count toward the audit; unlike CLI Run, it has no intention field
 		// and deliberately omits tool arguments.
 		toolName := tool.Name
-		instrumentedHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			handlerMu.Lock()
-			defer handlerMu.Unlock()
-			return handler(ctx, req)
-		}
-		if !sessionTools[toolName] {
-			instrumentedHandler = func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				handlerMu.Lock()
-				defer handlerMu.Unlock()
-				start := time.Now()
-				result, err := handler(ctx, req)
-				if result != nil && result.StructuredContent == nil && toolRefreshesGraph(toolName) {
-					attachGraphState(result, graphState())
-				}
-				elapsed := time.Since(start)
-				status := "success"
-				if err != nil || (result != nil && result.IsError) {
-					status = "failure"
-				}
-				// Strip the "gograph_" prefix so the command name matches the CLI
-				// convention (e.g. "plan", "review", "callers") used by RunAudit.
-				cmd := strings.TrimPrefix(toolName, "gograph_")
-				_ = session.LogCommandAt(serverRoot, cmd, nil, "", elapsed, status)
-				return result, err
+		instrumentedHandler := func(ctx context.Context, req mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
 			}
+			if search.SupportsListPagination(strings.TrimPrefix(toolName, "gograph_")) {
+				args, _ := req.Params.Arguments.(map[string]any)
+				if boolArg(args, "mermaid") {
+					if _, ok := args["limit"]; ok {
+						return mcp.NewToolResultError("limit pages result rows, not Mermaid diagrams"), nil
+					}
+					if _, ok := args["cursor"]; ok {
+						return mcp.NewToolResultError("cursor pages result rows, not Mermaid diagrams"), nil
+					}
+				}
+			}
+			// Serialize mutating tool bodies without making independent readers
+			// wait for wiki generation or session operations.
+			if !behavior.readOnly {
+				select {
+				case writeGate <- struct{}{}:
+					defer func() { <-writeGate }()
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			}
+			start := time.Now()
+			if !sessionTools[toolName] {
+				defer func() {
+					status := "success"
+					if err != nil || ctx.Err() != nil || (result != nil && result.IsError) {
+						status = "failure"
+					}
+					telemetryMu.Lock()
+					_ = session.LogCommandAt(serverRoot, strings.TrimPrefix(toolName, "gograph_"), nil, "", time.Since(start), status)
+					telemetryMu.Unlock()
+				}()
+			}
+			if requestRefreshesGraph(toolName, req) {
+				snapshot, err := snapshots.acquire(ctx)
+				if err != nil {
+					return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
+				}
+				ctx = context.WithValue(ctx, requestSnapshotKey{}, snapshot)
+			}
+			result, err = handler(ctx, req)
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if result != nil {
+				if pending, ok := result.StructuredContent.(pendingResults); ok {
+					result = finishListResult(strings.TrimPrefix(toolName, "gograph_"), req, pending, queriesForRequest(ctx))
+				}
+			}
+			if result != nil && requestRefreshesGraph(toolName, req) && (result.Meta == nil || result.Meta.AdditionalFields["gograph_graph_state"] == nil) {
+				attachGraphState(result, ctx.Value(requestSnapshotKey{}).(requestSnapshot).state)
+			}
+			return result, err
 		}
 
 		s.AddTool(tool, instrumentedHandler)
@@ -387,7 +454,7 @@ func NewServer(
 	capabilitiesTool := mcp.NewTool("gograph_capabilities",
 		mcp.WithDescription("List the running gograph server version, all available MCP tools, their purposes, and recommended agent workflows. Once the project-scoped MCP server has started, this tool has no additional graph-state prerequisite. Read-only; no side effects. WHEN TO USE: Call once per session to record the analysis instrument and orient before issuing analytical queries. NOT TO USE: Do not repeat after capabilities are cached in context. RETURNS: Structured JSON with version, every registered tool name, one-line purposes, recommended workflow sequences, and known static-analysis limitations."),
 	)
-	addTool(capabilitiesTool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	addTool(capabilitiesTool, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		startupGraph := "auto-builds an in-memory graph when it is missing, unreadable, unsafe, or uses an unsupported source policy"
 		if selectedOptions.PersistRefresh {
 			startupGraph = "auto-builds and publishes graph.json plus nine reports when the artifact is missing, unreadable, unsafe, or uses an unsupported source policy"
@@ -395,7 +462,7 @@ func NewServer(
 		resp := map[string]any{
 			"summary":      "gograph MCP capabilities",
 			"version":      version,
-			"prerequisite": "The MCP server loads only a regular, repository-confined .gograph/graph.json with the current source-policy marker and " + startupGraph + ". Whole graph, saved-baseline, validation, MCP-reload, and workspace-overlay JSON reads reject artifacts larger than 512 MiB before allocation; startup recovery rebuilds an oversized graph from source. Its serialized root is ignored. Source-analysis tools compare selected-file content digests and the build/module fingerprint per call, then incrementally rebuild changed package ASTs after edits using the latest requested analysis mode and build tags selected at MCP startup; precise CHA/SSA enrichment remains repository-wide for selected project packages but does not build dependency SSA bodies, and separately attempts typed test-call attribution without making test compilation a prerequisite for production precision. Typed-only test targets are recomputed rather than restored as parser facts. Every refresh-backed result preserves its compatibility text payload and adds gograph.graph-state.v1 metadata plus gograph.mcp-result.v1 structured content. A failed precise enrichment can therefore serve an explicitly marked in-memory fallback, and an operational refresh failure can serve the last trusted stale graph. Neither degraded state is silently published. A persisted graph from a different effective GOWORK or build selection is never served after a failed refresh. gograph_stale, gograph_changes without git_ref, and gograph_stats inspect that trusted persisted index, or the startup auto-build fallback when no usable artifact exists. Linked directories and linked or special files recognized as Go build inputs are excluded, while unrelated regular-file or dangling links with non-Go extensions do not block precision. Linked/non-regular Go tool metadata (go.mod, go.sum, go.work, go.work.sum, and vendor/modules.txt) is rejected before toolchain use. Applicable go.work members may be sibling modules beneath the nearest real Git checkout; without that boundary they remain confined beneath the workspace directory. Each member directory, go.mod, and optional go.sum is validated before cmd/go. Use the current binary for untrusted repositories because older binaries do not enforce this contract. Run `gograph build . --precise --tags=integration` for type-checked CHA/SSA enrichment of an explicitly tagged selection; MCP accepts the same --tags selector, adopts a newer precise graph, and re-runs precision after source changes without silently changing that context. `gograph doctor --json` reports persisted-artifact diagnostics. On constrained hosts, project MCP startup accepts `--memory-mode=low --max-memory=1GiB`; analysis_memory reports the requested/effective soft Go runtime memory target, which is not a hard RSS cap. Session lifecycle tools write local telemetry, gograph_session_cleanup deletes stale logs, gograph_boundaries_create writes configuration, and gograph_wiki writes documentation; wiki regeneration prunes only obsolete generator-owned package pages and preserves custom pages plus packages/README.md. Their repository-controlled paths use rooted regular-file operations that reject descendant links. When an audit session is active, non-session MCP calls append observational command telemetry even when their analysis contract is read-only. Saved graph baselines must be regular files inside the project root, have no linked path component, and carry the exact current source-policy marker; their serialized root is ignored. gograph_doc rejects filesystem-shaped queries and source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees; .git and .gograph are excluded from that preflight. It invokes the local Go toolchain after repository source/metadata validation and is annotated open-world because dependency resolution follows the user's Go environment.",
+			"prerequisite": "The MCP server loads only a regular, repository-confined .gograph/graph.json with the current source-policy marker and " + startupGraph + ". Whole graph, saved-baseline, validation, MCP-reload, and workspace-overlay JSON reads reject artifacts larger than 512 MiB before allocation; startup recovery rebuilds an oversized graph from source. Its serialized root is ignored. Source-analysis tools compare selected-file content digests and the build/module fingerprint per call, then incrementally rebuild changed package ASTs after edits using the latest requested analysis mode and build tags selected at MCP startup; precise CHA/SSA enrichment remains repository-wide for selected project packages but does not build dependency SSA bodies, and separately attempts typed test-call attribution without making test compilation a prerequisite for production precision. Typed-only test targets are recomputed rather than restored as parser facts. Every refresh-backed result adds gograph.graph-state.v1 provenance. Bounded row lists use gograph.results.v1 JSON text and structured content; native explain/changes retain their own schemas, while other legacy payloads retain a gograph.mcp-result.v1 graph-state companion. A failed precise enrichment can therefore serve an explicitly marked in-memory fallback, and an operational refresh failure can serve the last trusted stale graph. Neither degraded state is silently published. A persisted graph from a different effective GOWORK or build selection is never served after a failed refresh. gograph_stale, gograph_changes without git_ref, and gograph_stats inspect that trusted persisted index, or the startup auto-build fallback when no usable artifact exists. Linked directories and linked or special files recognized as Go build inputs are excluded, while unrelated regular-file or dangling links with non-Go extensions do not block precision. Linked/non-regular Go tool metadata (go.mod, go.sum, go.work, go.work.sum, and vendor/modules.txt) is rejected before toolchain use. Applicable go.work members may be sibling modules beneath the nearest real Git checkout; without that boundary they remain confined beneath the workspace directory. Each member directory, go.mod, and optional go.sum is validated before cmd/go. Use the current binary for untrusted repositories because older binaries do not enforce this contract. Run `gograph build . --precise --tags=integration` for type-checked CHA/SSA enrichment of an explicitly tagged selection; MCP accepts the same --tags selector, adopts a newer precise graph, and re-runs precision after source changes without silently changing that context. `gograph doctor --json` reports persisted-artifact diagnostics. On constrained hosts, project MCP startup accepts `--memory-mode=low --max-memory=1GiB`; analysis_memory reports the requested/effective soft Go runtime memory target, which is not a hard RSS cap. Session lifecycle tools write local telemetry, gograph_session_cleanup deletes stale logs, gograph_boundaries_create writes configuration, and gograph_wiki writes documentation; wiki regeneration prunes only obsolete generator-owned package pages and preserves custom pages plus packages/README.md. Their repository-controlled paths use rooted regular-file operations that reject descendant links. When an audit session is active, non-session MCP calls append observational command telemetry even when their analysis contract is read-only. Saved graph baselines must be regular files inside the project root, have no linked path component, and carry the exact current source-policy marker; their serialized root is ignored. gograph_doc rejects filesystem-shaped queries and source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees; .git and .gograph are excluded from that preflight. It invokes the local Go toolchain after repository source/metadata validation and is annotated open-world because dependency resolution follows the user's Go environment.",
 			"transport_contract": map[string]any{
 				"project_server_tools": 68,
 				"cli_equivalent_tools": 64,
@@ -415,6 +482,46 @@ func NewServer(
 				"version_source":         "The top-level version field records the running MCP server binary; the standalone CLI version command has no separate MCP tool.",
 				"presentation":           "CLI flags/envelopes and typed MCP arguments/content may differ; paired operations share functional semantics.",
 			},
+			"result_pagination": map[string]any{
+				"schema":             search.ResultsSchemaVersion,
+				"commands":           append([]string{}, search.ListPaginationCommands...),
+				"default_limit":      search.DefaultResultsLimit,
+				"max_limit":          search.MaxResultsLimit,
+				"native_byte_budget": search.MaxResultsBytes,
+				"fields":             []string{"schema_version", "command", "status", "limit", "offset", "count", "total", "returned", "truncated", "next_cursor", "results"},
+				"cursor":             "opaque token bound to graph content, command, and filtered result identities; changing page size is allowed; changed content or results require restarting",
+				"transport":          "MCP JSON text and structuredContent share the native page; CLI retains its standard envelope/results array and exposes the same pagination fields",
+				"oversized_row":      "refused with narrowing/source guidance; no field truncation",
+				"presentation":       "--files-only keeps a full deduplicated file census; do not combine row pagination with files-only or Mermaid",
+			},
+			"query_lifecycle": map[string]any{
+				"concurrency":            "refresh/publication is serialized; query handlers retain immutable per-request graph and provenance snapshots",
+				"cancellation":           "request cancellation reaches Go context resolution and package loading plus checks between parsing/enrichment stages and before artifact commit; cancellation is cooperative",
+				"commit_boundary":        "a started artifact commit finishes its set; cancellation does not promise rollback",
+				"indexes":                "current fingerprint owns lazy SQL classification, sorted routes, reverse calls, and test attribution/reachability; old snapshots live only while retained by active queries",
+				"workspace_verification": "16-entry positive receipt cache keyed by root, input fingerprint, and artifact bytes; member source/path/ownership/freshness checks always run",
+				"binary_upgrade":         "restart a running MCP server after installation; verify this payload's version",
+			},
+			"http_resolution": map[string]any{
+				"extraction":   "net_http_v2: package Get/Post/PostForm/Head and possible NewRequest/NewRequestWithContext construction; client receiver methods and arbitrary URL builders are not inferred",
+				"dynamic_urls": "bounded lexical base + static suffix; workspace repository.http_clients maps base or env:KEY to authority_id with optional path_prefix",
+				"trust":        "no runtime environment reads or hostname guesses; authority ownership is selected-scope only; request construction remains possible",
+				"diagnostics":  "workspace query returns filtered http_unresolved evidence; verified workspace status reports http_unresolved_by_scope counts; unresolved facts never traverse",
+			},
+			"change_evaluation": map[string]any{
+				"current_graph_selection": search.CurrentChangeSelectionContract,
+				"schema":                  "gograph.changes.v1",
+				"evaluation":              []string{"complete", "partial", "cannot_evaluate"},
+				"declaration_statuses":    []string{"new", "modified", "deleted", "excluded", "unknown"},
+				"comparison":              "declaration fingerprints include bodies and ignore formatting/comments; recorded platform/build tags are reused, current module ownership is rediscovered, package names and repeated initializers are retained; Git mode extracts a confined declaration baseline without compilation",
+				"failure":                 "unsafe sources and parsing failures are diagnostics, never deletion proof; missing legacy digests are unknown; incomplete CLI evaluation exits 2",
+			},
+			"impact_certainty": map[string]any{
+				"default":    "conservative repository impact includes explicitly labeled exact and possible paths",
+				"exact_only": "CLI --exact-only / MCP exact_only=true excludes paths depending on possible evidence",
+				"identity":   "resolved call identities never fall back to conflicting display names",
+				"mermaid":    "dotted possible edges; complete transitive reachability without a silent hop cutoff",
+			},
 			"explore_response_modes": map[string]any{
 				"standard":  "default limit 10; ranked matches plus selected source, direct callers/callees/tests, and exact identity impact",
 				"compact":   "compact=true; default limit 5; ranked matches, selected node/role, complete totals, and explicit omissions without evidence bodies",
@@ -431,7 +538,7 @@ func NewServer(
 				"composition":        "different categories AND-compose; repeated tables, verbs, and accesses OR-compose",
 				"classification":     "operation/access/table metadata reports exact, partial, or unknown instead of inventing unsupported facts; CTEs resolve to the actual operation, data-modifying CTEs elevate access and retain write tables, and ON CONFLICT remains INSERT",
 				"compatibility":      "tests remain included unless no_tests=true; legacy artifacts are classified at query time",
-				"pagination":         "default 100, maximum 200, 64 KiB page budget, opaque next_cursor with unchanged filters",
+				"pagination":         "default 100, maximum 200, 64 KiB page budget, opaque next_cursor bound to graph content and normalized filters; restart after a snapshot change",
 				"transport_parity":   "CLI sql and MCP gograph_sql execute QuerySQL and return the same gograph.sql.v1 native page; CLI JSON adds its generic envelope and mirrors pagination fields",
 				"supported_verbs":    []string{"SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "CREATE", "ALTER", "DROP", "TRUNCATE"},
 				"supported_accesses": []string{"read", "write", "ddl"},
@@ -456,7 +563,7 @@ func NewServer(
 				"axes":               []string{"source: persisted|in_memory|unknown", "freshness: current|stale|unknown", "completeness: complete|partial|unknown", "precision: ast|precise|fallback|unknown"},
 				"refresh_reporting":  "refresh policy, attempted flag, outcome, and bounded diagnostic are independent from graph health",
 				"persistence":        "requested flag, outcome, and bounded diagnostic are independent; fallback and stale graphs are never silently published",
-				"transport":          "refresh-backed tools preserve compatibility text once and add a small graph-state-only companion to _meta.gograph_graph_state and structuredContent.graph_state; stale, default changes, and stats attach the state they inspected",
+				"transport":          "refresh-backed tools attach per-request provenance in _meta.gograph_graph_state and structuredContent.graph_state; native structured results preserve their fields, while legacy results use a graph-state companion; stale, default changes, and stats attach the state they inspected",
 				"degraded_serving":   "failed precise enrichment may serve current in-memory fallback; ordinary refresh failure may serve the last trusted stale graph; a mismatched Go build context still fails closed",
 				"cli_correspondence": "repository graph-backed CLI --json envelopes expose the same graph_state schema; CLI text stats/stale report the persisted state",
 			},
@@ -516,8 +623,8 @@ func NewServer(
 				{"name": "gograph_coverage", "purpose": "Transitive reverse test attribution: product symbols one unambiguous test statically reaches, with exact/possible propagation and stable-ID paths."},
 				{"name": "gograph_identity", "purpose": "Resolve exact symbol spellings or canonical stable IDs without silently choosing ambiguous matches."},
 				{"name": "gograph_hotspot", "purpose": "Functions ranked by fan-in (incoming call count). High fan-in = highest-risk change target."},
-				{"name": "gograph_httpcalls", "purpose": "All outbound HTTP client calls via net/http (Get, Post, PostForm, Head). Filter by method or URL."},
-				{"name": "gograph_changes", "purpose": "Symbols modified/added/deleted. Deleted includes files absent from the current safely selected inventory. Without git_ref: changes since trusted persisted graph or startup fallback. With git_ref: static diff vs that ref."},
+				{"name": "gograph_httpcalls", "purpose": "net/http Get/Post/PostForm/Head calls and possible NewRequest/NewRequestWithContext construction. Filter by method, URL/base, or function; includes bounded lexical base/static-suffix evidence, never runtime environment values."},
+				{"name": "gograph_changes", "purpose": "Declaration changes: new/modified/deleted/excluded/unknown with complete/partial/cannot_evaluate status. Missing selection/digests and unsafe/racing sources are explicit, never silent deletion proof. Uses recorded build selection and current module ownership. Optional git_ref selects a confined historical declaration baseline."},
 				{"name": "gograph_path", "purpose": "Best call chain between two symbols, ranked by certainty, length, production/test provenance, typed/heuristic resolution, and deterministic identity."},
 				{"name": "gograph_complexity", "purpose": "Cyclomatic complexity per function, sorted highest first. Labels: LOW/MEDIUM/HIGH/VERY HIGH; source that cannot be read or parsed safely is retained as UNKNOWN with score -1."},
 				{"name": "gograph_coupling", "purpose": "Fan-in (Ca), fan-out (Ce), and instability I=Ce/(Ca+Ce) per package. 0=stable, 1=unstable."},
@@ -583,12 +690,8 @@ func NewServer(
 		mcp.WithString("term", mcp.Description("One keyword search term (e.g. 'AuthService')")),
 		mcp.WithArray("terms", mcp.Description("Optional list of keyword terms combined with OR semantics"), mcp.WithStringItems()),
 	)
-	addTool(queryTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(queryTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -610,7 +713,7 @@ func NewServer(
 			return mcp.NewToolResultError("provide term or at least one terms entry"), nil
 		}
 		results := search.Query(g, terms)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_explore
@@ -622,12 +725,8 @@ func NewServer(
 		mcp.WithBoolean("compact", mcp.Description("Low-token response: matches, selected node/role, complete counts, and explicit omissions; mutually exclusive with deep")),
 		mcp.WithBoolean("deep", mcp.Description("Expanded response: standard evidence plus bounded depth-3 exact callers/callees, package context, and explanation; mutually exclusive with compact")),
 	)
-	addTool(exploreTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(exploreTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -668,12 +767,8 @@ func NewServer(
 		mcp.WithDescription("Extract a comprehensive structural summary of one Go package: all files, defined symbols, internal call edges, and package-level imports. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: When orienting to an unfamiliar package before editing it — provides a full map of what the package contains and how it connects to the rest of the codebase. NOT TO USE: For a single symbol's details (use gograph_context or gograph_source); for global keyword searches (use gograph_query). RETURNS: All files, symbol names, call edges, and import paths within the package; empty when the package is not found."),
 		mcp.WithString("package", mcp.Required(), mcp.Description("The package path or name to focus on (e.g., 'internal/auth')")),
 	)
-	addTool(focusTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(focusTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -683,7 +778,7 @@ func NewServer(
 			return mcp.NewToolResultError("package must be a string"), nil
 		}
 		results := search.Focus(g, pkg)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_callers
@@ -695,12 +790,8 @@ func NewServer(
 		mcp.WithBoolean("exact", mcp.Description("Require an exact symbol-name or fully-qualified-ID match")),
 		mcp.WithBoolean("mermaid", mcp.Description("Return Mermaid flowchart text instead of the normal response")),
 	)
-	addTool(callersTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(callersTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -724,7 +815,7 @@ func NewServer(
 		} else {
 			results = search.Callers(g, fn, includeTests, exact)
 		}
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_callees
@@ -735,12 +826,8 @@ func NewServer(
 		mcp.WithBoolean("no_tests", mcp.Description("Exclude call edges originating in *_test.go files")),
 		mcp.WithBoolean("mermaid", mcp.Description("Return Mermaid flowchart text instead of the normal response")),
 	)
-	addTool(calleesTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(calleesTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -763,7 +850,7 @@ func NewServer(
 		} else {
 			results = search.Callees(g, fn, includeTests, false)
 		}
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_implementers
@@ -772,12 +859,8 @@ func NewServer(
 		mcp.WithString("interface", mcp.Required(), mcp.Description("The name of the interface (e.g., 'AuthService')")),
 		mcp.WithBoolean("test_only", mcp.Description("If true, return only structs defined in test or mock files (replaces gograph_mocks)")),
 	)
-	addTool(implementersTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(implementersTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -788,10 +871,10 @@ func NewServer(
 		}
 		if testOnly, _ := args["test_only"].(bool); testOnly {
 			results := search.Mocks(g, iface)
-			return formatResults(results), nil
+			return formatResults(g, results), nil
 		}
 		results := search.Implementers(g, iface)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_fields
@@ -799,12 +882,8 @@ func NewServer(
 		mcp.WithDescription("Extract all declared fields from a named Go struct: field names, Go types, and raw struct tag strings (json, db, yaml, gorm, etc.). The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: When mapping JSON/DB serialization tags, inspecting struct layouts, or enumerating fields before adding a new one. NOT TO USE: For methods on the struct (use gograph_node or gograph_source); for all struct initialization sites (use gograph_literals). RETURNS: Array of field entries with name, type, and tag string; empty when the struct is not found."),
 		mcp.WithString("struct", mcp.Required(), mcp.Description("The exact name of the target struct to inspect fields for (e.g., 'Config', 'User')")),
 	)
-	addTool(fieldsTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(fieldsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -814,7 +893,7 @@ func NewServer(
 			return mcp.NewToolResultError("struct must be a string"), nil
 		}
 		results := search.Fields(g, structName)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_source
@@ -822,12 +901,8 @@ func NewServer(
 		mcp.WithDescription("Retrieve verbatim Go source for a named function, method, struct, interface, type, variable, or constant, including complete bodies or declarations. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Source reads are confined to regular .go files beneath the analyzed repository and reject symlink path components. Read-only; no side effects. WHEN TO USE: When you need a specific implementation or declaration in full without loading a large file — a targeted alternative to reading the whole file. NOT TO USE: For call hierarchy information (use gograph_callers/gograph_callees); for AST metadata without the full source (use gograph_node). RETURNS: Raw Go source blocks with file paths and line numbers. It errors when the symbol is absent or no matching block can be read safely; an ambiguous query may still return its safely readable matches."),
 		mcp.WithString("symbol", mcp.Required(), mcp.Description("The name of the symbol to retrieve source for (supports short name 'ValidateToken', dot-notation 'graph.Graph', or fully-qualified ID)")),
 	)
-	addTool(sourceTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(sourceTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -848,72 +923,88 @@ func NewServer(
 	orphansTool := mcp.NewTool("gograph_orphans",
 		mcp.WithDescription("Find functions and methods unreachable from runtime roots (main/init), test/benchmark/fuzz roots, HTTP route handlers, and eligible externally callable exports; exports confined under internal/ are not roots. Uses full BFS reachability. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: During code cleanup or dead-code audits. NOT TO USE: For checking one symbol's usages (use gograph_usages or gograph_callers). RETURNS: Orphan symbols with package paths and file locations; empty means no unreachable code was detected."),
 	)
-	addTool(orphansTool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(orphansTool, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		results := search.ReachableOrphans(g)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_impact
 	impactTool := mcp.NewTool("gograph_impact",
-		mcp.WithDescription("Traverse the call graph backwards to find every symbol that transitively calls the target — the full upstream blast radius of a change. The MCP server checks freshness before the call. Read-only; no side effects. Three modes: (1) single symbol via `symbol`; (2) uncommitted changes via `uncommitted=true`; (3) git-ref changes via `since`. WHEN TO USE: Before refactoring a core function to see what breaks. NOT TO USE: For direct one-hop callers only (use gograph_callers). RETURNS: Transitive upstream affected symbols; with mermaid=true, Mermaid flowchart text; count:0 JSON when no changed symbols exist."),
+		mcp.WithDescription("Traverse the call graph backwards to find every symbol that transitively calls the target — the full upstream blast radius of a change. The MCP server checks freshness before the call. Read-only; no side effects. Three modes: (1) single symbol via `symbol`; (2) uncommitted changes via `uncommitted=true`; (3) git-ref changes via `since`. WHEN TO USE: Before refactoring a core function to see what breaks. NOT TO USE: For direct one-hop callers only (use gograph_callers). RETURNS: Transitive upstream affected symbols; with mermaid=true, Mermaid flowchart text; a bounded native page (including empty pages). Exact and possible paths remain distinct; Mermaid uses dotted edges for possible evidence."),
 		mcp.WithString("symbol", mcp.Description("Symbol name for single-symbol blast radius (supports short name 'ValidateToken', dot-notation 'graph.Graph', or fully-qualified ID)")),
+		mcp.WithBoolean("exact_only", mcp.Description("Exclude any path that depends on possible call evidence; default false retains explicitly labeled possible results")),
 		mcp.WithBoolean("uncommitted", mcp.Description("If true, compute blast radius of all uncommitted modified symbols")),
 		mcp.WithString("since", mcp.Description("Git ref (e.g. 'main', 'HEAD~5'): blast radius of all symbols changed since this ref")),
 		mcp.WithBoolean("mermaid", mcp.Description("Return Mermaid flowchart text instead of the normal response")),
 	)
-	addTool(impactTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(impactTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
 		}
 
+		options := search.ImpactOptions{IncludeTests: true, ExactOnly: boolArg(args, "exact_only")}
+		if value, exists := args["exact_only"]; exists {
+			if _, ok := value.(bool); !ok {
+				return mcp.NewToolResultError("exact_only must be a boolean"), nil
+			}
+		}
+		modes := 0
+		if symbol, _ := args["symbol"].(string); symbol != "" {
+			modes++
+		}
+		if ref, _ := args["since"].(string); ref != "" {
+			modes++
+		}
+		if boolArg(args, "uncommitted") {
+			modes++
+		}
+		if modes != 1 {
+			return mcp.NewToolResultError("provide exactly one of symbol, uncommitted=true, or since"), nil
+		}
+
 		// --since <ref> mode
 		if ref, ok := args["since"].(string); ok && ref != "" {
 			root := g.Root
-			changes, err := search.ChangesByGitRef(g, root, ref)
+			changes, err := search.ChangesByGitRefContext(ctx, g, root, ref)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			if len(changes.Symbols) == 0 {
-				return mcp.NewToolResultText(fmt.Sprintf(`{"count":0,"message":"No Go symbol changes found since %q."}`, ref)), nil
+			if changes.Evaluation != "complete" {
+				return mcp.NewToolResultError("cannot evaluate impact from incomplete changes: " + strings.Join(changes.Diagnostics, "; ")), nil
 			}
-			names := make([]string, 0, len(changes.Symbols))
-			for _, s := range changes.Symbols {
-				names = append(names, s.Name)
+			if len(changes.Symbols) == 0 {
+				return formatResults(g, nil), nil
+			}
+			names, err := search.CurrentChangedSymbolIDs(g, changes)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			reason := fmt.Sprintf("downstream impact of changes since %s (%d symbols)", ref, len(names))
 			if boolArg(args, "mermaid") {
-				return mcp.NewToolResultText(search.ImpactMultipleToMermaid(g, names, true)), nil
+				return mcp.NewToolResultText(queriesForRequest(ctx).ImpactMermaid(names, options)), nil
 			}
-			results := search.ImpactMultiple(g, names, reason, true)
-			return formatResults(results), nil
+			results := queriesForRequest(ctx).Impact(names, reason, options)
+			return formatResults(g, results), nil
 		}
 
 		// --uncommitted mode
 		if u, _ := args["uncommitted"].(bool); u {
-			syms, err := search.UncommittedSymbols(g)
+			syms, err := search.UncommittedSymbolsContext(ctx, g)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			if len(syms) == 0 {
-				return mcp.NewToolResultText(`{"count":0,"message":"No uncommitted modified symbols found."}`), nil
+				return formatResults(g, nil), nil
 			}
 			reason := fmt.Sprintf("downstream impact of uncommitted changes (%d symbols)", len(syms))
 			if boolArg(args, "mermaid") {
-				return mcp.NewToolResultText(search.ImpactMultipleToMermaid(g, syms, true)), nil
+				return mcp.NewToolResultText(queriesForRequest(ctx).ImpactMermaid(syms, options)), nil
 			}
-			results := search.ImpactMultiple(g, syms, reason, true)
-			return formatResults(results), nil
+			results := queriesForRequest(ctx).Impact(syms, reason, options)
+			return formatResults(g, results), nil
 		}
 
 		// single symbol mode
@@ -922,10 +1013,10 @@ func NewServer(
 			return mcp.NewToolResultError("must provide symbol, set uncommitted=true, or provide a since ref"), nil
 		}
 		if boolArg(args, "mermaid") {
-			return mcp.NewToolResultText(search.ImpactToMermaid(g, sym, true)), nil
+			return mcp.NewToolResultText(queriesForRequest(ctx).ImpactMermaid([]string{sym}, options)), nil
 		}
-		results := search.Impact(g, sym, true)
-		return formatResults(results), nil
+		results := queriesForRequest(ctx).Impact([]string{sym}, "downstream impact of "+sym, options)
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_boundaries
@@ -933,12 +1024,8 @@ func NewServer(
 		mcp.WithDescription("Refresh source analysis and check package imports against a boundaries.json configuration. The required config defaults to .gograph/boundaries.json; explicit paths must remain inside the analyzed project, and every path component plus the final regular file is read through the rooted repository boundary. Create it with gograph_boundaries_create. Read-only; no side effects. WHEN TO USE: In CI gates or post-edit reviews to enforce layer separation. NOT TO USE: For unconstrained dependency exploration (use gograph_deps or gograph_coupling). RETURNS: Structured pass state and boundary violations."),
 		mcp.WithString("config", mcp.Description("Optional in-project path to a regular, non-linked boundary config (default .gograph/boundaries.json)")),
 	)
-	addTool(boundariesTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(boundariesTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 
 		configPath := ".gograph/boundaries.json"
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
@@ -977,12 +1064,8 @@ func NewServer(
 		mcp.WithDescription("Create a baseline architecture boundary configuration from the repository's current package imports. Defaults to .gograph/boundaries.json under the graph root, uses repository-rooted regular-file creation, and refuses linked paths or overwrite. Mutating and non-idempotent; no network access. WHEN TO USE: Once when adopting boundary checks in an existing repository, then review and tighten the generated rules. NOT TO USE: To verify an existing configuration (use gograph_boundaries). RETURNS: The written config path or an error when the path is unsafe or already exists."),
 		mcp.WithString("config", mcp.Description("Optional in-project output path, absolute or repository-relative; linked components and existing entries are refused (default .gograph/boundaries.json)")),
 	)
-	addTool(boundariesCreateTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(boundariesCreateTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		configPath := ".gograph/boundaries.json"
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if value, ok := args["config"].(string); ok && value != "" {
@@ -1011,12 +1094,8 @@ func NewServer(
 		mcp.WithBoolean("include_tests", mcp.Description("Include routes registered in *_test.go files")),
 		mcp.WithBoolean("mermaid", mcp.Description("Return Mermaid flowchart text instead of structured JSON")),
 	)
-	addTool(endpointTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(endpointTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, _ := request.Params.Arguments.(map[string]any)
 		query, _ := args["query"].(string)
 		if query == "" {
@@ -1054,11 +1133,7 @@ func NewServer(
 		mcp.WithString("since", mcp.Required(), mcp.Description("A baseline Git ref (for example 'main' or 'HEAD~1') or regular in-project saved graph path ending in .json, with no linked component and the exact current source-policy marker")),
 	)
 	addTool(apiTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1095,12 +1170,7 @@ func NewServer(
 		mcp.WithInteger("limit", mcp.Description("Maximum rows in this page, 1-200 (default: 100); the 64 KiB byte budget may return fewer")),
 		mcp.WithString("cursor", mcp.Description("Opaque next_cursor from the previous gograph_routes result; reuse the same filters")),
 	)
-	addTool(routesTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(routesTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := map[string]any{}
 		if request.Params.Arguments != nil {
 			var ok bool
@@ -1136,7 +1206,7 @@ func NewServer(
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		page, err := search.QueryRoutes(g, search.RouteQuery{
+		page, err := queriesForRequest(ctx).QueryRoutes(search.RouteQuery{
 			Term:         term,
 			Module:       module,
 			IncludeTests: boolArg(args, "include_tests"),
@@ -1160,12 +1230,8 @@ func NewServer(
 		mcp.WithBoolean("uncommitted", mcp.Description("If true, return context for all uncommitted modified symbols bundled in one response.")),
 		mcp.WithBoolean("exact", mcp.Description("Require an exact symbol-name or fully-qualified-ID match in single-symbol mode.")),
 	)
-	addTool(contextTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(contextTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1174,7 +1240,7 @@ func NewServer(
 		root := g.Root
 
 		if u, _ := args["uncommitted"].(bool); u {
-			syms, err := search.UncommittedSymbols(g)
+			syms, err := search.UncommittedSymbolsContext(ctx, g)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -1236,12 +1302,8 @@ func NewServer(
 		mcp.WithBoolean("uncommitted", mcp.Description("Set to true to generate a global plan for all currently uncommitted changes across the repository")),
 		mcp.WithBoolean("with_context", mcp.Description("If set to true, bundles full context, source code, callers, callees, and architectural roles for each symbol to be inspected")),
 	)
-	addTool(planTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(planTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1249,7 +1311,7 @@ func NewServer(
 		var symbolNames []string
 		var title string
 		if u, ok := args["uncommitted"].(bool); ok && u {
-			syms, err := search.UncommittedSymbols(g)
+			syms, err := search.UncommittedSymbolsContext(ctx, g)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -1305,12 +1367,8 @@ func NewServer(
 		mcp.WithString("symbol", mcp.Description("The name of the target symbol to run the design review for (e.g. 'AuthService')")),
 		mcp.WithBoolean("uncommitted", mcp.Description("Set to true to review all uncommitted/modified changes in the repository")),
 	)
-	addTool(reviewTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(reviewTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1318,7 +1376,7 @@ func NewServer(
 		var symbolNames []string
 		var title string
 		if u, ok := args["uncommitted"].(bool); ok && u {
-			syms, err := search.UncommittedSymbols(g)
+			syms, err := search.UncommittedSymbolsContext(ctx, g)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -1362,12 +1420,8 @@ func NewServer(
 		mcp.WithString("symbol", mcp.Description("The name of the target symbol to run the risk evaluation for (e.g. 'AuthService')")),
 		mcp.WithBoolean("uncommitted", mcp.Description("Set to true to evaluate risk for all uncommitted/modified changes in the repository")),
 	)
-	addTool(riskTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(riskTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1375,7 +1429,7 @@ func NewServer(
 		var symbolNames []string
 		var title string
 		if u, ok := args["uncommitted"].(bool); ok && u {
-			syms, err := search.UncommittedSymbols(g)
+			syms, err := search.UncommittedSymbolsContext(ctx, g)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -1412,12 +1466,8 @@ func NewServer(
 		mcp.WithString("config", mcp.Description("Sanitizer policy path inside the graph root (default .gograph/flow.json when present)")),
 		mcp.WithBoolean("no_tests", mcp.Description("Exclude functions in *_test.go files")),
 	)
-	addTool(flowTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(flowTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1479,12 +1529,8 @@ func NewServer(
 		mcp.WithString("query", mcp.Description("The error string or sentinel error name (preferred over term)")),
 		mcp.WithBoolean("no_tests", mcp.Description("If true, exclude test files from related-test collection (matches CLI --no-tests)")),
 	)
-	addTool(errorflowTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(errorflowTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1517,12 +1563,8 @@ func NewServer(
 		mcp.WithDescription("Find all files and packages in the codebase that import a specific package by its exact import path. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: When isolating usage of a third-party library before removing or replacing it, or tracing where an internal package is consumed from outside. NOT TO USE: For a package's own outgoing imports (use gograph_deps); for reverse package-level dependency lookup by short name (use gograph_dependents). RETURNS: File paths and package names of all importers; empty when the package is imported nowhere."),
 		mcp.WithString("package", mcp.Required(), mcp.Description("The exact import path of the target package to trace imports for (e.g., 'github.com/redis/go-redis')")),
 	)
-	addTool(importsTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(importsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1532,7 +1574,7 @@ func NewServer(
 			return mcp.NewToolResultError("package must be a string"), nil
 		}
 		results := search.ExternalImports(g, pkg)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_dependents
@@ -1541,12 +1583,8 @@ func NewServer(
 		mcp.WithString("package", mcp.Required(), mcp.Description("The package to find dependents for (e.g., 'internal/auth', 'auth', or a full import path)")),
 		mcp.WithBoolean("mermaid", mcp.Description("Return Mermaid flowchart text instead of the normal response")),
 	)
-	addTool(dependentsTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(dependentsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1559,7 +1597,7 @@ func NewServer(
 		if boolArg(args, "mermaid") {
 			return mcp.NewToolResultText(search.DependentsToMermaid(pkg, results)), nil
 		}
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_sql
@@ -1575,12 +1613,7 @@ func NewServer(
 		mcp.WithInteger("limit", mcp.Description("Page size from 1 to 200; defaults to 100"), mcp.Min(1), mcp.Max(200)),
 		mcp.WithString("cursor", mcp.Description("Opaque next_cursor from the previous gograph_sql page; reuse the same filters"), mcp.MaxLength(1024)),
 	)
-	addTool(sqlTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(sqlTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := map[string]any{}
 		if request.Params.Arguments != nil {
 			var ok bool
@@ -1632,7 +1665,7 @@ func NewServer(
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		page, err := search.QuerySQL(g, search.SQLQuery{
+		page, err := queriesForRequest(ctx).QuerySQL(search.SQLQuery{
 			Term: term, Tables: tables, Verbs: verbs, Accesses: accesses,
 			Function: function, Module: module, NoTests: boolArg(args, "no_tests"),
 			Limit: limit, Cursor: cursor,
@@ -1653,12 +1686,8 @@ func NewServer(
 		mcp.WithString("term", mcp.Description("Optional keyword to filter the returned error structures (e.g., 'ErrInvalid', 'unauthorized')")),
 		mcp.WithBoolean("no_tests", mcp.Description("Exclude error sites in *_test.go files")),
 	)
-	addTool(errorsTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(errorsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		term := ""
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if t, ok := args["term"].(string); ok {
@@ -1670,7 +1699,7 @@ func NewServer(
 			includeTests = !boolArg(args, "no_tests")
 		}
 		results := search.Errors(g, term, includeTests)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_embeds
@@ -1678,12 +1707,8 @@ func NewServer(
 		mcp.WithDescription("Find all Go structs that embed the named struct via anonymous field composition. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: When understanding how a base type is extended throughout the codebase, or before modifying a shared embedded struct to estimate blast radius. NOT TO USE: For interface implementations (use gograph_implementers); for named field type references in other structs (use gograph_usages). RETURNS: List of embedding parent struct names with package paths and file locations; empty when the struct is embedded nowhere."),
 		mcp.WithString("struct", mcp.Required(), mcp.Description("The exact name of the target struct to inspect embedding relationships for (e.g., 'Symbol', 'PackageNode')")),
 	)
-	addTool(embedsTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(embedsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1693,7 +1718,7 @@ func NewServer(
 			return mcp.NewToolResultError("struct must be a string"), nil
 		}
 		results := search.Embeds(g, structName)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_public
@@ -1701,12 +1726,8 @@ func NewServer(
 		mcp.WithDescription("List all exported (public) symbols of a specific package, including functions, methods, types/interfaces, variables, and constants. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: When reviewing a package's public contract before changing it, building integration documentation, or checking what a package exposes to callers. NOT TO USE: For unexported/private symbols (use gograph_node or gograph_focus); for API drift detection against a baseline (use gograph_api). RETURNS: List of exported symbol names with kinds and file locations; empty when the package has no exports or is not found."),
 		mcp.WithString("package", mcp.Required(), mcp.Description("The package name or path to inspect (e.g., 'internal/auth')")),
 	)
-	addTool(publicTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(publicTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1716,10 +1737,10 @@ func NewServer(
 			return mcp.NewToolResultError("package must be a string"), nil
 		}
 		results := search.Public(g, pkgName)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
-	initNewTools(g, rebuild, buildGraph, buildBaseline, selectedOptions, addTool)
+	initNewTools(g, buildGraph, buildBaseline, selectedOptions, addTool)
 
 	// Start stdio server
 	return s
@@ -1738,7 +1759,11 @@ func Serve(
 	return server.ServeStdio(s)
 }
 
-func formatResults(results []search.Result) *mcp.CallToolResult {
+func formatResults(g *graph.Graph, results []search.Result) *mcp.CallToolResult {
+	return &mcp.CallToolResult{StructuredContent: pendingResults{Graph: g, Rows: results}}
+}
+
+func formatUnpagedResults(results []search.Result) *mcp.CallToolResult {
 	if len(results) == 0 {
 		return mcp.NewToolResultText("No results found.")
 	}
@@ -1754,7 +1779,6 @@ func formatResults(results []search.Result) *mcp.CallToolResult {
 
 func initNewTools(
 	g *graph.Graph,
-	rebuild func() (*graph.Graph, error),
 	buildGraph func(string) (*graph.Graph, error),
 	buildBaseline func(context.Context, string) (*graph.Graph, error),
 	selectedOptions ServerOptions,
@@ -1768,12 +1792,8 @@ func initNewTools(
 		mcp.WithDescription("Find every place a named Go type appears in function parameter lists, return type signatures, struct field or interface method declarations, and composite-literal construction. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: Before changing an interface or type definition — see the consumption and construction blast radius. NOT TO USE: For call sites of a function (use gograph_callers); use gograph_literals when only struct Foo{...} initialization sites are needed; for all transitive callers use gograph_impact. RETURNS: File paths and line locations where the type appears; empty when the type is not referenced."),
 		mcp.WithString("type", mcp.Required(), mcp.Description("The type name to search for (e.g., 'AuthService', 'Repository')")),
 	)
-	addTool(usagesTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(usagesTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1783,7 +1803,7 @@ func initNewTools(
 			return mcp.NewToolResultError("type must be a non-empty string"), nil
 		}
 		results := search.Usages(g, typeName)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_literals
@@ -1791,12 +1811,8 @@ func initNewTools(
 		mcp.WithDescription("Find every composite-literal initialization site for a named Go struct — all locations where Foo{...} syntax is used to construct the struct. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: Before adding a required field to a struct — every site returned will fail to compile if the new field has no default; run this first to scope the migration blast radius. NOT TO USE: For finding string or integer magic values (use gograph_envs or grep for those); for factory functions that return the struct (use gograph_constructors). RETURNS: All file paths and line numbers where the named struct is composite-initialized; empty when the struct has no direct initialization sites."),
 		mcp.WithString("struct", mcp.Required(), mcp.Description("The name of the struct (e.g., 'User')")),
 	)
-	addTool(literalsTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(literalsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1806,7 +1822,7 @@ func initNewTools(
 			return mcp.NewToolResultError("struct must be a non-empty string"), nil
 		}
 		results := search.Literals(g, structName)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_constructors
@@ -1814,12 +1830,8 @@ func initNewTools(
 		mcp.WithDescription("Find all factory and constructor functions that instantiate and return a named Go struct (functions whose return type includes the struct name). The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: When looking for the canonical way to create a struct, or before modifying struct initialization to ensure all construction paths are updated. NOT TO USE: For direct composite-literal sites (use gograph_literals); for struct fields (use gograph_fields). RETURNS: List of constructor function names with signatures, package paths, and file locations; empty when no factory functions are found."),
 		mcp.WithString("struct", mcp.Required(), mcp.Description("The exact name of the target Go struct to find constructors for (e.g., 'User', 'Config')")),
 	)
-	addTool(constructorsTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(constructorsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1829,7 +1841,7 @@ func initNewTools(
 			return mcp.NewToolResultError("missing 'struct' argument"), nil
 		}
 		results := search.Constructors(g, str)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_schema
@@ -1837,12 +1849,8 @@ func initNewTools(
 		mcp.WithDescription("Find Go structs that declare a mapping to a specific database table via struct tags (e.g., `db:\"table_name\"`, `gorm:\"table:table_name\"`). The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: When tracing which Go types represent a database table, or before writing a migration to understand the current ORM model. NOT TO USE: For non-tagged Go structs used as query results (use gograph_fields or gograph_query instead). RETURNS: Matching struct names with package paths and file locations; empty when no structs map to the named table."),
 		mcp.WithString("table", mcp.Required(), mcp.Description("The table or schema name to search for in struct tags (e.g., 'users', 'roles')")),
 	)
-	addTool(schemaTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(schemaTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1852,7 +1860,7 @@ func initNewTools(
 			return mcp.NewToolResultError("missing 'table' argument"), nil
 		}
 		results := search.Schema(g, tbl)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_globals
@@ -1860,12 +1868,8 @@ func initNewTools(
 		mcp.WithDescription("Find package-level variable declarations (var blocks) and the functions that mutate them in a specific package. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: When auditing mutable global state, identifying thread-safety hazards, or locating shared singleton variables before a concurrency refactor. NOT TO USE: For local-scope variables; for environment variable reads (use gograph_envs). RETURNS: Package-level variable names, types, and the functions that write to them; empty when the package has no package-level variables."),
 		mcp.WithString("package", mcp.Required(), mcp.Description("The package name or path to inspect (e.g., 'internal/config')")),
 	)
-	addTool(globalsTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(globalsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1875,7 +1879,7 @@ func initNewTools(
 			return mcp.NewToolResultError("missing 'package' argument"), nil
 		}
 		results := search.Globals(g, pkg)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_mocks
@@ -1883,12 +1887,8 @@ func initNewTools(
 		mcp.WithDescription("Find structs in *_test.go files that implement a named interface — test doubles, mocks, and stubs. Equivalent to gograph_implementers with test_only=true; kept for compatibility. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: When writing tests and wanting to find existing mock implementations before creating a new one. NOT TO USE: For production interface implementers (use gograph_implementers without test_only); prefer gograph_implementers(test_only=true) for new code. RETURNS: Test-file struct names implementing the interface with file locations; empty when no test mocks exist for the interface."),
 		mcp.WithString("interface", mcp.Required(), mcp.Description("The name of the interface (e.g., 'AuthService')")),
 	)
-	addTool(mocksTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(mocksTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1898,7 +1898,7 @@ func initNewTools(
 			return mcp.NewToolResultError("missing 'interface' argument"), nil
 		}
 		results := search.Mocks(g, iface)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_explain
@@ -1906,12 +1906,8 @@ func initNewTools(
 		mcp.WithDescription("Generate a synthesized, LLM-ready narrative for a Go symbol: role classification, callers, callees, complexity, SQL, env vars, HTTP routes, concurrency primitives, tests, and interface satisfaction — all in one structured document. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: For onboarding to an unfamiliar symbol, generating PR documentation, or getting an opinionated architectural assessment without issuing multiple tool calls. NOT TO USE: For raw source code (use gograph_source); for targeted blast-radius analysis (use gograph_impact). RETURNS: Rich structured JSON with role, narrative summary, and all associated cross-references; {\"found\":false} when symbol is not in the graph."),
 		mcp.WithString("symbol", mcp.Required(), mcp.Description("The name or ID of the symbol to explain (supports short name 'CreateUser', dot-notation 'graph.Graph', or fully-qualified ID)")),
 	)
-	addTool(explainTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(explainTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1922,13 +1918,9 @@ func initNewTools(
 		}
 		result := search.Explain(g, sym)
 		if result == nil {
-			return mcp.NewToolResultText(fmt.Sprintf(`{"symbol":"%s","found":false}`, sym)), nil
+			return nativeResult(map[string]any{"schema_version": "gograph.explain.v1", "symbol": sym, "status": "not_found", "found": false}), nil
 		}
-		data, err := json.MarshalIndent(result, "", "  ")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		return mcp.NewToolResultText(string(data)), nil
+		return nativeResult(result), nil
 	})
 
 	// Tool: gograph_node
@@ -1936,12 +1928,8 @@ func initNewTools(
 		mcp.WithDescription("Fetch AST metadata for a named symbol, package, or file: kind, file path, line number, full signature, doc comment, and struct fields if applicable. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: When you need structural metadata (kind, signature, line number) without the full source body — lighter than gograph_source for metadata-only lookups. NOT TO USE: For full source code (use gograph_source); for call relationships (use gograph_callers/gograph_callees). RETURNS: Node properties array with kind, file, line, and signature; empty when the name is not found."),
 		mcp.WithString("name", mcp.Required(), mcp.Description("The exact symbol, package path, or Go file name to inspect (e.g., 'Graph', 'internal/search', 'server.go')")),
 	)
-	addTool(nodeTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(nodeTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1951,7 +1939,7 @@ func initNewTools(
 			return mcp.NewToolResultError("name must be a non-empty string"), nil
 		}
 		results := search.Node(g, name)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_envs
@@ -1959,12 +1947,8 @@ func initNewTools(
 		mcp.WithDescription("Find all environment variable reads in the codebase via os.Getenv, os.LookupEnv, and common config frameworks, with their enclosing function context. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. Optional `term` filters by key name substring (e.g., \"DATABASE\" matches DATABASE_URL and DATABASE_HOST). WHEN TO USE: When compiling a deployment configuration manifest, documenting required env vars, or auditing what secrets a service reads at startup. NOT TO USE: For reading actual runtime env values (this is static analysis); for database queries (use gograph_sql). RETURNS: List of env key names, calling function, and file/line; empty when no env reads match the filter."),
 		mcp.WithString("term", mcp.Description("Optional filter term (e.g., 'DATABASE' matches DATABASE_URL, DATABASE_HOST, etc.)")),
 	)
-	addTool(envsTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(envsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		term := ""
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if t, ok := args["term"].(string); ok {
@@ -1972,7 +1956,7 @@ func initNewTools(
 			}
 		}
 		results := search.Envs(g, term)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_interfaces
@@ -1980,12 +1964,8 @@ func initNewTools(
 		mcp.WithDescription("Find all Go interfaces satisfied by a named concrete struct (duck-typing resolution — inverse of gograph_implementers). Given a struct name, returns every interface whose complete method set is a subset of that struct's methods. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: When you need to know which contracts a struct implicitly fulfills — useful before refactoring a method to understand which interface contracts will break. NOT TO USE: For finding structs that implement an interface (use gograph_implementers); for listing interface declarations in a package (use gograph_node or gograph_public). RETURNS: Interface names, method signatures, and file locations; empty when the struct satisfies no known interfaces."),
 		mcp.WithString("struct", mcp.Required(), mcp.Description("The name of the struct (e.g., 'AuthService')")),
 	)
-	addTool(interfacesTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(interfacesTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -1995,7 +1975,7 @@ func initNewTools(
 			return mcp.NewToolResultError("struct must be a non-empty string"), nil
 		}
 		results := search.Interfaces(g, structName)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_tests
@@ -2006,12 +1986,8 @@ func initNewTools(
 		mcp.WithBoolean("exact_only", mcp.Description("With transitive=true, omit paths containing possible edges")),
 		mcp.WithString("package", mcp.Description("With transitive=true, optional exact Go package name used to disambiguate the selected symbol")),
 	)
-	addTool(testsTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(testsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		term := ""
 		transitive := false
 		exactOnly := false
@@ -2028,7 +2004,7 @@ func initNewTools(
 			if strings.TrimSpace(term) == "" {
 				return mcp.NewToolResultError("symbol must be a non-empty string when transitive=true"), nil
 			}
-			report := search.TransitiveTestsInPackage(g, term, packageName, exactOnly)
+			report := queriesForRequest(ctx).TransitiveTests(term, packageName, exactOnly)
 			data, err := json.MarshalIndent(report, "", "  ")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -2039,7 +2015,7 @@ func initNewTools(
 			return mcp.NewToolResultError("exact_only and package require transitive=true"), nil
 		}
 		results := search.Tests(g, term)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_coverage
@@ -2049,12 +2025,7 @@ func initNewTools(
 		mcp.WithString("package", mcp.Description("Optional exact Go package name used only to disambiguate matching test symbols")),
 		mcp.WithBoolean("exact_only", mcp.Description("Return only symbols reached entirely through exact/static edges")),
 	)
-	addTool(coverageTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(coverageTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -2064,7 +2035,7 @@ func initNewTools(
 			return mcp.NewToolResultError("test must be a non-empty string"), nil
 		}
 		packageName, _ := args["package"].(string)
-		report := search.CoverageInPackage(g, testName, packageName, boolArg(args, "exact_only"))
+		report := queriesForRequest(ctx).Coverage(testName, packageName, boolArg(args, "exact_only"))
 		data, err := json.MarshalIndent(report, "", "  ")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -2078,12 +2049,8 @@ func initNewTools(
 		mcp.WithString("symbol", mcp.Required(), mcp.Description("Exact symbol name, package/receiver-qualified spelling, or canonical stable ID")),
 		mcp.WithString("package", mcp.Description("Optional exact Go package name used to disambiguate matching symbols")),
 	)
-	addTool(identityTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(identityTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -2107,12 +2074,8 @@ func initNewTools(
 		mcp.WithInteger("top", mcp.Description("Number of results to return (default: 10, 0 = all)")),
 		mcp.WithBoolean("include_tests", mcp.Description("Include call edges from *_test.go files. Default false — production fan-in only, otherwise test helpers (baseReq, newTestFoo, etc.) tend to dominate rankings in test-heavy codebases.")),
 	)
-	addTool(hotspotTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(hotspotTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		top := 10
 		includeTests := false
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
@@ -2140,12 +2103,8 @@ func initNewTools(
 		mcp.WithBoolean("transitive", mcp.Description("If true, return the full transitive import closure via Breadth-First Search (BFS)")),
 		mcp.WithBoolean("mermaid", mcp.Description("Return Mermaid flowchart text instead of structured JSON")),
 	)
-	addTool(depsTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(depsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -2171,7 +2130,7 @@ func initNewTools(
 
 	// Tool: gograph_changes
 	changesTool := mcp.NewTool("gograph_changes",
-		mcp.WithDescription("List Go symbols that have been structurally modified, added, or deleted. In working-tree mode, deleted also covers a prior graph file that is no longer in the current safely selected inventory because it is absent, ignored, build-inactive, or unsafe. Without git_ref, compares against trusted persisted graph.json without refreshing it, or against the startup fallback when no usable artifact exists. With git_ref, refreshes source analysis and performs a static symbol diff against the named Git reference. Read-only; no side effects. WHEN TO USE: After editing to confirm which symbols changed before gograph_impact or gograph_review. NOT TO USE: For line-level text diffs (use git diff); for blast radius (use gograph_impact). RETURNS: Changed symbols grouped by added/modified/deleted; empty arrays when no structural changes are detected."),
+		mcp.WithDescription("Compare Go declaration fingerprints, including bodies, without marking every symbol in an edited file modified. Without git_ref, inspects trusted persisted graph.json without refreshing, or the startup fallback if no usable artifact exists. With git_ref, refreshes and extracts a confined declaration baseline without compiling application code. Existing but deselected files are excluded, not deleted; unsafe inputs and parse failures produce diagnostics, never deletion proof. Missing legacy declaration fingerprints produce unknown. Read-only analysis. WHEN TO USE: After editing to identify changed declarations before impact/review. NOT TO USE: For line-level diffs or a complete census when evaluation is partial/cannot_evaluate. RETURNS: Native gograph.changes.v1 with complete/partial/cannot_evaluate, diagnostics, changed_files, and new/modified/deleted/excluded/unknown symbol rows; CLI uses the same value and exits 2 for incomplete evaluation."),
 		mcp.WithString("git_ref", mcp.Description("Optional git reference to compare against (e.g., 'main', 'HEAD~5', 'v1.4.50')")),
 	)
 	addTool(changesTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -2182,29 +2141,17 @@ func initNewTools(
 			}
 		}
 		if gitRef != "" {
-			if newG, err := rebuild(); err == nil {
-				g = newG
-			} else {
-				return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-			}
+			g := graphForRequest(ctx)
 			root := graphRoot(g)
-			result, err := search.ChangesByGitRef(g, root, gitRef)
+			result, err := search.ChangesByGitRefContext(ctx, g, root, gitRef)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			data, err := json.MarshalIndent(result, "", "  ")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			return mcp.NewToolResultText(string(data)), nil
+			return nativeResult(result), nil
 		}
 		base, source := persistedGraphWithSource(indexedGraph)
-		result := search.Changes(base, graphRoot(base))
-		data, err := json.MarshalIndent(result, "", "  ")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		toolResult := mcp.NewToolResultText(string(data))
+		result := search.ChangesContext(ctx, base, graphRoot(base))
+		toolResult := nativeResult(result)
 		attachGraphState(toolResult, inspectedGraphState(ctx, base, source, selectedOptions))
 		return toolResult, nil
 	})
@@ -2216,12 +2163,8 @@ func initNewTools(
 		mcp.WithString("to", mcp.Required(), mcp.Description("The target symbol name")),
 		mcp.WithBoolean("mermaid", mcp.Description("Return Mermaid flowchart text instead of structured JSON")),
 	)
-	addTool(pathTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(pathTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -2278,12 +2221,8 @@ func initNewTools(
 		mcp.WithDescription("Report estimated cyclomatic complexity for Go functions, sorted highest-to-lowest with severity labels (LOW/MEDIUM/HIGH/VERY HIGH). A function whose repository source cannot be read or parsed safely is retained as UNKNOWN with score -1. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. Optional `symbol` substring filters to a specific function or set of functions. WHEN TO USE: During code quality audits, identifying functions that need decomposition, or setting complexity budgets in CI. NOT TO USE: For import dependency metrics (use gograph_coupling or gograph_deps); for God Object detection (use gograph_godobj). RETURNS: Structured list of functions with complexity score and severity label; empty when no functions match the filter."),
 		mcp.WithString("symbol", mcp.Description("Optional Go function or method symbol name substring to filter the complexity report (e.g., 'Build')")),
 	)
-	addTool(complexityTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(complexityTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		term := ""
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if s, ok := args["symbol"].(string); ok {
@@ -2306,12 +2245,8 @@ func initNewTools(
 		mcp.WithBoolean("internal_only", mcp.Description("Restrict the report to the project's own packages (anything starting with the module path from go.mod). Strictly stronger than excluding stdlib — also excludes third-party deps.")),
 		mcp.WithBoolean("mermaid", mcp.Description("Return Mermaid flowchart text instead of structured JSON")),
 	)
-	addTool(couplingTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(couplingTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		term := ""
 		opts := search.CouplingOptions{}
 		mermaid := false
@@ -2345,12 +2280,8 @@ func initNewTools(
 		mcp.WithDescription("Find functions and methods with at least a threshold number of parameters — the long-parameter-list smell. The MCP server checks freshness before this call. Read-only; no side effects. `min` sets the inclusive minimum (default: 5; 0 includes zero-arity functions), matching CLI --min. WHEN TO USE: During code smell audits. NOT TO USE: For struct field counts (use gograph_fields or gograph_godobj). RETURNS: Functions meeting the threshold with parameter count, signature, and file location."),
 		mcp.WithInteger("min", mcp.Description("Inclusive minimum argument count to report (default: 5; 0 includes zero-arity functions)")),
 	)
-	addTool(arityTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(arityTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		minArgs := 5
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			var err error
@@ -2360,7 +2291,7 @@ func initNewTools(
 			}
 		}
 		results := search.Arity(g, minArgs)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_concurrency
@@ -2368,12 +2299,8 @@ func initNewTools(
 		mcp.WithDescription("Find indexed concurrency sites in the codebase: goroutine spawns (`go` statements), channel sends, and calls on sync.Mutex/RWMutex, sync.WaitGroup, and sync.Once. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. Optional `term` filter (e.g., \"mutex\", \"goroutine\", \"channel\"). WHEN TO USE: When auditing race safety, understanding async flow, or locating synchronization points before a concurrency refactor. NOT TO USE: For standard sequential call flow analysis (use gograph_callers/gograph_callees). RETURNS: File locations, line numbers, and primitive kind for each indexed concurrency site; empty when no sites are found. Channel receives and select statements are not indexed."),
 		mcp.WithString("term", mcp.Description("Optional filter term (e.g., 'goroutine', 'mutex', 'channel')")),
 	)
-	addTool(concurrencyTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(concurrencyTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		term := ""
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if t, ok := args["term"].(string); ok {
@@ -2381,20 +2308,16 @@ func initNewTools(
 			}
 		}
 		results := search.Concurrency(g, term)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_httpcalls
 	httpcallsTool := mcp.NewTool("gograph_httpcalls",
-		mcp.WithDescription("Find all outbound HTTP client calls detected in the codebase via net/http package-level functions: http.Get, http.Post, http.PostForm, http.Head. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. Optional `term` filters by method, URL, or function name substring. WHEN TO USE: When auditing external API dependencies, understanding which services your code calls, or identifying all outbound HTTP traffic. NOT TO USE: For HTTP server route definitions (use gograph_routes). RETURNS: List of HTTP method, URL, static path segments, dynamic flag, calling function, and file/line; empty when no HTTP client calls match."),
+		mcp.WithDescription("List a bounded page of HTTP evidence from imported, unshadowed net/http Get/Post/PostForm/Head calls and possible NewRequest/NewRequestWithContext construction. Client receiver methods and arbitrary URL-building functions are not inferred. Static strings and bounded lexical base + static suffix expressions are recorded; runtime environment values are never read. Construction is not dispatch proof. Workspace http_clients may explicitly map bases or env:KEY to scoped logical authorities; unresolved destinations remain workspace diagnostics. The MCP server refreshes source analysis before this call. Read-only. Optional term matches method, URL/base, or function. RETURNS: gograph.results.v1 rows with file/line and dynamic base/suffix or request-only evidence in detail, plus total/returned/truncated/next_cursor. For server routes use gograph_routes."),
 		mcp.WithString("term", mcp.Description("Optional filter term (matches method, URL, or function name — e.g., 'POST' or 'api.example.com')")),
 	)
-	addTool(httpcallsTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(httpcallsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		term := ""
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if t, ok := args["term"].(string); ok {
@@ -2402,7 +2325,7 @@ func initNewTools(
 			}
 		}
 		results := search.HTTPCalls(g, term)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_fixtures
@@ -2410,12 +2333,8 @@ func initNewTools(
 		mcp.WithDescription("Find test helper structs and factory/builder functions declared in *_test.go files for a named package. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: Before writing new tests — check what test infrastructure (helper builders, stub factories, shared setup structs) already exists in the package to avoid duplication. NOT TO USE: For test functions that exercise a symbol (use gograph_tests); for external test data files on disk (those are not tracked in the graph — use filesystem search). RETURNS: Symbols defined in test files for the package including helper structs and factory functions; empty when the package has no test helper infrastructure."),
 		mcp.WithString("package", mcp.Required(), mcp.Description("The package path or name (e.g., 'internal/auth')")),
 	)
-	addTool(fixturesTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(fixturesTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -2425,7 +2344,7 @@ func initNewTools(
 			return mcp.NewToolResultError("package must be a non-empty string"), nil
 		}
 		results := search.Fixtures(g, pkg)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_godobj
@@ -2436,12 +2355,8 @@ func initNewTools(
 		mcp.WithInteger("calls", mcp.Description("Minimum outgoing call count (default: 15)")),
 		mcp.WithInteger("top", mcp.Description("Maximum results to return (default: 10)")),
 	)
-	addTool(godobjTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(godobjTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		p := search.DefaultGodObjectParams()
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			methods, err := integerArg(args, "methods", p.MinMethods)
@@ -2485,12 +2400,8 @@ func initNewTools(
 	skeletonTool := mcp.NewTool("gograph_skeleton",
 		mcp.WithDescription("Emit the full repository's API signatures with function bodies stripped — struct definitions, interface declarations, and function/method signatures only. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WARNING: output can be very large on big repositories — consider using gograph_public per package for targeted queries. WHEN TO USE: When an LLM needs a compact map of the entire codebase's shape without reading source files individually. NOT TO USE: For full implementations (use gograph_source); for a single package (use gograph_public). RETURNS: Multi-line text of all stripped declarations across all packages; always non-empty when the graph has symbols."),
 	)
-	addTool(skeletonTool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(skeletonTool, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		return mcp.NewToolResultText(search.Skeleton(g)), nil
 	})
 
@@ -2499,12 +2410,8 @@ func initNewTools(
 		mcp.WithDescription("Show how each caller uses the return value(s) of a named function: discarded, assigned, partially ignored, returned upstream, or passed directly to another call. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: Before changing a function's return signature — see which callers ignore the error or only use some return values. NOT TO USE: For error propagation tracing (use gograph_errorflow); for finding all callers without usage detail (use gograph_callers). RETURNS: List of call sites with usage classification (discarded/assigned/partially_ignored/returned/passed); empty when the function has no callers."),
 		mcp.WithString("function", mcp.Required(), mcp.Description("The function name to analyse (e.g., 'ValidateToken')")),
 	)
-	addTool(returnusageTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(returnusageTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -2514,7 +2421,7 @@ func initNewTools(
 			return mcp.NewToolResultError("function must be a non-empty string"), nil
 		}
 		results := search.ReturnUsages(g, fn)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_mutate
@@ -2522,12 +2429,8 @@ func initNewTools(
 		mcp.WithDescription("Find struct-field and package-global mutation sites. Use Type.Field to exclude same-named fields on unrelated types; ordinary local-variable assignments are excluded. The MCP server refreshes in the current requested analysis mode; a precise graph adds ++/+=, pointer-alias, atomic/sync/wrapper, and channel mutations and re-runs that analysis after source edits. Read-only; no side effects. WHEN TO USE: Diagnosing state changes or auditing mutability. NOT TO USE: For field declarations (gograph_fields) or whole-struct initialization (gograph_literals). RETURNS: Mutation locations and indirect mutator method names when applicable."),
 		mcp.WithString("field", mcp.Required(), mcp.Description("The field name to search for mutations (e.g., 'Status')")),
 	)
-	addTool(mutateTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(mutateTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -2537,7 +2440,7 @@ func initNewTools(
 			return mcp.NewToolResultError("field must be a non-empty string"), nil
 		}
 		results := search.Mutate(g, field)
-		return formatResults(results), nil
+		return formatResults(g, results), nil
 	})
 
 	// Tool: gograph_stats
@@ -2564,12 +2467,8 @@ func initNewTools(
 		mcp.WithString("term", mcp.Required(), mcp.Description("Error string or symbol name to trace (e.g. 'ErrNotFound', 'permission denied')")),
 		mcp.WithBoolean("no_tests", mcp.Description("If true, skip collecting related test functions")),
 	)
-	addTool(traceTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(traceTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -2597,12 +2496,8 @@ func initNewTools(
 		mcp.WithInteger("max_depth", mcp.Description("Maximum BFS depth from graph roots (0 = unlimited)")),
 		mcp.WithBoolean("include_stdlib", mcp.Description("If true, include Go standard library packages in the diagram")),
 	)
-	addTool(diagramTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(diagramTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		args, _ := request.Params.Arguments.(map[string]any)
 		groupBy := "package"
 		maxDepth := 0
@@ -2632,11 +2527,7 @@ func initNewTools(
 		mcp.WithString("config", mcp.Description("Optional checks.json path; relative/default paths are project-confined, while an absolute path explicitly selects a regular local file")),
 	)
 	addTool(checkTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+		g := graphForRequest(ctx)
 		args, _ := request.Params.Arguments.(map[string]any)
 		var sinceRef string
 		uncommitted := false
@@ -2711,7 +2602,7 @@ func initNewTools(
 		mcp.WithDescription("Start a telemetry audit session for tracking agent compliance and tool success metrics. Writes only regular, repository-confined session state under .gograph/sessions and refuses linked storage; MCP annotations mark it mutating and non-idempotent. No prerequisites once the MCP server is running. WHEN TO USE: Call once at the start of a multi-step coding task to track your work. NOT TO USE: When a session is already active. RETURNS: Structured message with the newly generated session ID."),
 		mcp.WithString("custom_word", mcp.Description("Optional custom word prefix to incorporate in the timestamped session ID (e.g. 'implement_feature')")),
 	)
-	addTool(sessionCreateTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	addTool(sessionCreateTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args, _ := request.Params.Arguments.(map[string]any)
 		customWord := ""
 		if args != nil {
@@ -2730,7 +2621,7 @@ func initNewTools(
 	sessionEndTool := mcp.NewTool("gograph_session_end",
 		mcp.WithDescription("End the active telemetry session cleanly, append its end record, and remove the active-session pointer through repository-confined regular-file operations. MCP annotations mark it mutating and non-idempotent. No additional prerequisite once the MCP server is running. WHEN TO USE: Call once after you have completed all edits and post-edit reviews. NOT TO USE: When no session is active. RETURNS: Message confirming ending of the session."),
 	)
-	addTool(sessionEndTool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	addTool(sessionEndTool, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		sessionID, err := session.EndSessionAt(serverRoot)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -2744,7 +2635,7 @@ func initNewTools(
 		mcp.WithString("session_id", mcp.Description("Optional session ID to audit. If not supplied, audits the most recent session in the repository.")),
 		mcp.WithBoolean("json", mcp.Description("Set to true to return structured JSON format instead of human-readable ASCII layout.")),
 	)
-	addTool(sessionAuditTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	addTool(sessionAuditTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args, _ := request.Params.Arguments.(map[string]any)
 		sessionID := ""
 		jsonMode := false
@@ -2771,7 +2662,7 @@ func initNewTools(
 	sessionCleanupTool := mcp.NewTool("gograph_session_cleanup",
 		mcp.WithDescription("Delete stale inactive regular session telemetry JSONL logs without following linked repository paths. If no session is active, it deletes all eligible logs; an active log is preserved. MCP annotations mark this operation mutating and destructive. No prerequisites. WHEN TO USE: Call after auditing to keep the repository clean. RETURNS: Number of deleted session files."),
 	)
-	addTool(sessionCleanupTool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	addTool(sessionCleanupTool, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		count, err := session.CleanupSessionsAt(serverRoot)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -2783,12 +2674,8 @@ func initNewTools(
 		mcp.WithDescription("Generate the llm-wiki/ directory of machine-first markdown pages from the static graph. Pages produced: overview.md, architecture.md, hotspots.md, routes.md, env.md, errors.md, concurrency.md, api-surface.md, and one packages/<name>.md per internal package. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. A relative output is anchored beneath the graph root and rejects linked components; an absolute output explicitly selects a local destination whose final directory must be real. Generated page paths and regular-file writes remain confined beneath the selected output root. Writes may overwrite existing regular files; MCP annotations mark it mutating and destructive. WHEN TO USE: At the start of an agent session on an unfamiliar codebase — run once to get a token-efficient orientation without issuing dozens of individual tool calls. NOT TO USE: For targeted symbol lookups (use gograph_context or gograph_source). RETURNS: JSON manifest of written page filenames and a count; error when the graph cannot be loaded or the output directory is unsafe or cannot be created."),
 		mcp.WithString("output", mcp.Description("Wiki directory: relative paths are graph-rooted; an absolute path explicitly selects a real local output root (default 'llm-wiki')")),
 	)
-	addTool(wikiTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(wikiTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		outputDir := "llm-wiki"
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if v, ok := args["output"].(string); ok && v != "" {
@@ -2825,12 +2712,8 @@ func initNewTools(
 	summaryTool := mcp.NewTool("gograph_summary",
 		mcp.WithDescription("Single-call codebase briefing: top 3 hotspots (most-called symbols), worst instability package, highest cyclomatic complexity function, total orphan count, and god-object count. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: At the very start of any session — replaces running gograph_hotspot + gograph_coupling + gograph_orphans + gograph_complexity + gograph_godobj separately (5 calls → 1). NOT TO USE: For detailed drill-down into a specific metric (use the dedicated tool after reviewing summary). RETURNS: JSON with symbols, packages, hotspots[], worst_instability, top_complexity, orphan_count, and god_object_count."),
 	)
-	addTool(summaryTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
+	addTool(summaryTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
 		hotspots := search.Hotspot(g, 3, false)
 		coupling := search.Coupling(g, "", search.CouplingOptions{})
 		complexity := search.Complexity(g, "")
@@ -2874,13 +2757,8 @@ func initNewTools(
 		mcp.WithInteger("top", mcp.Description("Limit results to top N by caller count (0 = all, default)")),
 		mcp.WithArray("exclude", mcp.WithStringItems(), mcp.Description("Repository-relative path globs to exclude; use prefix/** for all descendants")),
 	)
-	addTool(untestedTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if newG, err := rebuild(); err == nil {
-			g = newG
-		} else {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to refresh graph: %v", err)), nil
-		}
-		results := search.Untested(g)
+	addTool(untestedTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		results := queriesForRequest(ctx).Untested()
 
 		// Parse optional filters from MCP arguments.
 		pkg := ""
@@ -2931,7 +2809,7 @@ func initNewTools(
 		mcp.WithDescription("Fetch Go documentation for a package, stdlib symbol, or third-party symbol by running `go doc <query>`. The handler does not query the graph, though the project-scoped MCP server must already have started with a usable artifact or buildable Go source. Filesystem-shaped queries are rejected, and the command is refused for source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees; .git and .gograph are excluded from that preflight. It also refuses a special recognized Go build input, linked/non-regular Go tool metadata (go.mod, go.sum, go.work, go.work.sum, or vendor/modules.txt), or a workspace member outside the workspace directory. Each applicable member directory, go.mod, and optional go.sum is validated first. Dependency and toolchain resolution remain open-world under the user's Go environment. WHEN TO USE: When a call chain reaches code outside the project. NOT TO USE: For project-internal symbols (use gograph_source or gograph_context). RETURNS: A one-element JSON array containing {query, output}, where output is the raw go doc text; an error when the query or repository input is unsafe, the symbol is not found, or go is unavailable."),
 		mcp.WithString("query", mcp.Required(), mcp.Description("The go doc query string. Examples: 'fmt.Errorf', 'net/http.HandleFunc', 'io.Reader', 'github.com/jackc/pgx/v5.Conn.QueryRow'")),
 	)
-	addTool(docTool, func(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	addTool(docTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		query, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
 			return mcp.NewToolResultError("invalid arguments"), nil
@@ -2951,7 +2829,7 @@ func initNewTools(
 			return mcp.NewToolResultError("refusing to run the Go toolchain with unsafe repository source or metadata: " + err.Error()), nil
 		}
 
-		cmd := exec.Command("go", "doc", q)
+		cmd := exec.CommandContext(ctx, "go", "doc", q)
 		cmd.Dir = docRoot
 		out, err := cmd.Output()
 		if err != nil {

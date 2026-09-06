@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"fmt"
-	"net/url"
 	pathpkg "path"
 	"sort"
 	"strings"
@@ -321,19 +320,10 @@ func resolveHTTP(overlay *ScopeOverlay, members map[string]LoadedMember, service
 	}
 	for _, member := range members {
 		for _, call := range member.Graph.HTTPCalls {
-			if call.HasDynamic {
-				continue
-			}
-			parsed, err := url.Parse(call.URL)
-			if err != nil || parsed.Host == "" {
-				continue
-			}
-			host := strings.ToLower(parsed.Host)
-			owners := aliases[host]
-			if len(owners) == 0 {
-				owners = aliases[strings.ToLower(parsed.Hostname())]
-			}
-			if len(owners) == 0 {
+			owners, parsed, reason := resolveHTTPDestination(member, call, services, aliases)
+			if reason != "" {
+				source, _ := functionRefStatus(member, call.FunctionName, call.SourceFile)
+				overlay.HTTPUnresolved = append(overlay.HTTPUnresolved, HTTPUnresolved{Source: source, File: call.SourceFile, Line: call.SourceLine, Method: call.Method, URL: call.URL, Base: call.URLBase, Reason: reason, Resolver: ResolverVersions["http"]})
 				continue
 			}
 			source, sourceStatus := functionRefStatus(member, call.FunctionName, call.SourceFile)
@@ -343,7 +333,7 @@ func resolveHTTP(overlay *ScopeOverlay, members map[string]LoadedMember, service
 				matched := matchingRoutes(routes, owner.authorityID, method, path)
 				contractIDs := matchedHTTPContracts(owner.authorityID, method, path, matched)
 				status := sourceStatus
-				if method == "ANY" {
+				if method == "ANY" || call.RequestOnly {
 					status = combineResolutionStatus(status, ResolutionPossible)
 				}
 				if distinctAuthorityCount(owners) > 1 || len(contractIDs) > 1 {
@@ -651,6 +641,7 @@ func sortScope(scope *ScopeOverlay) {
 		return string(a.ResolutionStatus)+"\x00"+string(a.EvidenceOrigin)+"\x00"+a.Resolver < string(b.ResolutionStatus)+"\x00"+string(b.EvidenceOrigin)+"\x00"+b.Resolver
 	})
 	scope.HTTPRelations = dedupeHTTPRelations(scope.HTTPRelations)
+	sortHTTPUnresolved(scope.HTTPUnresolved)
 }
 
 func nodeSortKey(node NodeRef) string {

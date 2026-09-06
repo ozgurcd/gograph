@@ -44,6 +44,8 @@ type Envelope struct {
 	// detect and continue a bounded routes result without knowing the nested
 	// results representation. Other commands leave these fields nil/empty.
 	Total      *int    `json:"total,omitempty"`
+	Limit      int     `json:"limit,omitempty"`
+	Offset     *int    `json:"offset,omitempty"`
 	Returned   *int    `json:"returned,omitempty"`
 	Truncated  *bool   `json:"truncated,omitempty"`
 	NextCursor *string `json:"next_cursor,omitempty"`

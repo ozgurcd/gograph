@@ -153,7 +153,8 @@ func TestMCPUsagesIncludesCompositeLiterals(t *testing.T) {
 	text := callTool(t, setupHandlers(t, g)["gograph_usages"], map[string]any{
 		"type": "UsersHandlerDeps",
 	})
-	if !strings.Contains(text, "[literal] UsersHandlerDeps") || !strings.Contains(text, "internal/api/router.go:88") {
+	rows := decodeResultRows(t, text)
+	if len(rows) != 1 || rows[0].Kind != "literal" || rows[0].Name != "UsersHandlerDeps" || rows[0].File != "internal/api/router.go" || rows[0].Line != 88 {
 		t.Fatalf("MCP usages = %q, want composite literal", text)
 	}
 }
@@ -259,7 +260,7 @@ func TestMCPMermaidParityIsAdvertisedAndExecutable(t *testing.T) {
 
 			tc.args["mermaid"] = true
 			text := callTool(t, handlers[tc.tool], tc.args)
-			if !strings.HasPrefix(text, "```mermaid\nflowchart ") || !strings.Contains(text, "-->") || !strings.HasSuffix(text, "```") {
+			if !strings.HasPrefix(text, "```mermaid\nflowchart ") || (!strings.Contains(text, "-->") && !strings.Contains(text, "-.->")) || !strings.HasSuffix(text, "```") {
 				t.Fatalf("tool %q mermaid output is not a populated fenced flowchart:\n%s", tc.tool, text)
 			}
 		})

@@ -62,7 +62,14 @@ func publishGraphArtifacts(root string, candidate *graph.Graph, mode artifactPub
 	return publishGraphArtifactsWithFreshness(root, candidate, mode, search.Stale)
 }
 
-func publishGraphArtifactsWithFreshness(root string, candidate *graph.Graph, mode artifactPublicationMode, freshness func(*graph.Graph, string) search.StaleResult) (result graphPublication, err error) {
+func publishGraphArtifactsWithFreshness(root string, candidate *graph.Graph, mode artifactPublicationMode, freshness func(*graph.Graph, string) search.StaleResult) (graphPublication, error) {
+	return publishGraphArtifactsWithFreshnessContext(context.Background(), root, candidate, mode, freshness)
+}
+
+func publishGraphArtifactsWithFreshnessContext(parent context.Context, root string, candidate *graph.Graph, mode artifactPublicationMode, freshness func(*graph.Graph, string) search.StaleResult) (result graphPublication, err error) {
+	if err := parent.Err(); err != nil {
+		return graphPublication{}, err
+	}
 	if candidate == nil {
 		return graphPublication{}, fmt.Errorf("cannot publish a nil graph")
 	}
@@ -73,6 +80,10 @@ func publishGraphArtifactsWithFreshness(root string, candidate *graph.Graph, mod
 	if err != nil {
 		return graphPublication{}, fmt.Errorf("resolving publication root: %w", err)
 	}
+	// Publication may retry a graph already held by active queries.
+	// Only the private copy may acquire root/baseline publication metadata.
+	copyOfCandidate := *candidate
+	candidate = &copyOfCandidate
 	candidate.Root = absRoot
 
 	outDir := filepath.Join(absRoot, outputDir)
@@ -85,7 +96,7 @@ func publishGraphArtifactsWithFreshness(root string, candidate *graph.Graph, mod
 		return graphPublication{}, err
 	}
 	lock := flock.New(lockPath, flock.SetPermissions(0o640))
-	ctx, cancel := context.WithTimeout(context.Background(), artifactLockTimeout)
+	ctx, cancel := context.WithTimeout(parent, artifactLockTimeout)
 	defer cancel()
 	locked, lockErr := lock.TryLockContext(ctx, artifactLockRetry)
 	if lockErr != nil {
@@ -120,8 +131,14 @@ func publishGraphArtifactsWithFreshness(root string, candidate *graph.Graph, mod
 	}
 
 	candidate.Baseline = graphBaseline(previous)
+	if err := parent.Err(); err != nil {
+		return graphPublication{}, err
+	}
 	payloads, err := renderGraphArtifacts(candidate)
 	if err != nil {
+		return graphPublication{}, err
+	}
+	if err := parent.Err(); err != nil {
 		return graphPublication{}, err
 	}
 	staged, err := stageGraphArtifacts(absRoot, payloads)
@@ -134,6 +151,11 @@ func publishGraphArtifactsWithFreshness(root string, candidate *graph.Graph, mod
 	// known-stale candidate visible; the caller can rebuild and retry.
 	if stale := freshness(candidate, absRoot); stale.IsStale {
 		return graphPublication{}, fmt.Errorf("source changed while staging graph artifacts (%d freshness changes)", stale.ChangeCount())
+	}
+	// Once the commit starts, finish the artifact set. Cancellation must not
+	// intentionally leave only a prefix of the staged set installed.
+	if err := parent.Err(); err != nil {
+		return graphPublication{}, err
 	}
 	for _, artifact := range staged {
 		if err := os.Rename(artifact.tempPath, artifact.finalPath); err != nil {

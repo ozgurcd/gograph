@@ -46,7 +46,7 @@ func NewWorkspaceServerWithBuildTags(root, version string, buildTags []string) *
 	})
 
 	queryTool := protocol.NewTool("gograph_workspace_query",
-		protocol.WithDescription("Search symbols, packages, modules, and HTTP contracts across one resolution scope. Repository graphs remain authoritative and the workspace overlay must match their exact current artifacts. Read-only."),
+		protocol.WithDescription("Search symbols, packages, modules, HTTP contracts, and unresolved HTTP diagnostics across one resolution scope. http_unresolved records why a call has no resolved destination; these records never participate in traversal. Repository graphs remain authoritative and the workspace overlay must match their exact current artifacts. Read-only."),
 		protocol.WithString("term", protocol.Required(), protocol.Description("Search term")),
 		protocol.WithString("scope", protocol.Description("Resolution scope; required when multiple scopes exist and no default_scope is configured")),
 	)

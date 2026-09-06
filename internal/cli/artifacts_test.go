@@ -61,8 +61,8 @@ func TestPublishGraphArtifactsWritesCompleteBundleAndBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !publication.Published || publication.Graph != first {
-		t.Fatalf("first publication = %+v, want candidate published", publication)
+	if !publication.Published || publication.Graph == nil || publication.Graph == first || publication.Graph.GeneratedAt != first.GeneratedAt {
+		t.Fatalf("first publication = %+v, want private copy of candidate published", publication)
 	}
 	if first.Baseline != nil {
 		t.Fatalf("first graph baseline = %+v, want nil", first.Baseline)
@@ -92,6 +92,9 @@ func TestPublishGraphArtifactsWritesCompleteBundleAndBaseline(t *testing.T) {
 	}
 	if !publication.Published {
 		t.Fatal("second graph was not published")
+	}
+	if second.Baseline != nil {
+		t.Fatal("publication mutated the caller's graph snapshot")
 	}
 	persisted, err := loadGraph(root)
 	if err != nil {

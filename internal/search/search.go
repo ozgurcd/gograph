@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
@@ -15,13 +14,14 @@ import (
 
 // Result is a single match returned by any search function.
 type Result struct {
-	Kind     string `json:"kind"`
-	Name     string `json:"name"`
-	StableID string `json:"stable_id,omitempty"`
-	File     string `json:"file,omitempty"`
-	Line     int    `json:"line,omitempty"`
-	Detail   string `json:"detail,omitempty"`
-	Score    int    `json:"-"` // internal ranking only, not serialised
+	ResolutionStatus string `json:"resolution_status,omitempty"`
+	Kind             string `json:"kind"`
+	Name             string `json:"name"`
+	StableID         string `json:"stable_id,omitempty"`
+	File             string `json:"file,omitempty"`
+	Line             int    `json:"line,omitempty"`
+	Detail           string `json:"detail,omitempty"`
+	Score            int    `json:"-"` // internal ranking only, not serialised
 
 	// CallSiteFile, CallSiteLine, and CallSiteColumn carry the location of the call
 	// expression that produced this result (callers/callees). Empty for
@@ -38,6 +38,9 @@ func (r Result) String() string {
 		loc = fmt.Sprintf("%s:%d", r.File, r.Line)
 	}
 	provenance := ""
+	if r.ResolutionStatus != "" {
+		provenance = " [" + r.ResolutionStatus + "]"
+	}
 	if r.CallSiteFile != "" {
 		provenance = fmt.Sprintf(" [call @ %s:%d]", r.CallSiteFile, r.CallSiteLine)
 		if r.CallSiteColumn > 0 {
@@ -67,10 +70,14 @@ func Query(g *graph.Graph, terms []string) []Result {
 		return 0
 	}
 
-	seen := make(map[string]bool)
+	type queryIdentity struct {
+		Kind, StableID, Name, File string
+		Line                       int
+	}
+	seen := make(map[queryIdentity]bool)
 	var results []Result
 	add := func(r Result) {
-		key := fmt.Sprintf("%s|%s|%d", r.Kind, r.Name, r.Line)
+		key := queryIdentity{r.Kind, r.StableID, r.Name, r.File, r.Line}
 		if !seen[key] {
 			seen[key] = true
 			results = append(results, r)
@@ -94,7 +101,7 @@ func Query(g *graph.Graph, terms []string) []Result {
 			if s.Receiver != "" {
 				name = fmt.Sprintf("(%s).%s", s.Receiver, s.Name)
 			}
-			add(Result{Kind: string(s.Kind), Name: name, File: s.File, Line: s.Line, Detail: string(s.Kind), Score: score})
+			add(Result{Kind: string(s.Kind), StableID: s.ID, Name: name, File: s.File, Line: s.Line, Detail: string(s.Kind), Score: score})
 		}
 	}
 	for _, imp := range g.Imports {
@@ -1171,125 +1178,7 @@ func Impact(g *graph.Graph, name string, includeTests bool) []Result {
 // own SymbolNode.ID so its uplink search is performed once per symbol, even
 // when many symbols share the same short name.
 func ImpactMultiple(g *graph.Graph, names []string, reason string, includeTests bool) []Result {
-	callerSymbols := make(map[string]graph.SymbolNode)
-	for _, s := range g.Symbols {
-		callerSymbols[s.ID] = s
-	}
-
-	// idFrontier holds SymbolNode.ID values to match exactly against
-	// CalleeSymbolID. termFrontier holds lowercase substrings to match
-	// against CalleeRaw. Both are checked on every edge — order doesn't
-	// matter because we dedup on caller symbol identity.
-	type frontierItem struct {
-		id   string // empty for short-name items
-		term string // lowercase substring for short-name items
-	}
-	var queue []frontierItem
-	visitedIDs := make(map[string]bool)     // FQ-ID terms we've already searched
-	visitedTerms := make(map[string]bool)   // short-name terms we've already searched
-	visitedSymbols := make(map[string]bool) // caller symbols we've already requeued
-	enqueueID := func(id string) {
-		if id == "" {
-			return
-		}
-		expanded := expandTransparentCallerTargets(g, map[string]bool{id: true})
-		ids := make([]string, 0, len(expanded))
-		for targetID := range expanded {
-			if targetID != "" && !visitedIDs[targetID] {
-				ids = append(ids, targetID)
-			}
-		}
-		sort.Strings(ids)
-		for _, targetID := range ids {
-			visitedIDs[targetID] = true
-			queue = append(queue, frontierItem{id: targetID})
-		}
-	}
-
-	for _, name := range names {
-		resolvedTargets, interfaceMethodQuery := resolvedCallTargetIDs(g, name)
-		for targetID := range resolvedTargets {
-			enqueueID(targetID)
-		}
-		if interfaceMethodQuery {
-			// A resolved Interface.Method is identity-qualified. Falling back
-			// to its raw text would either miss receiver-variable calls such as
-			// value.Delete or conflate unrelated methods with the same name.
-			continue
-		}
-		if isFullyQualifiedID(name) {
-			enqueueID(name)
-		} else {
-			nl := strings.ToLower(name)
-			if !visitedTerms[nl] {
-				visitedTerms[nl] = true
-				queue = append(queue, frontierItem{term: nl})
-			}
-		}
-	}
-
-	var results []Result
-	seenIDs := make(map[string]bool)
-
-	for len(queue) > 0 {
-		item := queue[0]
-		queue = queue[1:]
-
-		for _, c := range g.Calls {
-			if c.Synthetic {
-				continue
-			}
-			if !includeTests && isTestFile(c.File) {
-				continue
-			}
-			matched := false
-			if item.id != "" {
-				if c.CalleeSymbolID == item.id {
-					matched = true
-				}
-			} else if strings.Contains(strings.ToLower(c.CalleeRaw), item.term) {
-				matched = true
-			}
-			if !matched {
-				continue
-			}
-			callerID := c.CallerSymbolID
-			if seenIDs[callerID] {
-				continue
-			}
-			seenIDs[callerID] = true
-
-			sym, ok := callerSymbols[callerID]
-			if !ok {
-				continue
-			}
-			results = append(results, Result{
-				Kind:   "impact",
-				Name:   sym.Name,
-				File:   sym.File,
-				Line:   sym.Line,
-				Detail: reason,
-				Score:  8,
-			})
-
-			// Enqueue this caller's identity (preferred) AND short name
-			// (fallback for callers of THIS symbol that recorded only the
-			// name on their edges). Each enqueue is gated by its own visited
-			// set so two same-named symbols don't suppress one another.
-			if !visitedSymbols[sym.ID] {
-				visitedSymbols[sym.ID] = true
-				enqueueID(sym.ID)
-				nextTerm := strings.ToLower(sym.Name)
-				if !visitedTerms[nextTerm] {
-					visitedTerms[nextTerm] = true
-					queue = append(queue, frontierItem{term: nextTerm})
-				}
-			}
-		}
-	}
-
-	sortResults(results)
-	return results
+	return ImpactWithOptions(g, names, reason, ImpactOptions{IncludeTests: includeTests})
 }
 
 // Routes extracts all HTTP REST API routes found in the codebase.
@@ -1494,6 +1383,12 @@ func HTTPCalls(g *graph.Graph, term string) []Result {
 			detail := fmt.Sprintf("%s %s", h.Method, h.URL)
 			if h.HasDynamic {
 				detail += " [dynamic]"
+			}
+			if h.URLBase != "" {
+				detail += fmt.Sprintf(" [base=%s suffix=%q static=%t]", h.URLBase, h.URLSuffix, h.URLSuffixStatic)
+			}
+			if h.RequestOnly {
+				detail += " [request construction; dispatch unproven]"
 			}
 			detail += " in " + h.FunctionName
 			results = append(results, Result{
@@ -1862,6 +1757,14 @@ type UntestedResult struct {
 //
 // One full graph sweep — replaces N sequential 'gograph tests <sym>' calls.
 func Untested(g *graph.Graph) []UntestedResult {
+	return NewSnapshot(g).Untested()
+}
+
+func (snapshot *Snapshot) Untested() []UntestedResult {
+	g := snapshot.g
+	if g == nil {
+		return []UntestedResult{}
+	}
 	// Build exact and bounded-possible typed target sets. Parser-only edges
 	// retain the historical name attribution fallback only when the name has one
 	// production owner. Once a typed ID exists, never also apply its raw selector
@@ -1896,7 +1799,7 @@ func Untested(g *graph.Graph) []UntestedResult {
 			testedNames[te.Target] = true
 		}
 	}
-	transitiveTests := allTestReachability(g)
+	transitiveTests := snapshot.testReachability()
 
 	// Count distinct production source-target pairs. Synthetic promoted-method
 	// wrappers forward the real source call to the declared method body.

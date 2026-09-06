@@ -81,9 +81,9 @@ gograph plan <symbol> --with-context  # plan + full context for every inspect_fi
 gograph plan --uncommitted       # generate a change plan for all uncommitted changes
 gograph risk <symbol>            # evaluate change risk profile (blast radius, complexity, tests, SQL/env)
 gograph risk --uncommitted       # evaluate risk profile for all uncommitted changes
-gograph changes                  # new/modified/deleted symbols since trusted persisted graph;
-                                 # deleted also means absent from current safe selected inventory
-gograph changes --git <ref>      # symbols in files changed since a git ref (MODIFIED only; e.g. --git main, --git HEAD~5, --git v1.4.50)
+gograph changes                  # declaration-level new/modified/deleted/excluded/unknown;
+                                 # check evaluation and diagnostics; incomplete exits 2
+gograph changes --git <ref>      # declaration comparison against a confined Git baseline
 gograph errorflow "parse failed" --no-tests  # trace error path to entry points, excluding test references
 gograph trace "parse failed"     # alias for errorflow (kept for compatibility)
 gograph flow --no-tests          # potential HTTP/JSON/env paths to SQL, process, filesystem, or outbound HTTP sinks
@@ -128,7 +128,7 @@ gograph mcp [path] [--persist-refresh] [--tags=integration[,tag...]] [--memory-m
                                  # stdio MCP server; optional successful-refresh publication
                                  # memory options match CLI build/refresh semantics; use the
                                  # same GOWORK/GOFLAGS/tags as the persisted graph
-gograph httpcalls [term]         # all outbound net/http calls (Get, Post, PostForm, Head); filter by method or URL substring
+gograph httpcalls [term]         # net/http calls + possible request construction; bounded pages, method/URL/base/function filter
 gograph add-claude-plugin        # install MCP server + CLAUDE.md rules + PreToolUse hook (Claude Desktop & Claude Code)
 gograph hook-guard               # PreToolUse hook binary — blocks indexed-repository Go symbol greps (invoked automatically by Claude Code)
 # --- CI ENFORCEMENT ---
@@ -505,6 +505,13 @@ Change plan for ValidateToken
 ```
 Agents should **always** run `gograph plan` before editing a symbol to avoid breaking downstream callers or missing test updates. It can also be run for all uncommitted changes using `gograph plan --uncommitted`.
 
+Uncommitted modes compare declarations against `HEAD`, including selected
+untracked Go files. They refuse incomplete changes, ambiguous/missing graph
+identities, and deletions that require historical caller evidence. Use
+`gograph changes --git HEAD` to inspect deletions; rebuild to include added
+symbols before asking for their current-graph context or impact. CLI and MCP
+use the same guard. A refused selection is not a clean review.
+
 ### 17. Change review (Post-Edit Verification)
 `gograph review <symbol>` (or `gograph review --uncommitted`) acts as the final gate *after* you have made code changes, but *before* you commit them.
 
@@ -715,7 +722,8 @@ only by default, 100 rows by default, at most 200 rows, and never more than
 64 KiB of compact JSON. `term` matches method/path, handler, or file;
 `--module` accepts an exact module path/directory, a unique nested-module
 directory basename, or the repository directory name for the root module.
-Continue with the returned cursor and exactly the same filters. CLI JSON mirrors
+Continue with the returned cursor and exactly the same graph snapshot and filters.
+A refresh invalidates old cursors; restart without `--cursor`. CLI JSON mirrors
 `total`, `returned`, `truncated`, and `next_cursor` on the outer envelope while
 retaining the complete native `gograph.routes.v1` page under `results`.
 CLI `--files-only` follows all pages locally and keeps the legacy complete,
@@ -790,35 +798,47 @@ This reports packages connected through the indexed import graph so the agent
 can prioritize review without following each import manually.
 
 ### 18. Change detection
-`gograph changes` compares every selected source file's content digest against the persisted graph and reports:
-- **MODIFIED** — symbols in files whose bytes differ from the persisted graph
-- **NEW** — top-level declarations in changed files not recorded in the graph
-- **DELETED** — symbols whose recorded files are absent from the current safely
-  selected inventory: gone, ignored, build-inactive, or unsafe to read
+`gograph changes` compares declaration fingerprints against the persisted graph.
+It reports `modified` only when that declaration changed, `new` for additions,
+and `deleted` for removed declarations, including removals inside surviving files.
+Formatting and comment-only edits do not mark declarations modified. Const-group
+changes are conservative because implicit values and `iota` depend on the group.
 
-`gograph changes --git <ref>` extends this to git-ref-based scoping:
-- Runs `git diff --name-only <ref>` to get the list of changed files
-- Returns **MODIFIED** symbols from those files (NEW/DELETED require a full baseline build)
-- Accepts any valid git ref: branch name, tag, or commit SHA (e.g. `--git main`, `--git HEAD~5`, `--git v1.4.50`)
-- Ref is validated against a positive allowlist to prevent injection
+Existing files no longer selected are `excluded`, not deleted. Unsafe inputs and
+parse failures produce diagnostics; a legacy baseline without declaration digests
+reports `unknown`. Check the aggregate `evaluation`: `complete`, `partial`, or
+`cannot_evaluate`. Incomplete CLI evaluation exits 2.
 
-This allows an agent in an iterative session to see exactly what changed without re-reading files or re-running `gograph build`.
+`gograph changes --git <ref>` uses the same comparison after extracting a confined
+declaration baseline from Git, without compiling application code. It supports
+additions and deletions as well as modifications. Reference validation and safe
+baseline extraction apply. MCP `gograph_changes` exposes the same native
+`gograph.changes.v1` result and evaluation field.
+Both modes reuse the graph's recorded platform/compiler/CGO selection and
+effective build/tool/release tags. Ambient `GOFLAGS` does not silently change
+the measured universe. Missing legacy selection metadata is partial; rebuild
+before beginning the next edit. Module ownership is rediscovered even if Go
+bytes do not change, and `package_name` distinguishes external-test twins.
+Repeated initializers are retained and initialization-order changes reported.
+Detected source/selection races invalidate the result instead of mixing snapshots.
+
+See [query contracts](query-contracts.md) for cursor, identity, and trust rules.
 
 ```
 gograph changes
 ```
 ```
-Changes since persisted graph (2026-05-09 14:00:00 UTC):
+Changes since persisted graph — evaluation: complete
 
-Modified files (2):
+Changed files (2):
   internal/auth/validator.go
   internal/api/handler.go
 
-Affected symbols: 3 modified, 1 new, 0 deleted
+Affected symbols: 2 modified, 1 new, 0 deleted, 0 excluded, 0 unknown
 
-[NEW     ] RefreshToken  (internal/auth/validator.go:71)
-[MODIFIED] ValidateToken  (internal/auth/validator.go:42)
-[MODIFIED] HandleLogin  (internal/api/handler.go:88)
+[NEW     ] example.com/app/internal/auth::RefreshToken  (internal/auth/validator.go:71)
+[MODIFIED] example.com/app/internal/auth::ValidateToken  (internal/auth/validator.go:42)
+[MODIFIED] example.com/app/internal/api::HandleLogin  (internal/api/handler.go:88)
 ```
 
 ### 20. Architecture Boundary Enforcement
@@ -903,7 +923,7 @@ version. In particular, `doctor` inspects the invoking machine's executable and
 
 MCP agents should call `gograph_capabilities` first when they need to discover available gograph tools and recommended workflows.
 
-At startup, the MCP server loads a regular repository-confined persisted graph with the exact current source-policy marker, or creates an in-memory AST graph when the artifact is missing, unreadable, unsafe, or unsupported. Source-analysis tools compare source-content digests and the build/module fingerprint per call, adopt a newer persisted precise graph, and reparse changed packages in memory while reusing unchanged package AST records. Every refresh-backed result preserves its original text payload and adds `gograph.mcp-result.v1` structured content plus `_meta.gograph_graph_state`. The shared state separates source (`persisted`/`in_memory`), freshness (`current`/`stale`), completeness (`complete`/`partial`), precision (`ast`/`precise`/`fallback`), refresh outcome, and persistence outcome; refresh and persistence diagnostics are independently bounded. Failed precise enrichment may serve an explicitly marked current in-memory fallback. An ordinary refresh failure may serve the last trusted stale graph. Neither degraded state is silently published, while a stale graph from a different effective `GOWORK`, `GOFLAGS`, or tag selection still fails closed. A precise or fallback session re-attempts repository-wide CHA/SSA after an edit. If the same sources already have a fresh successful precise artifact, a failed retry retains it rather than publishing a fallback. `gograph doctor --json` reports persisted-artifact diagnostics. `gograph_stale`, default `gograph_changes`, and `gograph_stats` inspect trusted persisted `graph.json` when available, or the startup auto-build fallback when no usable artifact exists.
+At startup, the MCP server loads a regular repository-confined persisted graph with the exact current source-policy marker, or creates an in-memory AST graph when the artifact is missing, unreadable, unsafe, or unsupported. Source-analysis tools compare source-content digests and the build/module fingerprint per call, adopt a newer persisted precise graph, and reparse changed packages in memory while reusing unchanged package AST records. Refresh-backed results attach per-request `_meta.gograph_graph_state` and `structuredContent.graph_state`. Bounded row lists use native `gograph.results.v1` JSON text and structured content; native explain/changes keep their own schemas. Other legacy results retain their payload plus a `gograph.mcp-result.v1` graph-state companion. The shared state separates source (`persisted`/`in_memory`), freshness (`current`/`stale`), completeness (`complete`/`partial`), precision (`ast`/`precise`/`fallback`), refresh outcome, and persistence outcome; refresh and persistence diagnostics are independently bounded. Failed precise enrichment may serve an explicitly marked current in-memory fallback. An ordinary refresh failure may serve the last trusted stale graph. Neither degraded state is silently published, while a stale graph from a different effective `GOWORK`, `GOFLAGS`, or tag selection still fails closed. A precise or fallback session re-attempts repository-wide CHA/SSA after an edit. If the same sources already have a fresh successful precise artifact, a failed retry retains it rather than publishing a fallback. `gograph doctor --json` reports persisted-artifact diagnostics. `gograph_stale`, default `gograph_changes`, and `gograph_stats` inspect trusted persisted `graph.json` when available, or the startup auto-build fallback when no usable artifact exists.
 
 Refreshes are in-memory by default. Starting the server as
 `gograph mcp [path] --persist-refresh` opts into writing or overwriting
@@ -964,17 +984,17 @@ The current suite registers 68 MCP endpoints: 64 query, analysis, and workflow t
 - **`gograph_fields`**
 - **`gograph_source`**: Repository-confined source for a named function, method, struct, interface, type, variable, or constant. It errors only when the symbol is absent or no matching block can be read safely; an ambiguous query may return its safe matches.
 - **`gograph_orphans`**
-- **`gograph_impact`**: Blast radius analysis. Supports three modes: single symbol, `uncommitted=true` for uncommitted changes, and `since=<ref>` for all changes since a git ref. `mermaid=true` applies to all three modes.
+- **`gograph_impact`**: Identity-safe blast radius with exact/possible path labels. Choose exactly one mode: `symbol`, `uncommitted=true`, or `since=<ref>`. Optional `exact_only=true` excludes any path depending on possible evidence. Default conservative results use the shared bounded-page contract. `mermaid=true` applies to all three modes and renders possible paths as dotted edges; do not combine Mermaid with limit/cursor.
 - **`gograph_boundaries`**: Verifies package architecture constraints from a regular, non-linked file inside the selected project (default `.gograph/boundaries.json`, override with `config`). MCP refreshes source analysis before evaluation; CLI reads the persisted graph and should be preceded by `stale`/`build`. Returns structured output.
 - **`gograph_boundaries_create`**: Creates a regular repository-rooted baseline boundary config, rejecting linked ancestors/finals and overwrite; equivalent to CLI `boundaries --create`.
 - **`gograph_api`**: Compares public-facing contract and integration surface
   drift against a Git reference or a saved graph path ending in `.json`. Saved
   graphs must be regular non-linked files inside the selected project, require
   the exact current source-policy marker, and cannot supply the trusted root.
-- **`gograph_routes`**: Return a deterministic `gograph.routes.v1` page. Optional `term` matches method/path, handler, or file; `module` accepts an exact module path/directory, a unique nested-module directory basename, or the repository directory name for a root module; `include_tests` opts into `_test.go` routes. `limit` defaults to 100 and is restricted to 1-200, while a 64 KiB page budget may return fewer. Continue with `next_cursor` as `cursor` and the same filters. CLI `--files-only` follows pages for a complete file census, not a route-row dump. Constant nested Gin/Echo/Fiber Group prefixes and Chi Route closure prefixes are composed into final paths; Gin/Fiber use the final variadic argument as the terminal handler, while Echo uses the handler immediately after the path. Unresolvable handler factories remain marked dynamic.
+- **`gograph_routes`**: Return a deterministic `gograph.routes.v1` page. Optional `term` matches method/path, handler, or file; `module` accepts an exact module path/directory, a unique nested-module directory basename, or the repository directory name for a root module; `include_tests` opts into `_test.go` routes. `limit` defaults to 100 and is restricted to 1-200, while a 64 KiB page budget may return fewer. Continue with `next_cursor` as `cursor` and the same graph snapshot and filters; a refresh invalidates old cursors. CLI `--files-only` follows pages for a complete file census, not a route-row dump. Constant nested Gin/Echo/Fiber Group prefixes and Chi Route closure prefixes are composed into final paths; Gin/Fiber use the final variadic argument as the terminal handler, while Echo uses the handler immediately after the path. Unresolvable handler factories remain marked dynamic.
 - **`gograph_node`**: AST metadata for a symbol: kind, file, line, signature, doc comment. Lighter than `gograph_source` when you only need metadata.
 - **`gograph_path`**: Best deterministically ranked call chain between two symbols. It uses the same certainty, length, production/test, and typed/heuristic ordering as CLI `path`; accepts `mermaid=true` for visual output.
-- **`gograph_changes`**: Symbols modified/added/deleted since the trusted persisted graph, or the startup fallback when no usable artifact exists. Deleted includes files absent from the current safely selected inventory. Default mode attaches the exact snapshot state it inspected; with `git_ref`, it refreshes first and attaches that live state while returning symbols in files changed since the ref (MODIFIED only).
+- **`gograph_changes`**: Declaration-level `gograph.changes.v1` comparison against the trusted persisted graph, or a confined Git declaration baseline with `git_ref`. Reports new/modified/deleted/excluded/unknown and aggregate complete/partial/cannot_evaluate with diagnostics. Existing but deselected files are excluded; unsafe paths are never proof of deletion. Default mode does not refresh and attaches the state it inspected; Git mode refreshes and attaches its live state.
 - **`gograph_context`**: Bundles node details, callers, callees, tests, source code, and top-level architectural role into one compact structured response shared with CLI JSON. `node` retains the first match for compatibility, `nodes[]` preserves all ambiguous matches, test names and `test_results[]` preserve test evidence, and `source_error` reports a non-fatal source read failure. Supports exact matching and uncommitted mode.
 - **`gograph_plan`**: Pre-edit planning. Highlights likely affected tests, routes, env reads, SQL touches, and public API impact. Set `with_context=true` to bundle full context for every `inspect_first` symbol — eliminates follow-up `context` calls.
 - **`gograph_review`**: Post-edit review. Summarizes what changed and its risk profile in a structured JSON payload.
@@ -989,7 +1009,7 @@ The current suite registers 68 MCP endpoints: 64 query, analysis, and workflow t
 - **`gograph_tests`**: Direct attributed test calls by default; `symbol` accepts `Receiver.Method` (including pointer receivers) or a stable ID without matching another receiver's same-named method. Set `transitive=true` to receive `gograph.tests.v1`, listing every reaching test with exact/possible resolution, depth, and a representative stable-ID path. Optional `exact_only` filters uncertain paths and `package` disambiguates the selected product symbol. CLI uses the equivalent `--transitive`, `--exact-only`, and `--package` flags.
 - **`gograph_coverage`**: Transitive product symbols statically reachable from one unambiguous test, with stable-ID paths and exact/possible propagation. Parameters: required `test`; optional `exact_only` and exact `package` disambiguator. Equivalent to CLI `coverage`.
 - **`gograph_identity`**: Resolve an exact symbol spelling or stable ID. Returns exact, ambiguous, or not_found without silently choosing a candidate; optional `package` disambiguates an external-test collision. Equivalent to CLI `identity`.
-- **`gograph_sql`**: Bounded `gograph.sql.v1` PostgreSQL static SQL census. Direct literals and statically resolvable local or same-file package declarations, straight-line assignments, and bounded concatenations are indexed. Optional `term` is a raw-query substring; `tables[]`, `verbs[]`, and `accesses[]` OR-compose within their category and AND-compose across categories. `function`, `module`, `no_tests`, `limit`, and `cursor` match CLI `--function`, `--module`, `--no-tests`, `--limit`, and `--cursor`. Tests remain included by default. Rows expose operation, read/write/DDL access, referenced tables, `exact`/`partial`/`unknown` classification, function, and source. Follow `next_cursor` with unchanged filters.
+- **`gograph_sql`**: Bounded `gograph.sql.v1` PostgreSQL static SQL census. Direct literals and statically resolvable local or same-file package declarations, straight-line assignments, and bounded concatenations are indexed. Optional `term` is a raw-query substring; `tables[]`, `verbs[]`, and `accesses[]` OR-compose within their category and AND-compose across categories. `function`, `module`, `no_tests`, `limit`, and `cursor` match CLI `--function`, `--module`, `--no-tests`, `--limit`, and `--cursor`. Tests remain included by default. Rows expose operation, read/write/DDL access, referenced tables, `exact`/`partial`/`unknown` classification, function, and source. Follow `next_cursor` with unchanged graph content and filters; restart after a snapshot change.
 - **`gograph_errors`**: Error constructors, sentinels, and panic sites; supports a term filter and `no_tests`.
 - **`gograph_embeds`**
 - **`gograph_public`**
@@ -1019,7 +1039,15 @@ The current suite registers 68 MCP endpoints: 64 query, analysis, and workflow t
 - **`gograph_summary`**: Single-call codebase briefing: top 3 hotspots, worst instability package, highest complexity function, orphan count, and god-object count. Replaces 5 separate tool calls.
 - **`gograph_untested`**: Called production functions and methods without an exact transitive path from any test. Precise direct calls and proof-backed concrete interface receivers are exact; open CHA/parser paths propagate `possible` to descendants. Rows include `stable_id`, `test_resolution`, and `possible_test_count`. `typed_partial` stats mean the census remains an upper bound. Optional `pkg`, `top`, and repository-relative `exclude[]` filters; CLI also supports `--wide` for full stable IDs. Replaces N forward coverage or direct-test probes.
 - **`gograph_doc`**: `go doc` wrapper — signature + doc comment for any stdlib or third-party package/symbol. The handler does not query the graph, though the project-scoped MCP server must already have started with a usable artifact or buildable Go source. Rejects filesystem-shaped queries and refuses source-tree links `cmd/go` may inspect across the selected root plus its effective module root, or the workspace root and member trees, special recognized Go build inputs, or linked/non-regular `go.mod`, `go.sum`, `go.work`, `go.work.sum`, and `vendor/modules.txt` metadata before invoking the toolchain; `.git` and `.gograph` are excluded from the source-tree walk. Applicable `go.work` members may be siblings beneath the nearest real Git checkout and otherwise remain confined beneath the workspace directory, with each directory, `go.mod`, and optional `go.sum` validated first. Unrelated non-Go regular-file/dangling links do not block preflight; dependency resolution remains open-world. Returns a one-element JSON array with `query` and raw-text `output`. Use when a call chain leads outside the project. Examples: `fmt.Errorf`, `io.Reader`.
-- **`gograph_httpcalls`**: All outbound HTTP client calls via `net/http` (Get, Post, PostForm, Head) in the codebase. Filter by method or URL substring.
+- **`gograph_httpcalls`**: Imported, unshadowed `net/http` Get/Post/PostForm/Head calls
+  and possible NewRequest/NewRequestWithContext construction, using the same
+  bounded pages and method/URL/base/function filter as CLI `httpcalls`. Dynamic
+  base/static-suffix evidence is retained; construction is not dispatch proof.
+  Client receiver methods and arbitrary URL builders are not inferred. Workspace
+  member `http_clients` explicitly maps lexical bases or `env:KEY` to scoped
+  logical authorities; no runtime environment values are read. Query returns
+  filtered `http_unresolved` diagnostics; verified status gives per-scope counts.
+  See [workspace configuration and trust rules](workspaces.md#dynamic-http-url-bases).
 
 The separate workspace server started by `gograph workspace mcp` exposes four
 additional read-only tools, each backed by the same native implementation as
@@ -1196,3 +1224,14 @@ methodology, and limitations.
 structural queries. It can reduce repeated exploration while keeping graph
 artifacts local and avoiding target-program execution, but its results must be
 interpreted according to the analysis mode and limitations above.
+
+### Shared pagination and request lifecycle
+
+Common list commands such as `query`, `callers`, `usages`, and `impact` now
+return bounded pages rather than unbounded lists. Follow `next_cursor` while
+`truncated=true`; `count` is the page count, not the census total. CLI
+`--limit`/`--cursor` and MCP `limit`/`cursor` use the same result selection
+and continuation tokens. Each request pins graph content and provenance while
+other requests may refresh a newer snapshot. Cancellation does not silently
+turn into a successful fallback. See [query contracts](query-contracts.md) for
+the full command inventory, byte budgets, cache boundaries, and commit semantics.

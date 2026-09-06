@@ -1,200 +1,368 @@
 package search
 
 import (
-	"go/ast"
-	"go/parser"
+	"context"
+	"errors"
+	"fmt"
 	"go/token"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/ozgurcd/gograph/internal/graph"
-	"github.com/ozgurcd/gograph/internal/scanner"
+	sourceparser "github.com/ozgurcd/gograph/internal/parser"
+	"github.com/ozgurcd/gograph/internal/repositoryfingerprint"
 	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
 
-// ChangeStatus classifies a symbol relative to the current graph.
+// ChangeStatus classifies a declaration, not merely its enclosing file.
 type ChangeStatus string
 
 const (
-	// ChangeModified means the symbol's source-file content differs from graph.json.
-	// The symbol may or may not have changed — agents should inspect it.
 	ChangeModified ChangeStatus = "modified"
-	// ChangeNew means the declaration was found in a changed file but is not
-	// recorded in graph.json — it was likely added since the graph was persisted.
-	ChangeNew ChangeStatus = "new"
-	// ChangeDeleted means a symbol from graph.json lives in a file that is no
-	// longer in the current safely selected source inventory. It may be absent,
-	// ignored, inactive under the build context, or unsafe to read.
-	ChangeDeleted ChangeStatus = "deleted"
+	ChangeNew      ChangeStatus = "new"
+	ChangeDeleted  ChangeStatus = "deleted"
+	// ChangeUnknown requires a newer baseline with declaration fingerprints.
+	ChangeUnknown ChangeStatus = "unknown"
+	// ChangeExcluded is a file that exists but left the selected source inventory.
+	ChangeExcluded ChangeStatus = "excluded"
 )
 
-// ChangedSymbol is a symbol affected by source changes since the graph was persisted.
 type ChangedSymbol struct {
-	// Name is the symbol name or declaration identifier.
-	Name string `json:"name"`
-	// File is the source file path.
-	File string `json:"file"`
-	// Line is the line number (0 for deleted symbols whose file is absent from
-	// the current safely selected inventory).
-	Line int `json:"line,omitempty"`
-	// Status classifies how this symbol was affected.
-	Status ChangeStatus `json:"status"`
+	Name        string       `json:"name"`
+	StableID    string       `json:"stable_id,omitempty"`
+	Receiver    string       `json:"receiver,omitempty"`
+	PackageName string       `json:"package_name,omitempty"`
+	File        string       `json:"file"`
+	Line        int          `json:"line,omitempty"`
+	Status      ChangeStatus `json:"status"`
 }
 
-// ChangesResult is returned by Changes.
 type ChangesResult struct {
-	// GraphAge is when graph.json was last generated.
-	GraphAge time.Time `json:"graph_age"`
-	// ChangedFiles lists source files whose selected content differs from the graph.
-	ChangedFiles []string `json:"changed_files"`
-	// Symbols lists all symbols affected by the source changes.
-	Symbols []ChangedSymbol `json:"symbols"`
+	SchemaVersion string          `json:"schema_version"`
+	GraphAge      time.Time       `json:"graph_age"`
+	Evaluation    string          `json:"evaluation"`
+	Diagnostics   []string        `json:"diagnostics,omitempty"`
+	ChangedFiles  []string        `json:"changed_files"`
+	Symbols       []ChangedSymbol `json:"symbols"`
 }
 
-// Changes compares the current source tree against graph.json to report what
-// has changed since the graph was persisted. It identifies:
-//   - Symbols in files whose content digest changed (ChangeModified)
-//   - Top-level declarations in changed files not found in the graph (ChangeNew)
-//   - Graph symbols whose files are absent from the current safely selected
-//     source inventory (ChangeDeleted)
-//
-// root is the absolute path to the repository root.
+// Changes compares current selected source with the persisted declaration
+// baseline. It does not rebuild or overwrite that baseline.
 func Changes(g *graph.Graph, root string) *ChangesResult {
-	result := &ChangesResult{GraphAge: g.GeneratedAt}
+	return ChangesContext(context.Background(), g, root)
+}
 
-	// Step 1: Scan the same source set used by graph construction. This keeps
-	// generated, vendored, and gitignored files out of freshness reports.
-	changedFiles := make(map[string]bool)
-	existingFiles := make(map[string]bool)
-	previousDigests := make(map[string]string, len(g.Files))
+func ChangesContext(ctx context.Context, g *graph.Graph, root string) *ChangesResult {
+	result := &ChangesResult{SchemaVersion: "gograph.changes.v1", GraphAge: g.GeneratedAt,
+		Evaluation: "complete", ChangedFiles: []string{}, Symbols: []ChangedSymbol{}}
+	reader, err := sourcefs.Open(root)
+	if err != nil {
+		result.Evaluation = "cannot_evaluate"
+		result.Diagnostics = []string{err.Error()}
+		return result
+	}
+	defer func() { _ = reader.Close() }()
+	config, files, scanErrors := changesSelection(ctx, root, graphSelection(g))
+	var observation repositoryfingerprint.Result
+	if len(scanErrors) == 0 {
+		var observeErr error
+		observation, observeErr = repositoryfingerprint.Compute(ctx, root, config, files)
+		if observeErr != nil {
+			scanErrors = append(scanErrors, observeErr)
+		}
+	}
+	for _, err := range scanErrors {
+		result.incomplete(err.Error())
+	}
+	if g.Build != nil && g.Build.BuildContextFingerprint != "" && g.Build.Selection == nil {
+		result.incomplete("baseline lacks recorded build selection; current environment used, rebuild a baseline before the next edit")
+	}
+	current, err := changesCurrentInventory(root, files, g)
+	if err != nil {
+		result.Evaluation = "cannot_evaluate"
+		result.Diagnostics = append(result.Diagnostics, err.Error())
+		return result
+	}
+	previousFiles := make(map[string]string)
+	oldByFile := make(map[string][]graph.SymbolNode)
 	for _, file := range g.Files {
-		previousDigests[graphFileRelative(root, file.Path)] = file.ContentDigest
+		rel := graphFileRelative(root, file.Path)
+		if !filepath.IsLocal(rel) {
+			result.incomplete("unsafe baseline file path: " + file.Path)
+			continue
+		}
+		previousFiles[rel] = file.ContentDigest
 	}
-	sourceReader, sourceRootErr := sourcefs.Open(root)
-	if sourceReader != nil {
-		defer func() { _ = sourceReader.Close() }()
+	for _, symbol := range g.Symbols {
+		if symbol.File != "" {
+			rel := graphFileRelative(root, symbol.File)
+			if !filepath.IsLocal(rel) {
+				result.incomplete("unsafe baseline symbol path: " + symbol.File)
+				continue
+			}
+			oldByFile[rel] = append(oldByFile[rel], symbol)
+		}
 	}
-	files, _ := scanner.Walk(root)
+	existing := make(map[string]bool)
+	changed := make(map[string]bool)
+	evaluated := 0
 	for _, path := range files {
-		info, statErr := os.Lstat(path)
-		rel, err := filepath.Rel(root, path)
+		if err := ctx.Err(); err != nil {
+			result.incomplete(err.Error())
+			break
+		}
+		rel := graphFileRelative(root, path)
+		existing[rel] = true
+		data, err := reader.ReadFile(rel)
 		if err != nil {
+			result.incomplete(fmt.Sprintf("%s: %v", rel, err))
 			continue
 		}
-		rel = filepath.Clean(rel)
-		existingFiles[rel] = true
-		var digest string
-		if sourceRootErr == nil {
-			if data, readErr := sourceReader.ReadFile(rel); readErr == nil {
-				digest = graph.SourceDigest(data)
+		digest := graph.SourceDigest(data)
+		if expected := observation.Files[filepath.ToSlash(rel)]; expected != "" && digest != expected {
+			result.incomplete("source changed during declaration comparison: " + rel)
+			continue
+		}
+		oldDigest, hadFile := previousFiles[rel]
+		importPath := changesImportPath(current, root, rel)
+		ownershipChanged := importPath != changesImportPath(g, root, rel)
+		if hadFile && digest == oldDigest && !ownershipChanged {
+			evaluated++
+			continue
+		}
+		// Legacy, handcrafted graphs may not have a file inventory. Preserve their
+		// mtime selection, but never claim declaration precision without fingerprints.
+		if !hadFile && len(g.Files) == 0 && len(oldByFile[rel]) > 0 {
+			if info, err := os.Lstat(path); err == nil && !info.ModTime().After(g.GeneratedAt) {
+				evaluated++
+				continue
 			}
 		}
-		oldDigest := previousDigests[rel]
-		changed := oldDigest != "" && (digest == "" || digest != oldDigest)
-		if oldDigest == "" && statErr == nil {
-			changed = info.ModTime().After(g.GeneratedAt)
-		}
-		if changed {
-			changedFiles[rel] = true
-			result.ChangedFiles = append(result.ChangedFiles, rel)
-		}
-	}
-	sortStrings(result.ChangedFiles)
-
-	// Step 2: Build a set of graph symbols keyed by (name, file).
-	type symKey struct{ name, file string }
-	graphSymbols := make(map[symKey]bool)
-	for _, s := range g.Symbols {
-		rel := graphFileRelative(root, s.File)
-		graphSymbols[symKey{s.Name, rel}] = true
-		graphSymbols[symKey{s.Name, s.File}] = true
-	}
-
-	// Step 3: For each changed file, collect graph symbols (modified) and
-	// parse for new declarations not in the graph.
-	seenModified := make(map[symKey]bool)
-	for _, s := range g.Symbols {
-		rel := graphFileRelative(root, s.File)
-		if !changedFiles[rel] && !changedFiles[s.File] {
-			continue
-		}
-		key := symKey{s.Name, rel}
-		if seenModified[key] {
-			continue
-		}
-		seenModified[key] = true
-		result.Symbols = append(result.Symbols, ChangedSymbol{
-			Name:   s.Name,
-			File:   rel,
-			Line:   s.Line,
-			Status: ChangeModified,
-		})
-	}
-
-	// Parse changed files for NEW top-level declarations.
-	fset := token.NewFileSet()
-	for relPath := range changedFiles {
-		if sourceRootErr != nil {
-			continue
-		}
-		data, err := sourceReader.ReadFile(relPath)
+		changed[rel] = true
+		parsed, err := sourceparser.ParseSource(token.NewFileSet(), rel, data, rel, importPath)
 		if err != nil {
+			result.incomplete(err.Error())
 			continue
 		}
-		f, err := parser.ParseFile(fset, relPath, data, 0)
-		if err != nil {
-			continue
+		evaluated++
+		compareDeclarations(result, oldByFile[rel], parsed.Symbols, rel)
+	}
+	// A failed inventory is not evidence that an omitted file or symbol vanished.
+	if len(scanErrors) == 0 && ctx.Err() == nil {
+		for rel, old := range oldByFile {
+			if existing[rel] {
+				continue
+			}
+			status := ChangeDeleted
+			if err := reader.ValidateRegularFile(rel); err == nil {
+				status = ChangeExcluded
+			} else if !errors.Is(err, os.ErrNotExist) {
+				result.incomplete(fmt.Sprintf("%s: %v", rel, err))
+				continue
+			}
+			changed[rel] = true
+			for _, symbol := range old {
+				result.Symbols = append(result.Symbols, changedDeclaration(symbol, rel, status))
+			}
 		}
-		for _, decl := range f.Decls {
-			switch d := decl.(type) {
-			case *ast.FuncDecl:
-				name := d.Name.Name
-				key := symKey{name, relPath}
-				if !graphSymbols[key] && !seenModified[key] {
-					result.Symbols = append(result.Symbols, ChangedSymbol{
-						Name:   name,
-						File:   relPath,
-						Line:   fset.Position(d.Pos()).Line,
-						Status: ChangeNew,
-					})
-				}
-			case *ast.GenDecl:
-				for _, spec := range d.Specs {
-					switch ts := spec.(type) {
-					case *ast.TypeSpec:
-						name := ts.Name.Name
-						key := symKey{name, relPath}
-						if !graphSymbols[key] && !seenModified[key] {
-							result.Symbols = append(result.Symbols, ChangedSymbol{
-								Name:   name,
-								File:   relPath,
-								Line:   fset.Position(ts.Pos()).Line,
-								Status: ChangeNew,
-							})
-						}
-					}
-				}
+		for rel := range previousFiles {
+			if !existing[rel] {
+				changed[rel] = true
 			}
 		}
 	}
-
-	// Step 4: Detect deleted symbols — graph symbols whose files are no longer
-	// part of the current safely selected inventory.
-	for _, s := range g.Symbols {
-		rel := graphFileRelative(root, s.File)
-		if existingFiles[rel] {
-			continue
-		}
-		result.Symbols = append(result.Symbols, ChangedSymbol{
-			Name:   s.Name,
-			File:   s.File,
-			Line:   0,
-			Status: ChangeDeleted,
-		})
+	for rel := range changed {
+		result.ChangedFiles = append(result.ChangedFiles, rel)
 	}
-
+	if result.Evaluation == "partial" && evaluated == 0 {
+		result.Evaluation = "cannot_evaluate"
+	}
+	if observation.Fingerprint != "" {
+		if err := verifyChangesObservation(ctx, root, graphSelection(g), observation.Fingerprint); err != nil {
+			result.incomplete(err.Error())
+			result.Evaluation = "cannot_evaluate"
+			result.Symbols = []ChangedSymbol{}
+			result.ChangedFiles = []string{}
+		}
+	}
+	finalizeChanges(result)
 	return result
+}
+
+func (r *ChangesResult) incomplete(message string) {
+	r.Evaluation = "partial"
+	for _, existing := range r.Diagnostics {
+		if existing == message {
+			return
+		}
+	}
+	r.Diagnostics = append(r.Diagnostics, message)
+}
+
+func declarationKey(s graph.SymbolNode) string {
+	if strings.Contains(s.ID, "::") {
+		return s.PackageName + "\x00" + s.ID
+	}
+	return s.Receiver + "::" + s.Name
+}
+
+func changedDeclaration(s graph.SymbolNode, file string, status ChangeStatus) ChangedSymbol {
+	return ChangedSymbol{Name: s.Name, StableID: s.ID, Receiver: s.Receiver, PackageName: s.PackageName, File: file, Line: s.Line, Status: status}
+}
+
+func compareDeclarations(result *ChangesResult, before, after []graph.SymbolNode, file string) {
+	// Legal repeated declarations (init functions and blank identifiers) are
+	// multisets, not a map from ID to one symbol. Match unchanged digests first
+	// so removing the first initializer does not misattribute the second.
+	old := make(map[string][]graph.SymbolNode)
+	legacy := make(map[string]string)
+	for _, symbol := range before {
+		key := declarationKey(symbol)
+		old[key] = append(old[key], symbol)
+		if !strings.Contains(symbol.ID, "::") {
+			legacy[symbol.Receiver+"::"+symbol.Name] = key
+		}
+	}
+	keyFor := func(symbol graph.SymbolNode) string {
+		key := declarationKey(symbol)
+		if _, ok := old[key]; ok {
+			return key
+		}
+		if _, ok := old["\x00"+symbol.ID]; ok && symbol.PackageName != "" {
+			return "\x00" + symbol.ID // A legacy graph omitted package names.
+		}
+		if legacyKey, ok := legacy[symbol.Receiver+"::"+symbol.Name]; ok {
+			return legacyKey
+		}
+		return key
+	}
+	matched := make([]bool, len(after))
+	type matchPosition struct{ index, line int }
+	positions := make(map[string][]matchPosition)
+	for i, symbol := range after {
+		if symbol.DeclarationDigest == "" {
+			continue
+		}
+		key := keyFor(symbol)
+		for j, prior := range old[key] {
+			if prior.DeclarationDigest == symbol.DeclarationDigest {
+				old[key] = append(old[key][:j], old[key][j+1:]...)
+				matched[i] = true
+				if symbol.Name == "init" || symbol.Name == "_" {
+					positions[key] = append(positions[key], matchPosition{i, prior.Line})
+				}
+				break
+			}
+		}
+	}
+	for _, group := range positions {
+		// Retain semantic initialization-order changes even when bodies match.
+		minimumAfter := make([]int, len(group))
+		minimum := int(^uint(0) >> 1)
+		for i := len(group) - 1; i >= 0; i-- {
+			minimumAfter[i] = minimum
+			if group[i].line < minimum {
+				minimum = group[i].line
+			}
+		}
+		maximumBefore := 0
+		for i, match := range group {
+			if match.line < maximumBefore || match.line > minimumAfter[i] {
+				result.Symbols = append(result.Symbols, changedDeclaration(after[match.index], file, ChangeModified))
+			}
+			if match.line > maximumBefore {
+				maximumBefore = match.line
+			}
+		}
+	}
+	for i, symbol := range after {
+		if matched[i] {
+			continue
+		}
+		key := keyFor(symbol)
+		prior := old[key]
+		if len(prior) == 0 {
+			result.Symbols = append(result.Symbols, changedDeclaration(symbol, file, ChangeNew))
+			continue
+		}
+		old[key] = prior[1:]
+		if prior[0].DeclarationDigest == "" || symbol.DeclarationDigest == "" {
+			result.incomplete(file + ": baseline lacks declaration fingerprints; rebuild a baseline before the next edit")
+			result.Symbols = append(result.Symbols, changedDeclaration(symbol, file, ChangeUnknown))
+		} else {
+			result.Symbols = append(result.Symbols, changedDeclaration(symbol, file, ChangeModified))
+		}
+	}
+	for _, remaining := range old {
+		for _, symbol := range remaining {
+			result.Symbols = append(result.Symbols, changedDeclaration(symbol, file, ChangeDeleted))
+		}
+	}
+}
+
+func finalizeChanges(result *ChangesResult) {
+	sort.Strings(result.ChangedFiles)
+	sort.Strings(result.Diagnostics)
+	sort.Slice(result.Symbols, func(i, j int) bool {
+		a, b := result.Symbols[i], result.Symbols[j]
+		if a.File != b.File {
+			return a.File < b.File
+		}
+		if a.StableID != b.StableID {
+			return a.StableID < b.StableID
+		}
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		if a.PackageName != b.PackageName {
+			return a.PackageName < b.PackageName
+		}
+		if a.Line != b.Line {
+			return a.Line < b.Line
+		}
+		return a.Status < b.Status
+	})
+}
+
+func changesImportPath(g *graph.Graph, root, file string) string {
+	dir := filepath.Dir(file)
+	for _, symbol := range g.Symbols {
+		if filepath.Dir(graphFileRelative(root, symbol.File)) == dir {
+			if pkg, _, ok := strings.Cut(symbol.ID, "::"); ok {
+				return pkg
+			}
+		}
+	}
+	for _, pkg := range g.Packages {
+		if graphFileRelative(root, pkg.Dir) == dir && pkg.ImportPathBestEffort != "" {
+			return pkg.ImportPathBestEffort
+		}
+	}
+	owner := -1
+	longest := -1
+	for i, module := range g.Modules {
+		moduleDir := graphFileRelative(root, module.Dir)
+		rel, err := filepath.Rel(moduleDir, dir)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		if len(moduleDir) > longest {
+			owner = i
+			longest = len(moduleDir)
+		}
+	}
+	if owner >= 0 {
+		module := g.Modules[owner]
+		rel, _ := filepath.Rel(graphFileRelative(root, module.Dir), dir)
+		if rel == "." {
+			return module.Path
+		}
+		return module.Path + "/" + filepath.ToSlash(rel)
+	}
+	return filepath.ToSlash(dir)
 }
 
 func graphFileRelative(root, path string) string {

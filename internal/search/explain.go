@@ -2,6 +2,7 @@ package search
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
@@ -11,6 +12,9 @@ import (
 // It composes data from multiple graph queries into a single narrative
 // designed for prompt injection or onboarding documentation.
 type ExplainResult struct {
+	SchemaVersion string           `json:"schema_version"`
+	Status        string           `json:"status"`
+	Candidates    []SymbolIdentity `json:"candidates,omitempty"`
 	// Identity
 	Symbol  string `json:"symbol"`
 	Kind    string `json:"kind"` // "function", "method", "struct", "interface"
@@ -74,17 +78,30 @@ func Explain(g *graph.Graph, term string) *ExplainResult {
 	// Resolve the symbol
 	sym := resolveSymbol(g, term)
 	if sym == nil {
+		candidates := explanationCandidates(g, term)
+		if len(candidates) > 1 {
+			result := &ExplainResult{SchemaVersion: "gograph.explain.v1", Status: "ambiguous", Narrative: "Several symbols match. Retry with one of the fully qualified candidate IDs."}
+			for _, candidate := range candidates {
+				result.Candidates = append(result.Candidates, symbolIdentity(candidate))
+			}
+			return result
+		}
 		return nil
 	}
+	// All subsequent relationships must use the selected identity, not the
+	// original shorthand that could match another package or receiver.
+	term = sym.ID
 
 	res := &ExplainResult{
-		Symbol:  sym.ID,
-		Kind:    string(sym.Kind),
-		Package: sym.PackageName,
-		File:    sym.File,
-		Line:    sym.Line,
-		Doc:     sym.Doc,
-		Arity:   sym.Arity,
+		SchemaVersion: "gograph.explain.v1",
+		Status:        "ok",
+		Symbol:        sym.ID,
+		Kind:          string(sym.Kind),
+		Package:       sym.PackageName,
+		File:          sym.File,
+		Line:          sym.Line,
+		Doc:           sym.Doc,
+		Arity:         sym.Arity,
 	}
 
 	displayName := sym.Name
@@ -93,17 +110,20 @@ func Explain(g *graph.Graph, term string) *ExplainResult {
 	}
 
 	// Callers: split into production vs test
-	allCallers := Callers(g, term, true, false)
-	prodOnly := Callers(g, term, false, false) // excludes test files
-	prodSet := make(map[string]bool)
-	for _, c := range prodOnly {
-		prodSet[c.Name] = true
+	callerGraph := *g
+	callerGraph.Calls = nil
+	for _, call := range g.Calls {
+		if target := explanationTarget(g, call.CalleeSymbolID, call.CalleeRaw, call.File); target != nil && target.ID == sym.ID {
+			call.CalleeSymbolID = sym.ID
+			callerGraph.Calls = append(callerGraph.Calls, call)
+		}
 	}
+	allCallers := Callers(&callerGraph, term, true, true)
 	for _, c := range allCallers {
-		if prodSet[c.Name] {
-			res.ProdCallers = append(res.ProdCallers, c.Name)
-		} else {
+		if isTestFile(c.CallSiteFile) || isTestFile(c.File) {
 			res.TestCallers = append(res.TestCallers, c.Name)
+		} else {
+			res.ProdCallers = append(res.ProdCallers, c.Name)
 		}
 	}
 	res.CallerCount = len(allCallers)
@@ -124,9 +144,9 @@ func Explain(g *graph.Graph, term string) *ExplainResult {
 		}
 
 		// Complexity — reuse the Complexity function, find the matching result
-		cxResults := Complexity(g, displayName)
+		cxResults := Complexity(g, sym.ID)
 		for _, cx := range cxResults {
-			if cx.Symbol == displayName {
+			if cx.File == sym.File && cx.Line == sym.Line {
 				res.Complexity = cx.Score
 				res.ComplexityLabel = cx.Label
 				break
@@ -136,28 +156,33 @@ func Explain(g *graph.Graph, term string) *ExplainResult {
 
 	// SQL: direct (in this function's body)
 	for _, sql := range g.SQLs {
-		if matchesSymbol(sql.Function, sym) {
+		if explanationFactMatches(sql.Function, sql.File, sql.Line, sym) {
 			res.SQLDirect++
 		}
 	}
 
 	// SQL: via direct callees (1-level deep)
-	directCallees := make(map[string]bool)
+	directCallees := make(map[string]graph.SymbolNode)
 	for _, call := range g.Calls {
-		if matchesSymbol(call.CallerName, sym) {
-			directCallees[call.CalleeRaw] = true
+		if call.CallerSymbolID == sym.ID || call.CallerSymbolID == "" && explanationFactMatches(call.CallerName, call.File, call.Line, sym) {
+			if target := explanationTarget(g, call.CalleeSymbolID, call.CalleeRaw, call.File); target != nil {
+				directCallees[target.ID] = *target
+			}
 		}
 	}
 	for _, sql := range g.SQLs {
-		if directCallees[sql.Function] {
-			res.SQLCallees++
+		for _, callee := range directCallees {
+			if explanationFactMatches(sql.Function, sql.File, sql.Line, &callee) {
+				res.SQLCallees++
+				break
+			}
 		}
 	}
 
 	// Env reads (direct only)
 	envSet := make(map[string]bool)
 	for _, env := range g.EnvReads {
-		if matchesSymbol(env.Function, sym) && !envSet[env.Key] {
+		if explanationFactMatches(env.Function, env.File, env.Line, sym) && !envSet[env.Key] {
 			envSet[env.Key] = true
 			res.EnvKeys = append(res.EnvKeys, env.Key)
 		}
@@ -165,7 +190,7 @@ func Explain(g *graph.Graph, term string) *ExplainResult {
 
 	// Routes
 	for _, route := range g.Routes {
-		if matchesSymbol(route.Handler, sym) {
+		if target := explanationTarget(g, "", route.Handler, route.File); !route.DynamicHandler && target != nil && target.ID == sym.ID {
 			res.IsRouteHandler = true
 			res.Routes = append(res.Routes, fmt.Sprintf("%s %s", route.Method, route.Path))
 		}
@@ -174,15 +199,18 @@ func Explain(g *graph.Graph, term string) *ExplainResult {
 	// Concurrency (direct)
 	kindSet := make(map[string]bool)
 	for _, c := range g.Concurrency {
-		if matchesSymbol(c.Function, sym) && !kindSet[c.Kind] {
+		if explanationFactMatches(c.Function, c.File, c.Line, sym) && !kindSet[c.Kind] {
 			kindSet[c.Kind] = true
 			res.ConcurrencyKinds = append(res.ConcurrencyKinds, c.Kind)
 		}
 	}
 
 	// Test coverage
+	seenTests := make(map[string]bool)
 	for _, te := range g.TestEdges {
-		if matchesSymbol(te.Target, sym) {
+		key := te.File + "\x00" + te.TestFunc
+		if target := explanationTarget(g, te.TargetSymbolID, te.Target, te.File); target != nil && target.ID == sym.ID && !seenTests[key] {
+			seenTests[key] = true
 			res.DirectTestCount++
 		}
 	}
@@ -201,9 +229,7 @@ func Explain(g *graph.Graph, term string) *ExplainResult {
 			}
 			receiverID := pkg + "::" + strings.TrimPrefix(sym.Receiver, "*")
 			match = strings.EqualFold(impl.ConcreteID, receiverID)
-		} else if impl.ConcreteID == "" && sym.Kind == graph.KindStruct && strings.EqualFold(impl.Concrete, sym.Name) {
-			match = true
-		} else if impl.ConcreteID == "" && sym.Receiver != "" && strings.EqualFold(impl.Concrete, sym.Receiver) {
+		} else if impl.ConcreteID == "" && sym.Kind == graph.KindStruct && strings.EqualFold(impl.Concrete, sym.Name) && explanationUniqueType(g, sym) {
 			match = true
 		}
 		if match && !ifaceSet[impl.Interface] {
@@ -217,13 +243,18 @@ func Explain(g *graph.Graph, term string) *ExplainResult {
 		res.FieldCount = len(sym.StructFields)
 		// Count methods with this struct as receiver
 		for _, s := range g.Symbols {
-			if s.Kind == graph.KindMethod && s.Receiver == sym.Name {
+			if s.Kind == graph.KindMethod && strings.TrimPrefix(s.Receiver, "*") == sym.Name && explanationPackage(s) == explanationPackage(*sym) && s.PackageName == sym.PackageName {
 				res.MethodCount++
 			}
 		}
 		ctors := Constructors(g, sym.Name)
 		for _, c := range ctors {
-			res.ConstructorNames = append(res.ConstructorNames, c.Name)
+			for _, candidate := range g.Symbols {
+				if candidate.File == c.File && candidate.Line == c.Line && explanationPackage(candidate) == explanationPackage(*sym) && candidate.PackageName == sym.PackageName {
+					res.ConstructorNames = append(res.ConstructorNames, c.Name)
+					break
+				}
+			}
 		}
 	}
 
@@ -247,33 +278,35 @@ func Explain(g *graph.Graph, term string) *ExplainResult {
 
 // resolveSymbol finds the best-matching SymbolNode for the given term.
 func resolveSymbol(g *graph.Graph, term string) *graph.SymbolNode {
-	tl := strings.ToLower(term)
+	candidates := explanationCandidates(g, term)
+	if len(candidates) != 1 {
+		return nil
+	}
+	return &candidates[0]
+}
 
-	// Exact ID match first
-	for i := range g.Symbols {
-		if g.Symbols[i].ID == term {
-			return &g.Symbols[i]
+func explanationCandidates(g *graph.Graph, term string) []graph.SymbolNode {
+	term = strings.TrimSpace(term)
+	if g == nil || term == "" {
+		return nil
+	}
+	identity := Identity(g, term)
+	ids := make(map[string]bool)
+	for _, candidate := range identity.Matches {
+		ids[candidate.StableID] = true
+	}
+	var candidates []graph.SymbolNode
+	for _, symbol := range g.Symbols {
+		if len(ids) > 0 {
+			if ids[symbol.ID] {
+				candidates = append(candidates, symbol)
+			}
+		} else if !isFullyQualifiedID(term) && (MatchSymbol(symbol, term) || strings.Contains(strings.ToLower(symbol.ID), strings.ToLower(term))) {
+			candidates = append(candidates, symbol)
 		}
 	}
-	// Exact name match
-	for i := range g.Symbols {
-		if g.Symbols[i].Name == term {
-			return &g.Symbols[i]
-		}
-	}
-	// Structured/qualified match
-	for i := range g.Symbols {
-		if MatchSymbol(g.Symbols[i], term) {
-			return &g.Symbols[i]
-		}
-	}
-	// Case-insensitive substring
-	for i := range g.Symbols {
-		if strings.Contains(strings.ToLower(g.Symbols[i].ID), tl) {
-			return &g.Symbols[i]
-		}
-	}
-	return nil
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].ID < candidates[j].ID })
+	return candidates
 }
 
 // matchesSymbol checks if a function name in a graph edge matches the given symbol.
@@ -281,8 +314,16 @@ func matchesSymbol(funcName string, sym *graph.SymbolNode) bool {
 	if funcName == sym.Name || funcName == sym.ID {
 		return true
 	}
+	// These spellings come from source facts, not a case-insensitive user query.
+	// Preserve Go identifier case while accepting pointer/receiver notation.
+	normalize := strings.NewReplacer("(", "", ")", "", "*", "", " ", "")
+	name := normalize.Replace(funcName)
+	if name == sym.PackageName+"."+sym.Name {
+		return true
+	}
 	if sym.Receiver != "" {
-		return funcName == sym.Receiver+"."+sym.Name
+		receiver := normalize.Replace(sym.Receiver) + "." + sym.Name
+		return name == receiver || name == sym.PackageName+"."+receiver
 	}
 	return false
 }

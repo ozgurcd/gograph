@@ -42,17 +42,27 @@ func EnrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config) er
 // graph semantics.
 type Options struct {
 	LowMemory bool
+	Context   context.Context
 }
 
 // EnrichWithOptions applies precise enrichment transactionally. The selective
 // copy duplicates only records that precise analysis may mutate; all other AST
 // records remain shared and read-only until enrichment succeeds.
 func EnrichWithOptions(absRoot string, g *graph.Graph, config buildctx.Config, options Options) error {
+	if options.Context == nil {
+		options.Context = context.Background()
+	}
+	if err := options.Context.Err(); err != nil {
+		return err
+	}
 	if g == nil {
 		return fmt.Errorf("cannot enrich a nil graph")
 	}
 	enriched := cloneForPreciseEnrichment(g)
 	if err := enrichWithConfig(absRoot, &enriched, config, options); err != nil {
+		return err
+	}
+	if err := options.Context.Err(); err != nil {
 		return err
 	}
 	*g = enriched
@@ -77,7 +87,7 @@ func cloneForPreciseEnrichment(g *graph.Graph) graph.Graph {
 
 func enrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config, options Options) error {
 	analysisRoot := preciseAnalysisRoot(absRoot, config)
-	if err := enrichProductionWithConfig(absRoot, analysisRoot, g, config); err != nil {
+	if err := enrichProductionWithConfig(options.Context, absRoot, analysisRoot, g, config); err != nil {
 		return err
 	}
 	// The production package/type/SSA graph is now out of scope. In low-memory
@@ -91,7 +101,13 @@ func enrichWithConfig(absRoot string, g *graph.Graph, config buildctx.Config, op
 	// production precision. Successful test packages still contribute exact
 	// selector identities and bounded CHA-possible interface/method-value
 	// targets to TestEdges and their corresponding call edges.
-	testResolution, testResolutionErr := enrichTypedTestCalls(analysisRoot, g, config)
+	if err := options.Context.Err(); err != nil {
+		return err
+	}
+	testResolution, testResolutionErr := enrichTypedTestCalls(options.Context, analysisRoot, g, config)
+	if err := options.Context.Err(); err != nil {
+		return err
+	}
 	if g.Build != nil {
 		g.Build.TestCallResolution = testResolution
 		if testResolutionErr != nil {
@@ -114,11 +130,15 @@ func preciseAnalysisRoot(absRoot string, config buildctx.Config) string {
 	return analysisRoot
 }
 
-func enrichProductionWithConfig(absRoot, analysisRoot string, g *graph.Graph, config buildctx.Config) error {
+func enrichProductionWithConfig(ctx context.Context, absRoot, analysisRoot string, g *graph.Graph, config buildctx.Config) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := scanner.ValidateToolchainSourceInputs(absRoot); err != nil {
 		return fmt.Errorf("refusing precise analysis of unsafe repository or Go tool input: %w", err)
 	}
 	cfg := &packages.Config{
+		Context: ctx,
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
 			packages.NeedImports | packages.NeedDeps | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedSyntax,
 		Dir:        analysisRoot,
@@ -128,6 +148,9 @@ func enrichProductionWithConfig(absRoot, analysisRoot string, g *graph.Graph, co
 
 	// Load all packages
 	initial, err := packages.Load(cfg, "./...")
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err != nil {
 		return fmt.Errorf("packages.Load failed: %w", err)
 	}

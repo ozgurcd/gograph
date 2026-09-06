@@ -312,7 +312,7 @@ You can check whether a rebuild is needed:
 gograph stale
 ```
 
-The MCP server checks source-content digests, the selected inventory/build fingerprint, and newer persisted graphs per analysis call. After an edit it reparses changed packages while reusing unchanged package AST records. Every refresh-backed response preserves its existing text and adds machine-readable `gograph.graph-state.v1` metadata through `gograph.mcp-result.v1`. A precise session still re-runs repository-wide CHA/SSA. If enrichment fails, the tool can serve an explicitly marked current in-memory fallback; if an ordinary refresh fails, it can serve the last trusted stale graph. Neither is silently published, and a mismatched build context still fails closed. MCP `stale`, default `changes`, and `stats` inspect a trusted persisted graph when present, or the startup in-memory fallback when the artifact is missing, unreadable, unsafe, or uses an unsupported source policy. CLI graph-backed `--json` envelopes expose the same state for their persisted result.
+The MCP server checks source-content digests, the selected inventory/build fingerprint, and newer persisted graphs per analysis call. After an edit it reparses changed packages while reusing unchanged package AST records. Refresh-backed responses attach machine-readable `gograph.graph-state.v1` provenance. Bounded row lists use `gograph.results.v1` JSON text and structured content; other native results retain their schemas, while legacy responses use a `gograph.mcp-result.v1` graph-state companion. A precise session still re-runs repository-wide CHA/SSA. If enrichment fails, the tool can serve an explicitly marked current in-memory fallback; if an ordinary refresh fails, it can serve the last trusted stale graph. Neither is silently published, and a mismatched build context still fails closed. MCP `stale`, default `changes`, and `stats` inspect a trusted persisted graph when present, or the startup in-memory fallback when the artifact is missing, unreadable, unsafe, or uses an unsupported source policy. CLI graph-backed `--json` envelopes expose the same state for their persisted result.
 
 MCP refreshes are in-memory by default. Start with
 `gograph mcp [path] --persist-refresh` to publish successful refreshes to the
@@ -337,3 +337,12 @@ For visual output through MCP, set `mermaid: true` on `gograph_callers`,
 `gograph_callees`, `gograph_impact`, `gograph_endpoint`,
 `gograph_dependents`, `gograph_deps`, `gograph_path`, or `gograph_coupling`.
 The selected tool returns Mermaid flowchart text instead of its normal response.
+
+MCP refresh/publication is serialized, but independent queries execute against
+immutable per-request graph/state snapshots. Cancellation reaches Go loading
+and checks before artifact publication; a commit already started finishes its
+artifact set. Derived indexes are retained for the current fingerprint only.
+For bounded row-list tools such as `gograph_query`, use `limit`/`cursor` and
+check `total`, `returned`, and `truncated`; CLI uses `--limit`/`--cursor`.
+Restart the server after replacing its binary, then verify
+`gograph_capabilities.version`.

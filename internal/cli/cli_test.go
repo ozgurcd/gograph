@@ -711,7 +711,12 @@ func TestWorkspaceHelpIncludesManifestSchemaAndMissingManifestGuidance(t *testin
 		"schema_version: gograph.workspace-manifest.v1",
 		"default_scope: oss",
 		"scopes:",
-		"repositories: [api]",
+		"repositories: [api, client]",
+		"http_clients:",
+		"base: env:API_URL",
+		"authority_id: api-service",
+		"path_prefix: /v1",
+		"http_unresolved",
 		"docs/workspaces.md",
 		"https://gograph.identuum.ai/docs/command-reference/#federated-workspaces",
 	} {

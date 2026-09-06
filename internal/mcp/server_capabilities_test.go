@@ -172,6 +172,10 @@ func TestGographCapabilities(t *testing.T) {
 		"composite-literal construction",
 		"not a route-row dump",
 		"default .gograph/boundaries.json",
+		"http_resolution",
+		"net_http_v2",
+		"http_clients",
+		"http_unresolved_by_scope",
 	} {
 		if !strings.Contains(toolsStr, want) {
 			t.Errorf("capabilities prerequisite omits %q", want)

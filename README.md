@@ -16,6 +16,9 @@ architecture without embeddings or a hosted code index.
 **[Explore the interactive no-install demo](https://gograph.identuum.ai/demo/)** ·
 **[Review the reproducible benchmark](docs/benchmarking.md)**
 
+See [CLI/MCP query contracts](docs/query-contracts.md) for bounded result pages,
+snapshot-bound cursors, exact/possible impact, and change-evaluation status.
+
 **Companion projects:** [Scrinium](https://github.com/ozgurcd/scrinium)
 provides repository-owned, evidence-backed knowledge for coding agents, while
 [Rulefloor](https://github.com/ozgurcd/rulefloor) protects repository-local

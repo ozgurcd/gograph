@@ -99,6 +99,10 @@ func memberRecord(config RepositoryConfig, snapshot validation.Snapshot) Member 
 	build := snapshot.Graph.Build
 	precise := "not_requested"
 	callResolution := "ast_heuristic"
+	httpExtraction := "net_http_v1"
+	if build.WorkspaceFactsVersion >= 2 {
+		httpExtraction = "net_http_v2"
+	}
 	if build.PreciseRequested() {
 		precise = "fallback"
 	}
@@ -126,7 +130,7 @@ func memberRecord(config RepositoryConfig, snapshot validation.Snapshot) Member 
 			PreciseEnrichment:  precise,
 			CallResolution:     callResolution,
 			TestCallResolution: string(build.EffectiveTestCallResolution()),
-			HTTPExtraction:     "net_http_v1",
+			HTTPExtraction:     httpExtraction,
 			RPCExtraction:      "unavailable",
 			TopicExtraction:    "unavailable",
 		},
@@ -207,17 +211,27 @@ func LoadWithBuildTags(ctx context.Context, start string, buildTags []string) (*
 	if artifact.InputFingerprint != inputFingerprint {
 		return nil, fmt.Errorf("workspace overlay is stale; run `gograph workspace build`")
 	}
-	expected, err := Resolve(manifest, members)
-	if err != nil {
-		return nil, fmt.Errorf("re-resolve workspace overlay: %w", err)
-	}
-	expectedBytes, err := EncodeArtifact(expected)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	expectedSum := sha256.Sum256(expectedBytes)
-	if artifactFingerprint != hex.EncodeToString(expectedSum[:]) {
-		return nil, fmt.Errorf("workspace artifact does not match the deterministic overlay for its recorded inputs; run `gograph workspace build`")
+	verificationKey := overlayVerificationKey(root, inputFingerprint, artifactFingerprint)
+	if !verifiedOverlays.contains(verificationKey) {
+		expected, err := Resolve(manifest, members)
+		if err != nil {
+			return nil, fmt.Errorf("re-resolve workspace overlay: %w", err)
+		}
+		expectedBytes, err := EncodeArtifact(expected)
+		if err != nil {
+			return nil, err
+		}
+		expectedSum := sha256.Sum256(expectedBytes)
+		if artifactFingerprint != hex.EncodeToString(expectedSum[:]) {
+			return nil, fmt.Errorf("workspace artifact does not match the deterministic overlay for its recorded inputs; run `gograph workspace build`")
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		verifiedOverlays.remember(verificationKey)
 	}
 	return &LoadedWorkspace{Root: root, Manifest: manifest, ManifestFingerprint: manifestFingerprint, Members: members, Artifact: artifact, ArtifactFingerprint: artifactFingerprint}, nil
 }

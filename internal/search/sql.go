@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -83,11 +82,28 @@ type SQLPage struct {
 
 // QuerySQL returns one deterministic, bounded page of PostgreSQL static SQL facts.
 func QuerySQL(g *graph.Graph, query SQLQuery) (SQLPage, error) {
+	return NewSnapshot(g).QuerySQL(query)
+}
+
+func (snapshot *Snapshot) QuerySQL(query SQLQuery) (SQLPage, error) {
+	g := snapshot.g
 	normalized, err := normalizeSQLQuery(query)
 	if err != nil {
 		return SQLPage{}, err
 	}
-	offset, err := decodeSQLCursor(normalized.Cursor)
+	selection := normalized
+	selection.Cursor, selection.Limit = "", 0
+	selection.Term = strings.ToLower(selection.Term)
+	selection.Function = strings.ToLower(selection.Function)
+	binding, err := snapshot.binding(SQLSchemaVersion, selection)
+	if err != nil {
+		return SQLPage{}, err
+	}
+	encodedOffset, err := cursorOffset(normalized.Cursor, binding, "SQL")
+	if err != nil {
+		return SQLPage{}, err
+	}
+	offset, err := decodeSQLCursor(encodedOffset)
 	if err != nil {
 		return SQLPage{}, err
 	}
@@ -99,39 +115,25 @@ func QuerySQL(g *graph.Graph, query SQLQuery) (SQLPage, error) {
 	term := strings.ToLower(normalized.Term)
 	function := strings.ToLower(normalized.Function)
 	rows := make([]SQLResult, 0, len(g.SQLs))
-	for _, edge := range g.SQLs {
-		if normalized.NoTests && strings.HasSuffix(strings.ToLower(filepath.Base(edge.File)), "_test.go") {
+	for _, row := range snapshot.sqlRows() {
+		if normalized.NoTests && strings.HasSuffix(strings.ToLower(filepath.Base(row.File)), "_test.go") {
 			continue
 		}
-		if moduleIndex >= 0 && routeModuleIndex(g, edge.File) != moduleIndex {
+		if moduleIndex >= 0 && routeModuleIndex(g, row.File) != moduleIndex {
 			continue
 		}
-		if term != "" && !strings.Contains(strings.ToLower(edge.Query), term) {
+		if term != "" && !strings.Contains(strings.ToLower(row.Query), term) {
 			continue
 		}
-		if function != "" && !strings.Contains(strings.ToLower(edge.Function), function) {
+		if function != "" && !strings.Contains(strings.ToLower(row.Function), function) {
 			continue
 		}
-		row := classifySQLResult(edge)
 		if !sqlVerbMatches(row, normalized.Verbs) || !sqlAccessMatches(row, normalized.Accesses) || !sqlTableMatches(row, normalized.Tables) {
 			continue
 		}
 		rows = append(rows, row)
 	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		left, right := rows[i], rows[j]
-		leftQuery, rightQuery := strings.ToLower(left.Query), strings.ToLower(right.Query)
-		if leftQuery != rightQuery {
-			return leftQuery < rightQuery
-		}
-		if left.File != right.File {
-			return left.File < right.File
-		}
-		if left.Line != right.Line {
-			return left.Line < right.Line
-		}
-		return left.Function < right.Function
-	})
+
 	if offset > len(rows) {
 		return SQLPage{}, fmt.Errorf("SQL cursor starts at %d, past the %d filtered queries; restart without cursor", offset, len(rows))
 	}
@@ -151,8 +153,10 @@ func QuerySQL(g *graph.Graph, query SQLQuery) (SQLPage, error) {
 		Queries:       []SQLResult{},
 	}
 	for index := offset; index < len(rows) && len(page.Queries) < normalized.Limit; index++ {
-		page.Queries = append(page.Queries, rows[index])
-		finalizeSQLPage(&page, offset)
+		row := rows[index]
+		row.Tables = append([]SQLTable{}, row.Tables...)
+		page.Queries = append(page.Queries, row)
+		finalizeSQLPage(&page, offset, binding)
 		encoded, marshalErr := json.MarshalIndent(page, "", "  ")
 		if marshalErr != nil {
 			return SQLPage{}, fmt.Errorf("encode SQL page: %w", marshalErr)
@@ -166,7 +170,7 @@ func QuerySQL(g *graph.Graph, query SQLQuery) (SQLPage, error) {
 		}
 		break
 	}
-	finalizeSQLPage(&page, offset)
+	finalizeSQLPage(&page, offset, binding)
 	encoded, err := json.MarshalIndent(page, "", "  ")
 	if err != nil {
 		return SQLPage{}, fmt.Errorf("encode SQL page: %w", err)
@@ -307,13 +311,13 @@ func sqlTableMatches(row SQLResult, tables []string) bool {
 	return false
 }
 
-func finalizeSQLPage(page *SQLPage, offset int) {
+func finalizeSQLPage(page *SQLPage, offset int, binding string) {
 	page.Returned = len(page.Queries)
 	next := offset + page.Returned
 	page.Truncated = next < page.Total
 	page.NextCursor = ""
 	if page.Truncated {
-		page.NextCursor = encodeSQLCursor(next)
+		page.NextCursor = boundCursor(binding, encodeSQLCursor(next))
 	}
 }
 

@@ -504,3 +504,7 @@ The maintained project, agent-workflow, and contributor contracts were synchroni
 - Added a fail-closed release transformation because the configured GoReleaser still emits the legacy hook; missing, duplicate, and conflicting forms now abort publication.
 - Verified Gograph and Achta full gates, focused Homebrew style, direct cask transformation, active-tap parsing, and a warning-free `brew doctor` with the patched casks.
 - Recorded canonical claim `GOGRAPH-HOMEBREW-POSTFLIGHT-1`.
+
+## [2026-09-06] decision | Bind query evidence to immutable snapshots
+
+Recorded the owner-approved eight-improvement contract in query-contracts.md: identity-preserving exact/possible impact, declaration-level changes with explicit incompleteness, snapshot-bound bounded pages, unambiguous explanations, cancellable immutable MCP requests, bounded caches, and scope-confined dynamic HTTP mappings. Historical declaration evidence does not substitute for historical caller edges; current-graph consumers must refuse unsupported deletion traversal. Release publication remains a separately verified outcome.

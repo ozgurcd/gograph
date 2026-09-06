@@ -2,7 +2,6 @@ package mcp_test
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/ozgurcd/gograph/internal/graph"
@@ -45,10 +44,11 @@ func TestMCPInterfaceCallerFormsUseSharedResolver(t *testing.T) {
 	for _, exact := range []bool{false, true} {
 		for _, query := range queries {
 			text := callTool(t, handler, map[string]any{"function": query, "exact": exact})
-			if count := strings.Count(text, "[caller]"); count != 1 {
+			rows := decodeResultRows(t, text)
+			if count := len(rows); count != 1 {
 				t.Fatalf("gograph_callers(%q, exact=%v) returned %d caller rows, want one:\n%s", query, exact, count, text)
 			}
-			if !strings.Contains(text, "Purge") || !strings.Contains(text, "service/purge.go:12") {
+			if rows[0].Name != "Purge" || rows[0].CallSiteFile != "service/purge.go" || rows[0].CallSiteLine != 12 {
 				t.Fatalf("gograph_callers(%q, exact=%v) returned wrong source site:\n%s", query, exact, text)
 			}
 			if baseline == "" {

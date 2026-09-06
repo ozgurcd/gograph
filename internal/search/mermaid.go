@@ -370,7 +370,7 @@ func callersToMermaid(g *graph.Graph, term string, maxDepth int, includeTests, e
 			matched := false
 			if c.CalleeSymbolID != "" && currentLevel[c.CalleeSymbolID] {
 				matched = true
-			} else if currentLevel[strings.ToLower(c.CalleeRaw)] {
+			} else if c.CalleeSymbolID == "" && currentLevel[strings.ToLower(c.CalleeRaw)] {
 				matched = true
 			}
 
@@ -397,7 +397,7 @@ func callersToMermaid(g *graph.Graph, term string, maxDepth int, includeTests, e
 					visited[c.CallerSymbolID] = true
 					nextLevel[c.CallerSymbolID] = true
 				}
-				if c.CallerName != "" && !visited[strings.ToLower(c.CallerName)] {
+				if c.CallerSymbolID == "" && c.CallerName != "" && !visited[strings.ToLower(c.CallerName)] {
 					visited[strings.ToLower(c.CallerName)] = true
 					nextLevel[strings.ToLower(c.CallerName)] = true
 				}
@@ -503,78 +503,105 @@ func PathToMermaid(chain []Result) string {
 
 // ImpactToMermaid draws downstream blast radius in TD style.
 func ImpactToMermaid(g *graph.Graph, term string, includeTests bool) string {
-	return callersToMermaid(g, term, 20, includeTests, false)
+	return ImpactMultipleToMermaid(g, []string{term}, includeTests)
 }
 
 // ImpactMultipleToMermaid draws the combined blast radius for multiple starting symbols.
 func ImpactMultipleToMermaid(g *graph.Graph, terms []string, includeTests bool) string {
-	if len(terms) == 0 {
+	return NewSnapshot(g).ImpactMermaid(terms, ImpactOptions{IncludeTests: includeTests})
+}
+
+// ImpactMermaid renders the same complete reverse reachability as Impact.
+// It never promotes caller display names into canonical traversal identities.
+// Dotted edges mark paths whose existence still depends on possible evidence.
+func (snapshot *Snapshot) ImpactMermaid(terms []string, options ImpactOptions) string {
+	g := snapshot.g
+	if g == nil || len(terms) == 0 {
 		return ""
 	}
-	mg := newMermaidGraph()
-	allCalls := visibleMermaidCallEdges(g, includeTests)
-
-	symMap := make(map[string]string)
-	for _, s := range g.Symbols {
-		if s.Receiver != "" {
-			symMap[s.ID] = "(" + s.Receiver + ")." + s.Name
-		} else {
-			symMap[s.ID] = s.Name
-		}
+	selected := make(map[string]string)
+	for _, row := range snapshot.Impact(terms, "", options) {
+		selected[row.StableID] = row.ResolutionStatus
 	}
-
-	// Seed frontier from all terms.
-	frontier := make(map[string]bool)
 	for _, term := range terms {
-		for key := range mermaidResolvedFrontier(g, term, false) {
-			frontier[key] = true
-		}
-	}
-
-	visited := make(map[string]bool)
-	currentLevel := make(map[string]bool)
-	for k := range frontier {
-		currentLevel[k] = true
-	}
-
-	for depth := 1; depth <= 20; depth++ {
-		currentLevel = expandTransparentCallerTargets(g, currentLevel)
-		nextLevel := make(map[string]bool)
-		for _, c := range allCalls {
-			matched := (c.CalleeSymbolID != "" && currentLevel[c.CalleeSymbolID]) || currentLevel[strings.ToLower(c.CalleeRaw)]
-			if !matched {
-				continue
-			}
-			callerLabel := c.CallerSymbolID
-			if label, ok := symMap[c.CallerSymbolID]; ok {
-				callerLabel = label
-			} else if c.CallerName != "" {
-				callerLabel = c.CallerName
-			}
-			calleeLabel := c.CalleeSymbolID
-			if label, ok := symMap[c.CalleeSymbolID]; ok {
-				calleeLabel = label
-			} else if c.CalleeRaw != "" {
-				calleeLabel = c.CalleeRaw
-			}
-			if callerLabel != "" && calleeLabel != "" {
-				mg.addEdge(callerLabel, calleeLabel)
-			}
-			if c.CallerSymbolID != "" && !visited[c.CallerSymbolID] {
-				visited[c.CallerSymbolID] = true
-				nextLevel[c.CallerSymbolID] = true
-			}
-			if c.CallerName != "" && !visited[strings.ToLower(c.CallerName)] {
-				visited[strings.ToLower(c.CallerName)] = true
-				nextLevel[strings.ToLower(c.CallerName)] = true
+		ids, _ := resolvedCallTargetIDs(g, term)
+		for id := range ids {
+			selected[id] = "exact"
+			for _, visible := range visibleForwardingTargets(g, id) {
+				selected[visible] = "exact"
 			}
 		}
-		if len(nextLevel) == 0 {
-			break
-		}
-		currentLevel = nextLevel
 	}
-
+	labels := make(map[string]string)
+	counts := make(map[string]int)
+	for _, symbol := range g.Symbols {
+		label := symbol.Name
+		if symbol.Receiver != "" {
+			label = "(" + symbol.Receiver + ")." + label
+		}
+		labels[symbol.ID] = label
+		counts[label]++
+	}
+	for id, label := range labels {
+		if counts[label] > 1 {
+			labels[id] = label + " [" + id + "]"
+		}
+	}
+	type link struct{ from, to, status string }
+	links := make(map[link]bool)
+	for _, call := range visibleMermaidCallEdges(g, options.IncludeTests) {
+		from, to := call.CallerSymbolID, call.CalleeSymbolID
+		if selected[from] == "" {
+			continue
+		}
+		if to == "" {
+			candidates := FindSymbols(g, call.CalleeRaw)
+			if len(candidates) == 1 {
+				to = candidates[0].ID
+			} else {
+				for _, term := range terms {
+					if !isFullyQualifiedID(term) && term != "" && strings.Contains(strings.ToLower(call.CalleeRaw), strings.ToLower(term)) {
+						to = "unresolved-query:" + term
+						selected[to], labels[to] = "possible", call.CalleeRaw
+						break
+					}
+				}
+			}
+		}
+		if selected[to] == "" || labels[from] == "" || labels[to] == "" || from == to {
+			continue
+		}
+		status := "exact"
+		if callResolution(call.Resolution) != "exact" || selected[from] == "possible" || selected[to] == "possible" {
+			status = "possible"
+		}
+		if options.ExactOnly && status != "exact" {
+			continue
+		}
+		links[link{from, to, status}] = true
+	}
+	ordered := make([]link, 0, len(links))
+	for edge := range links {
+		ordered = append(ordered, edge)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].from != ordered[j].from {
+			return ordered[i].from < ordered[j].from
+		}
+		if ordered[i].to != ordered[j].to {
+			return ordered[i].to < ordered[j].to
+		}
+		return ordered[i].status < ordered[j].status
+	})
+	mg := newMermaidGraph()
+	for _, edge := range ordered {
+		from, to := mg.getID(labels[edge.from]), mg.getID(labels[edge.to])
+		arrow := "-->"
+		if edge.status == "possible" {
+			arrow = "-.->"
+		}
+		mg.edges[fmt.Sprintf("    %s %s %s", from, arrow, to)] = true
+	}
 	return mg.String("LR")
 }
 

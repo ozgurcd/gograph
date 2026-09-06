@@ -17,7 +17,7 @@ const (
 var ResolverVersions = map[string]string{
 	"go_module": "go-module-v1",
 	"go_symbol": "go-symbol-v1",
-	"http":      "http-contract-v1",
+	"http":      "http-contract-v2",
 }
 
 type Manifest struct {
@@ -34,10 +34,19 @@ type ManifestDefaults struct {
 }
 
 type RepositoryConfig struct {
-	ID        string          `yaml:"id" json:"id"`
-	Path      string          `yaml:"path" json:"path"`
-	Precision string          `yaml:"precision,omitempty" json:"precision,omitempty"`
-	Services  []ServiceConfig `yaml:"services,omitempty" json:"services,omitempty"`
+	ID          string             `yaml:"id" json:"id"`
+	Path        string             `yaml:"path" json:"path"`
+	Precision   string             `yaml:"precision,omitempty" json:"precision,omitempty"`
+	Services    []ServiceConfig    `yaml:"services,omitempty" json:"services,omitempty"`
+	HTTPClients []HTTPClientConfig `yaml:"http_clients,omitempty" json:"http_clients,omitempty"`
+}
+
+// HTTPClientConfig is an explicit repository-local promise about a URL base.
+// Neither environment values nor arbitrary hostname conventions are consulted.
+type HTTPClientConfig struct {
+	Base        string `yaml:"base" json:"base"`
+	AuthorityID string `yaml:"authority_id" json:"authority_id"`
+	PathPrefix  string `yaml:"path_prefix,omitempty" json:"path_prefix,omitempty"`
 }
 
 type ServiceConfig struct {
@@ -166,13 +175,26 @@ type HTTPRelation struct {
 }
 
 type ScopeOverlay struct {
-	ID            string                   `json:"id"`
-	Repositories  []string                 `json:"repositories"`
-	Modules       []ModuleOwnership        `json:"module_ownership,omitempty"`
-	Imports       []ModuleImportResolution `json:"module_imports,omitempty"`
-	GoCalls       []GoCallResolution       `json:"go_call_resolutions,omitempty"`
-	HTTPContracts []HTTPContract           `json:"http_contracts,omitempty"`
-	HTTPRelations []HTTPRelation           `json:"http_relations,omitempty"`
+	ID             string                   `json:"id"`
+	Repositories   []string                 `json:"repositories"`
+	Modules        []ModuleOwnership        `json:"module_ownership,omitempty"`
+	Imports        []ModuleImportResolution `json:"module_imports,omitempty"`
+	GoCalls        []GoCallResolution       `json:"go_call_resolutions,omitempty"`
+	HTTPContracts  []HTTPContract           `json:"http_contracts,omitempty"`
+	HTTPRelations  []HTTPRelation           `json:"http_relations,omitempty"`
+	HTTPUnresolved []HTTPUnresolved         `json:"http_unresolved,omitempty"`
+}
+
+// HTTPUnresolved is evidence, not an edge. It never participates in traversal.
+type HTTPUnresolved struct {
+	Source   NodeRef `json:"source"`
+	File     string  `json:"file"`
+	Line     int     `json:"line"`
+	Method   string  `json:"method"`
+	URL      string  `json:"url"`
+	Base     string  `json:"base,omitempty"`
+	Reason   string  `json:"reason"`
+	Resolver string  `json:"resolver"`
 }
 
 type Artifact struct {
