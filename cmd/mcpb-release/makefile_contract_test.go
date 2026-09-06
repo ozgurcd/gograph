@@ -136,7 +136,7 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 		{
 			path: ".github/workflows/release.yml",
 			required: []string{
-				"GO_VERSION: '1.27.0'",
+				"GO_VERSION: '1.27.1'",
 				"STATICCHECK_VERSION: 'v0.8.0'",
 				"GOLANGCI_LINT_VERSION: 'v2.13.1'",
 				"GOVULNCHECK_VERSION: 'v1.3.0'",

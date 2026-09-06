@@ -162,6 +162,7 @@ The release implementation is pinned to these official formats and tools:
 | Registry `server.json` schema | `2025-12-11` |
 | MCPB manifest schema | `0.4` |
 | MCPB schema provenance/tooling reference | `@anthropic-ai/mcpb` `2.1.2` |
+| Release Go compiler | `1.27.1` |
 | Registry publisher | `mcp-publisher` `1.7.9` |
 | GoReleaser local/CI gate | `v2.17.0` |
 | Grype GitHub Actions gate | `v0.116.1` |
@@ -174,6 +175,11 @@ archive's SHA-256 digest and embedded version before execution.
 
 For a new patch release, first commit the feature or fix on an attached branch
 whose HEAD includes the latest official `main`, and leave the worktree clean.
+Before preparing bundle hashes, check `go version` against `GO_VERSION` in
+`.github/workflows/release.yml`: the exact patch version must match. Deterministic
+bundles are reproducible for the same compiler and inputs, not across compiler
+versions. The release workflow compares rebuilt hashes with committed
+`server.json` and refuses publication when they differ.
 Then run the same command used before Registry support:
 
 ```bash
