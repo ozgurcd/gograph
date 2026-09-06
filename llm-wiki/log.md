@@ -508,3 +508,7 @@ The maintained project, agent-workflow, and contributor contracts were synchroni
 ## [2026-09-06] decision | Bind query evidence to immutable snapshots
 
 Recorded the owner-approved eight-improvement contract in query-contracts.md: identity-preserving exact/possible impact, declaration-level changes with explicit incompleteness, snapshot-bound bounded pages, unambiguous explanations, cancellable immutable MCP requests, bounded caches, and scope-confined dynamic HTTP mappings. Historical declaration evidence does not substitute for historical caller edges; current-graph consumers must refuse unsupported deletion traversal. Release publication remains a separately verified outcome.
+
+### 2026-09-06 — v1.7.0 publication and installed acceptance
+
+Published immutable v1.7.0 (tag 9ba68b6) with all eight query/workspace improvements and CLI/MCP/help documentation. Release34064579154, CI and docs passed; all 14 GitHub assets and Registry hashes verified. Go1.27.0/1.27.1 bundle mismatch was reproduced and fixed in the workflow (ec75c77) without moving the tag or bypassing verification. Homebrew tap a6bad5d retains postflight_steps; installed CLI/new MCP report1.7.0, brew doctor is clean, and their 259-route/3-page real census matches exactly with cursors below the cap and unchanged persisted graph. See mcp-registry.md for evidence and query-contracts.md for semantic boundaries.

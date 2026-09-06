@@ -12,7 +12,7 @@
 - [agent-contract.md](agent-contract.md) — Workflow lifecycle, verification, CLI/MCP parity, context fidelity, and auditing.
 - [agent-rules.md](agent-rules.md) — Workflow guidelines and rules for development.
 - [scrinium-guide.md](scrinium-guide.md) — Conditional, token-conscious Scrinium usage and governance limits.
-- [mcp-registry.md](mcp-registry.md) — Live v1.6.9 Registry identity, MCPB representation, release invariants, and preview limits.
+- [mcp-registry.md](mcp-registry.md) — Live v1.7.0 Registry identity, MCPB representation, release invariants, and preview limits.
 
 ## Canonical Claims
 
