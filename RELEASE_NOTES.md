@@ -1,6 +1,6 @@
 # Release Notes
 
-## Unreleased
+## v1.7.0 — 2026-09-06
 
 ### Query correctness and bounded agent responses
 

@@ -53,6 +53,13 @@ latest `.gograph` graph and reports must use a custom local MCP registration
 that adds `--persist-refresh`; that mode does not update `.gitignore` and is
 not a branch cache.
 
+Restart running MCP processes after upgrading and check
+`gograph_capabilities.version`. Existing processes do not hot-reload the binary
+or tool schemas. See [query contracts](query-contracts.md) for snapshot-bound
+pagination, native CLI/MCP payloads, cancellation, cache boundaries, and explicit
+incomplete-change handling. Follow continuation cursors for a complete census;
+never combine pages after a graph change invalidates the cursor.
+
 Select a different project directory for each repository-specific server
 configuration. gograph anchors its graph, source refresh, configuration, Git
 operations, and local session metadata to that analyzed project.
@@ -228,6 +235,21 @@ the newer `main` tip unchanged. An incompatible remote advance fails closed
 and requires manual reconciliation of the unpublished local commit and tag.
 Protected-branch policy may also require repository-specific approval before
 the atomic push can succeed.
+
+### Intentionally prepared minor releases
+
+Automatic version selection is patch-only. For an owner-approved minor version,
+prepare it explicitly: align `.bumpversion.cfg` and `plugin.json`, give the new
+`RELEASE_NOTES.md` section its version/date, build all six MCPBs with that version
+into a new repository-local temporary directory, and use `render-server` to
+generate `server.json` from their actual hashes. Commit the aligned metadata
+and create an annotated local `v<version>` tag at that exact commit.
+
+Then run `make release` from that clean tagged commit. The existing resume path
+verifies the committed metadata against newly rebuilt bundles, runs the complete
+release gate, checks that the version is unpublished, and atomically pushes the
+commit and tag without incrementing the version. Do not push the prepared tag
+before this verification, reuse a published version, or move an existing tag.
 
 GoReleaser publishes the ordinary archives, six MCPBs, `server.json`, and
 checksums from the verified tag. The workflow then idempotently reconciles the
