@@ -340,6 +340,9 @@ type gitIgnoreChecker struct {
 	once   sync.Once
 	root   string // absolute repository root (output of git rev-parse)
 	hasGit bool   // false when git is unavailable or not a git repo
+	cmd    *exec.Cmd
+	input  io.WriteCloser
+	output *bufio.Reader
 }
 
 // newGitIgnoreChecker returns a checker rooted at the given directory.
@@ -358,6 +361,7 @@ func (g *gitIgnoreChecker) init() {
 		}
 		g.root = strings.TrimSpace(string(out))
 		g.hasGit = true
+		g.startBatch()
 	})
 }
 
@@ -370,6 +374,19 @@ func (g *gitIgnoreChecker) isIgnored(absPath string) bool {
 	g.init()
 	if !g.hasGit {
 		return false
+	}
+	if strings.ContainsRune(absPath, 0) {
+		return false // exec rejects NUL in a path too; never inject a protocol record.
+	}
+	if g.cmd != nil {
+		if _, err := io.WriteString(g.input, absPath+"\x00"); err == nil {
+			if ignored, err := readIgnoreResponse(g.output, absPath); err == nil {
+				return ignored
+			}
+		}
+		// An unsupported/broken protocol must retain the original per-path
+		// behavior. Reap the child before falling back, including on read errors.
+		g.stopBatch(true)
 	}
 	// `git check-ignore --quiet` exits 0 if the path is ignored, 1 if not.
 	cmd := exec.Command("git", "-C", g.root, "check-ignore", "--quiet", absPath)
@@ -433,6 +450,7 @@ func WalkWithConfigAndFingerprint(root string, config buildctx.Config) (paths []
 	}
 	buildContext := confinedBuildContext(config.BuildContext())
 	gitIgnore := newGitIgnoreChecker(absRoot)
+	defer gitIgnore.stopBatch(false)
 	moduleIgnores, moduleErr := newModuleIgnoreTracker(config.ModulesEnabled(), config.ModuleRoot(), absRoot)
 	if moduleErr != nil {
 		errs = append(errs, moduleErr)
@@ -466,7 +484,7 @@ func WalkWithConfigAndFingerprint(root string, config buildctx.Config) (paths []
 				return filepath.SkipDir
 			}
 			// Gitignore check for directories: if the directory itself is
-			// gitignored skip the whole subtree with one syscall instead of
+			// gitignored skip the whole subtree with one lookup instead of
 			// checking every file inside it individually. This is what catches
 			// `.claude/worktrees/agent-*/` and similar AI agent scratch trees.
 			if aerr == nil && gitIgnore.isIgnored(absPath) {

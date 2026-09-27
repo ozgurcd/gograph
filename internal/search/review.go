@@ -83,6 +83,12 @@ func (r *ReviewResult) String() string {
 
 // Review generates a post-edit review report for modified symbols.
 func Review(g *graph.Graph, symbolNames []string, title string) *ReviewResult {
+	return NewSnapshot(g).Review(symbolNames, title)
+}
+
+// Review composes a change review using this immutable snapshot's derived indexes.
+func (snapshot *Snapshot) Review(symbolNames []string, title string) *ReviewResult {
+	g := snapshot.g
 	if len(symbolNames) == 0 {
 		return &ReviewResult{Message: "No modified symbols found to review."}
 	}
@@ -145,7 +151,7 @@ func Review(g *graph.Graph, symbolNames []string, title string) *ReviewResult {
 	}
 
 	routeSet := make(map[string]bool)
-	blastRadius := ImpactMultiple(g, validSymbols, "review", true)
+	blastRadius := snapshot.Impact(validSymbols, "review", ImpactOptions{IncludeTests: true})
 	blastMap := make(map[string]bool)
 	for _, b := range blastRadius {
 		blastMap[b.Name] = true
@@ -164,24 +170,7 @@ func Review(g *graph.Graph, symbolNames []string, title string) *ReviewResult {
 		}
 	}
 
-	downstream := make(map[string]bool)
-	queue := make([]string, len(validSymbols))
-	copy(queue, validSymbols)
-	for _, s := range validSymbols {
-		downstream[s] = true
-	}
-	for len(queue) > 0 {
-		curr := queue[0]
-		queue = queue[1:]
-		for _, call := range g.Calls {
-			if call.CallerName == curr {
-				if !downstream[call.CalleeRaw] {
-					downstream[call.CalleeRaw] = true
-					queue = append(queue, call.CalleeRaw)
-				}
-			}
-		}
-	}
+	downstream := snapshot.downstream(validSymbols)
 
 	envSet := make(map[string]bool)
 	for _, env := range g.EnvReads {

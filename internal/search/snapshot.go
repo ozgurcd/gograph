@@ -31,6 +31,8 @@ type Snapshot struct {
 	reverseAttribution map[string][]attributionLink
 	reachabilityOnce   sync.Once
 	reachability       map[string]symbolTestReach
+	downstreamOnce     sync.Once
+	downstreamCalls    map[string][]string
 }
 
 func NewSnapshot(g *graph.Graph) *Snapshot { return &Snapshot{g: g} }

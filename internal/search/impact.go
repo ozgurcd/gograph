@@ -31,16 +31,33 @@ func buildImpactIndex(g *graph.Graph) impactIndex {
 	}
 	incoming := make(map[string][]graph.CallEdge)
 	var unresolved []graph.CallEdge
+	// A raw spelling has the same candidates throughout this immutable graph.
+	// Cache misses and ambiguities too, without retaining whole candidate lists.
+	// Keep uniqueness separate from ID: legacy graphs may have an empty ID.
+	type fallbackResolution struct {
+		id     string
+		unique bool
+	}
+	fallbacks := make(map[string]fallbackResolution)
+	var resolver *symbolResolver
 	for _, call := range g.Calls {
 		if call.CalleeSymbolID == "" {
 			// Unique raw-spelling fallback is possible evidence only. An edge
 			// already resolved elsewhere can never enter this fallback.
-			candidates := FindSymbols(g, call.CalleeRaw)
-			if len(candidates) != 1 {
+			resolved, cached := fallbacks[call.CalleeRaw]
+			if !cached {
+				if resolver == nil {
+					prepared := newSymbolResolver(g.Symbols)
+					resolver = &prepared
+				}
+				resolved.id, resolved.unique = resolver.unique(call.CalleeRaw)
+				fallbacks[call.CalleeRaw] = resolved
+			}
+			if !resolved.unique {
 				unresolved = append(unresolved, call)
 				continue
 			}
-			call.CalleeSymbolID = candidates[0].ID
+			call.CalleeSymbolID = resolved.id
 			call.Resolution = ""
 		}
 		incoming[call.CalleeSymbolID] = append(incoming[call.CalleeSymbolID], call)

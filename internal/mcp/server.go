@@ -1329,7 +1329,7 @@ func NewServer(
 			return mcp.NewToolResultError("must provide either symbol or set uncommitted to true"), nil
 		}
 
-		planRes := search.Plan(g, symbolNames, title)
+		planRes := queriesForRequest(ctx).Plan(symbolNames, title)
 		withContext, _ := args["with_context"].(bool)
 
 		resp := map[string]any{
@@ -1394,7 +1394,7 @@ func NewServer(
 			return mcp.NewToolResultError("must provide either symbol or set uncommitted to true"), nil
 		}
 
-		revRes := search.Review(g, symbolNames, title)
+		revRes := queriesForRequest(ctx).Review(symbolNames, title)
 
 		resp := MCPResponse{
 			Summary:        "Code Review for " + revRes.Title,

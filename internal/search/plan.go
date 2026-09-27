@@ -132,6 +132,12 @@ func (r *PlanResult) String() string {
 
 // Plan generates an operational change plan for one or more symbols.
 func Plan(g *graph.Graph, symbolNames []string, title string) *PlanResult {
+	return NewSnapshot(g).Plan(symbolNames, title)
+}
+
+// Plan composes a change plan using this immutable snapshot's derived indexes.
+func (snapshot *Snapshot) Plan(symbolNames []string, title string) *PlanResult {
+	g := snapshot.g
 	res := &PlanResult{
 		Title:      title,
 		PublicAPI:  "no",
@@ -190,7 +196,7 @@ func Plan(g *graph.Graph, symbolNames []string, title string) *PlanResult {
 
 	// Check Routes
 	routeSet := make(map[string]bool)
-	blastRadius := ImpactMultiple(g, symbolNames, "plan", true)
+	blastRadius := snapshot.Impact(symbolNames, "plan", ImpactOptions{IncludeTests: true})
 	blastMap := make(map[string]bool)
 	for _, b := range blastRadius {
 		blastMap[b.Name] = true
@@ -210,24 +216,7 @@ func Plan(g *graph.Graph, symbolNames []string, title string) *PlanResult {
 	}
 
 	// Check Envs and SQL via downstream BFS
-	downstream := make(map[string]bool)
-	queue := make([]string, len(symbolNames))
-	copy(queue, symbolNames)
-	for _, s := range symbolNames {
-		downstream[s] = true
-	}
-	for len(queue) > 0 {
-		curr := queue[0]
-		queue = queue[1:]
-		for _, call := range g.Calls {
-			if call.CallerName == curr {
-				if !downstream[call.CalleeRaw] {
-					downstream[call.CalleeRaw] = true
-					queue = append(queue, call.CalleeRaw)
-				}
-			}
-		}
-	}
+	downstream := snapshot.downstream(symbolNames)
 
 	envSet := make(map[string]bool)
 	for _, env := range g.EnvReads {
