@@ -1,5 +1,19 @@
 # Release Notes
 
+## v1.7.5 — 2026-09-27
+
+- Improved CLI and MCP plan/review performance by caching repeated call-target
+  resolution, preparing normalized symbol matching once per impact build, and
+  reusing impact and downstream indexes within query snapshots.
+- Reduced repository scan overhead by streaming native Git ignore checks through
+  one process per scan. Responses are bounded and validated; a failed streaming
+  check falls back to the existing per-path check. Each scan starts fresh so
+  changes to ignore rules and the Git index remain visible.
+- Preserved matching and traversal semantics, graph freshness checks, precise
+  analysis, and source confinement. Added differential, concurrency, allocation,
+  fuzz, and ignore-protocol regression coverage.
+- Restart existing MCP servers after upgrading to load the new executable.
+
 ## v1.7.4 — 2026-09-17
 
 - Windows binaries are no longer built or published; macOS and Linux targets are unchanged.
