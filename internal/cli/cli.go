@@ -271,7 +271,7 @@ func dispatch(args []string) int {
 	case "godobj":
 		return runGodObj(args[1:])
 	case "skeleton":
-		return runSkeleton()
+		return runSkeleton(args[1:])
 	case "mutate":
 		return runMutate(args[1:])
 	case "trace":
@@ -803,7 +803,7 @@ review --uncommitted : post-edit review for all uncommitted changes
 risk <sym>           : change risk profile — blast radius, complexity, test coverage, SQL/env dependencies
 risk --uncommitted   : change risk profile for all uncommitted changes
 schema <table>       : structs mapped to a DB table via struct tags
-skeleton             : full repository API signatures with bodies stripped — WARNING: large on big repos
+skeleton [file]      : one indexed file's API signatures, or the full repository when omitted
 trace <err_str>      : alias for errorflow (kept for compatibility)
 doc <pkg[.Symbol]>  : "go doc <query>" — signature + doc comment for any stdlib or third-party symbol.
                        No graph required. Examples: doc fmt.Errorf  doc net/http.HandleFunc  doc io.Reader
@@ -3139,7 +3139,7 @@ SEARCH & NAVIGATION
                              show "via <method-name>" in Detail. The ++/+= and
                              indirect-mutation cases require a --precise build.
   arity [--min 5]            Find functions with many arguments (long parameter list smell).
-  skeleton                   Output the whole repository's API signatures with bodies stripped.
+  skeleton [file]            Output one indexed file's API signatures; omit file for the whole repository.
 
 CALL GRAPH
   callers <function> [--no-tests] [--depth N] [--exact]
@@ -4749,14 +4749,26 @@ func runHTTPCalls(args []string) int {
 }
 
 // runSkeleton prints a stripped skeleton of the repository structure.
-func runSkeleton() int {
+func runSkeleton(args []string) int {
+	if len(args) > 1 || (len(args) == 1 && !hasSingleTarget(args)) {
+		return failCommand("skeleton", "usage: gograph skeleton [file]")
+	}
 	g, err := loadGraph(".")
 	if err != nil {
 		return failCommand("skeleton", err.Error())
 	}
-	skeleton := search.Skeleton(g)
+	var skeleton, target string
+	if len(args) == 1 {
+		target = args[0]
+		skeleton, err = search.SkeletonFile(g, target)
+		if err != nil {
+			return failCommand("skeleton", err.Error())
+		}
+	} else {
+		skeleton = search.Skeleton(g)
+	}
 	if jsonMode {
-		return PrintJSON(okEnvelope("skeleton", "", skeleton, 1))
+		return PrintJSON(okEnvelope("skeleton", target, skeleton, 1))
 	}
 	fmt.Println(skeleton)
 	return 0

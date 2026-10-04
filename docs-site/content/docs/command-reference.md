@@ -879,9 +879,9 @@ Ranks structs that exceed any enabled method, field, or outgoing-call threshold;
 
 ### skeleton
 ```bash
-gograph skeleton [--json]
+gograph skeleton [file] [--json]
 ```
-Outputs the entire repository's API signatures with their function/method bodies stripped. Useful for full structural orientation.
+Outputs API signatures with function/method bodies stripped. Supply an exact repository-relative indexed file, such as `tools/devseed/main.go`, to return only that file's package and declarations. A missing file is an error; basename matching and repository fallback are not used. With no file argument, outputs the entire repository for structural orientation. The MCP tool `gograph_skeleton` accepts the same optional `file` parameter.
 
 ### mutate
 ```bash

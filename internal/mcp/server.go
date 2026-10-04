@@ -2400,10 +2400,24 @@ func initNewTools(
 
 	// Tool: gograph_skeleton
 	skeletonTool := mcp.NewTool("gograph_skeleton",
-		mcp.WithDescription("Emit the full repository's API signatures with function bodies stripped — struct definitions, interface declarations, and function/method signatures only. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WARNING: output can be very large on big repositories — consider using gograph_public per package for targeted queries. WHEN TO USE: When an LLM needs a compact map of the entire codebase's shape without reading source files individually. NOT TO USE: For full implementations (use gograph_source); for a single package (use gograph_public). RETURNS: Multi-line text of all stripped declarations across all packages; always non-empty when the graph has symbols."),
+		mcp.WithDescription("Emit API signatures with function bodies stripped — struct definitions, interface declarations, and function/method signatures only. Supply file for one exact repository-relative indexed file; omit it for the full repository. Unknown files return an error. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WARNING: whole-repository output can be very large. WHEN TO USE: For a file's declarations or a compact map of the entire codebase's shape. NOT TO USE: For full implementations (use gograph_source); for a single package (use gograph_public). RETURNS: Multi-line text of stripped declarations and package names."),
+		mcp.WithString("file", mcp.Description("Optional repository-relative indexed file; selects only that file's package and declarations. Unknown files are errors, never a repository fallback.")),
 	)
-	addTool(skeletonTool, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	addTool(skeletonTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
+		if args, ok := request.Params.Arguments.(map[string]any); ok {
+			if value, provided := args["file"]; provided {
+				file, ok := value.(string)
+				if !ok || file == "" {
+					return mcp.NewToolResultError("file must be a non-empty string"), nil
+				}
+				text, err := search.SkeletonFile(g, file)
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				return mcp.NewToolResultText(text), nil
+			}
+		}
 		return mcp.NewToolResultText(search.Skeleton(g)), nil
 	})
 

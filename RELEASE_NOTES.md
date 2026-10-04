@@ -1,5 +1,16 @@
 # Release Notes
 
+## v1.7.6 — 2026-10-04
+
+- Fixed `gograph skeleton <file>` silently ignoring the file argument and
+  returning unrelated packages. An exact repository-relative indexed file now
+  returns only its package and declarations; unknown files return an error.
+- Added the same optional file selection to the MCP `gograph_skeleton` tool.
+  Omitting the file preserves the whole-repository skeleton.
+- Added CLI text/JSON and MCP regression coverage, including the reported
+  `tools/devseed/main.go` example, and updated help and command documentation.
+- Restart existing MCP servers after upgrading to load the new executable.
+
 ## v1.7.5 — 2026-09-27
 
 - Improved CLI and MCP plan/review performance by caching repeated call-target

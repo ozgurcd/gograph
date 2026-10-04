@@ -2,11 +2,37 @@ package search
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
 )
+
+// SkeletonFile returns only the declarations indexed for a repository-relative
+// file. A missing file is an error, never a fallback to the repository skeleton.
+func SkeletonFile(g *graph.Graph, file string) (string, error) {
+	path := filepath.ToSlash(filepath.Clean(file))
+	if file == "" || filepath.IsAbs(file) || path == ".." || strings.HasPrefix(path, "../") {
+		return "", fmt.Errorf("skeleton: expected a repository-relative indexed file")
+	}
+	for _, indexed := range g.Files {
+		if indexed.Path != path {
+			continue
+		}
+		selected := &graph.Graph{}
+		for _, symbol := range g.Symbols {
+			if symbol.File == indexed.Path {
+				selected.Symbols = append(selected.Symbols, symbol)
+			}
+		}
+		if len(selected.Symbols) == 0 {
+			return fmt.Sprintf("package %s\n\n", indexed.PackageName), nil
+		}
+		return Skeleton(selected), nil
+	}
+	return "", fmt.Errorf("skeleton: file %q is not indexed", file)
+}
 
 // Skeleton returns a pseudo-Go string representing the structural API of the repository
 // with all function bodies stripped.
