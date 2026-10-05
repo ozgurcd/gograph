@@ -76,6 +76,8 @@ func cloneForPreciseEnrichment(g *graph.Graph) graph.Graph {
 	enriched.TestEdges = append([]graph.TestEdge(nil), g.TestEdges...)
 	enriched.Implements = append([]graph.ImplementsEdge(nil), g.Implements...)
 	enriched.Mutations = append([]graph.MutationEdge(nil), g.Mutations...)
+	enriched.EnvReads = append([]graph.EnvRead(nil), g.EnvReads...)
+	enriched.VariableUses = append([]graph.VariableUse(nil), g.VariableUses...)
 	if g.Build != nil {
 		build := *g.Build
 		build.Failures = append([]graph.BuildFailure(nil), g.Build.Failures...)
@@ -175,6 +177,7 @@ func enrichProductionWithConfig(ctx context.Context, absRoot, analysisRoot strin
 	if err := validatePackageCoverage(analysisRoot, initial, g); err != nil {
 		return err
 	}
+	enrichPackageFacts(initial, g)
 
 	// Build SSA. ssa.InstantiateGenerics monomorphises generic functions
 	// and methods so CHA can see their call sites with source positions

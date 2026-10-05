@@ -66,3 +66,26 @@ func printSessionHelp() {
 	fmt.Println("  gograph session audit [session_id]               - Audits and scores agent compliance & success")
 	fmt.Println("  gograph session cleanup                          - Deletes all inactive session log files")
 }
+
+func printSessionVerbHelp(verb string) bool {
+	var usage, description, options string
+	switch verb {
+	case "create":
+		usage = "create [unique_identifier_word]"
+		description = "Start an audit session in the current project. The optional word labels the session."
+	case "end":
+		usage = "end"
+		description = "End the active audit session in the current project."
+	case "audit":
+		usage = "audit [session_id] [--json]"
+		description = "Audit and score the selected session, or the latest session when omitted."
+		options = "  --json        Print the native structured audit result.\n"
+	case "cleanup":
+		usage = "cleanup"
+		description = "Delete inactive session logs in the current project; keep the active session."
+	default:
+		return false
+	}
+	fmt.Printf("USAGE\n  gograph session %s\n\nDESCRIPTION\n  %s\n\nOPTIONS\n%s  --help, -h    Show this help without changing session state.\n", usage, description, options)
+	return true
+}

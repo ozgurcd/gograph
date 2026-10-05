@@ -13,6 +13,13 @@ import (
 func Usages(g *graph.Graph, typeName string) []Result {
 	nl := strings.ToLower(typeName)
 	var results []Result
+	for _, use := range g.VariableUses {
+		if !strings.EqualFold(typeName, use.Name) && !strings.EqualFold(typeName, use.PackageName+"."+use.Name) && !strings.EqualFold(typeName, use.SymbolID) {
+			continue
+		}
+		results = append(results, Result{Kind: "variable", Name: use.SymbolID,
+			File: use.File, Line: use.Line, Detail: "referenced in " + use.Function, Score: 10})
+	}
 
 	parts := strings.Split(nl, ".")
 	hasDot := len(parts) == 2

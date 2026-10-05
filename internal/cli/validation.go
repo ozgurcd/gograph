@@ -7,15 +7,26 @@ import (
 	"os"
 	"strings"
 
+	"github.com/ozgurcd/gograph/internal/installation"
 	"github.com/ozgurcd/gograph/internal/validation"
 )
 
 func runVersion() int {
+	installed := installation.Inspect(Version)
 	if !jsonMode {
 		fmt.Printf("gograph version v%s\n", Version)
+		if installed.RestartRequired {
+			fmt.Println(installed.Message)
+		}
 		return 0
 	}
-	document := validation.VersionDocument{SchemaVersion: validation.VersionSchemaVersion, Version: Version}
+	document := struct {
+		validation.VersionDocument
+		Installation *installation.Status `json:"installation,omitempty"`
+	}{VersionDocument: validation.VersionDocument{SchemaVersion: validation.VersionSchemaVersion, Version: Version}}
+	if installed.RestartRequired {
+		document.Installation = &installed
+	}
 	if err := json.NewEncoder(os.Stdout).Encode(document); err != nil {
 		fmt.Fprintf(os.Stderr, "encode version JSON: %v\n", err)
 		return 2

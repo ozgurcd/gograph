@@ -106,6 +106,7 @@ func enrichTypedTestCalls(ctx context.Context, absRoot string, g *graph.Graph, c
 	}
 
 	applyTypedTestTargets(g, resolved)
+	enrichPackageFacts(loaded, g)
 
 	for testFile := range selectedTests {
 		if _, ok := seenTests[testFile]; !ok {

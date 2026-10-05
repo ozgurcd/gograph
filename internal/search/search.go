@@ -989,6 +989,15 @@ func matchTestTarget(target, testFunc, term string) bool {
 	targetLower := strings.ToLower(target)
 	testFuncLower := strings.ToLower(testFunc)
 
+	// Retain both package and receiver identity for package.Receiver.Method.
+	normalized := strings.NewReplacer("(", "", ")", "", "*", "").Replace(tl)
+	if parts := strings.Split(normalized, "."); len(parts) == 3 {
+		if pkg, name, ok := strings.Cut(targetLower, "::"); ok {
+			actual := strings.NewReplacer("(", "", ")", "", "*", "").Replace(name)
+			return (pkg == parts[0] || strings.HasSuffix(pkg, "/"+parts[0])) && actual == parts[1]+"."+parts[2]
+		}
+	}
+
 	// Precise test attribution stores method targets as stable IDs such as
 	// "example.com/p::(*Service).Login". Accept the natural Receiver.Method
 	// query form without broadening it to another receiver with the same method.
@@ -1047,6 +1056,15 @@ func receiverMethodSelector(value string) (string, bool) {
 // when no matching source block can be read safely.
 func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
 	targets := FindSymbols(g, symbolName)
+	var exact []graph.SymbolNode
+	for _, candidate := range targets {
+		if matchSymbolExact(candidate, symbolName) {
+			exact = append(exact, candidate)
+		}
+	}
+	if len(exact) > 0 {
+		targets = exact
+	}
 
 	if len(targets) == 0 {
 		return "", fmt.Errorf("symbol '%s' not found", symbolName)
@@ -1201,7 +1219,7 @@ func Routes(g *graph.Graph) []Result {
 	for _, r := range g.Routes {
 		detail := "handled by " + r.Handler
 		if r.DynamicHandler {
-			detail += " [dynamic handler — cannot be statically resolved]"
+			detail += " [dynamic handler — cannot be statically resolved; factory call recorded, returned handler not resolved]"
 		}
 		results = append(results, Result{
 			Kind:   "route",

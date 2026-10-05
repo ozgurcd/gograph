@@ -80,7 +80,9 @@ func Run(args []string) int {
 		switch a {
 		case "--help", "-h":
 			if len(args) > 1 && args[0] != "--help" && args[0] != "-h" {
-				if args[0] == "workspace" {
+				if args[0] == "session" && len(args) > 2 && printSessionVerbHelp(args[1]) {
+					return 0
+				} else if args[0] == "workspace" {
 					printWorkspaceHelp()
 				} else {
 					printCommandHelp(args[0])
@@ -619,6 +621,15 @@ Machine validation uses gograph.validation.v1 instead of the generic envelope.
 
 ━━━ STATIC ANALYSIS LIMITATIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Know these before trusting results:
+
+  Getter parameters     precise builds report constant keys passed to function parameters
+                        with an observed os.Getenv fallback, including one same-package helper.
+                        These are conditional reads, not proof of the injected function's behavior.
+                        Arbitrary getter propagation and dynamic keys are not resolved.
+  Variable usages       package-level variable references require a precise build; local
+                        shadowing is excluded. AST-only graphs do not contain these references.
+  Route factories       router.GET(path, factory(args)) records the factory call name;
+                        the returned handler is not resolved to a named function or closure.
 
   Interface dispatch    default AST graphs may miss dynamic targets. Precise SSA devirtualizes
                         only receivers proven to contain one concrete dynamic type; a single
@@ -1337,7 +1348,7 @@ func indexReusableFileAnalysis(previous *graph.Graph) map[string]*parser.FileRes
 		}
 	}
 	for _, edge := range previous.EnvReads {
-		if result := lookup(edge.File); result != nil {
+		if result := lookup(edge.File); result != nil && !edge.Precise {
 			result.Env = append(result.Env, edge)
 		}
 	}

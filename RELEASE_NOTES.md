@@ -1,5 +1,25 @@
 # Release Notes
 
+## v1.7.7 — 2026-10-05
+
+- Fixed package-qualified test queries such as `service.OIDCLoginService.InitiateLogin`
+  losing tests that call methods through struct fields. Precise receiver identity is preserved.
+- Added conditional environment reads through function parameters with an observed
+  `os.Getenv` fallback, including constant keys passed through a same-package helper.
+  These results require a precise build and say that an injected getter may behave differently.
+- Added precise references to package-level variables to `usages`, excluding local
+  variables that shadow the same name.
+- Fixed `source` treating an exact full name as ambiguous because another name
+  starts with it. Multiple exact matches still require disambiguation.
+- Made route factory diagnostics explicit: the factory call is recorded, but its
+  returned handler is not resolved to a named function or closure. This remains a limitation.
+- Added action-specific descriptions, arguments and options to every `session` verb's help.
+- Added installed-version comparison to MCP capabilities and an older-binary warning
+  to `version` (including JSON). The comparison reads local Go build metadata without
+  executing the installed program or contacting a server. Restart an older MCP server
+  after upgrading; unrelated running MCP processes cannot be inspected by the CLI.
+- Rebuild precise indexes after upgrading to obtain the new getter and variable facts.
+
 ## v1.7.6 — 2026-10-04
 
 - Fixed `gograph skeleton <file>` silently ignoring the file argument and

@@ -28,7 +28,7 @@ const CurrentSourcePolicyVersion = 2
 // CurrentAnalysisCacheVersion identifies graphs whose file-level records can
 // be decomposed back into parser output and safely reused by an incremental
 // build. Bump this whenever parser/precise provenance changes.
-const CurrentAnalysisCacheVersion = 7
+const CurrentAnalysisCacheVersion = 8
 
 // MaxArtifactBytes bounds whole-artifact JSON decoding. Repository graphs are
 // intentionally in-memory query artifacts; accepting an unbounded serialized
@@ -54,6 +54,7 @@ type Graph struct {
 	Imports       []ImportEdge      `json:"imports"`
 	Calls         []CallEdge        `json:"calls"`
 	EnvReads      []EnvRead         `json:"env_reads"`
+	VariableUses  []VariableUse     `json:"variable_uses,omitempty"`
 	Dependencies  []Dependency      `json:"dependencies"`
 	Modules       []ModuleNode      `json:"modules,omitempty"`
 	Routes        []HTTPRoute       `json:"routes,omitempty"`
@@ -68,6 +69,18 @@ type Graph struct {
 	FlowFunctions []FlowFunction    `json:"flow_functions,omitempty"`
 	Baseline      *GraphBaseline    `json:"baseline,omitempty"`
 	Build         *BuildMetadata    `json:"build,omitempty"`
+}
+
+// VariableUse identifies a reference to a repository package-level variable.
+// Precise analysis resolves the object, excluding shadowing local variables.
+type VariableUse struct {
+	SymbolID    string `json:"symbol_id"`
+	PackageName string `json:"package_name"`
+	Name        string `json:"name"`
+	Function    string `json:"function"`
+	File        string `json:"file"`
+	Line        int    `json:"line"`
+	Column      int    `json:"column"`
 }
 
 // ModuleNode records a Go module owned by the repository graph. Workspace
@@ -515,6 +528,7 @@ type ImportEdge struct {
 
 // EnvRead records a detected environment variable read.
 type EnvRead struct {
+	Precise  bool   `json:"precise,omitempty"`
 	Key      string `json:"key"`
 	Accessor string `json:"accessor"`
 	File     string `json:"file"`
