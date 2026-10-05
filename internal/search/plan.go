@@ -228,6 +228,13 @@ func (snapshot *Snapshot) Plan(symbolNames []string, title string) *PlanResult {
 		}
 	}
 
+	for _, key := range bodyEnvironment(g, symbolNames) {
+		if !envSet[key] {
+			envSet[key] = true
+			res.Envs = append(res.Envs, key)
+		}
+	}
+
 	for _, sql := range g.SQLs {
 		if downstream[sql.Function] {
 			res.TouchesSQL = "yes"

@@ -393,7 +393,7 @@ func buildSlice(
 			}
 			// Only append handler step at depth 0 (handled separately above)
 			// For depth >= 1, append actual chain steps.
-			if depth > 1 {
+			if depth > 1 && returned == nil {
 				slice.CallChain = append(slice.CallChain, step)
 			}
 

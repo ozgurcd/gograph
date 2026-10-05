@@ -235,6 +235,9 @@ func Risk(g *graph.Graph, symbolNames []string, title string) *RiskReport {
 				envSet[env.Key] = true
 			}
 		}
+		for _, key := range bodyEnvironment(g, []string{sym.ID}) {
+			envSet[key] = true
+		}
 		envCount := len(envSet)
 		envScore := 0
 		if envCount > 0 {

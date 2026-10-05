@@ -1226,6 +1226,9 @@ func Routes(g *graph.Graph) []Result {
 		}
 		if r.DynamicHandler {
 			detail += " [dynamic handler — cannot be statically resolved; factory call recorded, returned handler not resolved]"
+			if g.Build != nil && g.Build.Precision == "ast" {
+				detail += " [A precise build resolves statically known factory handlers; run gograph build . --precise]"
+			}
 		}
 		results = append(results, Result{
 			Kind:   "route",

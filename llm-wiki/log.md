@@ -529,3 +529,7 @@ Measured v1.7.2 CLI and stdio MCP on one scratch fixture: source/context text co
 ## 2026-09-17 — THE-READ-THAT-ANSWERED-NOTHING: release platform amendment
 
 Owner decision removes Windows binaries from the next release. CLI archives and MCP bundles retain macOS/Linux on amd64/arm64; strict archive membership and vulnerability checks remain. Homebrew configuration is unchanged. The already-pushed v1.7.3 tag is retained, while release workflow 35203976082 was cancelled before publication to avoid shipping Windows after this decision. The normal coordinator will prepare the next patch, v1.7.4. The four-target manifest and exact archive checks were red against the six-target code and green after the reduction.
+
+## 2026-10-05 — GOGRAPH-1.7.9 archive count correction
+
+Corrected contributing.md to say four fresh release archives, matching Makefile scan-release-artifacts and its four Darwin/Linux architecture paths; no release target changed.

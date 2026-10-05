@@ -1,5 +1,16 @@
 # Release Notes
 
+## v1.7.9 — 2026-10-05
+
+- Endpoint answers show each reached call once when following a factory's
+  returned handler, instead of printing the same traversal row twice.
+- AST-only route answers explain that a precise build resolves statically known
+  factory handlers and name `gograph build . --precise` in text, JSON and MCP.
+- Plan, review and risk detect direct `os.Getenv` and `os.LookupEnv` calls in a
+  selected symbol's body, including dynamic keys. Unknown keys are labelled
+  explicitly; analysis never reads the running process's environment values.
+- Corrected the contributing guide to name the four release archives.
+
 ## v1.7.8 — 2026-10-05
 
 - Precise route analysis now names handler factories and follows their statically

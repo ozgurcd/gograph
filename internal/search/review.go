@@ -182,6 +182,13 @@ func (snapshot *Snapshot) Review(symbolNames []string, title string) *ReviewResu
 		}
 	}
 
+	for _, key := range bodyEnvironment(g, validSymbols) {
+		if !envSet[key] {
+			envSet[key] = true
+			res.Envs = append(res.Envs, key)
+		}
+	}
+
 	for _, sql := range g.SQLs {
 		if downstream[sql.Function] {
 			res.TouchesSQL = "yes"

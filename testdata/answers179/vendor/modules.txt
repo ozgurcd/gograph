@@ -1,0 +1,3 @@
+# github.com/gin-gonic/gin v1.10.0
+## explicit; go 1.27.0
+github.com/gin-gonic/gin
