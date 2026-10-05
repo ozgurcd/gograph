@@ -14,7 +14,16 @@ type pendingResults struct {
 }
 
 func finishListResult(command string, request mcp.CallToolRequest, pending pendingResults, snapshot *search.Snapshot) *mcp.CallToolResult {
+	warning := ""
+	if pending.Graph != nil && pending.Graph.Build != nil {
+		warning = search.EmptyAnswerWarning(command, string(pending.Graph.Build.Precision), len(pending.Rows))
+	}
 	if !search.SupportsListPagination(command) {
+		if warning != "" {
+			result := mcp.NewToolResultText("No results found.\n" + warning)
+			result.StructuredContent = map[string]any{"schema_version": "gograph.mcp-result.v1", "count": 0, "results": []search.Result{}, "warning": warning}
+			return result
+		}
 		return formatUnpagedResults(pending.Rows)
 	}
 	args, _ := request.Params.Arguments.(map[string]any)
@@ -41,5 +50,6 @@ func finishListResult(command string, request mcp.CallToolRequest, pending pendi
 	if err != nil {
 		return mcp.NewToolResultError(err.Error())
 	}
+	page.Warning = warning
 	return nativeResult(page)
 }

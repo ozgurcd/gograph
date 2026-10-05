@@ -1218,6 +1218,12 @@ func Routes(g *graph.Graph) []Result {
 	var results []Result
 	for _, r := range g.Routes {
 		detail := "handled by " + r.Handler
+		if r.ReceiverUnresolved {
+			detail += " [route candidate: receiver type unresolved; run gograph build . --precise]"
+		}
+		if h := r.ReturnedHandler; h != nil {
+			detail += fmt.Sprintf(" [factory call; returned handler %s at %s:%d]", h.Name, h.File, h.Line)
+		}
 		if r.DynamicHandler {
 			detail += " [dynamic handler — cannot be statically resolved; factory call recorded, returned handler not resolved]"
 		}

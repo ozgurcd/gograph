@@ -628,8 +628,15 @@ Know these before trusting results:
                         Arbitrary getter propagation and dynamic keys are not resolved.
   Variable usages       package-level variable references require a precise build; local
                         shadowing is excluded. AST-only graphs do not contain these references.
-  Route factories       router.GET(path, factory(args)) records the factory call name;
-                        the returned handler is not resolved to a named function or closure.
+  Route factories       precise builds name the factory and follow a statically known
+                        returned function or closure, through at most eight factory calls.
+                        The returned handler is not resolved for dynamic or multiple returns.
+  Route receivers       AST builds check supported router import provenance; precise
+                        builds check router types and local path/function-handler adapters.
+                        Unresolved local types remain explicit route candidates in AST mode.
+                        Rebuild with --precise to check them; unsupported types are excluded.
+  Empty AST answers     tests, envs and usages warn that an empty answer may be incomplete
+                        and recommend gograph build . --precise (text, JSON and MCP).
 
   Interface dispatch    default AST graphs may miss dynamic targets. Precise SSA devirtualizes
                         only receivers proven to contain one concrete dynamic type; a single
@@ -1279,7 +1286,12 @@ func appendFileResult(g *graph.Graph, result *parser.FileResult) {
 	g.Imports = append(g.Imports, result.Imports...)
 	g.Calls = append(g.Calls, result.Calls...)
 	g.EnvReads = append(g.EnvReads, result.Env...)
-	g.Routes = append(g.Routes, result.Routes...)
+	g.RouteCandidates = append(g.RouteCandidates, result.Routes...)
+	for _, route := range result.Routes {
+		if route.ReceiverVerified || route.ReceiverUnresolved {
+			g.Routes = append(g.Routes, route)
+		}
+	}
 	g.SQLs = append(g.SQLs, result.SQLs...)
 	g.Errors = append(g.Errors, result.Errors...)
 	g.Concurrency = append(g.Concurrency, result.Concurrency...)
@@ -1352,8 +1364,16 @@ func indexReusableFileAnalysis(previous *graph.Graph) map[string]*parser.FileRes
 			result.Env = append(result.Env, edge)
 		}
 	}
-	for _, edge := range previous.Routes {
+	routes := previous.RouteCandidates
+	if routes == nil {
+		routes = previous.Routes
+	}
+	for _, edge := range routes {
 		if result := lookup(edge.File); result != nil {
+			if edge.ReturnedHandler != nil {
+				edge.ReturnedHandler = nil
+				edge.DynamicHandler = true
+			}
 			result.Routes = append(result.Routes, edge)
 		}
 	}
@@ -1595,6 +1615,13 @@ func printResults(cmd, query string, results []search.Result, emptyMsg string) i
 	}
 	if len(results) == 0 {
 		fmt.Println(emptyMsg)
+		if cmd == "tests" || cmd == "envs" || cmd == "usages" {
+			if state := currentOutputGraphState(); state != nil {
+				if warning := search.EmptyAnswerWarning(cmd, string(state.Precision), 0); warning != "" {
+					fmt.Println(warning)
+				}
+			}
+		}
 		return 0
 	}
 	for _, r := range results {

@@ -78,6 +78,7 @@ func cloneForPreciseEnrichment(g *graph.Graph) graph.Graph {
 	enriched.Mutations = append([]graph.MutationEdge(nil), g.Mutations...)
 	enriched.EnvReads = append([]graph.EnvRead(nil), g.EnvReads...)
 	enriched.VariableUses = append([]graph.VariableUse(nil), g.VariableUses...)
+	enriched.Routes = append([]graph.HTTPRoute(nil), g.Routes...)
 	if g.Build != nil {
 		build := *g.Build
 		build.Failures = append([]graph.BuildFailure(nil), g.Build.Failures...)
@@ -547,6 +548,8 @@ func enrichProductionWithConfig(ctx context.Context, absRoot, analysisRoot strin
 	// 3b. Indirect mutations through mutating-method calls.
 	indirect := collectIndirectMutations(prog, analysisRoot, userMutators)
 	g.Mutations = append(g.Mutations, indirect...)
+	verifyRouteReceivers(initial, g)
+	enrichRouteFactories(initial, g)
 	if err := scanner.ValidateMaskedSourceLinks(absRoot, links); err != nil {
 		return fmt.Errorf("repository source became unsafe during precise analysis: %w", err)
 	}

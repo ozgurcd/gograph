@@ -28,7 +28,7 @@ const CurrentSourcePolicyVersion = 2
 // CurrentAnalysisCacheVersion identifies graphs whose file-level records can
 // be decomposed back into parser output and safely reused by an incremental
 // build. Bump this whenever parser/precise provenance changes.
-const CurrentAnalysisCacheVersion = 8
+const CurrentAnalysisCacheVersion = 9
 
 // MaxArtifactBytes bounds whole-artifact JSON decoding. Repository graphs are
 // intentionally in-memory query artifacts; accepting an unbounded serialized
@@ -45,30 +45,31 @@ const CurrentWorkspaceFactsVersion = 2
 
 // Graph is the top-level data structure written to .gograph/graph.json.
 type Graph struct {
-	Version       string            `json:"version"`
-	GeneratedAt   time.Time         `json:"generated_at"`
-	Root          string            `json:"root"`
-	Packages      []PackageNode     `json:"packages"`
-	Files         []FileNode        `json:"files"`
-	Symbols       []SymbolNode      `json:"symbols"`
-	Imports       []ImportEdge      `json:"imports"`
-	Calls         []CallEdge        `json:"calls"`
-	EnvReads      []EnvRead         `json:"env_reads"`
-	VariableUses  []VariableUse     `json:"variable_uses,omitempty"`
-	Dependencies  []Dependency      `json:"dependencies"`
-	Modules       []ModuleNode      `json:"modules,omitempty"`
-	Routes        []HTTPRoute       `json:"routes,omitempty"`
-	SQLs          []SQLEdge         `json:"sqls,omitempty"`
-	Errors        []ErrorEdge       `json:"errors,omitempty"`
-	Concurrency   []ConcurrencyNode `json:"concurrency,omitempty"`
-	TestEdges     []TestEdge        `json:"test_edges,omitempty"`
-	Implements    []ImplementsEdge  `json:"implements,omitempty"`
-	Mutations     []MutationEdge    `json:"mutations,omitempty"`
-	Literals      []LiteralEdge     `json:"literals,omitempty"`
-	HTTPCalls     []HTTPCallEdge    `json:"http_calls,omitempty"`
-	FlowFunctions []FlowFunction    `json:"flow_functions,omitempty"`
-	Baseline      *GraphBaseline    `json:"baseline,omitempty"`
-	Build         *BuildMetadata    `json:"build,omitempty"`
+	Version         string            `json:"version"`
+	GeneratedAt     time.Time         `json:"generated_at"`
+	Root            string            `json:"root"`
+	Packages        []PackageNode     `json:"packages"`
+	Files           []FileNode        `json:"files"`
+	Symbols         []SymbolNode      `json:"symbols"`
+	Imports         []ImportEdge      `json:"imports"`
+	Calls           []CallEdge        `json:"calls"`
+	EnvReads        []EnvRead         `json:"env_reads"`
+	VariableUses    []VariableUse     `json:"variable_uses,omitempty"`
+	Dependencies    []Dependency      `json:"dependencies"`
+	Modules         []ModuleNode      `json:"modules,omitempty"`
+	Routes          []HTTPRoute       `json:"routes,omitempty"`
+	RouteCandidates []HTTPRoute       `json:"route_candidates,omitempty"`
+	SQLs            []SQLEdge         `json:"sqls,omitempty"`
+	Errors          []ErrorEdge       `json:"errors,omitempty"`
+	Concurrency     []ConcurrencyNode `json:"concurrency,omitempty"`
+	TestEdges       []TestEdge        `json:"test_edges,omitempty"`
+	Implements      []ImplementsEdge  `json:"implements,omitempty"`
+	Mutations       []MutationEdge    `json:"mutations,omitempty"`
+	Literals        []LiteralEdge     `json:"literals,omitempty"`
+	HTTPCalls       []HTTPCallEdge    `json:"http_calls,omitempty"`
+	FlowFunctions   []FlowFunction    `json:"flow_functions,omitempty"`
+	Baseline        *GraphBaseline    `json:"baseline,omitempty"`
+	Build           *BuildMetadata    `json:"build,omitempty"`
 }
 
 // VariableUse identifies a reference to a repository package-level variable.
@@ -375,9 +376,15 @@ type Dependency struct {
 
 // HTTPRoute represents an HTTP REST endpoint found in the AST.
 type HTTPRoute struct {
-	Method  string `json:"method"`
-	Path    string `json:"path"`
-	Handler string `json:"handler"`
+	ReceiverVerified   bool `json:"receiver_verified,omitempty"`
+	ReceiverUnresolved bool `json:"receiver_unresolved,omitempty"`
+	Column             int  `json:"column,omitempty"`
+	// ReturnedHandler is a precise, statically known factory result. Handler
+	// retains the factory spelling so existing route selectors remain valid.
+	ReturnedHandler *RouteHandler `json:"returned_handler,omitempty"`
+	Method          string        `json:"method"`
+	Path            string        `json:"path"`
+	Handler         string        `json:"handler"`
 	// InlineBody holds the rendered source of an anonymous handler function.
 	// Populated only when the handler is a *ast.FuncLit (closure), empty otherwise.
 	// Captured at build time via go/printer — no file I/O needed at query time.
@@ -391,6 +398,16 @@ type HTTPRoute struct {
 	DynamicHandler bool   `json:"dynamic_handler,omitempty"`
 	File           string `json:"file"`
 	Line           int    `json:"line"`
+}
+
+type RouteHandler struct {
+	Name     string     `json:"name"`
+	File     string     `json:"file"`
+	Line     int        `json:"line"`
+	Body     string     `json:"body"`
+	Calls    []CallEdge `json:"calls,omitempty"`
+	SQLs     []SQLEdge  `json:"sqls,omitempty"`
+	EnvReads []EnvRead  `json:"env_reads,omitempty"`
 }
 
 // PackageNode represents a Go package found in the repository.

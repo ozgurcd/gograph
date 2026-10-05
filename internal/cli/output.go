@@ -31,6 +31,7 @@ const SchemaVersion = "1"
 // Envelope is the top-level JSON wrapper for all --json output.
 // schema_version lets agents pin to a known schema and detect changes.
 type Envelope struct {
+	Warning       string `json:"warning,omitempty"`
 	SchemaVersion string `json:"schema_version"`
 	Command       string `json:"command"`
 	Query         string `json:"query,omitempty"`
@@ -67,6 +68,9 @@ func PrintJSON(env Envelope) int {
 		if payload, ok := env.Results.(search.ContextPayload); ok {
 			env.GraphState.ReadDiagnostic = payload.SourceError
 		}
+	}
+	if env.Status != "error" && env.GraphState != nil {
+		env.Warning = search.EmptyAnswerWarning(env.Command, string(env.GraphState.Precision), env.Count)
 	}
 	data, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {

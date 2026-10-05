@@ -132,6 +132,8 @@ func parseSource(fset *token.FileSet, path string, src any, relPath, pkgImportPa
 			return true
 		}
 		method := routeMethod(selector.Sel.Name)
+		receiverVerified := supportedRouteReceiver(f, selector.X, make(map[ast.Node]bool))
+		receiverUnresolved := !receiverVerified && supportedRouteReceiver(f, selector.X, make(map[ast.Node]bool), true)
 		if method != "" && len(call.Args) >= 1 {
 			if routePath, ok := routeString(call.Args[0]); ok {
 				path := joinRoutePath(routePrefixForExpr(selector.X, routePrefixes), routePath)
@@ -182,12 +184,15 @@ func parseSource(fset *token.FileSet, path string, src any, relPath, pkgImportPa
 						} else {
 							handler = calleeString(h)
 							result.Routes = append(result.Routes, graph.HTTPRoute{
-								Method:         method,
-								Path:           path,
-								Handler:        handler,
-								DynamicHandler: true,
-								File:           relPath,
-								Line:           fset.Position(call.Pos()).Line,
+								ReceiverVerified:   receiverVerified,
+								ReceiverUnresolved: receiverUnresolved,
+								Column:             fset.Position(call.Pos()).Column,
+								Method:             method,
+								Path:               path,
+								Handler:            handler,
+								DynamicHandler:     true,
+								File:               relPath,
+								Line:               fset.Position(call.Pos()).Line,
 							})
 							handlerAppended = true
 						}
@@ -197,12 +202,15 @@ func parseSource(fset *token.FileSet, path string, src any, relPath, pkgImportPa
 				}
 				if !handlerAppended {
 					result.Routes = append(result.Routes, graph.HTTPRoute{
-						Method:     method,
-						Path:       path,
-						Handler:    handler,
-						InlineBody: inlineBody,
-						File:       relPath,
-						Line:       fset.Position(call.Pos()).Line,
+						ReceiverVerified:   receiverVerified,
+						ReceiverUnresolved: receiverUnresolved,
+						Column:             fset.Position(call.Pos()).Column,
+						Method:             method,
+						Path:               path,
+						Handler:            handler,
+						InlineBody:         inlineBody,
+						File:               relPath,
+						Line:               fset.Position(call.Pos()).Line,
 					})
 				}
 			}

@@ -33,11 +33,12 @@ func genericVerb(m string) bool {
 
 // EndpointSlice is the full vertical slice for one HTTP endpoint.
 type EndpointSlice struct {
-	Route       string `json:"route"`
-	Handler     string `json:"handler"`
-	HandlerFile string `json:"handler_file"`
-	HandlerLine int    `json:"handler_line"`
-	IsInline    bool   `json:"is_inline,omitempty"`
+	ReturnedHandler *graph.RouteHandler `json:"returned_handler,omitempty"`
+	Route           string              `json:"route"`
+	Handler         string              `json:"handler"`
+	HandlerFile     string              `json:"handler_file"`
+	HandlerLine     int                 `json:"handler_line"`
+	IsInline        bool                `json:"is_inline,omitempty"`
 	// InlineBody contains the rendered source of the anonymous handler function.
 	// Non-empty only when IsInline is true and the body was captured at build time.
 	InlineBody  string      `json:"inline_body,omitempty"`
@@ -311,14 +312,33 @@ func buildSlice(
 	limitations []string,
 ) EndpointSlice {
 	inline := isInlineHandler(route.Handler)
+	var returned *graph.RouteHandler
+	if route.ReturnedHandler != nil {
+		returned = route.ReturnedHandler
+		// Copy the map before introducing a route-specific root: factories may
+		// share names, and their setup calls are not request-handler calls.
+		localCalls := make(map[string][]string, len(calleeIndex)+1)
+		for name, calls := range calleeIndex {
+			localCalls[name] = calls
+		}
+		root := route.Handler + " -> " + returned.Name
+		for _, call := range returned.Calls {
+			localCalls[root] = append(localCalls[root], call.CalleeRaw)
+		}
+		calleeIndex = localCalls
+		route.Handler = root
+		route.File, route.Line = returned.File, returned.Line
+		inline = false
+	}
 	slice := EndpointSlice{
-		Route:       route.Method + " " + route.Path,
-		Handler:     route.Handler,
-		HandlerFile: route.File,
-		HandlerLine: route.Line,
-		IsInline:    inline,
-		InlineBody:  route.InlineBody,
-		Limitations: limitations,
+		ReturnedHandler: returned,
+		Route:           route.Method + " " + route.Path,
+		Handler:         route.Handler,
+		HandlerFile:     route.File,
+		HandlerLine:     route.Line,
+		IsInline:        inline,
+		InlineBody:      route.InlineBody,
+		Limitations:     limitations,
 	}
 
 	// Inline handlers have no symbol name — call chain traversal is not possible.
@@ -336,6 +356,18 @@ func buildSlice(
 	queue := []string{route.Handler}
 	sqlSeen := make(map[string]bool)
 	envSeen := make(map[string]bool)
+	if returned != nil {
+		for _, sq := range returned.SQLs {
+			slice.SQL = append(slice.SQL, SQLStep{Query: sq.Query, Function: sq.Function, File: sq.File, Line: sq.Line})
+			sqlSeen[sq.Function+sq.Query] = true
+		}
+		for _, env := range returned.EnvReads {
+			if !envSeen[env.Key] {
+				slice.EnvReads = append(slice.EnvReads, env.Key)
+				envSeen[env.Key] = true
+			}
+		}
+	}
 
 	for depth := 1; depth <= maxDepth && len(queue) > 0; depth++ {
 		var nextQueue []string

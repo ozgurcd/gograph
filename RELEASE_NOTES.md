@@ -1,5 +1,18 @@
 # Release Notes
 
+## v1.7.8 — 2026-10-05
+
+- Precise route analysis now names handler factories and follows their statically
+  known returned functions or closures. Endpoint answers follow the returned
+  handler body instead of factory setup calls. Dynamic or multiple returns
+  remain explicitly unresolved.
+- Route discovery checks router receiver provenance and types. Logging fields,
+  URL values and HTTP header lookups no longer appear as HTTP routes.
+- Empty AST-only `tests`, `envs` and `usages` answers now warn that results may be
+  incomplete and recommend `gograph build . --precise`, in CLI text, JSON and MCP.
+- Rebuild indexes after upgrading. Restart existing MCP servers to load the new
+  executable.
+
 ## v1.7.7 — 2026-10-05
 
 - Fixed package-qualified test queries such as `service.OIDCLoginService.InitiateLogin`

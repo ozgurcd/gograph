@@ -672,7 +672,9 @@ func NewServer(
 				"api_changes":     {"gograph_api", "gograph_review"},
 			},
 			"limitations": []string{
-				"Route factory calls such as router.GET(path, factory(args)) record the factory call name; the returned handler is not resolved to a named function or closure.",
+				"Precise route analysis names the factory and follows a statically known returned function or closure through at most eight factory calls; the returned handler is not resolved for dynamic or multiple returns.",
+				"AST route analysis checks supported router import provenance; precise builds check router types and local path/function-handler adapters. Unresolved local types remain explicit route candidates in AST mode; run gograph build . --precise to check them. Unsupported types are excluded.",
+				"Empty AST-only tests, envs and usages answers may be incomplete and recommend gograph build . --precise in text, JSON and MCP.",
 				"Package-level variable usages require a precise build and exclude local shadowing. AST-only graphs do not record these references.",
 				"Precise environment analysis recognizes constant keys called through function parameters with an observed os.Getenv fallback, including one same-package helper. These are conditional reads; arbitrary getter propagation and dynamic keys are not resolved.",
 				"Installation comparison reads local Go executable metadata without execution or network access. Only this server and its PATH binary are compared; separate running MCP processes, wrappers and unversioned builds cannot be inspected. Restart servers after upgrading.",

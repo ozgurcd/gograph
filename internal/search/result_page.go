@@ -37,6 +37,7 @@ func SupportsListPagination(command string) bool {
 }
 
 type ResultPage struct {
+	Warning       string            `json:"warning,omitempty"`
 	SchemaVersion string            `json:"schema_version"`
 	Command       string            `json:"command"`
 	Status        string            `json:"status"`
