@@ -16,7 +16,7 @@ import (
 var safeGitRef = regexp.MustCompile(`^[A-Za-z0-9._/\-~^]+$`)
 
 // CurrentChangeSelectionContract is shared by CLI help and MCP discovery.
-const CurrentChangeSelectionContract = "Uncommitted modes compare declarations against HEAD, including selected untracked Go files. Current-graph consumers refuse incomplete comparisons, deleted declarations requiring historical caller evidence, and missing/ambiguous graph identities. Inspect changes --git REF for the declaration census; rebuild before traversing newly added symbols."
+const CurrentChangeSelectionContract = "Uncommitted modes compare declarations against HEAD, including selected untracked Go files. Traversal consumers refuse deleted declarations requiring historical caller evidence. Review instead includes changes --git HEAD declaration evidence and names unavailable historical callers, tests and risk. Incomplete comparisons and missing/ambiguous current identities remain errors. Rebuild before traversing newly added symbols."
 
 // ChangesByGitRef compares current declarations to a confined historical
 // baseline, including additions and deletions inside surviving files. It uses

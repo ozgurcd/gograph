@@ -102,11 +102,16 @@ Go files, instead of matching Git hunk lines to old symbol ranges. Nested analys
 roots do not include sibling repositories' changes.
 
 Current-graph traversal cannot reconstruct historical callers of deleted
-declarations. Impact and other `--uncommitted` consumers explicitly refuse such
+declarations. Impact and other traversal consumers explicitly refuse such
 selections, ambiguous identities, and new declarations absent from the graph;
 they do not report an empty successful result. Use `changes --git REF` to inspect
 the complete declaration census. Rebuild before traversing newly added symbols;
 rebuilding does not recover historical caller evidence for deletions.
+
+`review --uncommitted` is a scoped exception: it includes the declaration census
+from `changes --git HEAD`, names deleted declarations, and states that historical
+callers, tests and risk are not evaluated. Surviving declarations retain their
+normal current-graph review. Incomplete comparisons still fail.
 
 ## HTTP extraction and workspace resolution
 

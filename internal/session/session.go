@@ -380,23 +380,26 @@ type GenericLogLine struct {
 
 // AuditReport holds the calculated compliance and success metrics of a session.
 type AuditReport struct {
-	SessionID       string   `json:"session_id"`
-	Status          string   `json:"status"`
-	CreatedAt       string   `json:"created_at"`
-	EndedAt         string   `json:"ended_at"`
-	DurationSeconds float64  `json:"duration_seconds"`
-	TotalCommands   int      `json:"total_commands"`
-	SuccessCount    int      `json:"success_count"`
-	FailureCount    int      `json:"failure_count"`
-	SuccessRate     float64  `json:"success_rate"`
-	PlanRun         bool     `json:"plan_run"`
-	ReviewRun       bool     `json:"review_run"`
-	ComposedCount   int      `json:"composed_count"`
-	RawQueryCount   int      `json:"raw_query_count"`
-	Composability   float64  `json:"composability"`
-	ComplianceScore float64  `json:"compliance_score"`
-	Grade           string   `json:"grade"`
-	Recommendations []string `json:"recommendations"`
+	InvocationErrorCount    int      `json:"invocation_error_count"`
+	InvocationErrors        []string `json:"invocation_errors,omitempty"`
+	ComposabilityDefinition string   `json:"composability_definition"`
+	SessionID               string   `json:"session_id"`
+	Status                  string   `json:"status"`
+	CreatedAt               string   `json:"created_at"`
+	EndedAt                 string   `json:"ended_at"`
+	DurationSeconds         float64  `json:"duration_seconds"`
+	TotalCommands           int      `json:"total_commands"`
+	SuccessCount            int      `json:"success_count"`
+	FailureCount            int      `json:"failure_count"`
+	SuccessRate             float64  `json:"success_rate"`
+	PlanRun                 bool     `json:"plan_run"`
+	ReviewRun               bool     `json:"review_run"`
+	ComposedCount           int      `json:"composed_count"`
+	RawQueryCount           int      `json:"raw_query_count"`
+	Composability           float64  `json:"composability"`
+	ComplianceScore         float64  `json:"compliance_score"`
+	Grade                   string   `json:"grade"`
+	Recommendations         []string `json:"recommendations"`
 }
 
 // FindMostRecentSessionID finds the session log file with the newest modification time.
@@ -517,6 +520,7 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 	var totalCommands, successCount, failureCount int
 	var planRun, reviewRun bool
 	var composedCount, rawQueryCount int
+	var invocationErrors []string
 
 	for _, l := range lines {
 		switch l.Type {
@@ -527,6 +531,10 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 			status = "Completed"
 		case "command":
 			totalCommands++
+			if l.Status == "invocation_error" {
+				invocationErrors = append(invocationErrors, l.Command)
+				continue
+			}
 			if l.Status == "success" {
 				successCount++
 			} else {
@@ -561,8 +569,8 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 	duration := max(end.Sub(start), 0)
 
 	successRate := 100.0
-	if totalCommands > 0 {
-		successRate = (float64(successCount) / float64(totalCommands)) * 100.0
+	if successCount+failureCount > 0 {
+		successRate = (float64(successCount) / float64(successCount+failureCount)) * 100.0
 	}
 
 	var planContrib, reviewContrib, composedContrib float64
@@ -605,23 +613,26 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 	}
 
 	report := AuditReport{
-		SessionID:       sessionID,
-		Status:          status,
-		CreatedAt:       start.Format(time.RFC3339),
-		EndedAt:         end.Format(time.RFC3339),
-		DurationSeconds: duration.Seconds(),
-		TotalCommands:   totalCommands,
-		SuccessCount:    successCount,
-		FailureCount:    failureCount,
-		SuccessRate:     successRate,
-		PlanRun:         planRun,
-		ReviewRun:       reviewRun,
-		ComposedCount:   composedCount,
-		RawQueryCount:   rawQueryCount,
-		Composability:   composability,
-		ComplianceScore: complianceScore,
-		Grade:           grade,
-		Recommendations: recs,
+		InvocationErrorCount:    len(invocationErrors),
+		InvocationErrors:        invocationErrors,
+		ComposabilityDefinition: "Share of composed queries (plan, review, context, explain, api, changes, mutate) among composed and raw queries (node, callers, callees, source); invocation errors excluded. Measures command mix, not correctness or token savings.",
+		SessionID:               sessionID,
+		Status:                  status,
+		CreatedAt:               start.Format(time.RFC3339),
+		EndedAt:                 end.Format(time.RFC3339),
+		DurationSeconds:         duration.Seconds(),
+		TotalCommands:           totalCommands,
+		SuccessCount:            successCount,
+		FailureCount:            failureCount,
+		SuccessRate:             successRate,
+		PlanRun:                 planRun,
+		ReviewRun:               reviewRun,
+		ComposedCount:           composedCount,
+		RawQueryCount:           rawQueryCount,
+		Composability:           composability,
+		ComplianceScore:         complianceScore,
+		Grade:                   grade,
+		Recommendations:         recs,
 	}
 
 	output, err := formatAudit(report, jsonMode, duration)
@@ -661,11 +672,16 @@ func formatAudit(report AuditReport, jsonMode bool, duration time.Duration) (str
 	write("Total Commands  : %d\n", report.TotalCommands)
 	write("Successful      : %d\n", report.SuccessCount)
 	write("Failed          : %d\n", report.FailureCount)
+	write("Invocation errors: %d (excluded from compliance)\n", report.InvocationErrorCount)
+	for _, command := range report.InvocationErrors {
+		write("  - %s\n", command)
+	}
 	write("Success Rate    : %.1f%%\n\n", report.SuccessRate)
 	write("━━━ COMPLIANCE SCORE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 	write("Plan Rule Run   : %t (Weight: 35%%)\n", report.PlanRun)
 	write("Review Rule Run : %t (Weight: 35%%)\n", report.ReviewRun)
 	write("Composability   : %.1f%% (Weight: 30%%)\n\n", report.Composability)
+	write("%s\n\n", report.ComposabilityDefinition)
 	write("Overall Score   : %.1f%%\n", report.ComplianceScore)
 	write("Compliance Grade: %s\n\n", report.Grade)
 	write("━━━ RECOMMENDATIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")

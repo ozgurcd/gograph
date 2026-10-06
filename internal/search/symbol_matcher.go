@@ -10,18 +10,19 @@ import (
 // substring and Unicode behavior. This resolver is local to one immutable
 // impact-index build; it neither changes public enumeration nor retains graphs.
 type preparedSymbol struct {
+	original                                                graph.SymbolNode
 	id, name, pkg, receiverName, fullReceiverName, receiver string
 	hasReceiver                                             bool
 }
 
 type symbolQuery struct {
-	lower, replaced string
-	parts           []string
-	dotted          bool
+	raw, lower, replaced string
+	parts                []string
+	dotted               bool
 }
 
 func prepareSymbolQuery(query string) symbolQuery {
-	q := symbolQuery{lower: strings.ToLower(query), dotted: strings.Contains(query, ".")}
+	q := symbolQuery{raw: query, lower: strings.ToLower(query), dotted: strings.Contains(query, ".")}
 	if q.dotted {
 		q.replaced = strings.ReplaceAll(q.lower, ".", "::")
 		norm := strings.ReplaceAll(q.lower, "(", "")
@@ -34,6 +35,7 @@ func prepareSymbolQuery(query string) symbolQuery {
 
 func prepareSymbol(s graph.SymbolNode) preparedSymbol {
 	p := preparedSymbol{id: strings.ToLower(s.ID), name: strings.ToLower(s.Name), pkg: strings.ToLower(s.PackageName), hasReceiver: s.Receiver != ""}
+	p.original = s
 	if p.hasReceiver {
 		p.receiverName = strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(s.Receiver, "*"), "(") + "." + s.Name)
 		p.fullReceiverName = strings.ToLower("(" + s.Receiver + ")." + s.Name)
@@ -43,6 +45,9 @@ func prepareSymbol(s graph.SymbolNode) preparedSymbol {
 }
 
 func (s preparedSymbol) matches(q symbolQuery) bool {
+	if matched, qualified := qualifiedSymbolMatch(s.original, q.raw); qualified {
+		return matched
+	}
 	if s.id == q.lower || s.name == q.lower {
 		return true
 	}

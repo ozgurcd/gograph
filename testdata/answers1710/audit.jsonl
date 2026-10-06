@@ -1,0 +1,6 @@
+{"type":"session_start","session_id":"fixture","created_at":"2026-01-01T00:00:00Z"}
+{"type":"command","command":"plan","status":"success"}
+{"type":"command","command":"review","status":"success"}
+{"type":"command","command":"source","status":"invocation_error"}
+{"type":"command","command":"source","status":"invocation_error"}
+{"type":"session_end","ended_at":"2026-01-01T00:00:05Z"}

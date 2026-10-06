@@ -137,32 +137,33 @@ func intArg(args map[string]any, name string, fallback, min, max int) (int, erro
 
 // MCPResponse is the stable structured data payload returned by complex tools.
 type MCPResponse struct {
-	Query          string               `json:"query,omitempty"`
-	Summary        string               `json:"summary,omitempty"`
-	Source         string               `json:"source,omitempty"`
-	SourceError    string               `json:"source_error,omitempty"`
-	Node           *search.Result       `json:"node,omitempty"`
-	Nodes          []search.Result      `json:"nodes,omitempty"`
-	Role           string               `json:"role,omitempty"`
-	Callers        []search.Result      `json:"callers,omitempty"`
-	Callees        []search.Result      `json:"callees,omitempty"`
-	Findings       []search.Result      `json:"findings,omitempty"`
-	InspectFirst   []search.Result      `json:"inspect_first,omitempty"`
-	ChangedSymbols []search.Result      `json:"changed_symbols,omitempty"`
-	Definitions    []search.Result      `json:"definitions,omitempty"`
-	Sites          []search.Result      `json:"sites,omitempty"`
-	Paths          []search.TraceResult `json:"paths,omitempty"`
-	Files          []string             `json:"files,omitempty"`
-	Symbols        []string             `json:"symbols,omitempty"`
-	Routes         []string             `json:"routes,omitempty"`
-	Tests          []string             `json:"tests,omitempty"`
-	TestResults    []search.Result      `json:"test_results,omitempty"`
-	SQL            []string             `json:"sql,omitempty"`
-	Env            []string             `json:"env,omitempty"`
-	Errors         []string             `json:"errors,omitempty"`
-	Globals        []string             `json:"globals,omitempty"`
-	Risk           map[string]any       `json:"risk,omitempty"`
-	Limitations    []string             `json:"limitations,omitempty"`
+	DeclarationEvidence *search.ChangesResult `json:"declaration_evidence,omitempty"`
+	Query               string                `json:"query,omitempty"`
+	Summary             string                `json:"summary,omitempty"`
+	Source              string                `json:"source,omitempty"`
+	SourceError         string                `json:"source_error,omitempty"`
+	Node                *search.Result        `json:"node,omitempty"`
+	Nodes               []search.Result       `json:"nodes,omitempty"`
+	Role                string                `json:"role,omitempty"`
+	Callers             []search.Result       `json:"callers,omitempty"`
+	Callees             []search.Result       `json:"callees,omitempty"`
+	Findings            []search.Result       `json:"findings,omitempty"`
+	InspectFirst        []search.Result       `json:"inspect_first,omitempty"`
+	ChangedSymbols      []search.Result       `json:"changed_symbols,omitempty"`
+	Definitions         []search.Result       `json:"definitions,omitempty"`
+	Sites               []search.Result       `json:"sites,omitempty"`
+	Paths               []search.TraceResult  `json:"paths,omitempty"`
+	Files               []string              `json:"files,omitempty"`
+	Symbols             []string              `json:"symbols,omitempty"`
+	Routes              []string              `json:"routes,omitempty"`
+	Tests               []string              `json:"tests,omitempty"`
+	TestResults         []search.Result       `json:"test_results,omitempty"`
+	SQL                 []string              `json:"sql,omitempty"`
+	Env                 []string              `json:"env,omitempty"`
+	Errors              []string              `json:"errors,omitempty"`
+	Globals             []string              `json:"globals,omitempty"`
+	Risk                map[string]any        `json:"risk,omitempty"`
+	Limitations         []string              `json:"limitations,omitempty"`
 }
 
 type symbolContext = search.ContextPayload
@@ -418,6 +419,13 @@ func NewServer(
 					status := "success"
 					if err != nil || ctx.Err() != nil || (result != nil && result.IsError) {
 						status = "failure"
+					}
+					if err == nil && ctx.Err() == nil && result != nil && result.IsError {
+						for _, content := range result.Content {
+							if text, ok := content.(mcp.TextContent); ok && session.IsInvocationError(text.Text) {
+								status = "invocation_error"
+							}
+						}
 					}
 					telemetryMu.Lock()
 					_ = session.LogCommandAt(serverRoot, strings.TrimPrefix(toolName, "gograph_"), nil, "", time.Since(start), status)
@@ -675,7 +683,8 @@ func NewServer(
 				"Precise route analysis names the factory and follows a statically known returned function or closure through at most eight factory calls; the returned handler is not resolved for dynamic or multiple returns.",
 				"AST route analysis checks supported router import provenance; precise builds check router types and local path/function-handler adapters. Unresolved local types remain explicit route candidates in AST mode; run gograph build . --precise to check them. Unsupported types are excluded.",
 				"Empty AST-only tests, envs and usages answers may be incomplete and recommend gograph build . --precise in text, JSON and MCP.",
-				"Package-level variable usages require a precise build and exclude local shadowing. AST-only graphs do not record these references.",
+				"Package-level variable and constant usages require a precise build and exclude local shadowing. AST-only graphs do not record these references.",
+				"File-qualified symbol selectors use path/to/file.go:Name or path/to/file.go:Receiver.Method; the file may also be qualified by its full import path. Deleted-symbol review reports declaration evidence only, not historical callers, tests or risk.",
 				"Precise environment analysis recognizes constant keys called through function parameters with an observed os.Getenv fallback, including one same-package helper. These are conditional reads; arbitrary getter propagation and dynamic keys are not resolved.",
 				"Installation comparison reads local Go executable metadata without execution or network access. Only this server and its PATH binary are compared; separate running MCP processes, wrappers and unversioned builds cannot be inspected. Restart servers after upgrading.",
 				"gograph is static analysis.",
@@ -1388,12 +1397,13 @@ func NewServer(
 		}
 		var symbolNames []string
 		var title string
+		var revRes *search.ReviewResult
 		if u, ok := args["uncommitted"].(bool); ok && u {
-			syms, err := search.UncommittedSymbolsContext(ctx, g)
+			var err error
+			revRes, err = search.ReviewUncommittedContext(ctx, g)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			symbolNames = syms
 			title = "Uncommitted Changes"
 		} else if sym, ok := args["symbol"].(string); ok && sym != "" {
 			symbolNames = []string{sym}
@@ -1402,15 +1412,19 @@ func NewServer(
 			return mcp.NewToolResultError("must provide either symbol or set uncommitted to true"), nil
 		}
 
-		revRes := queriesForRequest(ctx).Review(symbolNames, title)
+		if revRes == nil {
+			revRes = queriesForRequest(ctx).Review(symbolNames, title)
+		}
 
 		resp := MCPResponse{
-			Summary:        "Code Review for " + revRes.Title,
-			ChangedSymbols: revRes.Changes,
-			Tests:          revRes.Tests,
-			Routes:         revRes.Routes,
-			Env:            revRes.Envs,
-			Errors:         revRes.Errors,
+			Summary:             "Code Review for " + revRes.Title,
+			DeclarationEvidence: revRes.DeclarationEvidence,
+			Limitations:         revRes.Limitations,
+			ChangedSymbols:      revRes.Changes,
+			Tests:               revRes.Tests,
+			Routes:              revRes.Routes,
+			Env:                 revRes.Envs,
+			Errors:              revRes.Errors,
 			Risk: map[string]any{
 				"public_api":      revRes.PublicAPI,
 				"touches_sql":     revRes.TouchesSQL,

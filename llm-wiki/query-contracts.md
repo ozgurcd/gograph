@@ -2,7 +2,7 @@
 title: Query snapshot, identity, and confidence contract
 type: decision
 status: current
-updated: 2026-09-17
+updated: 2026-10-06
 sources: []
 ---
 
@@ -49,9 +49,11 @@ survive comparison. A mixed source observation is invalid, not a clean census.
 
 A declaration baseline is not a historical call graph. Current-graph consumers
 must refuse a deletion requiring historical caller evidence, an incomplete
-comparison, or a missing/ambiguous target. The changes census can still explain
-what disappeared. Do not turn an unsupported historical traversal into an empty
-successful impact/review result or silently reconstruct old callers by name.
+comparison, or a missing/ambiguous target. Review is a scoped exception: it reports
+deleted declarations using the changes --git HEAD census and explicitly says
+historical callers, tests and risk are not evaluated. Surviving declarations keep
+current-graph analysis. Do not turn unsupported historical traversal into empty
+successful impact evidence or silently reconstruct old callers by name.
 
 ## Bounded dynamic HTTP resolution
 

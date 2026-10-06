@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -10,6 +11,7 @@ import (
 
 	mcpprotocol "github.com/mark3labs/mcp-go/mcp"
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/search"
 )
 
 func TestImpactExactOnlyHasCLIMCPAndMermaidParity(t *testing.T) {
@@ -106,6 +108,35 @@ func TestDeletedChangesCannotBecomeEmptyCLIMCPImpact(t *testing.T) {
 				arguments = map[string]any{"since": "HEAD"}
 			}
 			stdout, stderr, code = runCLIParityInDir(t, root, func() int { return Run(args) })
+			if command == "review" {
+				var envelope struct {
+					Results search.ReviewResult `json:"results"`
+				}
+				if code != 0 || json.Unmarshal([]byte(stdout), &envelope) != nil {
+					t.Fatalf("CLI review did not report deletion evidence: %d %s %s", code, stdout, stderr)
+				}
+				request := mcpprotocol.CallToolRequest{}
+				request.Params.Arguments = arguments
+				result, err := handlers["gograph_review"](context.Background(), request)
+				if err != nil || result == nil || result.IsError {
+					t.Fatalf("MCP review refused declaration census: %+v %v", result, err)
+				}
+				var mcpReview search.ReviewResult
+				if err := json.Unmarshal([]byte(mcpResultText(t, result)), &mcpReview); err != nil {
+					t.Fatal(err)
+				}
+				for _, review := range []search.ReviewResult{envelope.Results, mcpReview} {
+					evidence := review.DeclarationEvidence
+					if evidence == nil || evidence.Evaluation != "complete" || len(evidence.Symbols) != 1 || evidence.Symbols[0].StableID != "example.com/deleted::Gone" || evidence.Symbols[0].Status != search.ChangeDeleted {
+						t.Fatalf("missing exact deleted declaration: %+v", evidence)
+					}
+					notes := strings.Join(review.Limitations, " ")
+					if !strings.Contains(notes, "changes --git HEAD") || !strings.Contains(notes, "historical callers, tests and risk are not evaluated") {
+						t.Fatalf("missing historical limits: %s", notes)
+					}
+				}
+				continue
+			}
 			if code == 0 || !strings.Contains(stdout+stderr, "historical caller evidence") {
 				t.Fatalf("CLI %v silently accepted deletion: %d %s %s", args, code, stdout, stderr)
 			}

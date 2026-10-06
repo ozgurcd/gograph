@@ -488,6 +488,9 @@ func WalkWithConfigAndFingerprint(root string, config buildctx.Config) (paths []
 			// checking every file inside it individually. This is what catches
 			// `.claude/worktrees/agent-*/` and similar AI agent scratch trees.
 			if aerr == nil && gitIgnore.isIgnored(absPath) {
+				if isRoot {
+					errs = append(errs, fmt.Errorf("analysis root %s is ignored by an enclosing Git repository; use a standalone checkout or adjust its ignore rules", absRoot))
+				}
 				return filepath.SkipDir
 			}
 			skipModuleDir, moduleErr := moduleIgnores.enterDir(path)

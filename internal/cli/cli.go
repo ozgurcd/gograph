@@ -61,6 +61,14 @@ var Version = "dev"
 
 // Run is the entrypoint called from main.
 func Run(args []string) int {
+	invocationError = false
+	originalArgs := append([]string(nil), args...)
+	logged := false
+	defer func() {
+		if invocationError && !logged {
+			_ = session.LogCommand(commandFromArgs(originalArgs), nil, "", 0, "invocation_error")
+		}
+	}()
 	resetOutputGraph()
 	if len(args) == 0 {
 		printHelp()
@@ -180,7 +188,11 @@ func Run(args []string) int {
 	// Log command telemetry
 	if args[0] != "session" && args[0] != "--session" && args[0] != "mcp" {
 		status := commandTelemetryStatus(args[0], exitCode)
+		if invocationError {
+			status = "invocation_error"
+		}
 		_ = session.LogCommand(args[0], args[1:], intention, elapsed, status)
+		logged = true
 	}
 
 	return exitCode
@@ -1105,7 +1117,12 @@ func buildGraphWithConfigContext(ctx context.Context, absRoot string, buildConfi
 	}
 	fmt.Fprintf(os.Stderr, "  found %d Go files to parse\n", len(files))
 	if len(files) == 0 {
-		return nil, fmt.Errorf("no Go files in %s", absRoot)
+		return nil, fmt.Errorf("no Go files in %s%s", absRoot, func() string {
+			if len(buildMetadata.Warnings) == 0 {
+				return ""
+			}
+			return ": " + strings.Join(buildMetadata.Warnings, "; ")
+		}())
 	}
 
 	g := &graph.Graph{
@@ -5306,18 +5323,22 @@ func runReview(args []string) int {
 	var title string
 
 	if args[0] == "--uncommitted" {
-		symbolNames, err = search.UncommittedSymbols(g)
-		if err != nil {
-			return failCommand("review", err.Error())
+		report, reviewErr := search.ReviewUncommittedContext(context.Background(), g)
+		if reviewErr != nil {
+			return failCommand("review", reviewErr.Error())
 		}
-		if len(symbolNames) == 0 {
+		if report.Message != "" && report.DeclarationEvidence == nil {
 			if jsonMode {
 				return PrintJSON(okEnvelope("review", "Uncommitted Changes", nil, 0))
 			}
 			fmt.Println("No uncommitted modified symbols found in the graph.")
 			return 0
 		}
-		title = "Uncommitted Changes"
+		if jsonMode {
+			return PrintJSON(okEnvelope("review", "Uncommitted Changes", report, 1))
+		}
+		fmt.Print(report.String())
+		return 0
 	} else {
 		symbolNames = []string{args[0]}
 		title = args[0]

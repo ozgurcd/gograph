@@ -113,8 +113,10 @@ func enrichPackageFacts(loaded []*packages.Package, g *graph.Graph) {
 				}
 				ast.Inspect(decl, func(n ast.Node) bool {
 					if id, ok := n.(*ast.Ident); ok {
-						v, ok := info.Uses[id].(*types.Var)
-						if ok && v.Pkg() != nil && v.Parent() == v.Pkg().Scope() {
+						v := info.Uses[id]
+						_, variable := v.(*types.Var)
+						_, constant := v.(*types.Const)
+						if (variable || constant) && v.Pkg() != nil && v.Parent() == v.Pkg().Scope() {
 							target := v.Pkg().Path() + "::" + v.Name()
 							if symbols[target] {
 								pos := pkg.Fset.Position(id.Pos())

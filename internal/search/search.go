@@ -872,6 +872,9 @@ func appendUniqueResult(results *[]Result, seen map[string]bool, result Result) 
 // It supports bare names ("Graph"), fully-qualified IDs ("pkg::Graph"), and package/receiver-qualified
 // names ("graph.Graph", "(*graph.Graph).SomeMethod", "graph.Graph.SomeMethod", "(*Graph).SomeMethod").
 func MatchSymbol(s graph.SymbolNode, query string) bool {
+	if matched, qualified := qualifiedSymbolMatch(s, query); qualified {
+		return matched
+	}
 	ql := strings.ToLower(query)
 
 	// 1. Exact ID or Name match
@@ -944,6 +947,9 @@ func MatchSymbol(s graph.SymbolNode, query string) bool {
 // while the package, receiver, and symbol components still match exactly.
 func matchSymbolExact(s graph.SymbolNode, query string) bool {
 	query = strings.TrimSpace(query)
+	if matched, qualified := qualifiedSymbolMatch(s, query); qualified {
+		return matched
+	}
 	if strings.EqualFold(s.ID, query) || strings.EqualFold(s.Name, query) {
 		return true
 	}
@@ -982,6 +988,9 @@ func FindSymbols(g *graph.Graph, term string) []graph.SymbolNode {
 }
 
 func matchTestTarget(target, testFunc, term string) bool {
+	if strings.EqualFold(target, term) {
+		return true
+	}
 	if term == "" {
 		return true
 	}
@@ -1055,6 +1064,9 @@ func receiverMethodSelector(value string) (string, bool) {
 // safe and unreadable matches, the safe matches are returned; it fails only
 // when no matching source block can be read safely.
 func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
+	if err := validateQualifiedSelector(symbolName); err != nil {
+		return "", err
+	}
 	targets := FindSymbols(g, symbolName)
 	var exact []graph.SymbolNode
 	for _, candidate := range targets {
@@ -1072,7 +1084,7 @@ func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
 	if len(targets) > 1 {
 		candidates := make([]string, 0, len(targets))
 		for _, target := range targets {
-			candidates = append(candidates, fmt.Sprintf("%s (%s:%d)", target.ID, target.File, target.Line))
+			candidates = append(candidates, fmt.Sprintf("%s (%s:%d; selector %s)", target.ID, target.File, target.Line, fileSelector(target)))
 		}
 		sort.Strings(candidates)
 		return "", fmt.Errorf("source for %q is ambiguous; select a candidate: %s", symbolName, strings.Join(candidates, "; "))
@@ -1558,6 +1570,9 @@ func Concurrency(g *graph.Graph, term string) []Result {
 // Tests returns all test functions that exercise the named symbol.
 // Pass an empty term to list all test edges.
 func Tests(g *graph.Graph, term string) []Result {
+	if target, ok := qualifiedTarget(g, term); ok {
+		term = target.ID
+	}
 	var results []Result
 	seen := make(map[string]bool)
 	for _, te := range g.TestEdges {

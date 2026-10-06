@@ -533,3 +533,7 @@ Owner decision removes Windows binaries from the next release. CLI archives and 
 ## 2026-10-05 — GOGRAPH-1.7.9 archive count correction
 
 Corrected contributing.md to say four fresh release archives, matching Makefile scan-release-artifacts and its four Darwin/Linux architecture paths; no release target changed.
+
+## 2026-10-06 — Review declaration evidence
+
+Recorded the owner-requested distinction between a declaration census and historical call traversal. Deleted declarations remain unavailable to current-graph impact, while uncommitted review can report the HEAD census with explicit historical-caller, test and risk limits. The CLI/MCP regression is TestAnswers1710DeletedReview in internal/cli/answers1710_test.go.

@@ -281,8 +281,9 @@ gograph source <name>
 Extracts exact raw source blocks for a function, method, struct, interface,
 type, variable, or constant using the graph's location data. Reads are rooted
 at the analyzed repository and accept only regular `.go` files without symlink
-path components. An ambiguous name may return its safely readable matches; the
-command errors when no matching block can be read safely.
+path components. An ambiguous name prints exact selectors, such as
+`internal/auth/auth.go:Verifier.Verify`; the full import path plus file name is
+also accepted. The command errors when no matching block can be read safely.
 - **Note**: This is the preferred way for AI agents to view symbol declarations and bodies, avoiding reading entire files.
 
 ---

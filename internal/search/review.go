@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -8,15 +9,17 @@ import (
 )
 
 type ReviewResult struct {
-	Title      string   `json:"title"`
-	Changes    []Result `json:"changes"`
-	Tests      []string `json:"tests"`
-	PublicAPI  string   `json:"public_api"` // "yes", "no"
-	Routes     []string `json:"routes"`
-	Envs       []string `json:"envs"`
-	TouchesSQL string   `json:"touches_sql"` // "yes", "no"
-	Errors     []string `json:"errors"`
-	Message    string   `json:"message,omitempty"` // For "No modified symbols found"
+	DeclarationEvidence *ChangesResult `json:"declaration_evidence,omitempty"`
+	Limitations         []string       `json:"limitations,omitempty"`
+	Title               string         `json:"title"`
+	Changes             []Result       `json:"changes"`
+	Tests               []string       `json:"tests"`
+	PublicAPI           string         `json:"public_api"` // "yes", "no"
+	Routes              []string       `json:"routes"`
+	Envs                []string       `json:"envs"`
+	TouchesSQL          string         `json:"touches_sql"` // "yes", "no"
+	Errors              []string       `json:"errors"`
+	Message             string         `json:"message,omitempty"` // For "No modified symbols found"
 }
 
 func (r *ReviewResult) String() string {
@@ -26,6 +29,16 @@ func (r *ReviewResult) String() string {
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Code Review for %s\n\n", r.Title)
+	for _, note := range r.Limitations {
+		fmt.Fprintln(&sb, note)
+	}
+	if r.DeclarationEvidence != nil {
+		for _, change := range r.DeclarationEvidence.Symbols {
+			if change.Status == ChangeDeleted {
+				fmt.Fprintf(&sb, "   - deleted %s %s:%d\n", change.StableID, change.File, change.Line)
+			}
+		}
+	}
 
 	sb.WriteString("1. What changed?\n")
 	for _, c := range r.Changes {
@@ -79,6 +92,39 @@ func (r *ReviewResult) String() string {
 	}
 
 	return sb.String()
+}
+
+// ReviewUncommittedContext retains deletion evidence without pretending the
+// current graph has historical call edges. Other traversal tools remain strict.
+func ReviewUncommittedContext(ctx context.Context, g *graph.Graph) (*ReviewResult, error) {
+	if g == nil {
+		return nil, fmt.Errorf("graph is unavailable")
+	}
+	changes, err := ChangesByGitRefContext(ctx, g, g.Root, "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	present := *changes
+	present.Symbols = nil
+	deleted := false
+	for _, change := range changes.Symbols {
+		if change.Status == ChangeDeleted {
+			deleted = true
+		} else {
+			present.Symbols = append(present.Symbols, change)
+		}
+	}
+	ids, err := CurrentChangedSymbolIDs(g, &present)
+	if err != nil {
+		return nil, err
+	}
+	report := Review(g, ids, "Uncommitted Changes")
+	if deleted {
+		report.Title, report.Message = "Uncommitted Changes", ""
+		report.DeclarationEvidence = changes
+		report.Limitations = []string{"Deleted declarations: fallback to changes --git HEAD evidence; historical callers, tests and risk are not evaluated. Surface-area results describe surviving declarations only."}
+	}
+	return report, nil
 }
 
 // Review generates a post-edit review report for modified symbols.

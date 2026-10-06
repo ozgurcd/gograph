@@ -10,10 +10,13 @@ import (
 	"github.com/ozgurcd/gograph/internal/session"
 )
 
+var invocationError bool
+
 // failCommand is the single error-output path for commands that support
 // structured output. JSON mode writes exactly one standard error envelope to
 // stdout; text mode preserves the CLI convention of writing errors to stderr.
 func failCommand(command, message string) int {
+	invocationError = invocationError || session.IsInvocationError(message)
 	if jsonMode {
 		return PrintJSON(errEnvelope(command, message))
 	}

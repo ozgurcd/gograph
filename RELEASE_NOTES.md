@@ -1,5 +1,22 @@
 # Release Notes
 
+## v1.7.10 — 2026-10-06
+
+- Review of uncommitted changes now reports deleted declarations using the
+  declaration comparison against HEAD. It clearly leaves historical callers,
+  tests and risk unevaluated instead of refusing the whole review.
+- Symbol queries accept file-qualified names and full import-qualified forms.
+  Ambiguous source answers print exact selectors to use.
+- Builds explain when an enclosing Git repository ignores the requested folder,
+  instead of reporting only that no Go files were found.
+- Review finds the same tests as context, and precise usage queries include
+  package-level constants without confusing local shadowing.
+- Session audits show invocation errors separately and exclude them from the
+  compliance grade. The composability description explains that it measures
+  command mix, not answer correctness or token savings.
+- Rebuild indexes after upgrading. Restart running MCP servers to load the new
+  executable; installing an upgrade does not restart them.
+
 ## v1.7.9 — 2026-10-05
 
 - Endpoint answers show each reached call once when following a factory's

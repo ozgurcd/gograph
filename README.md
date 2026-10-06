@@ -1,5 +1,20 @@
 # gograph
 
+Symbol queries accept `path/to/file.go:Name`, including
+`path/to/file.go:Receiver.Method`, or an import-qualified file path when a short
+name is ambiguous. `source` prints exact selectors for ambiguous matches.
+Precise indexes include package-level constant references in `usages`, and
+`review` uses the same test attribution as `context`. Rebuild after upgrading.
+
+`review --uncommitted` includes deleted declarations from `changes --git HEAD`
+and explicitly leaves historical callers, tests and risk unevaluated. Other
+current-graph traversal commands retain their deletion refusal. Builds explain
+when an enclosing Git repository ignores the requested directory.
+
+Session audits list invocation errors separately from operational failures and
+exclude them from compliance scoring. Composability measures the mix of composed
+and raw query commands; it does not measure answer correctness or token savings.
+
 [![Go Report Card](https://goreportcard.com/badge/github.com/ozgurcd/gograph)](https://goreportcard.com/report/github.com/ozgurcd/gograph)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/ozgurcd/gograph)](https://github.com/ozgurcd/gograph)
