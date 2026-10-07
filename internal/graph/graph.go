@@ -28,7 +28,7 @@ const CurrentSourcePolicyVersion = 2
 // CurrentAnalysisCacheVersion identifies graphs whose file-level records can
 // be decomposed back into parser output and safely reused by an incremental
 // build. Bump this whenever parser/precise provenance changes.
-const CurrentAnalysisCacheVersion = 9
+const CurrentAnalysisCacheVersion = 10
 
 // MaxArtifactBytes bounds whole-artifact JSON decoding. Repository graphs are
 // intentionally in-memory query artifacts; accepting an unbounded serialized
@@ -376,6 +376,7 @@ type Dependency struct {
 
 // HTTPRoute represents an HTTP REST endpoint found in the AST.
 type HTTPRoute struct {
+	UnresolvedPath     bool `json:"unresolved_path,omitempty"`
 	ReceiverVerified   bool `json:"receiver_verified,omitempty"`
 	ReceiverUnresolved bool `json:"receiver_unresolved,omitempty"`
 	Column             int  `json:"column,omitempty"`

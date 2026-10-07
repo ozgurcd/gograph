@@ -54,6 +54,17 @@ func (r Result) String() string {
 	return fmt.Sprintf("[%s] %s  (%s)%s", r.Kind, r.Name, loc, provenance)
 }
 
+// WithoutTestResults excludes results whose evidence is in a Go test file.
+func WithoutTestResults(results []Result) []Result {
+	filtered := make([]Result, 0, len(results))
+	for _, result := range results {
+		if !strings.HasSuffix(result.File, "_test.go") {
+			filtered = append(filtered, result)
+		}
+	}
+	return filtered
+}
+
 // Query searches g for all occurrences of any of the given terms (OR logic)
 // and returns ranked results. Matching is case-insensitive.
 func Query(g *graph.Graph, terms []string) []Result {
@@ -97,12 +108,23 @@ func Query(g *graph.Graph, terms []string) []Result {
 	}
 	for _, s := range g.Symbols {
 		score := match(s.Name) + match(s.Doc) + match(s.Receiver)
+		for _, term := range terms {
+			if matched, qualified := qualifiedSymbolMatch(s, term); qualified && matched {
+				score++
+			}
+		}
 		if score > 0 {
 			name := s.Name
 			if s.Receiver != "" {
 				name = fmt.Sprintf("(%s).%s", s.Receiver, s.Name)
 			}
 			add(Result{Kind: string(s.Kind), StableID: s.ID, Name: name, File: s.File, Line: s.Line, Detail: string(s.Kind), Score: score})
+		}
+		for _, field := range s.StructFields {
+			name := s.Name + "." + field.Name
+			if match(name) > 0 {
+				add(Result{Kind: "field", Name: name, File: s.File, Line: s.Line, Detail: field.Type, Score: 1})
+			}
 		}
 	}
 	for _, imp := range g.Imports {
@@ -1230,6 +1252,9 @@ func Routes(g *graph.Graph) []Result {
 	var results []Result
 	for _, r := range g.Routes {
 		detail := "handled by " + r.Handler
+		if r.UnresolvedPath {
+			detail += " [unresolved path: non-constant expression or unavailable type information; run gograph build . --precise]"
+		}
 		if r.ReceiverUnresolved {
 			detail += " [route candidate: receiver type unresolved; run gograph build . --precise]"
 		}

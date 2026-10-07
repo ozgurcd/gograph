@@ -1,5 +1,23 @@
 # Release Notes
 
+## v1.7.11 — 2026-10-07
+
+- Routes now include constant paths and constant concatenations, including
+  imported constants in precise builds and ServeMux method patterns.
+  Unresolved runtime paths stay visible with an explanation.
+- Queries show struct fields. Precise mutation queries recover receiver types
+  from returned values. Known fields with no resolved mutation sites explain
+  the limit, including writes through arbitrary pointer arguments.
+- File-qualified selectors work across the supported symbol tools. Tools with
+  only lexical relationship evidence name their remaining limits instead of
+  returning misleading empty answers; capabilities list these limits.
+- Query treats --no-tests as a filter. Transitive tests with --files-only print
+  file paths without test names or call paths.
+- Freshness answers explain which build context they check. A build-context
+  mismatch can still mark unchanged source stale; no environment values appear.
+- Rebuild indexes after upgrading. The owner must restart existing MCP servers
+  to load the new executable; installation does not restart them.
+
 ## v1.7.10 — 2026-10-06
 
 - Review of uncommitted changes now reports deleted declarations using the

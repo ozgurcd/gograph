@@ -8,6 +8,24 @@ import (
 	"github.com/ozgurcd/gograph/internal/graph"
 )
 
+// FileSelectorLimitDescription names legacy queries whose evidence is lexical,
+// rather than bound to the declaration selected by a file-qualified spelling.
+const FileSelectorLimitDescription = "File-qualified selectors are not supported by embeds, constructors, literals, returnusage, mutate, path or endpoint. These queries retain lexical relationship records that cannot reliably bind a file-qualified declaration; use their documented name/type/field/route forms. Usages supports file-qualified variables/constants but reports a named limit for types, whose reference records are lexical."
+
+// FileSelectorLimit refuses unsupported selectors rather than returning an
+// apparently complete empty answer or conflating same-named declarations.
+func FileSelectorLimit(command string, values ...string) error {
+	switch command {
+	case "embeds", "constructors", "literals", "returnusage", "mutate", "path", "endpoint":
+		for _, value := range values {
+			if strings.Contains(value, ".go:") {
+				return fmt.Errorf("%s file-selector limit: %s", command, FileSelectorLimitDescription)
+			}
+		}
+	}
+	return nil
+}
+
 func validateQualifiedSelector(query string) error {
 	if file, name, ok := strings.Cut(query, ".go:"); ok && (file == "" || name == "" || strings.ContainsAny(name, ":/ ")) {
 		return fmt.Errorf("malformed selector %q: use path/to/file.go:Name or path/to/file.go:Receiver.Method", query)

@@ -207,6 +207,9 @@ func commandTelemetryStatus(command string, exitCode int) string {
 
 // dispatch routes subcommands to their implementation.
 func dispatch(args []string) int {
+	if err := search.FileSelectorLimit(args[0], args[1:]...); err != nil {
+		return failCommand(args[0], err.Error())
+	}
 	switch args[0] {
 	case "session", "--session":
 		return runSessionWithJSONErrors(args[1:])
@@ -374,6 +377,9 @@ func dispatch(args []string) int {
 }
 
 func runCapabilities() int {
+	fmt.Println("freshness_context: " + graphstate.FreshnessContextDescription)
+	fmt.Println("file_selector_limits: " + search.FileSelectorLimitDescription)
+	fmt.Println("mutation_resolution: " + search.MutationResolutionDescription)
 	fmt.Println(`gograph: AST-aware Repository Navigation Tool for AI Agents
 
 ━━━ READ FIRST ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -553,7 +559,7 @@ transport-specific (CLI flags/envelopes versus typed MCP arguments/content).
 ━━━ WHEN TO USE WHAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FINDING THINGS — four different scopes:
   explore <term>    bounded first call; add --compact for counts/identity or --deep for depth-3 evidence
-  query <term>      broad: searches symbol names, file paths, package names, import paths, call sites
+  query <term> [--no-tests] broad: searches symbols, struct fields, files, packages, imports, call sites
   node <sym>        exact: AST metadata for one named symbol (kind, file, line, signature, doc)
   source <sym>      body: extracts the actual source code block — use instead of reading the file
 
@@ -748,7 +754,7 @@ node <sym>           : AST metadata for one symbol (kind, file, line, signature,
 orphans              : symbols unreachable via BFS from main/init, test, route, and eligible public roots
 path <from> <to>     : best ranked call chain between two symbols
 public <pkg>         : exported symbols only
-query <term...>      : broad OR search — symbols, files, packages, imports, call sites
+query <term...> [--no-tests] : broad OR search — symbols, struct fields, files, packages, imports, call sites
 routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor CURSOR]
                      : deterministic HTTP route pages. Production only by default;
                        term matches method/path, handler, or file; module accepts
@@ -1651,6 +1657,19 @@ func printResults(cmd, query string, results []search.Result, emptyMsg string) i
 }
 
 func runQuery(args []string) int {
+	noTests := false
+	var terms []string
+	for _, arg := range args {
+		if arg == "--no-tests" {
+			noTests = true
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return failCommandf("query", "unknown flag: %s", arg)
+		}
+		terms = append(terms, arg)
+	}
+	args = terms
 	if len(args) == 0 {
 		return failCommand("query", "usage: gograph query <term...>")
 	}
@@ -1659,6 +1678,9 @@ func runQuery(args []string) int {
 		return failCommand("query", err.Error())
 	}
 	results := search.Query(g, args)
+	if noTests {
+		results = search.WithoutTestResults(results)
+	}
 	return printResults("query", strings.Join(args, " "), results, "no results")
 }
 
@@ -1905,6 +1927,24 @@ func runTests(args []string) int {
 	}
 	if transitive {
 		report := search.TransitiveTestsInPackage(g, term, packageName, exactOnly)
+		if filesOnlyMode {
+			if report.Status == "not_found" || report.Status == "ambiguous" {
+				return failCommandf("tests", "product selector %q: %s", term, report.Status)
+			}
+			seen := make(map[string]bool)
+			var files []string
+			for _, test := range report.Tests {
+				if !seen[test.File] {
+					seen[test.File] = true
+					files = append(files, test.File)
+				}
+			}
+			sort.Strings(files)
+			for _, file := range files {
+				fmt.Println(file)
+			}
+			return 0
+		}
 		if jsonMode {
 			return PrintJSON(okEnvelope("tests", term, report, len(report.Tests)))
 		}
@@ -3172,7 +3212,7 @@ SEARCH & NAVIGATION
                              overrides mode defaults and clamps to 1-100; response modes
                              are mutually exclusive. --exact disables promotion
                              of a fuzzy lexical match into selected-symbol context.
-  query <term...>            Search across symbols, packages, files, imports, and
+  query <term...> [--no-tests] Search across symbols, struct fields, packages, files, imports, and
                              call sites. Case-insensitive, OR logic across terms.
   focus <package>            Show all symbols, imports, and call edges for one
                              package. Token-efficient alternative to reading files.

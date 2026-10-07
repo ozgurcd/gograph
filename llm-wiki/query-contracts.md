@@ -2,7 +2,7 @@
 title: Query snapshot, identity, and confidence contract
 type: decision
 status: current
-updated: 2026-10-06
+updated: 2026-10-07
 sources: []
 ---
 
@@ -92,3 +92,19 @@ graph_state.read_diagnostic without changing graph precision or freshness.
 See docs/query-contracts.md and internal/mcp/read_result_test.go for the contract
 and fixture proof. The consumer gograph-first hook belongs to its harness and
 was not changed.
+
+## Declaration answers and build-context diagnostics
+
+The GOGRAPH-1.7.11 owner ruling accepts a freshness diagnostic instead of silently
+reusing saved build context. The graph-state freshness_context and capabilities
+name the querying process context, including GOFLAGS and explicit MCP startup
+tags. They disclose no environment values; a context mismatch can still be stale.
+
+Constant route paths and visible fields are query evidence. Unresolved route paths
+stay visible, and typed mutation receiver evidence separates same-named fields.
+Known fields without indexed assignments carry a named mutation-resolution limit:
+arbitrary pointer-argument, alias and reflective effects are not resolved.
+A file-qualified selector must bind a declaration or name a limit: lexical-only
+relationship records cannot pretend to provide file-qualified identity. The public
+query contract lists supported tools and remaining limits. CLI and MCP regression
+fixtures cover the same answers and refusals.

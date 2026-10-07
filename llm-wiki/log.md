@@ -537,3 +537,7 @@ Corrected contributing.md to say four fresh release archives, matching Makefile 
 ## 2026-10-06 — Review declaration evidence
 
 Recorded the owner-requested distinction between a declaration census and historical call traversal. Deleted declarations remain unavailable to current-graph impact, while uncommitted review can report the HEAD census with explicit historical-caller, test and risk limits. The CLI/MCP regression is TestAnswers1710DeletedReview in internal/cli/answers1710_test.go.
+
+## 2026-10-07 — GOGRAPH-1.7.11 answer boundaries
+
+Recorded the accepted freshness-context diagnostic and explicit file-selector and mutation-resolution limits. Public contracts and CLI/MCP fixtures define the answer; unresolved evidence must not look like a complete empty census. Release publication remains to be verified.

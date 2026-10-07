@@ -7,6 +7,13 @@ For `.claude/skills` directory symlinks, use v1.7.2+ with matching
 
 How `gograph` helps coding agents (Claude Code, Cursor, Copilot, Gemini, Codeium, Antigravity, etc.) work effectively in Go repositories.
 
+`query TokenTTLSecs --no-tests` includes struct fields and excludes test-file
+results. Precise builds resolve constant route paths and typed assignment
+receivers. Unresolved routes and known fields without resolved mutation sites
+carry named diagnostics. See [query contracts](query-contracts.md) for the
+file-selector support matrix, mutation limits, and `freshness_context` diagnostic.
+For a file list, use `tests SYMBOL --transitive --files-only`.
+
 ## The problem gograph solves
 
 Coding agents typically explore a repo by reading raw files and grepping. This is fine for small projects but becomes expensive in larger Go codebases:

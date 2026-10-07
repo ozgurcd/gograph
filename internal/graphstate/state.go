@@ -11,6 +11,10 @@ import (
 
 const SchemaVersion = "gograph.graph-state.v1"
 
+// FreshnessContextDescription identifies the context used by freshness checks
+// without exposing environment values or treating a mismatch as source drift.
+const FreshnessContextDescription = "Checked against the querying process Go build context (including GOFLAGS); MCP uses its explicit startup tags when supplied. A context mismatch is stale even without source edits."
+
 const maxDiagnosticRunes = 2048
 
 type Source string
@@ -63,13 +67,14 @@ type Persistence struct {
 // imply another: a persisted graph can be stale, a current graph can be
 // partial, and a fallback graph can exist only in memory.
 type State struct {
-	SchemaVersion string       `json:"schema_version"`
-	Source        Source       `json:"source"`
-	Freshness     Freshness    `json:"freshness"`
-	Completeness  Completeness `json:"completeness"`
-	Precision     Precision    `json:"precision"`
-	Refresh       Refresh      `json:"refresh"`
-	Persistence   Persistence  `json:"persistence"`
+	FreshnessContext string       `json:"freshness_context"`
+	SchemaVersion    string       `json:"schema_version"`
+	Source           Source       `json:"source"`
+	Freshness        Freshness    `json:"freshness"`
+	Completeness     Completeness `json:"completeness"`
+	Precision        Precision    `json:"precision"`
+	Refresh          Refresh      `json:"refresh"`
+	Persistence      Persistence  `json:"persistence"`
 	// ReadDiagnostic reports why this request could not serve indexed source.
 	// It never changes the independent analysis precision or freshness axes.
 	ReadDiagnostic string `json:"read_diagnostic,omitempty"`
@@ -79,13 +84,14 @@ func New(g *graph.Graph, source Source, freshness Freshness, refresh Refresh, pe
 	refresh.Diagnostic = boundedDiagnostic(refresh.Diagnostic)
 	persistence.Diagnostic = boundedDiagnostic(persistence.Diagnostic)
 	state := State{
-		SchemaVersion: SchemaVersion,
-		Source:        source,
-		Freshness:     freshness,
-		Completeness:  CompletenessUnknown,
-		Precision:     PrecisionUnknown,
-		Refresh:       refresh,
-		Persistence:   persistence,
+		FreshnessContext: FreshnessContextDescription,
+		SchemaVersion:    SchemaVersion,
+		Source:           source,
+		Freshness:        freshness,
+		Completeness:     CompletenessUnknown,
+		Precision:        PrecisionUnknown,
+		Refresh:          refresh,
+		Persistence:      persistence,
 	}
 	if g == nil || g.Build == nil {
 		return state

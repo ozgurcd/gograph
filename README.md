@@ -3,6 +3,19 @@
 Symbol queries accept `path/to/file.go:Name`, including
 `path/to/file.go:Receiver.Method`, or an import-qualified file path when a short
 name is ambiguous. `source` prints exact selectors for ambiguous matches.
+Supported declaration tools and named exceptions are listed in
+[the selector contract](docs/query-contracts.md#file-qualified-selectors).
+Queries include struct fields; `query --no-tests` excludes test-file rows.
+Precise mutation queries recover the type of fields assigned on returned values.
+Routes retain constant and unresolved path registrations; precise builds resolve
+constants across packages, including net/http method patterns.
+`tests --transitive --files-only` prints unique file paths, matching the files in
+the MCP transitive report.
+
+Graph-state output and capabilities expose `freshness_context`: CLI freshness
+checks use the querying process's Go context, including GOFLAGS; MCP uses its
+startup context and explicit tags. A context mismatch remains stale, even when
+source bytes have not changed. No environment values are printed.
 Precise indexes include package-level constant references in `usages`, and
 `review` uses the same test attribution as `context`. Rebuild after upgrading.
 

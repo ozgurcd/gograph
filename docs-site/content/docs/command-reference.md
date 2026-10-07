@@ -254,10 +254,11 @@ bounded impact section. Use focused `impact` for broader fallback traversal.
 
 ### query
 ```bash
-gograph query <term...>
+gograph query <term...> [--no-tests]
 ```
 Performs a broad, case-insensitive substring search across multiple entities.
-- **Scans**: Symbol names, file paths, package names, import paths, and call sites.
+- **Scans**: Symbol names, struct fields, file paths, package names, import paths, and call sites.
+- **Test filter**: `--no-tests` excludes test-file rows before pagination; MCP uses `no_tests=true`.
 - **Logic**: Performs OR-matching if multiple terms are provided.
 
 ### focus
@@ -275,6 +276,12 @@ Displays detailed AST metadata for a single named symbol, package, or file.
 - **Output fields**: Kind, file, line, signature, comments/docstrings, and struct fields.
 
 ### source
+
+File-qualified selectors also work with the declaration tools listed in
+[the query contract](https://github.com/ozgurcd/gograph/blob/main/docs/query-contracts.md#file-qualified-selectors).
+Embeds, constructors, literals, returnusage, mutate, path and endpoint report a
+named file-selector limit. Usages supports file-qualified variables/constants,
+but reports that limit for types. Capabilities lists these exceptions.
 ```bash
 gograph source <name>
 ```
@@ -514,6 +521,10 @@ Gin/Fiber registration uses the final argument as the terminal handler. Echo
 uses `path, handler, middleware...`, and gograph retains that ordering. Handler
 factories remain marked dynamic when their returned closure cannot be
 statically resolved.
+
+Path constants and concatenations are retained, including ServeMux method
+patterns. A precise build resolves imported and cross-file constants.
+Unresolved runtime path expressions remain visible with a diagnostic.
 
 ### sql
 ```bash

@@ -12,6 +12,10 @@ import (
 // type — the results show the full blast radius beyond just the implementers.
 func Usages(g *graph.Graph, typeName string) []Result {
 	if target, ok := qualifiedTarget(g, typeName); ok {
+		if target.Kind == graph.KindStruct || target.Kind == graph.KindInterface || target.Kind == graph.KindType {
+			return []Result{{Kind: "limit", Name: target.Name, File: target.File, Line: target.Line,
+				Detail: "usages file-selector limit: type-reference records contain lexical type spellings, not declaration identities; use the documented type-name query and inspect its heuristic results. File-qualified variables and constants remain supported."}}
+		}
 		typeName = target.ID
 	}
 	nl := strings.ToLower(typeName)

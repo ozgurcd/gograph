@@ -1,12 +1,60 @@
 package precise
 
 import (
+	"go/ast"
 	"go/types"
+	"path/filepath"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
+	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 )
+
+// enrichMutationTypes backfills direct assignment sites already recorded by
+// the parser. Repository-returned values have compiler-known types even when
+// AST inference cannot infer them.
+func enrichMutationTypes(pkgs []*packages.Package, g *graph.Graph) {
+	type site struct {
+		file  string
+		line  int
+		field string
+	}
+	indices := make(map[site][]int)
+	for i, m := range g.Mutations {
+		indices[site{m.File, m.Line, m.Field}] = append(indices[site{m.File, m.Line, m.Field}], i)
+	}
+	for _, pkg := range pkgs {
+		if pkg.TypesInfo == nil {
+			continue
+		}
+		for _, file := range pkg.Syntax {
+			ast.Inspect(file, func(n ast.Node) bool {
+				a, ok := n.(*ast.AssignStmt)
+				if !ok {
+					return true
+				}
+				pos := pkg.Fset.Position(a.Pos())
+				rel, err := filepath.Rel(absoluteSourcePath(g.Root, "."), absoluteSourcePath(g.Root, pos.Filename))
+				if err != nil {
+					return true
+				}
+				for _, lhs := range a.Lhs {
+					if s, ok := lhs.(*ast.SelectorExpr); ok {
+						selection := pkg.TypesInfo.Selections[s]
+						if selection == nil || selection.Kind() != types.FieldVal {
+							continue
+						}
+						for _, i := range indices[site{rel, pos.Line, s.Sel.Name}] {
+							g.Mutations[i].TypeName = mutationReceiverTypeName(selection.Recv())
+						}
+					}
+				}
+				return true
+			})
+		}
+	}
+}
 
 // stdlibMutators is a small allowlist of stdlib (and idiomatic concurrency
 // primitive) methods that are known to mutate their receiver's internal state.

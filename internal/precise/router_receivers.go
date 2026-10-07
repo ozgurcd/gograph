@@ -3,8 +3,10 @@ package precise
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/types"
 	"path/filepath"
+	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
 	"golang.org/x/tools/go/packages"
@@ -15,6 +17,7 @@ func verifyRouteReceivers(packages []*packages.Package, g *graph.Graph) {
 		return
 	}
 	verified := make(map[string]bool)
+	paths := make(map[string]string)
 	for _, pkg := range packages {
 		if pkg.TypesInfo == nil {
 			continue
@@ -32,7 +35,13 @@ func verifyRouteReceivers(packages []*packages.Package, g *graph.Graph) {
 				pos := pkg.Fset.Position(call.Pos())
 				rel, err := filepath.Rel(absoluteSourcePath(g.Root, "."), absoluteSourcePath(g.Root, pos.Filename))
 				if err == nil {
-					verified[fmt.Sprintf("%s:%d:%d", filepath.Clean(rel), pos.Line, pos.Column)] = true
+					key := fmt.Sprintf("%s:%d:%d", filepath.Clean(rel), pos.Line, pos.Column)
+					verified[key] = true
+					if len(call.Args) > 0 {
+						if value := pkg.TypesInfo.Types[call.Args[0]].Value; value != nil && value.Kind() == constant.String {
+							paths[key] = constant.StringVal(value)
+						}
+					}
 				}
 				return true
 			})
@@ -40,7 +49,16 @@ func verifyRouteReceivers(packages []*packages.Package, g *graph.Graph) {
 	}
 	g.Routes = nil
 	for _, route := range g.RouteCandidates {
-		if verified[fmt.Sprintf("%s:%d:%d", filepath.Clean(route.File), route.Line, route.Column)] {
+		key := fmt.Sprintf("%s:%d:%d", filepath.Clean(route.File), route.Line, route.Column)
+		if verified[key] {
+			if resolved, ok := paths[key]; ok && route.UnresolvedPath {
+				route.Path, route.UnresolvedPath = resolved, false
+			}
+			if route.Method == "Handle" || route.Method == "HandleFunc" {
+				if method, pattern, ok := strings.Cut(route.Path, " "); ok && !route.UnresolvedPath {
+					route.Method, route.Path = method, pattern
+				}
+			}
 			route.ReceiverVerified = true
 			route.ReceiverUnresolved = false
 			g.Routes = append(g.Routes, route)

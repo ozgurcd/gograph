@@ -135,84 +135,93 @@ func parseSource(fset *token.FileSet, path string, src any, relPath, pkgImportPa
 		receiverVerified := supportedRouteReceiver(f, selector.X, make(map[ast.Node]bool))
 		receiverUnresolved := !receiverVerified && supportedRouteReceiver(f, selector.X, make(map[ast.Node]bool), true)
 		if method != "" && len(call.Args) >= 1 {
-			if routePath, ok := routeString(call.Args[0]); ok {
-				path := joinRoutePath(routePrefixForExpr(selector.X, routePrefixes), routePath)
-				handler := ""
-				inlineBody := ""
-				handlerAppended := false
-				if len(call.Args) >= 2 {
-					// Gin and Fiber put the terminal handler after variadic
-					// middleware. Echo puts the handler immediately after the path
-					// and appends middleware after it, so retain the framework origin
-					// while choosing the candidate instead of applying one argument
-					// order to every router API.
-					handlerArg := routeHandlerArg(call, selector.X, echoRouters)
-					switch h := handlerArg.(type) {
-					case *ast.FuncLit:
-						// Inline anonymous function — not a named symbol.
-						// Record a descriptive label so callers know it is a closure
-						// and can navigate to the exact line in the source file.
-						handler = fmt.Sprintf("<inline handler at line %d>", fset.Position(h.Pos()).Line)
-						// Render the full function literal source via go/printer so it
-						// can be served from graph.json without re-reading the source file.
-						var buf bytes.Buffer
-						if err := printer.Fprint(&buf, fset, h); err == nil {
-							inlineBody = buf.String()
-						}
-					case *ast.CallExpr:
-						// Factory / curried / middleware-wrapped handler patterns:
-						//   router.POST("/path", HandleBulkCreateUsers(jobSvc, auditSvc))
-						//   mux.HandleFunc("/path", guard(h.method))
-						//   mux.HandleFunc("/path", wrap1(wrap2(h.method)))
-						//
-						// Prefer the *inner* handler reference (the method value or
-						// function the wrapper will eventually invoke) over the outer
-						// wrapper's name. The orphan-reachability BFS in
-						// search.ReachableOrphans seeds entry-point roots from
-						// HTTPRoute.Handler; if we record the wrapper name here, the
-						// real handler (e.g. (*AdminHandler).customers) appears
-						// unreachable because the BFS never reaches it through the
-						// opaque wrapper closure.
-						//
-						// Fall back to the outer call's name only when no inner
-						// callable reference can be recovered (e.g. the handler is
-						// itself the call's *result*, not an argument — the factory
-						// pattern above). In that case DynamicHandler is set so
-						// agents know the handler symbol can't be statically resolved.
-						if inner := extractHandlerRefs(h); len(inner) > 0 {
-							handler = inner[0]
-						} else {
-							handler = calleeString(h)
-							result.Routes = append(result.Routes, graph.HTTPRoute{
-								ReceiverVerified:   receiverVerified,
-								ReceiverUnresolved: receiverUnresolved,
-								Column:             fset.Position(call.Pos()).Column,
-								Method:             method,
-								Path:               path,
-								Handler:            handler,
-								DynamicHandler:     true,
-								File:               relPath,
-								Line:               fset.Position(call.Pos()).Line,
-							})
-							handlerAppended = true
-						}
-					default:
-						handler = typeString(handlerArg)
+			routePath, resolved := routeString(call.Args[0])
+			if !resolved {
+				routePath = "<unresolved path>"
+			}
+			if method == "Handle" || method == "HandleFunc" {
+				if verb, pattern, ok := strings.Cut(routePath, " "); ok && resolved {
+					method, routePath = verb, pattern
+				}
+			}
+			path := joinRoutePath(routePrefixForExpr(selector.X, routePrefixes), routePath)
+			handler := ""
+			inlineBody := ""
+			handlerAppended := false
+			if len(call.Args) >= 2 {
+				// Gin and Fiber put the terminal handler after variadic
+				// middleware. Echo puts the handler immediately after the path
+				// and appends middleware after it, so retain the framework origin
+				// while choosing the candidate instead of applying one argument
+				// order to every router API.
+				handlerArg := routeHandlerArg(call, selector.X, echoRouters)
+				switch h := handlerArg.(type) {
+				case *ast.FuncLit:
+					// Inline anonymous function — not a named symbol.
+					// Record a descriptive label so callers know it is a closure
+					// and can navigate to the exact line in the source file.
+					handler = fmt.Sprintf("<inline handler at line %d>", fset.Position(h.Pos()).Line)
+					// Render the full function literal source via go/printer so it
+					// can be served from graph.json without re-reading the source file.
+					var buf bytes.Buffer
+					if err := printer.Fprint(&buf, fset, h); err == nil {
+						inlineBody = buf.String()
 					}
+				case *ast.CallExpr:
+					// Factory / curried / middleware-wrapped handler patterns:
+					//   router.POST("/path", HandleBulkCreateUsers(jobSvc, auditSvc))
+					//   mux.HandleFunc("/path", guard(h.method))
+					//   mux.HandleFunc("/path", wrap1(wrap2(h.method)))
+					//
+					// Prefer the *inner* handler reference (the method value or
+					// function the wrapper will eventually invoke) over the outer
+					// wrapper's name. The orphan-reachability BFS in
+					// search.ReachableOrphans seeds entry-point roots from
+					// HTTPRoute.Handler; if we record the wrapper name here, the
+					// real handler (e.g. (*AdminHandler).customers) appears
+					// unreachable because the BFS never reaches it through the
+					// opaque wrapper closure.
+					//
+					// Fall back to the outer call's name only when no inner
+					// callable reference can be recovered (e.g. the handler is
+					// itself the call's *result*, not an argument — the factory
+					// pattern above). In that case DynamicHandler is set so
+					// agents know the handler symbol can't be statically resolved.
+					if inner := extractHandlerRefs(h); len(inner) > 0 {
+						handler = inner[0]
+					} else {
+						handler = calleeString(h)
+						result.Routes = append(result.Routes, graph.HTTPRoute{
+							UnresolvedPath:     !resolved,
+							ReceiverVerified:   receiverVerified,
+							ReceiverUnresolved: receiverUnresolved,
+							Column:             fset.Position(call.Pos()).Column,
+							Method:             method,
+							Path:               path,
+							Handler:            handler,
+							DynamicHandler:     true,
+							File:               relPath,
+							Line:               fset.Position(call.Pos()).Line,
+						})
+						handlerAppended = true
+					}
+				default:
+					handler = typeString(handlerArg)
 				}
-				if !handlerAppended {
-					result.Routes = append(result.Routes, graph.HTTPRoute{
-						ReceiverVerified:   receiverVerified,
-						ReceiverUnresolved: receiverUnresolved,
-						Column:             fset.Position(call.Pos()).Column,
-						Method:             method,
-						Path:               path,
-						Handler:            handler,
-						InlineBody:         inlineBody,
-						File:               relPath,
-						Line:               fset.Position(call.Pos()).Line,
-					})
-				}
+			}
+			if !handlerAppended {
+				result.Routes = append(result.Routes, graph.HTTPRoute{
+					UnresolvedPath:     !resolved,
+					ReceiverVerified:   receiverVerified,
+					ReceiverUnresolved: receiverUnresolved,
+					Column:             fset.Position(call.Pos()).Column,
+					Method:             method,
+					Path:               path,
+					Handler:            handler,
+					InlineBody:         inlineBody,
+					File:               relPath,
+					Line:               fset.Position(call.Pos()).Line,
+				})
 			}
 		}
 		return true
@@ -487,6 +496,36 @@ func routeMethod(name string) string {
 }
 
 func routeString(expr ast.Expr) (string, bool) {
+	return routeConstantString(expr, make(map[ast.Expr]bool))
+}
+
+func routeConstantString(expr ast.Expr, seen map[ast.Expr]bool) (string, bool) {
+	if expr == nil || seen[expr] {
+		return "", false
+	}
+	seen[expr] = true
+	defer delete(seen, expr)
+	switch value := expr.(type) {
+	case *ast.ParenExpr:
+		return routeConstantString(value.X, seen)
+	case *ast.BinaryExpr:
+		if value.Op != token.ADD {
+			return "", false
+		}
+		a, aOK := routeConstantString(value.X, seen)
+		b, bOK := routeConstantString(value.Y, seen)
+		return a + b, aOK && bOK
+	case *ast.Ident:
+		if value.Obj != nil && value.Obj.Kind == ast.Con {
+			if spec, ok := value.Obj.Decl.(*ast.ValueSpec); ok {
+				for i, name := range spec.Names {
+					if name.Name == value.Name && i < len(spec.Values) {
+						return routeConstantString(spec.Values[i], seen)
+					}
+				}
+			}
+		}
+	}
 	literal, ok := expr.(*ast.BasicLit)
 	if !ok || literal.Kind != token.STRING {
 		return "", false

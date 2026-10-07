@@ -6,6 +6,9 @@ import (
 	"github.com/ozgurcd/gograph/internal/graph"
 )
 
+// MutationResolutionDescription names the boundary of indexed mutation evidence.
+const MutationResolutionDescription = "Known fields without indexed mutation sites report a mutation-resolution limit: writes through arbitrary pointer arguments (including database Scan), aliases, and reflective code cannot be resolved by this index. Empty mutation evidence is not proof that the field is immutable."
+
 // Mutate searches for functions that mutate the given struct field.
 // The query can be "Status" or "User.Status".
 func Mutate(g *graph.Graph, query string) []Result {
@@ -43,6 +46,19 @@ func Mutate(g *graph.Graph, query string) []Result {
 		}
 	}
 
+	if len(results) == 0 {
+		for _, s := range g.Symbols {
+			if !mutationTypeMatches(s.Name, typeName) {
+				continue
+			}
+			for _, f := range s.StructFields {
+				if strings.ToLower(f.Name) == field {
+					results = append(results, Result{Kind: "limit", Name: s.Name + "." + f.Name, File: s.File, Line: s.Line,
+						Detail: "mutation-resolution limit: mutation sites for this field cannot be resolved; no indexed assignment or recognized mutating method was found. Writes through arbitrary pointer arguments (including database Scan), aliases, and reflective code are not resolved.", Score: 1})
+				}
+			}
+		}
+	}
 	sortResults(results)
 	return results
 }

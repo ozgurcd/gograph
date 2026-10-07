@@ -1,5 +1,60 @@
 # Query contracts for CLI and MCP
 
+## File-qualified selectors
+
+`path/to/file.go:Name` and `path/to/file.go:Receiver.Method` select indexed
+declarations, as do the import-qualified forms printed by an ambiguous `source`
+answer. CLI and MCP support them in query, node, source, context, callers,
+callees, impact, explain, explore, plan, review, risk, identity, fields,
+interfaces, implementers, mocks, tests (direct and transitive), and coverage.
+
+Named limits: embeds, constructors, literals, returnusage, mutate, path and
+endpoint reject file-qualified selectors. Their relationship records use
+lexical names and cannot reliably bind that file's declaration; use the
+documented name/type/field/route form. `usages` supports file-qualified variables
+and constants, but returns a named limit for file-qualified types because type
+references are lexical. This avoids presenting an empty answer as a complete
+identity-based census. These limits also appear in capabilities.
+
+Package selectors (focus, public, imports, deps, dependents, globals), route/SQL
+filters, and lexical filters (envs, concurrency, errors, errorflow/trace, flow,
+httpcalls) are not declaration selectors. The external `doc` command accepts
+Go import/symbol syntax, not repository file selectors. Workspace selectors
+use their separate member-and-stable-ID contract.
+
+## Fields, routes and file lists
+
+`query TokenTTLSecs` includes declared struct fields. `query --no-tests`
+excludes rows in `_test.go` files before pagination; MCP uses `no_tests=true`.
+`mutate Type.Field` in a precise graph recovers the type of assigned fields on
+returned values. AST-only type inference remains limited for those values.
+Known fields with no indexed mutation sites return a `mutation-resolution limit`
+row, not empty success. Arbitrary pointer-argument writes (including database
+Scan), aliases and reflective effects are not resolved. Capabilities expose this
+boundary as `mutation_resolution`; no indexed mutation is not proof of immutability.
+
+Route registrations with unresolved paths remain visible with an explicit
+diagnostic. AST analysis resolves local constants and concatenations; precise
+analysis resolves cross-file and imported constants. ServeMux method patterns
+such as `"GET " + AdminPath` report the method separately from the path.
+Runtime path expressions remain unresolved; analysis executes no target code.
+
+`tests SYMBOL --transitive --files-only` prints each returned file once, sorted,
+without test names or call paths. MCP's transitive report retains the same file
+set in its test rows. Missing or ambiguous selectors are refused in files-only
+mode, so an empty list does not hide a selector error.
+
+## Freshness check context
+
+Graph-state output and capabilities include `freshness_context`. CLI compares
+the saved graph to the querying process's effective Go context, including
+GOFLAGS; MCP uses its startup context and explicit startup tags when supplied.
+Recorded directory exclusions remain in force. A different build context can
+therefore make unchanged source appear stale. This diagnostic preserves that
+fail-closed comparison; it does not automatically reuse saved tags or print
+environment values. Reproduce the build's context when asking freshness
+questions. MCP refreshes in its chosen startup context.
+
 CLI and MCP share search implementations. CLI normally reads the persisted
 repository graph; MCP refreshes before source-analysis queries. Compare results
 from the same graph content and filters when testing parity. A running MCP

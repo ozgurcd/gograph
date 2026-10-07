@@ -95,12 +95,12 @@ make release
 ```
 
 No version argument is required. The target computes the next patch version,
-builds all six MCPBs, renders their immutable URLs and SHA-256 hashes into
+builds all four MCPBs, renders their immutable URLs and SHA-256 hashes into
 `server.json`, runs the complete release verification and native MCP smoke
 test, verifies modules and `go mod tidy`, runs `go vet`, and builds a pinned,
 non-publishing GoReleaser snapshot in the temporary release directory. The
 gate scans only explicit current inputs: declared modules in `go.mod`, the
-fresh native binary, and each of the exact six newly generated ordinary
+fresh native binary, and each of the exact four newly generated ordinary
 GoReleaser archives. A missing or extra archive fails closed. Ambient ignored
 outputs under `bin/`, `dist/`, `.release-mcpb/`, and `.release-work/` are not
 release evidence and are never included by a repository-wide Grype scan. It
@@ -146,7 +146,7 @@ source/native/archive vulnerability scans; and the full MCPB, schema, hash,
 documentation, and smoke-test checks against the currently declared version
 without creating a commit, tag, or push.
 
-After the atomic push, GoReleaser publishes the ordinary assets, six MCPBs,
+After the atomic push, GoReleaser publishes the ordinary assets, four MCPBs,
 checksums, and `server.json`. The workflow reconciles GoReleaser's generated
 Homebrew cask idempotently, waits for every referenced GitHub asset to be
 publicly downloadable, publishes with GitHub Actions OIDC, and verifies the
