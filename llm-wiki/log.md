@@ -551,3 +551,11 @@ Recorded the accepted freshness-context diagnostic and explicit file-selector an
 
 Security maintenance for GO-1.27.2-TOOLS: Grype reported GO-2026-6629 in golang.org/x/text v0.39.0; update to v0.41.0. Govulncheck reported no called vulnerabilities before this update. This routine security fix lands separately under ruling ff.
 GO-1.27.2-TOOLS validation found golangci-lint v2.13.1 also cannot decode Go 1.27.2 export data. Published v2.14.0 passes the focused lint gate; local and release pins and their contract tests move together in a separate routine-fix commit under ruling ff. Test assertions now require both analysis execution and the checksum-pinned staticcheck source and patches.
+
+## [2026-10-09] maintenance | TOOL-WIKI-1
+
+- Objective: close TOOLCHAIN-1 records for f68c017 and 6b711c7.
+- Pages touched: contributing.md, repos/gograph.md, index.md.
+- Outcome: shared action d35a8ad07dc59bd76153f0ed7d3b1ade22c6cf04 and caller go.mod ownership recorded; product behaviour unchanged.
+- Validation: native gates and postcheck reported at close.
+- Follow-ups: none.

@@ -84,3 +84,5 @@
 ## Logs
 
 - `log.md` — Canonical chronological wiki log.
+
+- [Repository record](repos/gograph.md) — co-versioned toolchain ledger.
