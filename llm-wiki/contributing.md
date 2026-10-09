@@ -11,7 +11,7 @@ sources:
 
 ## Scope and source of truth
 
-gograph intentionally analyzes Go repositories; other-language parsers are a non-goal. Derive behavior from current source, tests, live CLI help, and the MCP tool registry rather than copying older documentation. The module currently requires Go 1.27.0 as declared by `go.mod`.
+gograph intentionally analyzes Go repositories; other-language parsers are a non-goal. Derive behavior from current source, tests, live CLI help, and the MCP tool registry rather than copying older documentation. The module currently requires Go 1.27.2 as declared by `go.mod`.
 
 ## Adding or changing a capability
 

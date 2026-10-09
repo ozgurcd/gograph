@@ -33,7 +33,7 @@ Owner amendment to THE-READ-THAT-ANSWERED-NOTHING removes Windows binaries from 
 
 ## Identity and pinned formats
 
-Metadata includes immutable GitHub repository ID `1233398203`, website `https://gograph.identuum.ai`, and stdio transport. Validation pins Registry schema `2025-12-11`, MCPB manifest `0.4` from `@anthropic-ai/mcpb@2.1.2`, `mcp-publisher v1.7.9`, the local ordinary-archive gate to GoReleaser `v2.17.0`, GitHub Actions Grype `v0.116.1`, and the release compiler to Go `1.27.1`. Vendored schemas and provenance are under `internal/mcpbundle/schemas/`.
+Metadata includes immutable GitHub repository ID `1233398203`, website `https://gograph.identuum.ai`, and stdio transport. Validation pins Registry schema `2025-12-11`, MCPB manifest `0.4` from `@anthropic-ai/mcpb@2.1.2`, `mcp-publisher v1.7.9`, the local ordinary-archive gate to GoReleaser `v2.17.0`, GitHub Actions Grype `v0.116.1`, and the release compiler to Go `1.27.2`. Vendored schemas and provenance are under `internal/mcpbundle/schemas/`.
 
 ## Representation
 

@@ -11,7 +11,7 @@ RELEASE_REMOTE ?= origin
 RELEASE_DIST ?= $(MCPB_OUTPUT)/goreleaser-dist
 GRYPE ?= grype
 override GORELEASER_VERSION := v2.17.0
-override STATICCHECK_VERSION := v0.8.0
+override STATICCHECK_VERSION := v0.8.1
 override GOLANGCI_LINT_VERSION := v2.14.0
 override GOVULNCHECK_VERSION := v1.3.0
 
@@ -93,7 +93,8 @@ lint:
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
 
 staticcheck:
-	go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) ./...
+	staticcheck --version | grep -F "(0.8.1)"
+	staticcheck ./...
 
 govulncheck:
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...

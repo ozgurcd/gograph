@@ -541,3 +541,13 @@ Recorded the owner-requested distinction between a declaration census and histor
 ## 2026-10-07 — GOGRAPH-1.7.11 answer boundaries
 
 Recorded the accepted freshness-context diagnostic and explicit file-selector and mutation-resolution limits. Public contracts and CLI/MCP fixtures define the answer; unresolved evidence must not look like a complete empty census. Release publication remains to be verified.
+
+## [2026-10-09] maintenance | GO-1.27.2-TOOLS
+- Objective: Align the module, main CI and release compiler on Go 1.27.2.
+- Pages touched: contributing.md and mcp-registry.md.
+- Outcome: CI builds staticcheck 2026.2.1 with the OSS checksum-pinned PR 1834 patches; local analysis uses the version-checked installed build. Historical publication facts remain unchanged.
+- Validation: make verify and pushed CI are required and reported at close.
+- Follow-ups: No release or package installation in this goal.
+
+Security maintenance for GO-1.27.2-TOOLS: Grype reported GO-2026-6629 in golang.org/x/text v0.39.0; update to v0.41.0. Govulncheck reported no called vulnerabilities before this update. This routine security fix lands separately under ruling ff.
+GO-1.27.2-TOOLS validation found golangci-lint v2.13.1 also cannot decode Go 1.27.2 export data. Published v2.14.0 passes the focused lint gate; local and release pins and their contract tests move together in a separate routine-fix commit under ruling ff. Test assertions now require both analysis execution and the checksum-pinned staticcheck source and patches.

@@ -1,6 +1,6 @@
 module github.com/ozgurcd/gograph
 
-go 1.27.0
+go 1.27.2
 
 require (
 	github.com/gofrs/flock v0.13.0

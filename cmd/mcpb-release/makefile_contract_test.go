@@ -119,7 +119,7 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 		{
 			path: ".github/workflows/ci.yml",
 			required: []string{
-				"go-version: '1.27.0'",
+				"go-version: '1.27.2'",
 				"make staticcheck",
 				"make lint",
 				"make govulncheck",
@@ -134,11 +134,11 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 		{
 			path: ".github/workflows/release.yml",
 			required: []string{
-				"GO_VERSION: '1.27.1'",
-				"STATICCHECK_VERSION: 'v0.8.0'",
+				"GO_VERSION: '1.27.2'",
+				"STATICCHECK_VERSION: 'v0.8.1'",
 				"GOLANGCI_LINT_VERSION: 'v2.14.0'",
 				"GOVULNCHECK_VERSION: 'v1.3.0'",
-				"go run honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION} ./...",
+				"staticcheck ./...",
 				"go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION} run ./...",
 				"go run golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION} ./...",
 				"anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2",
@@ -157,6 +157,20 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 			t.Fatal(err)
 		}
 		contents := string(data)
+		for _, required := range []string{
+			"8d807cd909f4481d6777f7707e5ae75dcc399e14d68ff14a3c814731826e0dfc",
+			"4ff8b865d12b49f3af67daf2294023336987dad5",
+			"19f123d3f405f779e82a739d3d6e7e3b289659b496ac82bd699586465b06ecc4",
+			"01bcfe17fb93153091b35df4036a1d73087817ab",
+			"52ce80f83d597020938bb7c463070f3c133802995029faeb632e3fc385fb4d8a",
+			"sha256sum -c -",
+			"go build -trimpath",
+			"staticcheck --version | grep -F",
+		} {
+			if !strings.Contains(contents, required) {
+				t.Errorf("%s is missing patched staticcheck contract %q", test.path, required)
+			}
+		}
 		for _, required := range test.required {
 			if !strings.Contains(contents, required) {
 				t.Errorf("%s is missing %q", test.path, required)
@@ -247,7 +261,8 @@ func TestMakeAnalysisToolsUsePinnedVersions(t *testing.T) {
 		target  string
 		command string
 	}{
-		{"staticcheck", "go run honnef.co/go/tools/cmd/staticcheck@v0.8.0 ./..."},
+		{"staticcheck", "staticcheck --version | grep -F \"(0.8.1)\""},
+		{"staticcheck", "staticcheck ./..."},
 		{"lint", "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run ./..."},
 		{"govulncheck", "go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./..."},
 	}
