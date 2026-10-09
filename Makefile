@@ -12,7 +12,7 @@ RELEASE_DIST ?= $(MCPB_OUTPUT)/goreleaser-dist
 GRYPE ?= grype
 override GORELEASER_VERSION := v2.17.0
 override STATICCHECK_VERSION := v0.8.0
-override GOLANGCI_LINT_VERSION := v2.13.1
+override GOLANGCI_LINT_VERSION := v2.14.0
 override GOVULNCHECK_VERSION := v1.3.0
 
 .PHONY: build test verify benchmark format-check lint staticcheck govulncheck vulnerability-check scan-release-artifacts release-artifact-vulnerability-check run-build clean bump-patch bump-minor bump-major install release release-dry-run release-verify release-go-check release-goreleaser-check mcpb-build mcpb-verify mcpb-smoke mcpb-check docs-check

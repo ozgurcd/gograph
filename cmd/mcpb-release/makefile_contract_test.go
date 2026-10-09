@@ -136,7 +136,7 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 			required: []string{
 				"GO_VERSION: '1.27.1'",
 				"STATICCHECK_VERSION: 'v0.8.0'",
-				"GOLANGCI_LINT_VERSION: 'v2.13.1'",
+				"GOLANGCI_LINT_VERSION: 'v2.14.0'",
 				"GOVULNCHECK_VERSION: 'v1.3.0'",
 				"go run honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION} ./...",
 				"go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION} run ./...",
@@ -248,7 +248,7 @@ func TestMakeAnalysisToolsUsePinnedVersions(t *testing.T) {
 		command string
 	}{
 		{"staticcheck", "go run honnef.co/go/tools/cmd/staticcheck@v0.8.0 ./..."},
-		{"lint", "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run ./..."},
+		{"lint", "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run ./..."},
 		{"govulncheck", "go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./..."},
 	}
 	for _, test := range tests {
