@@ -119,7 +119,6 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 		{
 			path: ".github/workflows/ci.yml",
 			required: []string{
-				"go-version: '1.27.2'",
 				"make staticcheck",
 				"make lint",
 				"make govulncheck",
@@ -134,8 +133,6 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 		{
 			path: ".github/workflows/release.yml",
 			required: []string{
-				"GO_VERSION: '1.27.2'",
-				"STATICCHECK_VERSION: 'v0.8.1'",
 				"GOLANGCI_LINT_VERSION: 'v2.14.0'",
 				"GOVULNCHECK_VERSION: 'v1.3.0'",
 				"staticcheck ./...",
@@ -157,18 +154,17 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 			t.Fatal(err)
 		}
 		contents := string(data)
-		for _, required := range []string{
-			"8d807cd909f4481d6777f7707e5ae75dcc399e14d68ff14a3c814731826e0dfc",
-			"4ff8b865d12b49f3af67daf2294023336987dad5",
-			"19f123d3f405f779e82a739d3d6e7e3b289659b496ac82bd699586465b06ecc4",
-			"01bcfe17fb93153091b35df4036a1d73087817ab",
-			"52ce80f83d597020938bb7c463070f3c133802995029faeb632e3fc385fb4d8a",
-			"sha256sum -c -",
-			"go build -trimpath",
-			"staticcheck --version | grep -F",
-		} {
-			if !strings.Contains(contents, required) {
-				t.Errorf("%s is missing patched staticcheck contract %q", test.path, required)
+		want := 1
+		if strings.HasSuffix(test.path, "release.yml") {
+			want = 4
+		}
+		const action = "uses: ozgurcd/lictor/.github/actions/go-toolchain@d35a8ad07dc59bd76153f0ed7d3b1ade22c6cf04"
+		if got := strings.Count(contents, action); got != want {
+			t.Errorf("%s has %d shared toolchain steps, want %d", test.path, got, want)
+		}
+		for _, duplicate := range []string{"actions/setup-go@", "\n  GO_VERSION:", "STATICCHECK_VERSION:", "STATICCHECK_TAG:"} {
+			if strings.Contains(contents, duplicate) {
+				t.Errorf("%s contains duplicate toolchain setup %q", test.path, duplicate)
 			}
 		}
 		for _, required := range test.required {
