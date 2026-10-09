@@ -48,7 +48,7 @@ func TestMCPRefreshFailureStillRecordsSessionTelemetry(t *testing.T) {
 	t.Cleanup(func() { ExposeToolsForTesting = previous })
 	NewServer(&graph.Graph{Root: root}, nil, nil, nil, "test", ServerOptions{RefreshContext: func(context.Context) (*graph.Graph, error) { return nil, errors.New("deliberate refresh failure") }})
 	request := mcpprotocol.CallToolRequest{}
-	request.Params.Arguments = map[string]any{"term": "Foo"}
+	request.Params.Arguments = map[string]any{"term": "Foo", "session_id": id, "intention": "refresh failure fixture"}
 	result, err := handlers["gograph_query"](context.Background(), request)
 	if err != nil || result == nil || !result.IsError {
 		t.Fatalf("expected refresh failure: %v %+v", err, result)

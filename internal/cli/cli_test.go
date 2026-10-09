@@ -406,6 +406,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 		"doc",
 		"-i",
 		"--intention",
+		"--session-id",
 		// aliases
 		"help",
 		"--help",
@@ -532,9 +533,11 @@ func TestStaleExitCodeIsSuccessfulSessionTelemetry(t *testing.T) {
 
 	cmd := exec.Command(bin, "session", "create", "staleexit")
 	cmd.Dir = root
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("create session: %v\n%s", err, out)
+	createOut, createErr := cmd.CombinedOutput()
+	if createErr != nil {
+		t.Fatalf("create session: %v\n%s", createErr, createOut)
 	}
+	t.Setenv("GOGRAPH_SESSION", strings.Split(string(createOut), "\"")[1])
 
 	mainGo := filepath.Join(root, "main.go")
 	if err := os.WriteFile(mainGo, []byte("package main\nfunc main() { println(1) }\n"), 0o644); err != nil {

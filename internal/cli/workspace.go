@@ -13,6 +13,7 @@ import (
 	"github.com/ozgurcd/gograph/internal/mcp"
 	"github.com/ozgurcd/gograph/internal/memorylimit"
 	"github.com/ozgurcd/gograph/internal/search"
+	"github.com/ozgurcd/gograph/internal/session"
 	"github.com/ozgurcd/gograph/internal/sourcefs"
 	workspacegraph "github.com/ozgurcd/gograph/internal/workspace"
 )
@@ -169,6 +170,9 @@ func runWorkspaceBuild(args []string) int {
 	if err != nil {
 		return failCommand("workspace build", err.Error())
 	}
+	if err := session.GuardCallerMutationAt(root, callerSessionID); err != nil {
+		return failCommand("workspace build", err.Error())
+	}
 	manifest, _, err := workspacegraph.LoadManifest(root)
 	if err != nil {
 		return failCommand("workspace build", err.Error())
@@ -195,6 +199,11 @@ func runWorkspaceBuild(args []string) int {
 				attempt.Error = rootErr.Error()
 				result.RefreshFailed = append(result.RefreshFailed, attempt)
 				return writeWorkspaceBuildFailure(result, fmt.Sprintf("refresh repository %q: %v", config.ID, rootErr))
+			}
+			if err := session.GuardCallerMutationAt(memberRoot, callerSessionID); err != nil {
+				attempt.Error = err.Error()
+				result.RefreshFailed = append(result.RefreshFailed, attempt)
+				return writeWorkspaceBuildFailure(result, err.Error())
 			}
 			controller.Reclaim()
 			if err := refreshWorkspaceMember(memberRoot, config.Precision == "precise", memoryPolicy, buildTags, config.ExcludeDirs); err != nil {

@@ -559,3 +559,8 @@ GO-1.27.2-TOOLS validation found golangci-lint v2.13.1 also cannot decode Go 1.2
 - Outcome: shared action d35a8ad07dc59bd76153f0ed7d3b1ade22c6cf04 and caller go.mod ownership recorded; product behaviour unchanged.
 - Validation: native gates and postcheck reported at close.
 - Follow-ups: none.
+
+## [2026-10-09] decision | GOGRAPH-SESSION-SCOPE
+
+Owner-approved caller attribution replaces repository-global session selection. CLI and MCP use explicit session IDs; unrelated readers leave audits unchanged, concurrent owners have independent logs, and foreign writes/end/cleanup refuse. Scoring and historical records are unchanged. session-scope.md records storage and compatibility. Final validation and release evidence belong to the workspace report GOGRAPH-SESSION-SCOPE.txt. No external configuration change is needed.
+The ownership selector is cooperative rather than an authentication credential; audit scoring and existing session records keep their original format.

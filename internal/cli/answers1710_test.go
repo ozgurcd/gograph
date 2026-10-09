@@ -165,6 +165,7 @@ func TestAnswers1710ReviewTestsAndConstUses(t *testing.T) {
 }
 
 func TestAnswers1710InvocationTelemetry(t *testing.T) {
+	t.Setenv("GOGRAPH_SESSION", "fixture")
 	root, handlers := answers1710Fixture(t)
 	dir := filepath.Join(root, ".gograph", "sessions")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -186,7 +187,7 @@ func TestAnswers1710InvocationTelemetry(t *testing.T) {
 			t.Fatal("invalid invocation passed")
 		}
 	}
-	value := answers177MCP(t, handlers["gograph_source"], map[string]any{"symbol": "auth/auth.go:"})
+	value := answers177MCP(t, handlers["gograph_source"], map[string]any{"symbol": "auth/auth.go:", "session_id": "fixture", "intention": "test malformed selector"})
 	if !strings.Contains(value, "malformed selector") {
 		t.Errorf("MCP malformed: %s", value)
 	}

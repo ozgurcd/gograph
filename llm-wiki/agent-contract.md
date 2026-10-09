@@ -2,7 +2,7 @@
 title: Agent Workflow Contract
 type: workflow
 status: current
-updated: 2026-09-17
+updated: 2026-10-09
 sources:
   - SRC-20260614-gograph-legacy-agent-contract
 ---
@@ -13,7 +13,7 @@ This contract defines the operational workflows, tool-selection guidance, and ve
 
 ## Session Lifecycle
 
-1. **Start**: Create a tracked audit session via `gograph session create [word]`.
+1. **Start**: Create a tracked audit session via `gograph session create [word]`. Use its printed ID as `--session-id ID` or `GOGRAPH_SESSION=ID` on owner commands; MCP uses `session_id` per request.
 2. **Pre-edit**: Call `gograph plan <symbol>` before editing a Go symbol.
 3. **Rebuild**: Run `gograph build . --precise --strict` when precise enrichment is required; `--strict` preserves the diagnostic artifact but exits non-zero on fallback. Use ordinary `--precise` when a visible AST fallback is acceptable, or `gograph build .` when precise loading is unavailable.
 4. **Post-edit**: Run `gograph review --uncommitted` to inspect the indexed change impact.
@@ -67,7 +67,7 @@ All 64 repository query, analysis, and workflow capabilities must remain semanti
 
 Successful repository graph-backed CLI JSON envelopes include `gograph.graph-state.v1` for the exact persisted graph used by the command; text `stats` and `stale` expose the same core state. Refresh-backed MCP results retain their compatibility text and add a graph-state-only `gograph.mcp-result.v1` (source/context instead use `gograph.read.v1` with the answer or refusal) structured companion plus `_meta.gograph_graph_state`. Agents must inspect source, freshness, completeness, precision, refresh, and persistence before treating an absence, impact result, or validation input as authoritative. A current in-memory fallback and a trusted stale persisted graph are deliberately usable but degraded; different effective Go build contexts remain fail-closed. Snapshot MCP `stale`, default `changes`, and `stats` report the state they inspect rather than the live refresh state. Refresh and persistence diagnostics are bounded and remain on their respective axes.
 
-CLI analytical commands require `--intention` while an audit session is active. MCP schemas do not expose or enforce an intention parameter. Instead, active sessions record observational MCP command, duration, success/failure, and empty intention; arguments and query results are omitted. Read-only annotations describe the functional analysis contract, with this local audit telemetry as an observational exception. When `--persist-refresh` is enabled, refresh-capable tools advertise filesystem mutation and may replace the latest graph/report artifacts.
+Caller selection scopes both intention enforcement and telemetry. CLI uses `--session-id ID` (overriding `GOGRAPH_SESSION`); MCP uses `session_id` and `intention` per request without inheriting server environment. Selected analytical calls require a rationale and record only that owner's telemetry. Unselected readers run without intentions and never change another audit. Independent callers may create concurrently; repository mutation and end/cleanup by other callers refuse naming the active session. An owner may end its own session while other owners remain active. Audit scoring is unchanged; MCP still omits arguments and results. Read-only annotations describe functional analysis with selected local telemetry as an observational exception. With `--persist-refresh`, refresh-capable calls are guarded as mutations. IDs provide cooperative attribution, not authentication. See [session-scope.md](session-scope.md) for storage, compatibility, and cleanup boundaries.
 
 CLI `path` and MCP `gograph_path`, plus workspace `workspace path` and `gograph_workspace_path`, must share deterministic best-path selection. Competing routes are ordered lexicographically by worst certainty (`exact`, `ambiguous`, `possible`), visible length, production before tests, typed resolution before heuristics, and fewer cross-repository transitions; complete ties use canonical relationship/provenance identity. Repository calls without resolved target identity are possible heuristic edges, CHA targets remain possible typed edges, and synthetic forwarders consume no visible length. Existing singular response shapes, workspace exact-only defaults, explicit possible-edge opt-in, and Mermaid behavior remain compatible.
 

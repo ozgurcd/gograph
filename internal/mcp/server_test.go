@@ -576,11 +576,12 @@ func TestMCPBoundaryCreateAndSessionsUseGraphRoot(t *testing.T) {
 		t.Fatalf("boundary config was not written under graph root: %v", err)
 	}
 
-	callTool(t, handlers["gograph_session_create"], map[string]any{"custom_word": "rooted"})
-	if _, err := os.Stat(filepath.Join(root, ".gograph", "active_session.json")); err != nil {
+	text := callTool(t, handlers["gograph_session_create"], map[string]any{"custom_word": "rooted"})
+	id := strings.Split(text, "\"")[1]
+	if _, err := os.Stat(filepath.Join(root, ".gograph", "sessions", "session_"+id+".active")); err != nil {
 		t.Fatalf("session pointer was not written under graph root: %v", err)
 	}
-	callTool(t, handlers["gograph_session_end"], nil)
+	callTool(t, handlers["gograph_session_end"], map[string]any{"session_id": id})
 }
 
 func TestMCPResponseSerialization(t *testing.T) {
@@ -1334,11 +1335,7 @@ func TestGographContext_Structured(t *testing.T) {
 }
 
 func TestGographSessionMCP(t *testing.T) {
-	// Clean up any existing active session pointer first
-	_ = os.Remove(".gograph/active_session.json")
-	_ = os.RemoveAll(".gograph/sessions")
-
-	handlers := setupHandlers(t, &graph.Graph{})
+	handlers := setupHandlers(t, &graph.Graph{Root: t.TempDir()})
 	createHandler, ok := handlers["gograph_session_create"]
 	if !ok {
 		t.Fatal("gograph_session_create handler not found")
@@ -1363,11 +1360,13 @@ func TestGographSessionMCP(t *testing.T) {
 		t.Fatalf("create session failed: %s", res.Content[0].(mcp.TextContent).Text)
 	}
 	createText := res.Content[0].(mcp.TextContent).Text
+	id := strings.Split(createText, "\"")[1]
 	if !strings.Contains(createText, "successfully created and activated") {
 		t.Errorf("expected success message, got %s", createText)
 	}
 
-	// 2. Try creating session again (should fail because one is active)
+	// 2. The same selected caller cannot create a second session.
+	req.Params.Arguments = map[string]any{"session_id": id, "custom_word": "mcp_test"}
 	res2, err := createHandler(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected create session error: %v", err)
@@ -1377,7 +1376,9 @@ func TestGographSessionMCP(t *testing.T) {
 	}
 
 	// 3. End the session
-	resEnd, err := endHandler(context.Background(), mcp.CallToolRequest{})
+	endReq := mcp.CallToolRequest{}
+	endReq.Params.Arguments = map[string]any{"session_id": id}
+	resEnd, err := endHandler(context.Background(), endReq)
 	if err != nil {
 		t.Fatalf("unexpected end session error: %v", err)
 	}
@@ -1476,19 +1477,22 @@ func TestMCPSessionTelemetry_PlanAndReviewIncrementCounters(t *testing.T) {
 	if err != nil || createRes.IsError {
 		t.Fatalf("session_create failed: err=%v", err)
 	}
+	id := strings.Split(createRes.Content[0].(mcp.TextContent).Text, "\"")[1]
 
 	// 2. Call gograph_plan — simulates the coding agent using plan via MCP.
 	planReq := mcp.CallToolRequest{}
-	planReq.Params.Arguments = map[string]any{"symbol": "Run"}
+	planReq.Params.Arguments = map[string]any{"symbol": "Run", "session_id": id, "intention": "fixture plan"}
 	_, _ = handlers["gograph_plan"](context.Background(), planReq)
 
 	// 3. Call gograph_review — simulates the coding agent using review via MCP.
 	reviewReq := mcp.CallToolRequest{}
-	reviewReq.Params.Arguments = map[string]any{"symbol": "Run"}
+	reviewReq.Params.Arguments = map[string]any{"symbol": "Run", "session_id": id, "intention": "fixture review"}
 	_, _ = handlers["gograph_review"](context.Background(), reviewReq)
 
 	// 4. End the session.
-	endRes, err := handlers["gograph_session_end"](context.Background(), mcp.CallToolRequest{})
+	endReq := mcp.CallToolRequest{}
+	endReq.Params.Arguments = map[string]any{"session_id": id}
+	endRes, err := handlers["gograph_session_end"](context.Background(), endReq)
 	if err != nil || endRes.IsError {
 		t.Fatalf("session_end failed: err=%v", err)
 	}

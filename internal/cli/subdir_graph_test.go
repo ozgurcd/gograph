@@ -217,6 +217,7 @@ func TestSessionAndGraphLoading_SubdirectoryE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session create: %v\n%s", err, out)
 	}
+	t.Setenv("GOGRAPH_SESSION", strings.Split(string(out), "\"")[1])
 
 	// 2+3. Plan from subdirectory with intention.
 	cmd = exec.Command(bin, "plan", "RunAudit", "-i", "subdir e2e plan")
@@ -301,6 +302,7 @@ func TestSessionExemptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session create: %v\n%s", err, out)
 	}
+	t.Setenv("GOGRAPH_SESSION", strings.Split(string(out), "\"")[1])
 
 	// Clean up session at the end.
 	defer func() {

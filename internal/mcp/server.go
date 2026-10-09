@@ -353,6 +353,13 @@ func NewServer(
 	var telemetryMu sync.Mutex
 
 	addTool := func(tool mcp.Tool, handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+		if tool.InputSchema.Properties == nil {
+			tool.InputSchema.Properties = make(map[string]any)
+		}
+		if tool.Name != "gograph_session_audit" {
+			tool.InputSchema.Properties["session_id"] = map[string]any{"type": "string", "description": "Caller selector returned by session_create. Omission means an independent caller; never inherits server environment or another caller's session."}
+		}
+		tool.InputSchema.Properties["intention"] = map[string]any{"type": "string", "description": "Technical rationale, required for analytical calls selecting an active session."}
 		switch tool.Name {
 		case "gograph_impact", "gograph_context", "gograph_plan", "gograph_review", "gograph_risk", "gograph_check", "gograph_changes":
 			tool.Description += " " + search.CurrentChangeSelectionContract
@@ -383,12 +390,34 @@ func NewServer(
 		tool.Annotations.IdempotentHint = &idempotent
 		tool.Annotations.OpenWorldHint = &openWorld
 
-		// Wrap the handler to record observational command telemetry into an
-		// active session. MCP records command, duration, and status so plan/review
-		// calls count toward the audit; unlike CLI Run, it has no intention field
-		// and deliberately omits tool arguments.
+		// Scope attribution to each request, never to process-global environment.
+		// Omit arguments/results from telemetry; preserve the owner's rationale.
 		toolName := tool.Name
 		instrumentedHandler := func(ctx context.Context, req mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
+			args, _ := req.Params.Arguments.(map[string]any)
+			callerID, _ := args["session_id"].(string)
+			intention, _ := args["intention"].(string)
+			for _, key := range []string{"session_id", "intention"} {
+				if value, exists := args[key]; exists {
+					if _, ok := value.(string); !ok {
+						return mcp.NewToolResultError(key + " must be a string"), nil
+					}
+				}
+			}
+			if !sessionTools[toolName] {
+				if !readOnly {
+					if err := session.GuardCallerMutationAt(serverRoot, callerID); err != nil {
+						return mcp.NewToolResultError(err.Error()), nil
+					}
+				}
+				activeID, err := session.ActiveCallerSessionAt(serverRoot, callerID)
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				if activeID != "" && intention == "" && toolName != "gograph_capabilities" && toolName != "gograph_stats" && toolName != "gograph_stale" && toolName != "gograph_wiki" && toolName != "gograph_doc" {
+					return mcp.NewToolResultError(fmt.Sprintf("Active session %q requires an intention; supply intention with your technical rationale", activeID)), nil
+				}
+			}
 			if args, ok := req.Params.Arguments.(map[string]any); ok {
 				for _, value := range args {
 					if text, ok := value.(string); ok {
@@ -437,7 +466,7 @@ func NewServer(
 						}
 					}
 					telemetryMu.Lock()
-					_ = session.LogCommandAt(serverRoot, strings.TrimPrefix(toolName, "gograph_"), nil, "", time.Since(start), status)
+					_ = session.LogCallerCommandAt(serverRoot, callerID, strings.TrimPrefix(toolName, "gograph_"), nil, intention, time.Since(start), status)
 					telemetryMu.Unlock()
 				}()
 			}
@@ -486,7 +515,7 @@ func NewServer(
 			"summary":              "gograph MCP capabilities",
 			"version":              version,
 			"installation":         installation.Inspect(version),
-			"prerequisite":         "The MCP server loads only a regular, repository-confined .gograph/graph.json with the current source-policy marker and " + startupGraph + ". Whole graph, saved-baseline, validation, MCP-reload, and workspace-overlay JSON reads reject artifacts larger than 512 MiB before allocation; startup recovery rebuilds an oversized graph from source. Its serialized root is ignored. Source-analysis tools compare selected-file content digests and the build/module fingerprint per call, then incrementally rebuild changed package ASTs after edits using the latest requested analysis mode and build tags selected at MCP startup; precise CHA/SSA enrichment remains repository-wide for selected project packages but does not build dependency SSA bodies, and separately attempts typed test-call attribution without making test compilation a prerequisite for production precision. Typed-only test targets are recomputed rather than restored as parser facts. Every refresh-backed result adds gograph.graph-state.v1 provenance. Bounded row lists use gograph.results.v1 JSON text and structured content; native explain/changes retain their own schemas, while other legacy payloads retain a gograph.mcp-result.v1 graph-state companion. A failed precise enrichment can therefore serve an explicitly marked in-memory fallback, and an operational refresh failure can serve the last trusted stale graph. Neither degraded state is silently published. A persisted graph from a different effective GOWORK or build selection is never served after a failed refresh. gograph_stale, gograph_changes without git_ref, and gograph_stats inspect that trusted persisted index, or the startup auto-build fallback when no usable artifact exists. Linked directories and linked or special files recognized as Go build inputs are excluded, while unrelated regular-file or dangling links with non-Go extensions do not block precision. Linked/non-regular Go tool metadata (go.mod, go.sum, go.work, go.work.sum, and vendor/modules.txt) is rejected before toolchain use. Applicable go.work members may be sibling modules beneath the nearest real Git checkout; without that boundary they remain confined beneath the workspace directory. Each member directory, go.mod, and optional go.sum is validated before cmd/go. Use the current binary for untrusted repositories because older binaries do not enforce this contract. Run `gograph build . --precise --tags=integration` for type-checked CHA/SSA enrichment of an explicitly tagged selection; MCP accepts the same --tags selector, adopts a newer precise graph, and re-runs precision after source changes without silently changing that context. `gograph doctor --json` reports persisted-artifact diagnostics. On constrained hosts, project MCP startup accepts `--memory-mode=low --max-memory=1GiB`; analysis_memory reports the requested/effective soft Go runtime memory target, which is not a hard RSS cap. Session lifecycle tools write local telemetry, gograph_session_cleanup deletes stale logs, gograph_boundaries_create writes configuration, and gograph_wiki writes documentation; wiki regeneration prunes only obsolete generator-owned package pages and preserves custom pages plus packages/README.md. Their repository-controlled paths use rooted regular-file operations that reject descendant links. When an audit session is active, non-session MCP calls append observational command telemetry even when their analysis contract is read-only. Saved graph baselines must be regular files inside the project root, have no linked path component, and carry the exact current source-policy marker; their serialized root is ignored. gograph_doc rejects filesystem-shaped queries and source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees; .git and .gograph are excluded from that preflight. It invokes the local Go toolchain after repository source/metadata validation and is annotated open-world because dependency resolution follows the user's Go environment.",
+			"prerequisite":         "The MCP server loads only a regular, repository-confined .gograph/graph.json with the current source-policy marker and " + startupGraph + ". Whole graph, saved-baseline, validation, MCP-reload, and workspace-overlay JSON reads reject artifacts larger than 512 MiB before allocation; startup recovery rebuilds an oversized graph from source. Its serialized root is ignored. Source-analysis tools compare selected-file content digests and the build/module fingerprint per call, then incrementally rebuild changed package ASTs after edits using the latest requested analysis mode and build tags selected at MCP startup; precise CHA/SSA enrichment remains repository-wide for selected project packages but does not build dependency SSA bodies, and separately attempts typed test-call attribution without making test compilation a prerequisite for production precision. Typed-only test targets are recomputed rather than restored as parser facts. Every refresh-backed result adds gograph.graph-state.v1 provenance. Bounded row lists use gograph.results.v1 JSON text and structured content; native explain/changes retain their own schemas, while other legacy payloads retain a gograph.mcp-result.v1 graph-state companion. A failed precise enrichment can therefore serve an explicitly marked in-memory fallback, and an operational refresh failure can serve the last trusted stale graph. Neither degraded state is silently published. A persisted graph from a different effective GOWORK or build selection is never served after a failed refresh. gograph_stale, gograph_changes without git_ref, and gograph_stats inspect that trusted persisted index, or the startup auto-build fallback when no usable artifact exists. Linked directories and linked or special files recognized as Go build inputs are excluded, while unrelated regular-file or dangling links with non-Go extensions do not block precision. Linked/non-regular Go tool metadata (go.mod, go.sum, go.work, go.work.sum, and vendor/modules.txt) is rejected before toolchain use. Applicable go.work members may be sibling modules beneath the nearest real Git checkout; without that boundary they remain confined beneath the workspace directory. Each member directory, go.mod, and optional go.sum is validated before cmd/go. Use the current binary for untrusted repositories because older binaries do not enforce this contract. Run `gograph build . --precise --tags=integration` for type-checked CHA/SSA enrichment of an explicitly tagged selection; MCP accepts the same --tags selector, adopts a newer precise graph, and re-runs precision after source changes without silently changing that context. `gograph doctor --json` reports persisted-artifact diagnostics. On constrained hosts, project MCP startup accepts `--memory-mode=low --max-memory=1GiB`; analysis_memory reports the requested/effective soft Go runtime memory target, which is not a hard RSS cap. Session lifecycle tools write local telemetry, gograph_session_cleanup deletes stale logs, gograph_boundaries_create writes configuration, and gograph_wiki writes documentation; wiki regeneration prunes only obsolete generator-owned package pages and preserves custom pages plus packages/README.md. Their repository-controlled paths use rooted regular-file operations that reject descendant links. Only calls explicitly selecting session_id append owner telemetry. Selected analytical calls require intention; unselected readers never require intentions or change another audit. Other callers' mutations/end/cleanup refuse naming the active session, while independent callers may create concurrently. MCP never inherits GOGRAPH_SESSION. Saved graph baselines must be regular files inside the project root, have no linked path component, and carry the exact current source-policy marker; their serialized root is ignored. gograph_doc rejects filesystem-shaped queries and source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees; .git and .gograph are excluded from that preflight. It invokes the local Go toolchain after repository source/metadata validation and is annotated open-world because dependency resolution follows the user's Go environment.",
 			"transport_contract": map[string]any{
 				"project_server_tools": 68,
 				"cli_equivalent_tools": 64,
@@ -618,7 +647,7 @@ func NewServer(
 				{"name": "gograph_session_create", "purpose": "Start a telemetry audit session for tracking agent compliance and tool success metrics."},
 				{"name": "gograph_session_end", "purpose": "End the active telemetry session cleanly and write end-of-session logs."},
 				{"name": "gograph_session_audit", "purpose": "Review and grade agent compliance (Plan rule, Review rule, Composability/Efficiency) and tool success rates."},
-				{"name": "gograph_session_cleanup", "purpose": "Delete stale inactive regular session logs without following linked repository paths; preserves the active log."},
+				{"name": "gograph_session_cleanup", "purpose": "Delete stale inactive regular session logs without following linked repository paths; preserves active logs and refuses while another caller is active."},
 				{"name": "gograph_query", "purpose": "Search symbols, packages, files, and imports by one term or an OR-combined terms array."},
 				{"name": "gograph_explore", "purpose": "Bounded first-call discovery with compact, standard, and deep response modes; compact preserves identity/counts, while deep adds depth-3 exact evidence, package context, and explanation."},
 				{"name": "gograph_focus", "purpose": "Full structural summary of one package: files, symbols, internal call edges, and imports. Use before editing an unfamiliar package."},
@@ -2653,7 +2682,7 @@ func initNewTools(
 
 	// Tool: gograph_session_create
 	sessionCreateTool := mcp.NewTool("gograph_session_create",
-		mcp.WithDescription("Start a telemetry audit session for tracking agent compliance and tool success metrics. Writes only regular, repository-confined session state under .gograph/sessions and refuses linked storage; MCP annotations mark it mutating and non-idempotent. No prerequisites once the MCP server is running. WHEN TO USE: Call once at the start of a multi-step coding task to track your work. NOT TO USE: When a session is already active. RETURNS: Structured message with the newly generated session ID."),
+		mcp.WithDescription("Start a telemetry audit session for tracking agent compliance and tool success metrics. Writes only regular, repository-confined session state under .gograph/sessions and refuses linked storage; MCP annotations mark it mutating and non-idempotent. No prerequisites once the MCP server is running. WHEN TO USE: Call once at the start of a multi-step coding task to track your work. Pass the returned ID as session_id on this caller's later requests. Independent callers may create alongside other active sessions. RETURNS: Message with the caller session ID."),
 		mcp.WithString("custom_word", mcp.Description("Optional custom word prefix to incorporate in the timestamped session ID (e.g. 'implement_feature')")),
 	)
 	addTool(sessionCreateTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -2664,7 +2693,8 @@ func initNewTools(
 				customWord = w
 			}
 		}
-		sessionID, err := session.StartSessionAt(serverRoot, customWord)
+		callerID, _ := args["session_id"].(string)
+		sessionID, err := session.StartCallerSessionAt(serverRoot, customWord, callerID)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -2673,10 +2703,12 @@ func initNewTools(
 
 	// Tool: gograph_session_end
 	sessionEndTool := mcp.NewTool("gograph_session_end",
-		mcp.WithDescription("End the active telemetry session cleanly, append its end record, and remove the active-session pointer through repository-confined regular-file operations. MCP annotations mark it mutating and non-idempotent. No additional prerequisite once the MCP server is running. WHEN TO USE: Call once after you have completed all edits and post-edit reviews. NOT TO USE: When no session is active. RETURNS: Message confirming ending of the session."),
+		mcp.WithDescription("End only the explicitly selected caller session, append its end record, and remove its active marker through repository-confined regular-file operations. MCP annotations mark it mutating and non-idempotent. No additional prerequisite once the MCP server is running. WHEN TO USE: Call once after you have completed all edits and post-edit reviews. NOT TO USE: When no session is active. RETURNS: Message confirming ending of the session."),
 	)
-	addTool(sessionEndTool, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		sessionID, err := session.EndSessionAt(serverRoot)
+	addTool(sessionEndTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args, _ := request.Params.Arguments.(map[string]any)
+		callerID, _ := args["session_id"].(string)
+		sessionID, err := session.EndCallerSessionAt(serverRoot, callerID)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -2714,10 +2746,12 @@ func initNewTools(
 
 	// Tool: gograph_session_cleanup
 	sessionCleanupTool := mcp.NewTool("gograph_session_cleanup",
-		mcp.WithDescription("Delete stale inactive regular session telemetry JSONL logs without following linked repository paths. If no session is active, it deletes all eligible logs; an active log is preserved. MCP annotations mark this operation mutating and destructive. No prerequisites. WHEN TO USE: Call after auditing to keep the repository clean. RETURNS: Number of deleted session files."),
+		mcp.WithDescription("Delete stale inactive regular session telemetry JSONL logs without following linked repository paths. Deletes only logs with end records; preserves the selected active log and refuses while any other caller is active. MCP annotations mark this operation mutating and destructive. No prerequisites. WHEN TO USE: Call after auditing to keep the repository clean. RETURNS: Number of deleted session files."),
 	)
-	addTool(sessionCleanupTool, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		count, err := session.CleanupSessionsAt(serverRoot)
+	addTool(sessionCleanupTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args, _ := request.Params.Arguments.(map[string]any)
+		callerID, _ := args["session_id"].(string)
+		count, err := session.CleanupCallerSessionsAt(serverRoot, callerID)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

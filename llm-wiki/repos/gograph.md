@@ -12,3 +12,4 @@ Current toolchain facts: [contributing.md](../contributing.md). This page owns t
 | Date | Commit | Change |
 |---|---|---|
 | 2026-10-09 | co-versioned | TOOL-WIKI-1: close TOOLCHAIN-1 records for f68c017 and 6b711c7. |
+| 2026-10-09 | co-versioned | GOGRAPH-SESSION-SCOPE: explicit caller sessions for CLI/MCP, independent audits, guarded foreign writes, unchanged scoring. |

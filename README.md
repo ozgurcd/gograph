@@ -271,6 +271,24 @@ of evidence):*
 
 **Agent Compliance Auditing** — session telemetry tracks whether agents run `plan` before edits and `review` after. Grades agent behavior A–F with actionable recommendations.
 
+Audit sessions belong to an explicit caller. `gograph session create task` prints
+the session ID; pass it on subsequent CLI commands with `--session-id ID` or
+`GOGRAPH_SESSION=ID`. The flag overrides the environment. Selected analytical
+commands retain the `--intention` requirement and existing audit grades. Without
+a selector, read-only commands require no intention and never write to another
+caller's audit. Independent callers may create separate sessions concurrently.
+Repository writes and session end/cleanup refuse while another caller owns an
+active session, naming that session. Ending an owned session remains possible
+while other owners are active. Unset `GOGRAPH_SESSION` after ending it.
+
+MCP tools accept `session_id` and `intention` per request. Use the ID returned by
+`gograph_session_create`; analytical owner calls require a rationale. The server
+does not inherit `GOGRAPH_SESSION`, so sharing one MCP process does not merge
+callers. Default in-memory refresh remains read-only; `--persist-refresh` calls
+are guarded as writes. Session IDs are cooperative attribution selectors, not
+credentials or an OS-user security boundary. Older active sessions can be
+selected explicitly by their existing ID. See the [session design](llm-wiki/session-scope.md).
+
 ## Command Reference
 
 Query and composed-analysis commands support `--json`; `version --json` and

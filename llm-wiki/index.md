@@ -10,6 +10,7 @@
 - [workspace-v1.md](workspace-v1.md) — Federated workspace architecture, trust boundaries, resolution semantics, and P0 scope.
 - [query-contracts.md](query-contracts.md) — Immutable query snapshots, bounded pages, identity/certainty, declaration baselines, and dynamic HTTP resolution boundaries.
 - [sql-census-v1.md](sql-census-v1.md) — Shared CLI/MCP PostgreSQL static SQL classification, filtering, and pagination contract.
+- [session-scope.md](session-scope.md) — Explicit caller attribution, concurrent sessions, mutation guards, and legacy compatibility.
 - [agent-contract.md](agent-contract.md) — Workflow lifecycle, verification, CLI/MCP parity, context fidelity, and auditing.
 - [agent-rules.md](agent-rules.md) — Workflow guidelines and rules for development.
 - [scrinium-guide.md](scrinium-guide.md) — Conditional, token-conscious Scrinium usage and governance limits.

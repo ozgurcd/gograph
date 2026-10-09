@@ -62,11 +62,12 @@ var Version = "dev"
 // Run is the entrypoint called from main.
 func Run(args []string) int {
 	invocationError = false
+	callerSessionID = os.Getenv("GOGRAPH_SESSION")
 	originalArgs := append([]string(nil), args...)
 	logged := false
 	defer func() {
 		if invocationError && !logged {
-			_ = session.LogCommand(commandFromArgs(originalArgs), nil, "", 0, "invocation_error")
+			_ = session.LogCallerCommandAt("", callerSessionID, commandFromArgs(originalArgs), nil, "", 0, "invocation_error")
 		}
 	}()
 	resetOutputGraph()
@@ -112,8 +113,19 @@ func Run(args []string) int {
 			} else {
 				return failCommand(commandFromArgs(args), "Error: --intention/-i flag requires a value")
 			}
+		case "--session-id":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return failCommand(commandFromArgs(args), "--session-id requires a value")
+			}
+			callerSessionID = args[i+1]
+			i++
 		default:
-			if strings.HasPrefix(a, "-i=") {
+			if strings.HasPrefix(a, "--session-id=") {
+				callerSessionID = strings.TrimPrefix(a, "--session-id=")
+				if callerSessionID == "" {
+					return failCommand(commandFromArgs(args), "--session-id requires a value")
+				}
+			} else if strings.HasPrefix(a, "-i=") {
 				intention = strings.TrimPrefix(a, "-i=")
 			} else if strings.HasPrefix(a, "--intention=") {
 				intention = strings.TrimPrefix(a, "--intention=")
@@ -169,12 +181,18 @@ func Run(args []string) int {
 		"doc":               true,
 	}
 
-	if !nonAnalytical[args[0]] {
-		activeID, err := session.GetActiveSessionID()
+	if args[0] != "session" && args[0] != "--session" {
+		root := callerCommandRoot(args)
+		if callerCommandMutates(args) {
+			if err := session.GuardCallerMutationAt(root, callerSessionID); err != nil {
+				return failCommand(args[0], err.Error())
+			}
+		}
+		activeID, err := session.ActiveCallerSessionAt(root, callerSessionID)
 		if err != nil {
 			return failCommandf(args[0], "Error reading active session metadata: %v", err)
 		}
-		if activeID != "" {
+		if activeID != "" && !nonAnalytical[args[0]] {
 			if intention == "" {
 				return failCommandf(args[0], "Error: Active session %q requires an intention. Please supply the --intention (-i) flag stating your technical rationale.", activeID)
 			}
@@ -191,7 +209,7 @@ func Run(args []string) int {
 		if invocationError {
 			status = "invocation_error"
 		}
-		_ = session.LogCommand(args[0], args[1:], intention, elapsed, status)
+		_ = session.LogCallerCommandAt(callerCommandRoot(args), callerSessionID, args[0], args[1:], intention, elapsed, status)
 		logged = true
 	}
 
@@ -881,6 +899,11 @@ mcp [path] [--persist-refresh] [--tags=integration] [--memory-mode=low] [--max-m
                        a different startup Go context makes the artifact stale, not silently trusted
 gograph session <action>     : start/end audit sessions (create [word], end, audit, cleanup)
                                storage is confined to regular .gograph session entries
+                               create returns a caller selector: --session-id ID or
+                               GOGRAPH_SESSION=ID. Independent callers may each create.
+                               Only selected owner calls require intentions and log telemetry;
+                               unselected readers never affect another caller's audit.
+                               Foreign writes/end/cleanup refuse and name the active session.
                                NOTE: MCP tool calls (gograph_plan, gograph_review) are
                                now correctly recorded in session audit counters.
 add-claude-plugin    : install Claude Desktop MCP config + shared rules + Claude Code hook;
@@ -3540,6 +3563,11 @@ AGENT INTEGRATION
                              - cleanup: Deletes stale inactive session log files.
                              Session IDs and regular files are confined beneath the
                              project's real .gograph/sessions directory.
+                             Select your session with --session-id ID or GOGRAPH_SESSION=ID.
+                             Owners keep intention and audit rules; unselected readers
+                             neither require intentions nor enter another caller's audit.
+                             Other callers' writes/end/cleanup refuse, naming the session.
+                             Independent callers may each create a session concurrently.
                              NOTE: MCP gograph_plan/gograph_review calls are now
                              counted correctly in audit totals.
   add-claude-plugin          Install gograph as a Claude MCP plugin. Also injects
@@ -3577,6 +3605,7 @@ func printHelp() {
 }
 
 func printCommandHelp(cmd string) {
+	defer fmt.Println("\nCALLER SESSION\n  --session-id ID or GOGRAPH_SESSION selects the session printed by create.\n  Selected analytical calls require --intention; unselected readers are not logged.\n  Writes refuse while another caller owns an active session.")
 	defer printExcludeDirsHelp(cmd)
 	lines := strings.Split(helpText, "\n")
 	found := false

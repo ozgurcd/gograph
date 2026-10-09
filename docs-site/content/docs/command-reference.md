@@ -21,8 +21,12 @@ Global flags may appear before or after the command:
   `gograph --mermaid` is shorthand for `gograph diagram`.
 - `-i <message>` / `--intention <message>`: Technical rationale recorded with
   CLI command telemetry. It is mandatory for analytical commands while an
-  audit session is active; session, MCP startup, build, installation, help,
+  the caller selects an active audit session; session, MCP startup, build, installation, help,
   version, doctor, stale, stats, capabilities, wiki, and doc commands do not require it.
+- `--session-id ID` / `GOGRAPH_SESSION=ID`: Select the caller's session returned
+  by `session create`. The flag overrides the environment. Omission keeps a
+  read-only caller outside other agents' audits; writes still refuse when another
+  caller owns an active session. Independent callers may create concurrently.
 
 Request only one of `--json`, `--files-only`, or `--mermaid`; unsupported or
 conflicting output flags fail instead of being silently ignored.
@@ -1162,11 +1166,14 @@ AI clients (e.g., Claude Code, Cursor).
   not-found and status results have different transport-level presentation.
   `gograph_explore` and CLI `explore --json` share the native
   `gograph.explore.v1` value; only the CLI adds its generic envelope.
-- **Audit telemetry**: Read-only annotations describe the functional analysis
-  contract. While an audit session is active, non-session MCP calls append
-  local command/status telemetry without arguments or query results.
-  MCP has no `intention` tool parameter and does not enforce the CLI session
-  requirement, so those records use an empty intention.
+- **Audit telemetry**: Each request accepts `session_id` and `intention`.
+  Selected analytical owner calls require a rationale and record command,
+  duration, status, and intention; arguments and query results stay omitted.
+  Omission never inherits another caller's session or the server environment.
+  Independent read-only calls leave audit files byte-identical. Mutating calls,
+  including opt-in persisted refresh, refuse while another owner is active.
+  Read-only annotations describe functional analysis with this explicitly
+  selected local audit telemetry as an observational exception.
 
 ### wiki
 ```bash
@@ -1212,16 +1219,22 @@ must already have started with a usable artifact or buildable Go source.
 ### session
 ```bash
 gograph session create [word]
-gograph session end
+gograph session end --session-id ID
 gograph session audit [session_id]
 gograph session cleanup
 ```
 Manages local workflow metadata under `.gograph/sessions/`. Session IDs contain
 only letters, digits, and underscores. The `.gograph`/sessions directories must
-be real, and pointers/logs must be regular non-linked entries. Audit reads and
+be real, and markers/logs must be regular non-linked entries. Audit reads and
 cleanup are confined to the project; cleanup removes only validated inactive
-regular logs. CLI analytical commands fail closed when active-pointer metadata
-is unsafe or corrupt. Raw query results are not logged.
+regular logs with an end record. Each created session has an independent active
+marker and random suffix, so equal labels and simultaneous creation do not share
+a pointer. Owners keep the existing scoring rules. An unselected caller cannot
+end a session; cleanup refuses while another owner is active. Explicitly select
+older pointer-based sessions by their printed ID to finish them. Unset the CLI
+environment selector after ending. Selectors are cooperative attribution, not
+credentials. Unsafe selected markers fail closed; independent readers never
+inspect another owner's session metadata. Raw query results are not logged.
 
 ### add-claude-plugin
 ```bash

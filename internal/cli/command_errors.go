@@ -60,7 +60,7 @@ func runSessionWithJSONErrors(args []string) int {
 		return failCommand("session audit", "usage: gograph session audit [session_id]")
 	}
 
-	sessionID := ""
+	sessionID := callerSessionID
 	if len(args) == 2 {
 		sessionID = args[1]
 	}
