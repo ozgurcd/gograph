@@ -181,8 +181,8 @@ archive's SHA-256 digest and embedded version before execution.
 
 For a new patch release, first commit the feature or fix on an attached branch
 whose HEAD includes the latest official `main`, and leave the worktree clean.
-Before preparing bundle hashes, check `go version` against `GO_VERSION` in
-`.github/workflows/release.yml`: the exact patch version must match. Deterministic
+Before preparing bundle hashes, check `go version` against the Go version in
+`go.mod`: the exact patch version must match. Deterministic
 bundles are reproducible for the same compiler and inputs, not across compiler
 versions. The release workflow compares rebuilt hashes with committed
 `server.json` and refuses publication when they differ.

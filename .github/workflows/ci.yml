@@ -6,9 +6,6 @@ on:
   pull_request:
     branches: [ "main" ]
 
-env:
-  STATICCHECK_VERSION: v0.8.1
-
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -17,11 +14,7 @@ jobs:
       with:
         fetch-depth: 0
 
-    - name: Set up Go
-      uses: actions/setup-go@v6
-      with:
-        go-version: '1.27.2'
-
+    - uses: ozgurcd/lictor/.github/actions/go-toolchain@d35a8ad07dc59bd76153f0ed7d3b1ade22c6cf04
     - name: Verify Dependencies
       run: go mod verify
 
@@ -55,44 +48,6 @@ jobs:
       uses: anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7
       with:
         grype-version: v0.116.1
-
-    - name: Install staticcheck (brew-identical build, and prove its version)
-      # OWNER RULE (2026-08-27): CI workflows always pin the LATEST
-      # stable tool version — pinned (never rolling @latest, which
-      # re-scopes silently) and bumped deliberately the moment a new
-      # stable ships. v0.8.1 == staticcheck 2026.2.1, latest stable.
-      # THE-UNWATCHED-FOUR: the install derives from the workflow-env
-      # declaration and the printed version is asserted — staticcheck
-      # prints its module version in parentheses, e.g.
-      # "staticcheck 2026.2.1 (0.8.1)".
-      # OSS-SEC-MFA-FIXES item 12 (owner, 2026-10-09): `go install`ed,
-      # v0.8.1 carries golang.org/x/tools v0.44.1-0.20260420230617, which
-      # cannot read go1.27.2's export data ("export data version 5 is
-      # greater than maximum supported version 4"). CI builds what brew
-      # builds: the 2026.2.1 source tarball plus the two dominikh/go-tools
-      # PR 1834 patches (x/tools v0.51.0), each checked against its
-      # sha256 before use. Drop the patches at the first upstream release
-      # that supports Go 1.27.x.
-      env:
-        STATICCHECK_TAG: "2026.2.1"
-        STATICCHECK_SOURCE_SHA256: 8d807cd909f4481d6777f7707e5ae75dcc399e14d68ff14a3c814731826e0dfc
-        STATICCHECK_PATCH1: 4ff8b865d12b49f3af67daf2294023336987dad5
-        STATICCHECK_PATCH1_SHA256: 19f123d3f405f779e82a739d3d6e7e3b289659b496ac82bd699586465b06ecc4
-        STATICCHECK_PATCH2: 01bcfe17fb93153091b35df4036a1d73087817ab
-        STATICCHECK_PATCH2_SHA256: 52ce80f83d597020938bb7c463070f3c133802995029faeb632e3fc385fb4d8a
-      run: |
-        src="$RUNNER_TEMP/staticcheck-src"
-        mkdir -p "$src"
-        curl -fsSL -o "$src/src.tar.gz" "https://github.com/dominikh/go-tools/archive/refs/tags/${STATICCHECK_TAG}.tar.gz"
-        curl -fsSL -o "$src/p1.patch" "https://github.com/dominikh/go-tools/commit/${STATICCHECK_PATCH1}.patch?full_index=1"
-        curl -fsSL -o "$src/p2.patch" "https://github.com/dominikh/go-tools/commit/${STATICCHECK_PATCH2}.patch?full_index=1"
-        printf '%s  %s\n' "$STATICCHECK_SOURCE_SHA256" "$src/src.tar.gz" "$STATICCHECK_PATCH1_SHA256" "$src/p1.patch" "$STATICCHECK_PATCH2_SHA256" "$src/p2.patch" | sha256sum -c -
-        tar -xzf "$src/src.tar.gz" -C "$src"
-        patch -d "$src/go-tools-${STATICCHECK_TAG}" -p1 < "$src/p1.patch"
-        patch -d "$src/go-tools-${STATICCHECK_TAG}" -p1 < "$src/p2.patch"
-        (cd "$src/go-tools-${STATICCHECK_TAG}" && go build -trimpath -o "$(go env GOPATH)/bin/staticcheck" ./cmd/staticcheck)
-        staticcheck --version
-        staticcheck --version | grep -F "staticcheck ${STATICCHECK_TAG} (${STATICCHECK_VERSION#v})"
 
     - name: Staticcheck
       run: make staticcheck
