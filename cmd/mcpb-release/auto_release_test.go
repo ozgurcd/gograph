@@ -804,6 +804,13 @@ func newAutoReleaseRepository(t *testing.T) autoReleaseTestRepository {
 	writeTestFile(t, root, releaseConfigFile, "[bumpversion]\ncurrent_version = 1.5.0\ncommit = False\ntag = False\n")
 	writeTestFile(t, root, releasePluginFile, "{\n  \"name\": \"gograph\",\n  \"version\": \"1.5.0\"\n}\n")
 	writeTestFile(t, root, releaseServerFile, renderedTestServer("1.5.0"))
+	// These fixtures model checked-out release metadata with exact modes.
+	// WriteFile's creation mode is filtered by the launching process's umask.
+	for _, relative := range releaseOwnedPaths() {
+		if err := os.Chmod(filepath.Join(root, relative), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	writeTestFile(t, root, "feature.txt", "initial\n")
 	gitTestCommand(t, root, "add", ".")
 	gitTestCommand(t, root, "commit", "-m", "initial")
