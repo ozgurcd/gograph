@@ -2,7 +2,7 @@
 title: Caller-owned audit sessions
 type: decision
 status: current
-updated: 2026-10-09
+updated: 2026-10-10
 sources:
   - SRC-20260614-gograph-legacy-agent-contract
 ---
@@ -20,3 +20,9 @@ Writes refuse whenever a different active caller is present, naming its session.
 The external wiki hook detects open JSONL logs by their final entry type; the unchanged start/command/end layout preserves compatibility. Achta's generic gate runner inherits its caller environment: independent gates omit the selector, while owners deliberately passing it retain intention enforcement. No hook, integration configuration or achta source change is required.
 
 Regression evidence: CLI/MCP caller-isolation tests prove byte-identical foreign reads/refusals, intention enforcement, independent creation/ending and unchanged owner fixture grades. Session tests cover concurrent equal-label creation, independent telemetry, cleanup, linked markers and traversal rejection.
+
+## Concurrent marker publication (2026-10-10)
+
+GOGRAPH-CONCURRENT-SESSIONS-1 reproduced both partially written active markers and markers removed between directory enumeration and reading. Caller creation now stages and syncs marker bytes before a confined same-directory rename, using the existing atomic regular-file publisher. The exclusively created audit log reserves the collision-resistant ID. Enumeration ignores only a marker that no longer exists because its owner ended; malformed, linked and other unreadable entries still fail closed. The marker set is a point-in-time observation, not a lock covering later product writes. Creation and ending remain independent across callers.
+
+The create/end stress regression runs independent owners against one repository, checks that all completed logs can be cleaned, and complements existing CLI/MCP attribution and confinement tests. Release-mode fixture tests explicitly establish their checked-out metadata permissions instead of inheriting the launching umask. These fixture preconditions do not alter the caller process umask or weaken release mode-change checks.

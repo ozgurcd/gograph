@@ -1,5 +1,17 @@
 # Release Notes
 
+## v1.7.14 — 2026-10-10
+
+- Concurrent caller sessions publish complete active markers with a confined
+  atomic rename. Other callers no longer read a marker before its ID is written.
+- Session enumeration tolerates a marker removed when its owner ends after
+  directory listing. Malformed and linked markers still fail closed; independent
+  audits, ownership guards, and scoring are unchanged.
+- Release test fixtures establish their exact metadata permissions explicitly,
+  so normal and race suites support both restrictive and ordinary launch umasks.
+- No installation or MCP restart happens automatically. Restart an existing MCP
+  server after choosing to upgrade.
+
 ## v1.7.13 — 2026-10-10
 
 - Broad `query` now returns precise package constant and variable reference

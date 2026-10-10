@@ -58,6 +58,47 @@ func TestCallerSessionsConcurrentIndependentOwners(t *testing.T) {
 	}
 }
 
+func TestCallerSessionsConcurrentCreateAndEnd(t *testing.T) {
+	root := t.TempDir()
+	const callers = 32
+	errs := make(chan error, callers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for range 16 {
+				id, err := StartCallerSessionAt(root, "churn", "")
+				if err != nil {
+					errs <- err
+					return
+				}
+				if _, err := EndCallerSessionAt(root, id); err != nil {
+					errs <- err
+					return
+				}
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	if t.Failed() {
+		return
+	}
+	if err := GuardCallerMutationAt(root, ""); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := CleanupCallerSessionsAt(root, ""); err != nil || n != callers*16 {
+		t.Fatalf("cleanup: %d %v", n, err)
+	}
+}
+
 func TestCallerSessionMarkersAreConfined(t *testing.T) {
 	root := t.TempDir()
 	id, err := StartCallerSessionAt(root, "owner", "")
@@ -90,5 +131,33 @@ func TestCallerSessionMarkersAreConfined(t *testing.T) {
 	data, _ := os.ReadFile(target)
 	if string(data) != id {
 		t.Fatal("linked target changed")
+	}
+}
+
+func TestCallerSessionMalformedMarkerRefuses(t *testing.T) {
+	for _, contents := range []string{"", "different_owner"} {
+		t.Run(contents, func(t *testing.T) {
+			root := t.TempDir()
+			id, err := StartCallerSessionAt(root, "owner", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(root, ".gograph", "sessions", "session_"+id+".active")
+			if err := os.WriteFile(marker, []byte(contents), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := GuardCallerMutationAt(root, ""); err == nil {
+				t.Fatal("malformed marker allowed mutation")
+			}
+			if _, err := StartCallerSessionAt(root, "other", ""); err == nil {
+				t.Fatal("malformed marker allowed creation")
+			}
+			if _, err := EndCallerSessionAt(root, id); err == nil {
+				t.Fatal("malformed marker allowed ending")
+			}
+			if _, err := CleanupCallerSessionsAt(root, ""); err == nil {
+				t.Fatal("malformed marker allowed cleanup")
+			}
+		})
 	}
 }

@@ -51,6 +51,11 @@ func (s *sessionStore) activeCallerIDs() ([]string, error) {
 			return nil, err
 		}
 		data, err := s.files.ReadRegularFile(marker)
+		// An owner may end after ReadDirectory captured its marker. Only an
+		// absent entry is benign; malformed or linked markers still fail closed.
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -155,7 +160,10 @@ func StartCallerSessionAt(root, word, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := store.files.WriteRegularFile(marker, []byte(id), 0644, true); err != nil {
+	// Publish only complete bytes. A directly created marker is visible to
+	// concurrent creators before WriteRegularFile has written its contents.
+	// The exclusively created log reserves this collision-resistant ID.
+	if err := store.files.AtomicReplaceRegularFile(marker, []byte(id), 0644); err != nil {
 		_ = store.files.RemoveRegularFile(path)
 		return "", err
 	}
