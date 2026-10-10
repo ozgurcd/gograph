@@ -107,7 +107,12 @@ func ReviewUncommittedContext(ctx context.Context, g *graph.Graph) (*ReviewResul
 	present := *changes
 	present.Symbols = nil
 	deleted := false
+	blank := false
 	for _, change := range changes.Symbols {
+		if change.Name == "_" {
+			blank = true
+			continue
+		}
 		if change.Status == ChangeDeleted {
 			deleted = true
 		} else {
@@ -119,10 +124,15 @@ func ReviewUncommittedContext(ctx context.Context, g *graph.Graph) (*ReviewResul
 		return nil, err
 	}
 	report := Review(g, ids, "Uncommitted Changes")
-	if deleted {
+	if deleted || blank {
 		report.Title, report.Message = "Uncommitted Changes", ""
 		report.DeclarationEvidence = changes
-		report.Limitations = []string{"Deleted declarations: fallback to changes --git HEAD evidence; historical callers, tests and risk are not evaluated. Surface-area results describe surviving declarations only."}
+		if deleted {
+			report.Limitations = append(report.Limitations, "Deleted declarations: fallback to changes --git HEAD evidence; historical callers, tests and risk are not evaluated. Surface-area results describe surviving declarations only.")
+		}
+		if blank {
+			report.Limitations = append(report.Limitations, "Blank-identifier declarations: retained in changes --git HEAD evidence; omitted from plan/review symbol traversal because they do not bind an addressable identifier.")
+		}
 	}
 	return report, nil
 }

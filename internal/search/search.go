@@ -140,6 +140,16 @@ func Query(g *graph.Graph, terms []string) []Result {
 			add(Result{Kind: "call", Name: c.CalleeRaw, File: c.File, Line: c.Line, Detail: "called by " + c.CallerName, Score: 1})
 		}
 	}
+	// Precise package references include constants in comparisons and switch
+	// cases as well as values passed to calls or composite literals. These are
+	// uses, not call edges; retain their resolved identity and source location.
+	for _, use := range g.VariableUses {
+		if match(use.Name)+match(use.PackageName+"."+use.Name)+match(use.SymbolID) == 0 {
+			continue
+		}
+		add(Result{Kind: "usage", StableID: use.SymbolID, Name: use.SymbolID,
+			File: use.File, Line: use.Line, Detail: "referenced in " + use.Function, Score: 1})
+	}
 
 	sortResults(results)
 	return results

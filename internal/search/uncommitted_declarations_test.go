@@ -90,3 +90,26 @@ func TestCurrentChangedSymbolIDsRejectsIncompleteAndAmbiguousSelection(t *testin
 		t.Fatal("duplicate identity accepted")
 	}
 }
+
+func TestCurrentChangedSymbolIDsSkipsBlankDeclarations(t *testing.T) {
+	g := &graph.Graph{Symbols: []graph.SymbolNode{{ID: "p::Keep", Name: "Keep", PackageName: "p"},
+		{ID: "p::_", Name: "_"}, {ID: "p::_", Name: "_"}}}
+	for _, status := range []ChangeStatus{ChangeNew, ChangeModified, ChangeDeleted} {
+		t.Run(string(status), func(t *testing.T) {
+			blank := ChangedSymbol{Name: "_", StableID: "p::_", Status: status}
+			changes := &ChangesResult{Evaluation: "complete", Symbols: []ChangedSymbol{blank}}
+			ids, err := CurrentChangedSymbolIDs(g, changes)
+			if err != nil || len(ids) != 0 {
+				t.Fatalf("blank-only traversal: ids=%v err=%v", ids, err)
+			}
+			changes.Symbols = append(changes.Symbols, ChangedSymbol{Name: "Keep", StableID: "p::Keep", PackageName: "p", Status: ChangeModified})
+			ids, err = CurrentChangedSymbolIDs(g, changes)
+			if err != nil || len(ids) != 1 || ids[0] != "p::Keep" {
+				t.Fatalf("mixed traversal lost named declaration: ids=%v err=%v", ids, err)
+			}
+			if len(changes.Symbols) != 2 || changes.Symbols[0] != blank {
+				t.Fatal("traversal must preserve the declaration census")
+			}
+		})
+	}
+}

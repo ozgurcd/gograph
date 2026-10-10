@@ -1,5 +1,21 @@
 # Release Notes
 
+## v1.7.13 — 2026-10-10
+
+- Broad `query` now returns precise package constant and variable reference
+  sites, including comparisons, switch cases, composite values, and function
+  arguments. Typed constants retain their identity; local shadows are excluded.
+  These sites were already indexed by `usages` in v1.7.12.
+- Uncommitted plan/review skip blank-identifier declarations during symbol
+  traversal. Review retains their declaration census and names the limit,
+  instead of failing on repeated interface assertions such as
+  `var _ I = (*T)(nil)`. Named identity and deletion checks remain strict.
+- Isolated CLI fixtures confirm independent query/source/callers/usages/explain
+  calls need no intention and leave another caller's audit unchanged in
+  v1.7.12. The v1.7.12 explicit-caller session rules remain unchanged.
+- No installation or MCP restart happens automatically. Rebuild the analyzed
+  graph where needed; restart an existing MCP server after choosing to upgrade.
+
 ## v1.7.11 — 2026-10-07
 
 - Routes now include constant paths and constant concatenations, including

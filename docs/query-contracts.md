@@ -168,6 +168,21 @@ from `changes --git HEAD`, names deleted declarations, and states that historica
 callers, tests and risk are not evaluated. Surviving declarations retain their
 normal current-graph review. Incomplete comparisons still fail.
 
+Blank-identifier declarations do not bind addressable symbols. Uncommitted
+plan/review omit them from symbol traversal, including repeated interface
+assertions such as `var _ I = (*T)(nil)`. Review retains their declaration
+evidence and states that limit. The complete changes census still includes new,
+modified, and deleted blanks; named identity and deletion refusals stay binding.
+
+## Package constant references
+
+Precise indexing records resolved package-level variables and constants in
+comparisons, switch cases, composite values, and function arguments. `usages`
+accepts their name, package-qualified name, stable ID, or supported file selector.
+Broad `query` includes the same reference evidence as `usage` rows with stable
+identity and source location. Typed enum-like constants remain distinct from
+local shadows. AST-only builds do not claim these type-resolved references.
+
 ## HTTP extraction and workspace resolution
 
 See [dynamic HTTP URL bases](workspaces.md#dynamic-http-url-bases) for the shared

@@ -16,13 +16,21 @@ Graph-state output and capabilities expose `freshness_context`: CLI freshness
 checks use the querying process's Go context, including GOFLAGS; MCP uses its
 startup context and explicit tags. A context mismatch remains stale, even when
 source bytes have not changed. No environment values are printed.
-Precise indexes include package-level constant references in `usages`, and
+Precise indexes include package-level constant references in `usages` and `query`,
+including comparisons, switch cases, composite values, and function arguments.
+Typed enum-like constants retain their declaration identity; local shadows are excluded.
+`query` labels these reference sites as `usage` rows. AST-only graphs do not
+claim type-resolved constant usages.
 `review` uses the same test attribution as `context`. Rebuild after upgrading.
 
 `review --uncommitted` includes deleted declarations from `changes --git HEAD`
 and explicitly leaves historical callers, tests and risk unevaluated. Other
 current-graph traversal commands retain their deletion refusal. Builds explain
 when an enclosing Git repository ignores the requested directory.
+
+Uncommitted plan/review skip blank-identifier declarations such as
+`var _ I = (*T)(nil)` during symbol traversal. Review keeps their declaration
+evidence and names the limit; `changes --git HEAD` still lists them.
 
 Session audits list invocation errors separately from operational failures and
 exclude them from compliance scoring. Composability measures the mix of composed
@@ -330,8 +338,9 @@ Precise `implementers` results merge type-checked production types with
 AST-discovered test-file fakes; `--test-only`/MCP `test_only=true` returns only
 the latter. Direct `tests` lookup accepts `Receiver.Method` (including pointer
 receivers) or a stable ID. `usages` covers signature/field/interface references
-and `Foo{...}` construction; `literals` remains the focused construction-only
-view.
+and `Foo{...}` construction. Precise indexes also include package variables and
+constants referenced in expressions; `literals` remains the focused
+construction-only view.
 
 SQL extraction includes direct literals and statically resolvable local or
 same-file package `const`/`var` declarations, straight-line assignments, and

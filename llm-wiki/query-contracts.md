@@ -2,7 +2,7 @@
 title: Query snapshot, identity, and confidence contract
 type: decision
 status: current
-updated: 2026-10-07
+updated: 2026-10-10
 sources: []
 ---
 
@@ -108,3 +108,9 @@ A file-qualified selector must bind a declaration or name a limit: lexical-only
 relationship records cannot pretend to provide file-qualified identity. The public
 query contract lists supported tools and remaining limits. CLI and MCP regression
 fixtures cover the same answers and refusals.
+
+## Constant references and blank declarations
+
+GOGRAPH-SESSIONS-2 (2026-10-10) re-measured v1.7.12 in isolated repositories: unrelated CLI readers were already independent; precise usages already included typed/untyped package constants in comparison, case, composite-value and argument positions. Broad query omitted that indexed evidence, and repeated blank assertions still refused plan/review.
+
+Broad query now exposes the resolved package references as usage rows. No lexical guess substitutes for precise identity, and local shadows remain excluded. Blank declarations remain in the complete changes census but are skipped during symbol traversal; review retains that evidence and states the limitation. Named ambiguity, incomplete comparison and deletion refusals remain binding. See internal/cli/answers1713_test.go and internal/search/uncommitted_declarations_test.go for CLI/MCP and traversal controls. This goal does not alter the caller-session contract or audit scoring.

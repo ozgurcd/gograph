@@ -44,7 +44,9 @@ func TestCallerSessionIsolationCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run(true, "", "query", "RunAudit")
+	for _, command := range []string{"query", "source", "callers", "usages", "explain"} {
+		run(true, "", command, "RunAudit")
+	}
 	for _, args := range [][]string{{"session", "end"}, {"session", "cleanup"}, {"build", "."}, {"wiki"}, {"snapshot", "save", "foreign"}} {
 		out := run(false, "", args...)
 		if !strings.Contains(string(out), id) {

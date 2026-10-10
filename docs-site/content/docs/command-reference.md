@@ -417,6 +417,16 @@ fields, interface methods, or composite-literal construction. Use
 `gograph literals <type>` for the focused `Foo{...}` construction-only subset.
 Essential for tracing the impact of a type change.
 
+With a precise index, this also finds package-level variable and constant
+references in comparisons, switch cases, composite values, and function
+arguments. Typed enum-like constants retain their resolved identity, excluding
+local shadows. Broad `query` includes these sites as `usage` rows. AST-only
+indexes do not claim type-resolved constant references.
+
+Uncommitted `plan` and `review` omit blank-identifier declarations from symbol
+traversal. Review preserves the declaration evidence and names that limit;
+`changes --git HEAD` still includes the blank assertions.
+
 ### schema
 ```bash
 gograph schema <table>

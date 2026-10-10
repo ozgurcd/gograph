@@ -87,6 +87,12 @@ func CurrentChangedSymbolIDs(g *graph.Graph, changes *ChangesResult) ([]string, 
 	seen := make(map[string]bool)
 	var ids []string
 	for _, change := range changes.Symbols {
+		// Blank declarations (including interface assertions) do not bind a
+		// usable identifier. Their repeated package::_ IDs cannot be traversed.
+		// Keep them in the declaration census, but omit them from symbol plans.
+		if change.Name == "_" {
+			continue
+		}
 		if change.Status == ChangeDeleted {
 			return nil, fmt.Errorf("deleted declaration %q requires historical caller evidence; inspect changes --git HEAD (or the selected ref); current-graph traversal cannot evaluate deletions", change.StableID)
 		}

@@ -564,3 +564,7 @@ GO-1.27.2-TOOLS validation found golangci-lint v2.13.1 also cannot decode Go 1.2
 
 Owner-approved caller attribution replaces repository-global session selection. CLI and MCP use explicit session IDs; unrelated readers leave audits unchanged, concurrent owners have independent logs, and foreign writes/end/cleanup refuse. Scoring and historical records are unchanged. session-scope.md records storage and compatibility. Final validation and release evidence belong to the workspace report GOGRAPH-SESSION-SCOPE.txt. No external configuration change is needed.
 The ownership selector is cooperative rather than an authentication credential; audit scoring and existing session records keep their original format.
+
+## [2026-10-10] decision | GOGRAPH-SESSIONS-2
+
+Isolated v1.7.12 fixtures confirm independent read-only callers are unblocked and precise usages already index typed/untyped constants in comparisons, switch cases, composite values and function arguments. Broad query omitted those references; plan/review failed on repeated blank assertions. Query now exposes resolved reference sites; blank declarations remain census evidence while traversal skips them with a review limitation. Caller ownership/scoring, named identity/deletion refusals and source safety remain binding. The co-versioned repository ledger records this goal; red/green native evidence and the v1.7.13 publication IDs are in the workspace GOGRAPH-SESSIONS-2 report. No owner installation or other repository graph mutation occurred.
