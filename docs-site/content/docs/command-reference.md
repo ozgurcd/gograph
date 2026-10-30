@@ -1240,8 +1240,9 @@ cleanup are confined to the project; cleanup removes only validated inactive
 regular logs with an end record. Each created session has an independent active
 marker and random suffix, so equal labels and simultaneous creation do not share
 a pointer. Owners keep the existing scoring rules. An unselected caller cannot
-end a session. Markers record the owner (`cli` or `mcp`), process ID, host,
-working directory and creation time. Cleanup never deletes: it moves files into
+end a session. Markers hold only the session ID; a `session_<id>.meta.json`
+sidecar records the owner (`cli` or `mcp`), process ID, host, working directory
+and creation time. Cleanup never deletes: it moves files into
 `.gograph/_to_delete/<UTC time>_<suffix>/`. It first ends and archives other
 callers' sessions idle over 24 hours or owned by an exited MCP server on this
 host, printing each, and archives an unselected legacy pointer; it then refuses

@@ -74,19 +74,24 @@ func deadPID(t *testing.T) int {
 	return cmd.Process.Pid
 }
 
-func TestCallerMarkerRecordsOwner(t *testing.T) {
+// v1.7.14 reads a marker only when its bytes equal the session ID, so the
+// marker stays bare and the owner metadata lives in a sidecar file.
+func TestCallerMarkerIsBareIDWithMetadataSidecar(t *testing.T) {
 	root := t.TempDir()
 	id, err := StartCallerSessionAt(root, "owner", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(sessionFile(root, id, ".active"))
+	if data, err := os.ReadFile(sessionFile(root, id, ".active")); err != nil || string(data) != id {
+		t.Fatalf("marker = %q, %v; want the bare session ID", data, err)
+	}
+	data, err := os.ReadFile(sessionFile(root, id, ".meta.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var marker CallerMarker
 	if err := json.Unmarshal(data, &marker); err != nil {
-		t.Fatalf("marker is not JSON: %q", data)
+		t.Fatalf("sidecar is not JSON: %q", data)
 	}
 	host, _ := os.Hostname()
 	cwd, _ := os.Getwd()
@@ -198,7 +203,7 @@ func TestCleanupEndsSessionsOfGoneMCPServersOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 		data, _ := json.Marshal(CallerMarker{ID: id, Owner: owner, PID: pid, Host: host, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
-		if err := os.WriteFile(sessionFile(root, id, ".active"), data, 0o644); err != nil {
+		if err := os.WriteFile(sessionFile(root, id, ".meta.json"), data, 0o644); err != nil {
 			t.Fatal(err)
 		}
 		ids[owner] = id
@@ -209,6 +214,78 @@ func TestCleanupEndsSessionsOfGoneMCPServersOnly(t *testing.T) {
 	}
 	if !slices.Equal(report.Ended, []string{ids[OwnerMCP]}) {
 		t.Fatalf("ended = %v, want only the MCP session %s", report.Ended, ids[OwnerMCP])
+	}
+}
+
+// Commit c7383dc wrote JSON markers; any left on disk still parse, and their
+// owner metadata still counts.
+func TestCallerMarkerAcceptsJSONMarkerShape(t *testing.T) {
+	root := t.TempDir()
+	host, _ := os.Hostname()
+	id, err := StartCallerSessionOwnedAt(root, "jsonmarker", "", OwnerMCP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(sessionFile(root, id, ".meta.json")); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(CallerMarker{ID: id, Owner: OwnerMCP, PID: deadPID(t), Host: host})
+	if err := os.WriteFile(sessionFile(root, id, ".active"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ActiveCallerSessionAt(root, id); err != nil {
+		t.Fatalf("JSON marker rejected: %v", err)
+	}
+	report, err := CleanupCallerSessionsReportAt(root, "")
+	if err != nil || !slices.Equal(report.Ended, []string{id}) {
+		t.Fatalf("cleanup = %+v, %v; want the gone MCP owner's session ended", report, err)
+	}
+}
+
+// A bare marker without a sidecar (older releases) carries no owner, so only
+// idle time can end it.
+func TestBareMarkerWithoutSidecarUsesIdleRuleOnly(t *testing.T) {
+	root := t.TempDir()
+	id, err := StartCallerSessionOwnedAt(root, "bare", "", OwnerMCP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(sessionFile(root, id, ".meta.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CleanupCallerSessionsReportAt(root, ""); err == nil || !strings.Contains(err.Error(), id) {
+		t.Fatalf("cleanup error = %v, want the recent bare session kept", err)
+	}
+	ageCallerLog(t, root, id)
+	report, err := CleanupCallerSessionsReportAt(root, "")
+	if err != nil || !slices.Equal(report.Ended, []string{id}) {
+		t.Fatalf("cleanup = %+v, %v; want the idle bare session ended", report, err)
+	}
+}
+
+func TestCleanupArchivesSidecarWithItsSession(t *testing.T) {
+	root := t.TempDir()
+	stale, err := StartCallerSessionAt(root, "stale", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ageCallerLog(t, root, stale)
+	done, err := StartCallerSessionAt(root, "done", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EndCallerSessionAt(root, done); err != nil {
+		t.Fatal(err)
+	}
+	report, err := CleanupCallerSessionsReportAt(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{stale, done} {
+		archived(t, root, report, "session_"+id+".meta.json")
+		if _, err := os.Stat(sessionFile(root, id, ".meta.json")); !os.IsNotExist(err) {
+			t.Fatalf("sidecar of %s left in sessions: %v", id, err)
+		}
 	}
 }
 

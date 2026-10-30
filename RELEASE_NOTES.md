@@ -8,17 +8,22 @@
   above that directory is never used, so a linked worktree or nested module
   keeps all its state in its own `.gograph/`. A nested module is its own
   project.
-- Session markers (`session_<id>.active`) are now JSON with `id`, `owner`
-  (`cli` or `mcp`), `pid`, `host`, `cwd` and `created_at`. Markers written by
-  older releases (the bare ID) are still accepted. Older releases refuse the
-  new marker format, so upgrade every gograph process that shares a project,
-  including running MCP servers, together.
+- Session markers (`session_<id>.active`) stay the bare session ID, exactly as
+  v1.7.14 writes and reads them, so mixed versions share a project during an
+  upgrade. Owner metadata (`id`, `owner` `cli` or `mcp`, `pid`, `host`, `cwd`,
+  `created_at`) goes in a `session_<id>.meta.json` sidecar, written atomically
+  before the marker. A marker without a sidecar, and a JSON marker of the same
+  shape, are also read; without metadata only idle time ends a session.
+- An MCP server started on a directory with no `.git` or `go.mod` above it
+  treats that directory as its own project root and keeps its state there.
 - `session cleanup` (CLI and `gograph_session_cleanup`) never deletes. It moves
   files into a new `.gograph/_to_delete/<UTC time>_<suffix>/` folder per pass.
   It first ends other callers' stale sessions: idle over 24 hours, or owned by
   an MCP server whose process has exited on this host. Each gets a `stale` end
-  record and is printed. A CLI marker's process exits at creation, so CLI
-  sessions are judged by idle time only. Cleanup still refuses while another
+  record and is printed, and its marker, log and sidecar move together. A CLI
+  creator's process exits at creation, so CLI sessions are judged by idle time
+  only. Sidecars left after an older release deleted their session are
+  archived too. Cleanup still refuses while another
   caller's session is live; otherwise it archives ended logs and unmarked logs
   idle over 24 hours.
 - A legacy `active_session.json` pointer no longer blocks other callers. It

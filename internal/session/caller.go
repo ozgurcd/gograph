@@ -40,8 +40,18 @@ func (s *sessionStore) activeCallerIDs() ([]string, error) {
 	return slices.Compact(ids), nil
 }
 
-// CallerMarker is the content of a session_<id>.active marker. Markers written
-// before v1.7.15 hold only the ID; they parse with the other fields empty.
+// callerMeta is the owner metadata sidecar of a session marker.
+func callerMeta(id string) (string, error) {
+	if err := validateSessionID(id); err != nil {
+		return "", err
+	}
+	return filepath.Join(relSessionsDir, "session_"+id+".meta.json"), nil
+}
+
+// CallerMarker is a session's owner metadata. The session_<id>.active marker
+// holds only the ID, which every release reads; the fields live in the
+// session_<id>.meta.json sidecar. A JSON marker of the same shape is also
+// read. Without metadata the fields are empty and only idle time applies.
 type CallerMarker struct {
 	ID        string `json:"id"`
 	Owner     string `json:"owner,omitempty"`
@@ -73,6 +83,25 @@ func parseCallerMarker(id string, data []byte) (CallerMarker, bool) {
 		return CallerMarker{}, false
 	}
 	return marker, true
+}
+
+// callerMetadata returns the sidecar metadata for id, or fallback when the
+// sidecar is missing, unsafe or names another session. Metadata only adds
+// evidence for ending a session, so its absence never fails a command.
+func (s *sessionStore) callerMetadata(id string, fallback CallerMarker) CallerMarker {
+	meta, err := callerMeta(id)
+	if err != nil {
+		return fallback
+	}
+	data, err := s.files.ReadRegularFile(meta)
+	if err != nil {
+		return fallback
+	}
+	var marker CallerMarker
+	if json.Unmarshal(data, &marker) != nil || marker.ID != id {
+		return fallback
+	}
+	return marker
 }
 
 // markerCallerIDs lists sessions that hold a caller marker.
@@ -122,6 +151,9 @@ func (s *sessionStore) callerMarkers() (map[string]CallerMarker, error) {
 		parsed, ok := parseCallerMarker(id, data)
 		if !ok {
 			return nil, fmt.Errorf("invalid active session marker %q", name)
+		}
+		if parsed.Owner == "" {
+			parsed = s.callerMetadata(id, parsed)
 		}
 		markers[id] = parsed
 	}
@@ -232,12 +264,23 @@ func StartCallerSessionOwnedAt(root, word, id, owner string) (string, error) {
 	// Publish only complete bytes. A directly created marker is visible to
 	// concurrent creators before WriteRegularFile has written its contents.
 	// The exclusively created log reserves this collision-resistant ID.
-	markerData, err := json.Marshal(newCallerMarker(id, owner))
+	// The marker stays the bare ID that v1.7.14 reads; owner metadata goes to
+	// a sidecar published first, so a visible marker always has it.
+	meta, err := callerMeta(id)
 	if err != nil {
 		_ = store.files.RemoveRegularFile(path)
 		return "", err
 	}
-	if err := store.files.AtomicReplaceRegularFile(marker, markerData, 0644); err != nil {
+	metaData, err := json.Marshal(newCallerMarker(id, owner))
+	if err == nil {
+		err = store.files.AtomicReplaceRegularFile(meta, metaData, 0644)
+	}
+	if err != nil {
+		_ = store.files.RemoveRegularFile(path)
+		return "", err
+	}
+	if err := store.files.AtomicReplaceRegularFile(marker, []byte(id), 0644); err != nil {
+		_ = store.files.RemoveRegularFile(meta)
 		_ = store.files.RemoveRegularFile(path)
 		return "", err
 	}
@@ -463,7 +506,57 @@ func (s *sessionStore) archiveStaleCallers(selected string, archive *sessionArch
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
+		if err := s.archiveSidecar(id, archive); err != nil {
+			return err
+		}
 		report.Ended = append(report.Ended, id)
+	}
+	return nil
+}
+
+// archiveSidecar moves a session's metadata sidecar, if any, with its session.
+func (s *sessionStore) archiveSidecar(id string, archive *sessionArchive) error {
+	meta, err := callerMeta(id)
+	if err != nil {
+		return err
+	}
+	if err := archive.move(meta); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// archiveOrphanSidecars moves sidecars whose marker and log are both gone, for
+// example after an older release ended and deleted that session.
+func (s *sessionStore) archiveOrphanSidecars(selected string, archive *sessionArchive) error {
+	entries, err := s.files.ReadDirectory(relSessionsDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, "session_") || !strings.HasSuffix(name, ".meta.json") {
+			continue
+		}
+		id := strings.TrimSuffix(strings.TrimPrefix(name, "session_"), ".meta.json")
+		if validateSessionID(id) != nil || id == selected {
+			continue
+		}
+		orphan := true
+		for _, sibling := range []func(string) (string, error){callerMarker, sessionLogPath} {
+			path, err := sibling(id)
+			if err != nil {
+				return err
+			}
+			if _, err := s.files.ReadRegularFile(path); !errors.Is(err, os.ErrNotExist) {
+				orphan = false
+			}
+		}
+		if orphan {
+			if err := s.archiveSidecar(id, archive); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -535,8 +628,11 @@ func CleanupCallerSessionsReportAt(root, id string) (report CleanupReport, err e
 			return report, err
 		}
 		report.Archived++
+		if err := store.archiveSidecar(logID, archive); err != nil {
+			return report, err
+		}
 	}
-	return report, nil
+	return report, store.archiveOrphanSidecars(id, archive)
 }
 
 // CleanupCallerSessionsAt is CleanupCallerSessionsReportAt returning only the
