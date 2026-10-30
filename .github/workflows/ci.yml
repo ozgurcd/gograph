@@ -14,7 +14,7 @@ jobs:
       with:
         fetch-depth: 0
 
-    - uses: ozgurcd/lictor/.github/actions/go-toolchain@d35a8ad07dc59bd76153f0ed7d3b1ade22c6cf04
+    - uses: ozgurcd/lictor/.github/actions/go-toolchain@fda0c2afaa765f190b7e331113a71570db802199
     - name: Verify Dependencies
       run: go mod verify
 

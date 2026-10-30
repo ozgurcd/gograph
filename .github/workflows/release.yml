@@ -42,7 +42,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: ozgurcd/lictor/.github/actions/go-toolchain@d35a8ad07dc59bd76153f0ed7d3b1ade22c6cf04
+      - uses: ozgurcd/lictor/.github/actions/go-toolchain@fda0c2afaa765f190b7e331113a71570db802199
       - name: Validate tag, versions, and main ancestry
         id: metadata
         shell: bash
@@ -165,7 +165,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: ozgurcd/lictor/.github/actions/go-toolchain@d35a8ad07dc59bd76153f0ed7d3b1ade22c6cf04
+      - uses: ozgurcd/lictor/.github/actions/go-toolchain@fda0c2afaa765f190b7e331113a71570db802199
       - name: Rebuild and verify immutable MCP bundles
         run: |
           go run ./cmd/mcpb-release build --version "${{ needs.verify.outputs.version }}" --output .release-mcpb
@@ -314,7 +314,7 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
           persist-credentials: false
 
-      - uses: ozgurcd/lictor/.github/actions/go-toolchain@d35a8ad07dc59bd76153f0ed7d3b1ade22c6cf04
+      - uses: ozgurcd/lictor/.github/actions/go-toolchain@fda0c2afaa765f190b7e331113a71570db802199
       - name: Verify released MCP bundles and inspect Registry state
         id: registry_state
         env:
@@ -380,7 +380,7 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
           persist-credentials: false
 
-      - uses: ozgurcd/lictor/.github/actions/go-toolchain@d35a8ad07dc59bd76153f0ed7d3b1ade22c6cf04
+      - uses: ozgurcd/lictor/.github/actions/go-toolchain@fda0c2afaa765f190b7e331113a71570db802199
       - name: Verify active Registry entry
         run: |
           test "$(go run ./cmd/mcpb-release registry-state --server server.json --wait 2m)" = matching

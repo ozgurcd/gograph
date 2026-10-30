@@ -158,7 +158,7 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 		if strings.HasSuffix(test.path, "release.yml") {
 			want = 4
 		}
-		const action = "uses: ozgurcd/lictor/.github/actions/go-toolchain@d35a8ad07dc59bd76153f0ed7d3b1ade22c6cf04"
+		const action = "uses: ozgurcd/lictor/.github/actions/go-toolchain@fda0c2afaa765f190b7e331113a71570db802199"
 		if got := strings.Count(contents, action); got != want {
 			t.Errorf("%s has %d shared toolchain steps, want %d", test.path, got, want)
 		}
