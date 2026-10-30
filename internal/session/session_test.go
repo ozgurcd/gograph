@@ -555,9 +555,13 @@ func TestSessionAttribution_SubdirectoryRootDiscovery(t *testing.T) {
 	if err := os.MkdirAll(subdir, 0o755); err != nil {
 		t.Fatalf("mkdir subdir: %v", err)
 	}
-	// Create the .gograph marker directory so FindGographRoot can find root.
+	// The go.mod project marker, not the .gograph directory, makes root the
+	// project root that FindGographRoot finds from subdir.
 	if err := os.MkdirAll(filepath.Join(root, ".gograph"), 0o755); err != nil {
 		t.Fatalf("mkdir .gograph: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.test/root\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
 	}
 
 	orig, err := os.Getwd()

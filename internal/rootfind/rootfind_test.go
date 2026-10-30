@@ -31,6 +31,7 @@ func TestFindRoot_FromRoot(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".gograph"), 0o755); err != nil {
 		t.Fatalf("mkdir .gograph: %v", err)
 	}
+	mustWrite(t, filepath.Join(root, "go.mod"), "module example.test/root\n")
 
 	orig, err := os.Getwd()
 	if err != nil {
@@ -58,6 +59,8 @@ func TestFindRoot_FromSubdirectory(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".gograph"), 0o755); err != nil {
 		t.Fatalf("mkdir .gograph: %v", err)
 	}
+	// The project marker, not the .gograph directory, makes root the root.
+	mustWrite(t, filepath.Join(root, "go.mod"), "module example.test/root\n")
 
 	orig, err := os.Getwd()
 	if err != nil {
@@ -83,6 +86,7 @@ func TestFindRoot_IgnoresLinkedGographDirectory(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(outer, ".gograph"), 0o755); err != nil {
 		t.Fatalf("mkdir outer .gograph: %v", err)
 	}
+	mustWrite(t, filepath.Join(outer, "go.mod"), "module example.test/outer\n")
 	if err := os.MkdirAll(inner, 0o755); err != nil {
 		t.Fatalf("mkdir inner repository: %v", err)
 	}
@@ -112,6 +116,7 @@ func TestFindRootFrom(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(indexed, ".gograph"), 0o755); err != nil {
 		t.Fatalf("mkdir indexed root: %v", err)
 	}
+	mustWrite(t, filepath.Join(indexed, "go.mod"), "module example.test/indexed\n")
 
 	tests := []struct {
 		name  string
@@ -162,8 +167,9 @@ func TestFindRepositoryRootIgnoresWorkspaceOnlyArtifactDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspaceDir, "graph.json"), []byte(`{"version":"`+graph.Version+`"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := FindRepositoryRootFrom(child); !ok || got != root {
-		t.Fatalf("FindRepositoryRootFrom = (%q, %v), want (%q, true)", got, ok, root)
+	// A valid graph in an unmarked ancestor is unrelated state, not a root.
+	if got, ok := FindRepositoryRootFrom(child); ok {
+		t.Fatalf("FindRepositoryRootFrom = (%q, true); an ancestor graph established a root", got)
 	}
 }
 

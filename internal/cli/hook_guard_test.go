@@ -765,6 +765,10 @@ func TestEvaluateHookCommandIndexedScope(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(indexed, ".gograph"), 0o755); err != nil {
 		t.Fatalf("mkdir indexed root: %v", err)
 	}
+	// The project marker makes indexed the root of its subdirectories.
+	if err := os.WriteFile(filepath.Join(indexed, "go.mod"), []byte("module example.test/indexed\n"), 0o644); err != nil {
+		t.Fatalf("write indexed go.mod: %v", err)
+	}
 	if err := os.MkdirAll(indexedNested, 0o755); err != nil {
 		t.Fatalf("mkdir indexed nested directory: %v", err)
 	}

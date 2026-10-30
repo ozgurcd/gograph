@@ -7,7 +7,9 @@
   `.git` (directory or worktree file) or `go.mod`. An ancestor `.gograph`
   above that directory is never used, so a linked worktree or nested module
   keeps all its state in its own `.gograph/`. A nested module is its own
-  project.
+  project. Outside any `.git` or `go.mod`, the start directory itself is the
+  project root for every operation; no command searches ancestors for
+  `.gograph` state or a graph.
 - Session markers (`session_<id>.active`) stay the bare session ID, exactly as
   v1.7.14 writes and reads them, so mixed versions share a project during an
   upgrade. Owner metadata (`id`, `owner` `cli` or `mcp`, `pid`, `host`, `cwd`,
