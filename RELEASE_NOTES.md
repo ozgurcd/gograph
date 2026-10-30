@@ -47,6 +47,7 @@
   precise loading uses, even when the root's `go.work` uses them and under any
   `GOWORK` setting, so AST and precise selection agree. A nested module no
   longer forces a precise build to fall back; build it as its own project.
+- Built with Go 1.27.3 (fixes GO-2026-6809 in crypto/x509).
 - No installation or MCP restart happens automatically. Restart an existing MCP
   server after choosing to upgrade; v1.7.14 and v1.7.15 can share a project
   while processes upgrade.
