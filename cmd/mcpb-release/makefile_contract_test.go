@@ -257,7 +257,7 @@ func TestMakeAnalysisToolsUsePinnedVersions(t *testing.T) {
 		target  string
 		command string
 	}{
-		{"staticcheck", "staticcheck --version | grep -F \"(0.8.1)\""},
+		{"staticcheck", "staticcheck --version | grep -F \"(0.8.2)\""},
 		{"staticcheck", "staticcheck ./..."},
 		{"lint", "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run ./..."},
 		{"govulncheck", "go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./..."},
