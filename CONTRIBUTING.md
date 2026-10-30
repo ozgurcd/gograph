@@ -110,6 +110,9 @@ remote's `main` together with the tag. The tag starts the immutable GitHub
 release, Homebrew reconciliation, and official MCP Registry publication
 workflow.
 
+The `make bump-*` targets need a tool change before their next use; see
+"Maintainer note: version bump tool" in `docs/mcp-registry.md`.
+
 The command fails closed before publishing unless HEAD is attached to a branch,
 the worktree is clean, the selected remote's `main` is an ancestor of HEAD, the
 current declared version has a remote baseline tag in that history, the next

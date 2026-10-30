@@ -263,6 +263,27 @@ release gate, checks that the version is unpublished, and atomically pushes the
 commit and tag without incrementing the version. Do not push the prepared tag
 before this verification, reuse a published version, or move an existing tag.
 
+### Maintainer note: version bump tool
+
+`make bump-patch`, `bump-minor`, and `bump-major` call `bump2version` 1.0.1,
+which no longer runs on Python 3.13 or newer (it imports the removed
+`sre_constants` module). Before the next release that uses these targets:
+
+- switch them to the Rust `bumpversion` (romnn; Homebrew cask
+  `romnn/tap/bumpversion`), which reads `.bumpversion.cfg`;
+- stop the `RELEASE_NOTES.md` `extra_files` rule from replacing every
+  occurrence of the old version, which would rewrite earlier release headings;
+- add the `server.json` render step: `mcpb-release build` and
+  `render-server` for the new version into a fresh `.release-work/` folder,
+  using the Go version in `go.mod`, because the tag workflow compares the
+  committed `server.json` with a fresh render.
+
+Until then, bump by hand as for v1.7.15: set `current_version` in
+`.bumpversion.cfg` and `"version"` in `plugin.json`, give the new
+`RELEASE_NOTES.md` section its version and date, then build the four MCPBs
+into a fresh `.release-work/` folder and run `render-server` to write
+`server.json`.
+
 GoReleaser publishes the ordinary archives, four MCPBs, `server.json`, and
 checksums from the verified tag. The workflow then idempotently reconciles the
 generated Homebrew cask, waits until every Registry-referenced asset is
