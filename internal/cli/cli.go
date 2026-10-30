@@ -1008,13 +1008,10 @@ func parseBuildArgs(args []string) (buildOptions, error) {
 	return options, nil
 }
 
-// buildProjectRoot applies the shared project-root rule to a build path, so
-// build, sessions, queries and cleanup use one root.
-func buildProjectRoot(path string) string {
-	if root, ok := rootfind.ProjectRootFrom(path); ok {
-		return root
-	}
-	return path
+// projectRoot applies the shared project-root rule to a build or MCP path, so
+// guards, graph loading, sessions, queries and cleanup use one root.
+func projectRoot(path string) string {
+	return rootfind.ResolveProjectRoot(path)
 }
 
 func runBuild(args []string) int {
@@ -1022,7 +1019,7 @@ func runBuild(args []string) int {
 	if err != nil {
 		return failCommandf("build", "invalid build arguments: %v", err)
 	}
-	options.Root = buildProjectRoot(options.Root)
+	options.Root = projectRoot(options.Root)
 	controller, err := memorylimit.Apply(options.Memory)
 	if err != nil {
 		return failCommandf("build", "invalid memory policy: %v", err)
@@ -2505,11 +2502,7 @@ func prepareMCPGraph(options mcpOptions) (*graph.Graph, string, error) {
 }
 
 func prepareMCPGraphWithState(options mcpOptions) (*graph.Graph, string, graphstate.State, error) {
-	root := options.Root
-	if root == "." {
-		root = rootfind.FindRepositoryRoot()
-	}
-	absRoot, err := filepath.Abs(root)
+	absRoot, err := filepath.Abs(projectRoot(options.Root))
 	if err != nil {
 		return nil, "", graphstate.State{}, fmt.Errorf("resolving path: %w", err)
 	}

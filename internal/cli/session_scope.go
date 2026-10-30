@@ -5,15 +5,12 @@ var callerSessionID string
 func callerCommandRoot(args []string) string {
 	if args[0] == "build" {
 		if options, err := parseBuildArgs(args[1:]); err == nil {
-			return buildProjectRoot(options.Root)
+			return projectRoot(options.Root)
 		}
 	}
 	if args[0] == "mcp" {
 		if options, err := parseMCPArgs(args[1:]); err == nil {
-			if options.Root == "." {
-				return ""
-			}
-			return options.Root
+			return projectRoot(options.Root)
 		}
 	}
 	return ""

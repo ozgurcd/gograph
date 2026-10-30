@@ -16,8 +16,12 @@
   `created_at`) goes in a `session_<id>.meta.json` sidecar, written atomically
   before the marker. A marker without a sidecar, and a JSON marker of the same
   shape, are also read; without metadata only idle time ends a session.
-- An MCP server started on a directory with no `.git` or `go.mod` above it
-  treats that directory as its own project root and keeps its state there.
+- An MCP server's path, explicit or `.`, resolves through the same rule
+  before its guards, graph loading and session storage, so `gograph mcp
+  repo/sub` serves `repo`. An MCP server started on a directory with no `.git`
+  or `go.mod` above it treats that directory as its own project root and keeps
+  its state there. A linked start directory is resolved before its ancestors
+  are searched.
 - `session cleanup` (CLI and `gograph_session_cleanup`) never deletes. It moves
   files into a new `.gograph/_to_delete/<UTC time>_<suffix>/` folder per pass.
   It first ends other callers' stale sessions: idle over 24 hours, or owned by
