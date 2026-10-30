@@ -394,20 +394,24 @@ func TestNestedModuleBoundaryChangesMakeGraphStale(t *testing.T) {
 		skipCoverageCacheFallback(t, preciseGraph)
 		t.Fatalf("initial precise graph: %v", err)
 	}
+	// A new nested module boundary removes its files from the selection, so
+	// the graph is stale for both the context and the excluded file.
 	boundaryPath := writeBuildContextFixture(t, root, "nested/go.mod", "module example.com/nested\n\ngo 1.26\n")
-	if stale := search.Stale(preciseGraph, root); !stale.IsStale || !stale.BuildContextChanged || len(stale.ChangedFiles) != 0 {
-		t.Fatalf("added nested module boundary was not a context-only freshness change: %+v", stale)
+	nestedChild := []string{filepath.ToSlash(filepath.Join("nested", "child.go"))}
+	if stale := search.Stale(preciseGraph, root); !stale.IsStale || !stale.BuildContextChanged || !reflect.DeepEqual(stale.ChangedFiles, nestedChild) {
+		t.Fatalf("added nested module boundary did not exclude its file: %+v", stale)
 	}
 
-	fallbackGraph, err := buildPreciseGraph(root)
-	if err == nil || fallbackGraph == nil || fallbackGraph.Build.EffectivePrecision() != graph.PrecisionFallback {
-		t.Fatalf("nested module boundary did not preserve genuine fallback: graph=%+v err=%v", fallbackGraph, err)
+	boundedGraph, err := buildPreciseGraph(root)
+	if err != nil {
+		skipCoverageCacheFallback(t, boundedGraph)
+		t.Fatalf("nested module boundary still forced a precise fallback: graph=%+v err=%v", boundedGraph, err)
 	}
 	if err := os.Remove(boundaryPath); err != nil {
 		t.Fatal(err)
 	}
-	if stale := search.Stale(fallbackGraph, root); !stale.IsStale || !stale.BuildContextChanged || len(stale.ChangedFiles) != 0 {
-		t.Fatalf("removed nested module boundary was not a context-only freshness change: %+v", stale)
+	if stale := search.Stale(boundedGraph, root); !stale.IsStale || !stale.BuildContextChanged || !reflect.DeepEqual(stale.ChangedFiles, nestedChild) {
+		t.Fatalf("removed nested module boundary did not restore its file: %+v", stale)
 	}
 }
 
@@ -473,7 +477,9 @@ func TestExplicitIgnoreTagMatchesGoToolchain(t *testing.T) {
 	}
 }
 
-func TestBuildPreciseGraphKeepsFallbackForNestedModuleCoverageGap(t *testing.T) {
+// The AST walk skips a nested module like cmd/go, so precise loading covers
+// every indexed file and the nested module's sources stay out of the graph.
+func TestBuildPreciseGraphSkipsNestedModule(t *testing.T) {
 	setDeterministicBuildEnvironment(t, "")
 	root := t.TempDir()
 	writeBuildContextFixture(t, root, "go.mod", "module example.com/parent\n\ngo 1.26\n")
@@ -483,22 +489,21 @@ func TestBuildPreciseGraphKeepsFallbackForNestedModuleCoverageGap(t *testing.T) 
 	writeBuildContextFixture(t, root, "nested/ignored/noise.go", "package ignored\nfunc NestedIgnoredSentinel() {}\n")
 
 	g, err := buildPreciseGraph(root)
-	if err == nil {
-		t.Fatal("buildPreciseGraph unexpectedly accepted a nested-module coverage gap")
+	if err != nil {
+		skipCoverageCacheFallback(t, g)
+		t.Fatalf("nested module forced a precise fallback: %v", err)
 	}
-	skipCoverageCacheFallback(t, g)
-	if g == nil || g.Build.EffectivePrecision() != graph.PrecisionFallback {
-		t.Fatalf("nested-module graph did not record precise_fallback: graph=%+v", g)
-	}
-	if !strings.Contains(err.Error(), "omitted 1 indexed production file") || !strings.Contains(err.Error(), filepath.Join("nested", "child.go")) {
-		t.Fatalf("unexpected coverage error: %v", err)
+	if g == nil || g.Build.EffectivePrecision() == graph.PrecisionFallback {
+		t.Fatalf("nested-module graph is not precise: graph=%+v", g)
 	}
 	encoded, marshalErr := json.Marshal(g)
 	if marshalErr != nil {
 		t.Fatal(marshalErr)
 	}
-	if strings.Contains(string(encoded), "NestedIgnoredSentinel") {
-		t.Fatal("nested module ignore directive leaked into fallback graph")
+	for _, sentinel := range []string{"NestedIgnoredSentinel", filepath.ToSlash(filepath.Join("nested", "child.go"))} {
+		if strings.Contains(string(encoded), sentinel) {
+			t.Fatalf("nested module source %q leaked into the graph", sentinel)
+		}
 	}
 }
 

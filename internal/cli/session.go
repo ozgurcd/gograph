@@ -46,12 +46,17 @@ func runSession(args []string) int {
 		return session.RunAudit(sessionID, jsonMode)
 
 	case "cleanup":
-		count, err := session.CleanupCallerSessionsAt("", callerSessionID)
+		report, err := session.CleanupCallerSessionsReportAt("", callerSessionID)
+		for _, line := range report.Lines() {
+			fmt.Println(line)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error cleaning up sessions: %v\n", err)
 			return 1
 		}
-		fmt.Printf("Successfully deleted %d stale session log files.\n", count)
+		if report.ArchiveDir == "" {
+			fmt.Println("Nothing to archive.")
+		}
 		return 0
 
 	default:
@@ -66,7 +71,7 @@ func printSessionHelp() {
 	fmt.Println("  gograph session create [unique_identifier_word]  - Starts a new audit session")
 	fmt.Println("  gograph session end                              - Ends the active audit session")
 	fmt.Println("  gograph session audit [session_id]               - Audits and scores agent compliance & success")
-	fmt.Println("  gograph session cleanup                          - Deletes all inactive session log files")
+	fmt.Println("  gograph session cleanup                          - Ends stale sessions, then moves inactive logs into .gograph/_to_delete/")
 }
 
 func printSessionVerbHelp(verb string) bool {
@@ -84,7 +89,7 @@ func printSessionVerbHelp(verb string) bool {
 		options = "  --json        Print the native structured audit result.\n"
 	case "cleanup":
 		usage = "cleanup"
-		description = "Delete inactive session logs; preserve the selected active session and refuse while any other caller is active."
+		description = "Never deletes: moves files into .gograph/_to_delete/<UTC time>_<suffix>/. First ends other callers' sessions idle over 24h or owned by an exited MCP server on this host, printing each, and archives an unselected legacy active_session.json; then archives ended logs. Preserves the selected session and refuses while any other caller is still live."
 	default:
 		return false
 	}

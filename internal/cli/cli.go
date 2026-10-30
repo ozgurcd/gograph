@@ -1008,11 +1008,21 @@ func parseBuildArgs(args []string) (buildOptions, error) {
 	return options, nil
 }
 
+// buildProjectRoot applies the shared project-root rule to a build path, so
+// build, sessions, queries and cleanup use one root.
+func buildProjectRoot(path string) string {
+	if root, ok := rootfind.ProjectRootFrom(path); ok {
+		return root
+	}
+	return path
+}
+
 func runBuild(args []string) int {
 	options, err := parseBuildArgs(args)
 	if err != nil {
 		return failCommandf("build", "invalid build arguments: %v", err)
 	}
+	options.Root = buildProjectRoot(options.Root)
 	controller, err := memorylimit.Apply(options.Memory)
 	if err != nil {
 		return failCommandf("build", "invalid memory policy: %v", err)
@@ -3129,8 +3139,10 @@ INDEXING
                              Artifacts over 512 MiB are rejected before allocation;
                              build reconstructs oversized previous state from source.
                              Inactive build-constrained files, cmd/go wildcard-excluded
-                             directories, generated sources, go.mod ignore paths, AI
-                             worktrees, and Git-ignored paths are automatically skipped.
+                             directories, nested modules not used by go.work, generated
+                             sources, go.mod ignore paths, AI worktrees, and Git-ignored
+                             paths are automatically skipped. The path resolves to its
+                             project root (nearest .git or go.mod).
   stale [--tags=<tag[,tag...]>] [--exclude-dirs=<dir1,dir2>]
                              Check selected files, build context, and content digests.
                              Exit 0 when current, 2 when stale, and 1 on error;
@@ -3560,9 +3572,12 @@ AGENT INTEGRATION
                              - create [unique_word]: Starts an audit session.
                              - end: Ends the active session.
                              - audit [session_id]: Audits and scores agent compliance & success.
-                             - cleanup: Deletes stale inactive session log files.
+                             - cleanup: Ends stale sessions of other callers, then moves
+                               inactive session logs into .gograph/_to_delete/<time>/.
                              Session IDs and regular files are confined beneath the
-                             project's real .gograph/sessions directory.
+                             project's real .gograph/sessions directory. The project
+                             root is the nearest directory with .git or go.mod; an
+                             ancestor .gograph above it is never used.
                              Select your session with --session-id ID or GOGRAPH_SESSION=ID.
                              Owners keep intention and audit rules; unselected readers
                              neither require intentions nor enter another caller's audit.

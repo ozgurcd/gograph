@@ -2694,7 +2694,7 @@ func initNewTools(
 			}
 		}
 		callerID, _ := args["session_id"].(string)
-		sessionID, err := session.StartCallerSessionAt(serverRoot, customWord, callerID)
+		sessionID, err := session.StartCallerSessionOwnedAt(serverRoot, customWord, callerID, session.OwnerMCP)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -2746,16 +2746,20 @@ func initNewTools(
 
 	// Tool: gograph_session_cleanup
 	sessionCleanupTool := mcp.NewTool("gograph_session_cleanup",
-		mcp.WithDescription("Delete stale inactive regular session telemetry JSONL logs without following linked repository paths. Deletes only logs with end records; preserves the selected active log and refuses while any other caller is active. MCP annotations mark this operation mutating and destructive. No prerequisites. WHEN TO USE: Call after auditing to keep the repository clean. RETURNS: Number of deleted session files."),
+		mcp.WithDescription("Archive stale and inactive session telemetry without following linked repository paths; never deletes. Each pass moves files into .gograph/_to_delete/<UTC time>_<suffix>/. First ends other callers' sessions idle over 24h or owned by an exited MCP server on this host, listing each, and archives an unselected legacy active_session.json; then archives logs with end records; preserves the selected active log and refuses while any other caller is still live. MCP annotations mark this operation mutating and destructive. No prerequisites. WHEN TO USE: Call after auditing to keep the repository clean. RETURNS: Each ended session, any archived legacy pointer, and the number of session logs moved with the archive folder, or Nothing to archive."),
 	)
 	addTool(sessionCleanupTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args, _ := request.Params.Arguments.(map[string]any)
 		callerID, _ := args["session_id"].(string)
-		count, err := session.CleanupCallerSessionsAt(serverRoot, callerID)
+		report, err := session.CleanupCallerSessionsReportAt(serverRoot, callerID)
+		lines := report.Lines()
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return mcp.NewToolResultError(strings.Join(append(lines, err.Error()), "\n")), nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("Successfully deleted %d stale session log files.", count)), nil
+		if report.ArchiveDir == "" {
+			lines = append(lines, "Nothing to archive.")
+		}
+		return mcp.NewToolResultText(strings.Join(lines, "\n")), nil
 	})
 	// Tool: gograph_wiki
 	wikiTool := mcp.NewTool("gograph_wiki",

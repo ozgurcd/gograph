@@ -1,5 +1,32 @@
 # Release Notes
 
+## Unreleased
+
+- One project root for sessions, build, queries and cleanup: the nearest
+  directory, walking up from the working directory or build path, that holds
+  `.git` (directory or worktree file) or `go.mod`. An ancestor `.gograph`
+  above that directory is never used, so a linked worktree or nested module
+  keeps all its state in its own `.gograph/`. A nested module is its own
+  project.
+- Session markers (`session_<id>.active`) are now JSON with `id`, `owner`
+  (`cli` or `mcp`), `pid`, `host`, `cwd` and `created_at`. Markers written by
+  older releases (the bare ID) are still accepted. Older releases refuse the
+  new marker format, so upgrade every gograph process that shares a project,
+  including running MCP servers, together.
+- `session cleanup` (CLI and `gograph_session_cleanup`) never deletes. It moves
+  files into a new `.gograph/_to_delete/<UTC time>_<suffix>/` folder per pass.
+  It first ends other callers' stale sessions: idle over 24 hours, or owned by
+  an MCP server whose process has exited on this host. Each gets a `stale` end
+  record and is printed. A CLI marker's process exits at creation, so CLI
+  sessions are judged by idle time only. Cleanup still refuses while another
+  caller's session is live; otherwise it archives ended logs and unmarked logs
+  idle over 24 hours.
+- A legacy `active_session.json` pointer no longer blocks other callers. It
+  stays usable when selected by its ID; cleanup by another caller archives it.
+- The AST walk skips nested modules like `cmd/go` expanding `./...`, unless
+  the root's `go.work` uses them. A nested module no longer forces a precise
+  build to fall back; build it as its own project.
+
 ## v1.7.14 — 2026-10-10
 
 - Concurrent caller sessions publish complete active markers with a confined

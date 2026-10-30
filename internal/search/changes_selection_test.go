@@ -71,6 +71,15 @@ func TestChangesRecomputesModuleIdentityWhenGoBytesDoNotChange(t *testing.T) {
 			}
 			writeChangesSource(t, root, test.moduleFile, test.moduleSource)
 			result := Changes(baseline, root)
+			if test.name == "nested boundary" {
+				// A nested module is skipped like cmd/go, so its file leaves
+				// the selection and its declaration is excluded.
+				if result.Evaluation != "complete" || len(result.Symbols) != 1 || len(result.ChangedFiles) != 1 ||
+					result.Symbols[0].Status != ChangeExcluded || result.Symbols[0].StableID != "example.com/old/sub::Keep" {
+					t.Fatalf("nested module boundary = %+v", result)
+				}
+				return
+			}
 			if result.Evaluation != "complete" || len(result.Symbols) != 2 || len(result.ChangedFiles) != 1 {
 				t.Fatalf("module ownership change = %+v", result)
 			}

@@ -184,7 +184,9 @@ func TestFindRepositoryRootUsesAnalysisInputsFromFilePath(t *testing.T) {
 	}
 }
 
-func TestFindRepositoryRootPrefersEnclosingGraphOverNestedModule(t *testing.T) {
+// A nested module is its own project: the nearest go.mod wins over an
+// enclosing graph, matching the AST walk that skips nested modules.
+func TestFindRepositoryRootPrefersNestedModuleOverEnclosingGraph(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".gograph"), 0o755); err != nil {
 		t.Fatal(err)
@@ -199,8 +201,8 @@ func TestFindRepositoryRootPrefersEnclosingGraphOverNestedModule(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte("module example.com/nested\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := FindRepositoryRootFrom(filepath.Join(nested, "pkg")); !ok || got != root {
-		t.Fatalf("FindRepositoryRootFrom(nested module) = (%q, %v), want enclosing graph (%q, true)", got, ok, root)
+	if got, ok := FindRepositoryRootFrom(filepath.Join(nested, "pkg")); !ok || got != nested {
+		t.Fatalf("FindRepositoryRootFrom(nested module) = (%q, %v), want nested module (%q, true)", got, ok, nested)
 	}
 }
 

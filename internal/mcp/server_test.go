@@ -1424,7 +1424,7 @@ func TestGographSessionMCP(t *testing.T) {
 		t.Fatalf("cleanup failed: %s", resCleanup.Content[0].(mcp.TextContent).Text)
 	}
 	cleanupText := resCleanup.Content[0].(mcp.TextContent).Text
-	if !strings.Contains(cleanupText, "Successfully deleted") {
+	if !strings.Contains(cleanupText, "Archived 1 session log files to .gograph/_to_delete/") {
 		t.Errorf("expected successful cleanup message, got %s", cleanupText)
 	}
 }

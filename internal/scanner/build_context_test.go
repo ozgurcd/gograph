@@ -625,7 +625,9 @@ func TestWalkWithConfigDoesNotApplyModuleIgnoreWhenModulesDisabled(t *testing.T)
 	}
 }
 
-func TestWalkWithConfigMalformedNestedModuleFailsOpen(t *testing.T) {
+// A malformed nested go.mod still warns and still bounds a module: the walk
+// skips it like any nested module.
+func TestWalkWithConfigMalformedNestedModuleWarnsAndIsSkipped(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "go.mod"), "module example.com/root\n\ngo 1.26\n")
 	mustWrite(t, filepath.Join(root, "root.go"), "package root\n")
@@ -637,7 +639,7 @@ func TestWalkWithConfigMalformedNestedModuleFailsOpen(t *testing.T) {
 		t.Fatalf("WalkWithContext errors = %v, want one malformed-module warning", errs)
 	}
 	got := relativePaths(t, root, paths)
-	want := []string{"nested/child.go", "root.go"}
+	want := []string{"root.go"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("selected files = %v, want %v", got, want)
 	}

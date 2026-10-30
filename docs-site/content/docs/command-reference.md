@@ -1240,8 +1240,15 @@ cleanup are confined to the project; cleanup removes only validated inactive
 regular logs with an end record. Each created session has an independent active
 marker and random suffix, so equal labels and simultaneous creation do not share
 a pointer. Owners keep the existing scoring rules. An unselected caller cannot
-end a session; cleanup refuses while another owner is active. Explicitly select
-older pointer-based sessions by their printed ID to finish them. Unset the CLI
+end a session. Markers record the owner (`cli` or `mcp`), process ID, host,
+working directory and creation time. Cleanup never deletes: it moves files into
+`.gograph/_to_delete/<UTC time>_<suffix>/`. It first ends and archives other
+callers' sessions idle over 24 hours or owned by an exited MCP server on this
+host, printing each, and archives an unselected legacy pointer; it then refuses
+while another owner is still live. A legacy pointer never blocks other callers;
+explicitly select older pointer-based sessions by their printed ID to finish
+them. The project root is the nearest directory with `.git` or `go.mod`; an
+ancestor `.gograph` above it is never used. Unset the CLI
 environment selector after ending. Selectors are cooperative attribution, not
 credentials. Unsafe selected markers fail closed; independent readers never
 inspect another owner's session metadata. Raw query results are not logged.

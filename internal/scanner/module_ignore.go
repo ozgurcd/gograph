@@ -15,11 +15,17 @@ import (
 )
 
 // moduleIgnoreTracker mirrors the directory-pruning semantics used by
-// cmd/go when it expands ./... while still allowing nested modules to be
-// scanned so precise coverage can report that boundary explicitly.
+// cmd/go when it expands ./..., including skipping nested modules that the
+// root's go.work does not use. Nested scopes are still recorded so the
+// selection fingerprint reports a boundary change.
 type moduleIgnoreTracker struct {
 	enabled bool
 	scopes  []moduleIgnoreScope
+	// skipNested is set when the scan root is inside a module. Like cmd/go
+	// expanding ./..., the walk then does not enter a nested module unless
+	// the scan root's go.work uses it (workspaceUses holds those roots).
+	skipNested    bool
+	workspaceUses map[string]bool
 }
 
 type moduleIgnoreScope struct {
@@ -44,7 +50,36 @@ func newModuleIgnoreTracker(enabled bool, moduleRoot, scanRoot string) (*moduleI
 	if err := tracker.addScope(moduleRoot); err != nil {
 		return tracker, err
 	}
+	tracker.skipNested = true
+	tracker.workspaceUses = workspaceUses(scanRoot)
 	return tracker, nil
+}
+
+// workspaceUses returns the absolute module roots named by scanRoot's go.work.
+// A missing or unreadable go.work uses nothing.
+func workspaceUses(scanRoot string) map[string]bool {
+	uses := map[string]bool{}
+	absRoot, err := filepath.Abs(scanRoot)
+	if err != nil {
+		return uses
+	}
+	files, err := sourcefs.Open(absRoot)
+	if err != nil {
+		return uses
+	}
+	data, err := files.ReadRegularFile("go.work")
+	_ = files.Close()
+	if err != nil {
+		return uses
+	}
+	work, err := modfile.ParseWork(filepath.Join(absRoot, "go.work"), data, nil)
+	if err != nil {
+		return uses
+	}
+	for _, use := range work.Use {
+		uses[filepath.Clean(filepath.Join(absRoot, filepath.FromSlash(use.Path)))] = true
+	}
+	return uses
 }
 
 // alignModuleRoot preserves the scan root's lexical path while matching the
@@ -100,7 +135,10 @@ func (t *moduleIgnoreTracker) enterDir(dir string) (bool, error) {
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return false, fmt.Errorf("unsafe module file %s: mode %s is not a regular file", modPath, info.Mode())
 	}
-	return false, t.addScope(absDir)
+	// The scope is still recorded so the selection fingerprint changes when a
+	// nested module boundary appears or disappears.
+	err = t.addScope(absDir)
+	return t.skipNested && !t.workspaceUses[absDir], err
 }
 
 func (t *moduleIgnoreTracker) addScope(root string) error {

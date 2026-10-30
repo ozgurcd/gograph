@@ -1,4 +1,5 @@
 .gograph/
+_to_delete/
 .agents/
 bin/
 bin/gograph-test

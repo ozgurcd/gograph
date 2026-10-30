@@ -252,6 +252,36 @@ func (r *Reader) RemoveRegularFile(name string) error {
 	return nil
 }
 
+// MoveRegularFile renames a regular non-linked file to a new name inside the
+// same root. The destination directory must already be real, and an existing
+// destination is refused rather than replaced.
+func (r *Reader) MoveRegularFile(name, destination string) error {
+	if r == nil || r.root == nil {
+		return errors.New("repository filesystem is closed")
+	}
+	clean, _, err := r.inspectExisting(name, false)
+	if err != nil {
+		return err
+	}
+	target, err := localName(destination, false)
+	if err != nil {
+		return err
+	}
+	if err := r.ValidateDirectory(filepath.Dir(target)); err != nil {
+		return err
+	}
+	if _, statErr := r.root.Lstat(target); !os.IsNotExist(statErr) {
+		if statErr == nil {
+			return fmt.Errorf("%w %q: destination exists", ErrUnsafeSourcePath, destination)
+		}
+		return fmt.Errorf("inspect repository path %q: %w", destination, statErr)
+	}
+	if err := r.root.Rename(clean, target); err != nil {
+		return fmt.Errorf("move repository file %q: %w", name, err)
+	}
+	return nil
+}
+
 func (r *Reader) prepareRegularWrite(name string) (clean string, expected os.FileInfo, exists bool, err error) {
 	if r == nil || r.root == nil {
 		return "", nil, false, errors.New("repository filesystem is closed")

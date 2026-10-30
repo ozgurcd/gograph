@@ -15,7 +15,8 @@ import (
 
 func TestCallerSessionIsolationMCP(t *testing.T) {
 	root := t.TempDir()
-	id, err := session.StartSessionAt(root, "owner")
+	// A marker-backed owner; a legacy pointer no longer blocks other callers.
+	id, err := session.StartCallerSessionAt(root, "owner", "")
 	if err != nil {
 		t.Fatal(err)
 	}
