@@ -1,6 +1,6 @@
 # Release Notes
 
-## Unreleased
+## v1.7.15 — 2026-10-30
 
 - One project root for sessions, build, queries and cleanup: the nearest
   directory, walking up from the working directory or build path, that holds
@@ -9,7 +9,9 @@
   keeps all its state in its own `.gograph/`. A nested module is its own
   project. Outside any `.git` or `go.mod`, the start directory itself is the
   project root for every operation; no command searches ancestors for
-  `.gograph` state or a graph.
+  `.gograph` state or a graph. `build <subdir>` now builds the project root,
+  so a graph that an earlier release built in a subfolder's `.gograph` is no
+  longer read; rebuild from the project root.
 - Session markers (`session_<id>.active`) stay the bare session ID, exactly as
   v1.7.14 writes and reads them, so mixed versions share a project during an
   upgrade. Owner metadata (`id`, `owner` `cli` or `mcp`, `pid`, `host`, `cwd`,
@@ -45,6 +47,9 @@
   precise loading uses, even when the root's `go.work` uses them and under any
   `GOWORK` setting, so AST and precise selection agree. A nested module no
   longer forces a precise build to fall back; build it as its own project.
+- No installation or MCP restart happens automatically. Restart an existing MCP
+  server after choosing to upgrade; v1.7.14 and v1.7.15 can share a project
+  while processes upgrade.
 
 ## v1.7.14 — 2026-10-10
 
