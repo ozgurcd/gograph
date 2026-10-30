@@ -3132,7 +3132,7 @@ INDEXING
                              Artifacts over 512 MiB are rejected before allocation;
                              build reconstructs oversized previous state from source.
                              Inactive build-constrained files, cmd/go wildcard-excluded
-                             directories, nested modules not used by go.work, generated
+                             directories, nested modules (even go.work members), generated
                              sources, go.mod ignore paths, AI worktrees, and Git-ignored
                              paths are automatically skipped. The path resolves to its
                              project root (nearest .git or go.mod).

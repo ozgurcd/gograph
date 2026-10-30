@@ -8,8 +8,8 @@ import (
 	"github.com/ozgurcd/gograph/internal/scanner"
 )
 
-// Like cmd/go expanding ./..., the AST walk does not enter a nested module
-// unless the root's go.work uses it.
+// Like cmd/go expanding ./..., the AST walk does not enter a nested module,
+// even one the root's go.work uses, matching precise loading.
 func TestWalkWithConfigSkipsNestedModules(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "go.mod"), "module example.com/root\n\ngo 1.26\n")
@@ -31,7 +31,7 @@ func TestWalkWithConfigSkipsNestedModules(t *testing.T) {
 	if len(errs) != 0 {
 		t.Fatalf("WalkWithConfig errors: %v", errs)
 	}
-	if got, want := relativePaths(t, root, paths), []string{"menubar/menu.go", "menubar/sub/deep.go", "root.go"}; !reflect.DeepEqual(got, want) {
+	if got, want := relativePaths(t, root, paths), []string{"root.go"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("selected files with go.work = %v, want %v", got, want)
 	}
 }

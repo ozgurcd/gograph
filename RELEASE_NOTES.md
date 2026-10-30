@@ -41,9 +41,10 @@
   idle over 24 hours.
 - A legacy `active_session.json` pointer no longer blocks other callers. It
   stays usable when selected by its ID; cleanup by another caller archives it.
-- The AST walk skips nested modules like `cmd/go` expanding `./...`, unless
-  the root's `go.work` uses them. A nested module no longer forces a precise
-  build to fall back; build it as its own project.
+- The AST walk skips nested modules like `cmd/go` expanding `./...`, which
+  precise loading uses, even when the root's `go.work` uses them and under any
+  `GOWORK` setting, so AST and precise selection agree. A nested module no
+  longer forces a precise build to fall back; build it as its own project.
 
 ## v1.7.14 — 2026-10-10
 
