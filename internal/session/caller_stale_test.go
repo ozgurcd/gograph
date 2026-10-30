@@ -242,24 +242,46 @@ func TestCallerMarkerAcceptsJSONMarkerShape(t *testing.T) {
 	}
 }
 
-// A bare marker without a sidecar (older releases) carries no owner, so only
-// idle time can end it.
-func TestBareMarkerWithoutSidecarUsesIdleRuleOnly(t *testing.T) {
-	root := t.TempDir()
-	id, err := StartCallerSessionOwnedAt(root, "bare", "", OwnerMCP)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(sessionFile(root, id, ".meta.json")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := CleanupCallerSessionsReportAt(root, ""); err == nil || !strings.Contains(err.Error(), id) {
-		t.Fatalf("cleanup error = %v, want the recent bare session kept", err)
-	}
-	ageCallerLog(t, root, id)
-	report, err := CleanupCallerSessionsReportAt(root, "")
-	if err != nil || !slices.Equal(report.Ended, []string{id}) {
-		t.Fatalf("cleanup = %+v, %v; want the idle bare session ended", report, err)
+// Only proof ends a session: a known CLI owner idle over 24 hours, or an MCP
+// owner whose process is gone on this host. Idle time never ends an MCP
+// session, and unknown, legacy or other-host owners are kept.
+func TestCleanupKeepsSessionsWithoutProofOfAbandonment(t *testing.T) {
+	host, _ := os.Hostname()
+	for _, tc := range []struct {
+		name string
+		meta *CallerMarker // nil removes the sidecar (legacy bare marker)
+	}{
+		{"live MCP idle", &CallerMarker{Owner: OwnerMCP, PID: os.Getpid(), Host: host}},
+		{"other-host MCP", &CallerMarker{Owner: OwnerMCP, PID: 1 << 30, Host: host + ".other"}},
+		{"unknown owner", &CallerMarker{Owner: "", PID: 1 << 30, Host: host}},
+		{"legacy bare marker", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			id, err := StartCallerSessionOwnedAt(root, "kept", "", OwnerMCP)
+			if err != nil {
+				t.Fatal(err)
+			}
+			meta := sessionFile(root, id, ".meta.json")
+			if tc.meta == nil {
+				err = os.Remove(meta)
+			} else {
+				tc.meta.ID = id
+				data, _ := json.Marshal(tc.meta)
+				err = os.WriteFile(meta, data, 0o644)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			ageCallerLog(t, root, id)
+			report, err := CleanupCallerSessionsReportAt(root, "")
+			if err == nil || !strings.Contains(err.Error(), id) || len(report.Ended) != 0 {
+				t.Fatalf("cleanup = %+v, %v; want %s kept and named", report, err, id)
+			}
+			if _, err := ActiveCallerSessionAt(root, id); err != nil {
+				t.Fatalf("session lost: %v", err)
+			}
+		})
 	}
 }
 

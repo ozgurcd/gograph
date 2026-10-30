@@ -1244,9 +1244,10 @@ end a session. Markers hold only the session ID; a `session_<id>.meta.json`
 sidecar records the owner (`cli` or `mcp`), process ID, host, working directory
 and creation time. Cleanup never deletes: it moves files into
 `.gograph/_to_delete/<UTC time>_<suffix>/`. It first ends and archives other
-callers' sessions idle over 24 hours or owned by an exited MCP server on this
-host, printing each, and archives an unselected legacy pointer; it then refuses
-while another owner is still live. A legacy pointer never blocks other callers;
+callers' CLI-owned sessions idle over 24 hours or MCP-owned sessions of an
+exited server process on this host (sessions without owner metadata, or owned
+on another host, are kept), printing each, and archives an unselected legacy
+pointer; it then refuses while another owner is still live. A legacy pointer never blocks other callers;
 explicitly select older pointer-based sessions by their printed ID to finish
 them. The project root is the nearest directory with `.git` or `go.mod`; an
 ancestor `.gograph` above it is never used. Unset the CLI

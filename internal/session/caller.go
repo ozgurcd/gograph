@@ -439,6 +439,20 @@ func (a *sessionArchive) move(path string) error {
 	return a.store.files.MoveRegularFile(path, filepath.Join(a.dir, filepath.Base(path)))
 }
 
+// abandoned reports proof that a session's owner is gone: a known CLI owner
+// whose log recorded nothing for staleSessionAfter, or an MCP owner whose
+// process has exited on this host. Idle time never ends an MCP session, and
+// unknown, legacy or other-host owners are always kept.
+func abandoned(marker CallerMarker, last time.Time, known bool) bool {
+	switch marker.Owner {
+	case OwnerCLI:
+		return known && time.Since(last) > staleSessionAfter
+	case OwnerMCP:
+		return ownerGone(marker)
+	}
+	return false
+}
+
 // ownerGone reports a marker whose MCP server process has exited on this host.
 // CLI markers name a process that exits at once, so they never qualify.
 func ownerGone(marker CallerMarker) bool {
@@ -481,8 +495,7 @@ func (s *sessionStore) archiveStaleCallers(selected string, archive *sessionArch
 		if err != nil {
 			return err
 		}
-		idle := known && time.Since(last) > staleSessionAfter
-		if !done && !idle && !ownerGone(markers[id]) {
+		if !done && !abandoned(markers[id], last, known) {
 			continue
 		}
 		if !done {

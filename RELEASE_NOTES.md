@@ -15,7 +15,8 @@
   upgrade. Owner metadata (`id`, `owner` `cli` or `mcp`, `pid`, `host`, `cwd`,
   `created_at`) goes in a `session_<id>.meta.json` sidecar, written atomically
   before the marker. A marker without a sidecar, and a JSON marker of the same
-  shape, are also read; without metadata only idle time ends a session.
+  shape, are also read. A session without owner metadata is never ended by
+  cleanup; end it with `session end --session-id <id>`.
 - An MCP server's path, explicit or `.`, resolves through the same rule
   before its guards, graph loading and session storage, so `gograph mcp
   repo/sub` serves `repo`. An MCP server started on a directory with no `.git`
@@ -24,12 +25,14 @@
   are searched.
 - `session cleanup` (CLI and `gograph_session_cleanup`) never deletes. It moves
   files into a new `.gograph/_to_delete/<UTC time>_<suffix>/` folder per pass.
-  It first ends other callers' stale sessions: idle over 24 hours, or owned by
-  an MCP server whose process has exited on this host. Each gets a `stale` end
-  record and is printed, and its marker, log and sidecar move together. A CLI
-  creator's process exits at creation, so CLI sessions are judged by idle time
-  only. Sidecars left after an older release deleted their session are
-  archived too. Cleanup still refuses while another
+  It first ends other callers' sessions only on proof the owner is gone: a
+  CLI-owned session idle over 24 hours, or an MCP-owned session whose process
+  has exited on this host. Idle time never ends an MCP session, and sessions
+  with unknown, legacy or other-host owners are kept. Each ended session gets
+  a `stale` end record and is printed, and its marker, log and sidecar move
+  together. A CLI creator's process exits at creation, so CLI sessions are
+  judged by idle time only. Sidecars left after an older release deleted their
+  session are archived too. Cleanup still refuses while another
   caller's session is live; otherwise it archives ended logs and unmarked logs
   idle over 24 hours.
 - A legacy `active_session.json` pointer no longer blocks other callers. It

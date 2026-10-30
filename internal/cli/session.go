@@ -89,7 +89,7 @@ func printSessionVerbHelp(verb string) bool {
 		options = "  --json        Print the native structured audit result.\n"
 	case "cleanup":
 		usage = "cleanup"
-		description = "Never deletes: moves files into .gograph/_to_delete/<UTC time>_<suffix>/. First ends other callers' sessions idle over 24h or owned by an exited MCP server on this host, printing each, and archives an unselected legacy active_session.json; then archives ended logs. Preserves the selected session and refuses while any other caller is still live."
+		description = "Never deletes: moves files into .gograph/_to_delete/<UTC time>_<suffix>/. First ends other callers' CLI-owned sessions idle over 24h or MCP-owned sessions whose server process exited on this host (owners without metadata or on another host are kept), printing each, and archives an unselected legacy active_session.json; then archives ended logs. Preserves the selected session and refuses while any other caller is still live."
 	default:
 		return false
 	}
