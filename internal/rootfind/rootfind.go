@@ -28,20 +28,47 @@ func FindRepositoryRoot() string {
 // ProjectRootFrom returns the nearest directory, walking up from start, that
 // holds a .git entry (directory or worktree file) or a go.mod file. The
 // boolean is false when no such directory exists.
+//
+// Links in the start directory are resolved before the walk, so a link to a
+// subdirectory finds that subdirectory's real project. The result keeps the
+// caller's lexical spelling when one of start's lexical ancestors is the same
+// directory, and is the real path otherwise. Only the start is resolved: state
+// below the root (.gograph and its descendants) is still refused when linked.
 func ProjectRootFrom(start string) (string, bool) {
-	dir, ok := startDirectory(start)
+	lexical, ok := startDirectory(start)
 	if !ok {
 		return "", false
 	}
+	dir, err := filepath.EvalSymlinks(lexical)
+	if err != nil {
+		dir = lexical
+	}
 	for {
 		if hasGitBoundary(dir) || hasRegularFile(dir, "go.mod") {
-			return dir, true
+			return lexicalAlias(lexical, dir), true
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			return "", false
 		}
 		dir = parent
+	}
+}
+
+// lexicalAlias returns the lexical ancestor of start that is the same
+// directory as real, or real when no lexical ancestor is.
+func lexicalAlias(start, real string) string {
+	target, err := os.Stat(real)
+	if err != nil {
+		return real
+	}
+	for candidate := start; ; candidate = filepath.Dir(candidate) {
+		if info, statErr := os.Stat(candidate); statErr == nil && os.SameFile(info, target) {
+			return candidate
+		}
+		if filepath.Dir(candidate) == candidate {
+			return real
+		}
 	}
 }
 
