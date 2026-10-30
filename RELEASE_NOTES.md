@@ -25,6 +25,10 @@
   are searched.
 - `session cleanup` (CLI and `gograph_session_cleanup`) never deletes. It moves
   files into a new `.gograph/_to_delete/<UTC time>_<suffix>/` folder per pass.
+  Each move is one atomic no-replace rename between verified directory handles
+  (`renameat2` `RENAME_NOREPLACE` on Linux, `renameatx_np` `RENAME_EXCL` on
+  macOS, link and unlink elsewhere): it never overwrites a file and never
+  follows a directory swapped for a link.
   It first ends other callers' sessions only on proof the owner is gone: a
   CLI-owned session idle over 24 hours, or an MCP-owned session whose process
   has exited on this host. Idle time never ends an MCP session, and sessions

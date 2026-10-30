@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -252,9 +253,15 @@ func (r *Reader) RemoveRegularFile(name string) error {
 	return nil
 }
 
+// moveBeforeCommit is a test seam called after MoveRegularFile has opened and
+// verified its directories and before it commits the move.
+var moveBeforeCommit func()
+
 // MoveRegularFile renames a regular non-linked file to a new name inside the
-// same root. The destination directory must already be real, and an existing
-// destination is refused rather than replaced.
+// same root. Both parent directories are opened and verified as real
+// directories first, and the move is one no-replace rename between those
+// directory handles: an existing destination is refused, never replaced, and a
+// directory path swapped for a link after verification is not followed.
 func (r *Reader) MoveRegularFile(name, destination string) error {
 	if r == nil || r.root == nil {
 		return errors.New("repository filesystem is closed")
@@ -267,19 +274,48 @@ func (r *Reader) MoveRegularFile(name, destination string) error {
 	if err != nil {
 		return err
 	}
-	if err := r.ValidateDirectory(filepath.Dir(target)); err != nil {
+	sourceDir, err := r.openVerifiedDirectory(filepath.Dir(clean))
+	if err != nil {
 		return err
 	}
-	if _, statErr := r.root.Lstat(target); !os.IsNotExist(statErr) {
-		if statErr == nil {
+	defer func() { _ = sourceDir.Close() }()
+	targetDir, err := r.openVerifiedDirectory(filepath.Dir(target))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = targetDir.Close() }()
+	if moveBeforeCommit != nil {
+		moveBeforeCommit()
+	}
+	if err := renameNoReplace(sourceDir, filepath.Base(clean), targetDir, filepath.Base(target)); err != nil {
+		if errors.Is(err, fs.ErrExist) {
 			return fmt.Errorf("%w %q: destination exists", ErrUnsafeSourcePath, destination)
 		}
-		return fmt.Errorf("inspect repository path %q: %w", destination, statErr)
-	}
-	if err := r.root.Rename(clean, target); err != nil {
 		return fmt.Errorf("move repository file %q: %w", name, err)
 	}
 	return nil
+}
+
+// openVerifiedDirectory opens a real, non-linked directory inside the root and
+// checks that the handle is the directory that was inspected.
+func (r *Reader) openVerifiedDirectory(name string) (*os.File, error) {
+	if name == "." {
+		return r.root.Open(".")
+	}
+	clean, expected, err := r.inspectExisting(name, true)
+	if err != nil {
+		return nil, err
+	}
+	directory, err := r.root.Open(clean)
+	if err != nil {
+		return nil, fmt.Errorf("open repository directory %q: %w", name, err)
+	}
+	opened, err := directory.Stat()
+	if err != nil || !opened.IsDir() || !os.SameFile(expected, opened) {
+		_ = directory.Close()
+		return nil, fmt.Errorf("%w %q: repository directory changed during open", ErrUnsafeSourcePath, name)
+	}
+	return directory, nil
 }
 
 func (r *Reader) prepareRegularWrite(name string) (clean string, expected os.FileInfo, exists bool, err error) {
