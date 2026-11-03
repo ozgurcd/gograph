@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -394,6 +395,10 @@ type AuditReport struct {
 	SuccessRate             float64  `json:"success_rate"`
 	PlanRun                 bool     `json:"plan_run"`
 	ReviewRun               bool     `json:"review_run"`
+	PlanSymbols             []string `json:"plan_symbols,omitempty"`
+	ReviewTargets           []string `json:"review_targets,omitempty"`
+	UnattributedPlan        int      `json:"unattributed_plan,omitempty"`
+	UnattributedReview      int      `json:"unattributed_review,omitempty"`
 	ComposedCount           int      `json:"composed_count"`
 	RawQueryCount           int      `json:"raw_query_count"`
 	Composability           float64  `json:"composability"`
@@ -521,6 +526,7 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 	var planRun, reviewRun bool
 	var composedCount, rawQueryCount int
 	var invocationErrors []string
+	planSet, reviewSet := map[string]bool{}, map[string]bool{}
 
 	for _, l := range lines {
 		switch l.Type {
@@ -546,9 +552,11 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 			case "plan":
 				planRun = true
 				composedCount++
+				planSet = addCoverage(planSet, l.Args)
 			case "review":
 				reviewRun = true
 				composedCount++
+				reviewSet = addCoverage(reviewSet, l.Args)
 			case "context", "explain", "api", "changes", "mutate":
 				composedCount++
 			case "node", "callers", "callees", "source":
@@ -556,6 +564,10 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 			}
 		}
 	}
+
+	unattributedPlan, unattributedReview := creditUnattributed(store, start, end, planSet, reviewSet)
+	planRun = planRun || unattributedPlan > 0
+	reviewRun = reviewRun || unattributedReview > 0
 
 	if end.IsZero() && !start.IsZero() && len(lines) > 0 {
 		lastLine := lines[len(lines)-1]
@@ -627,6 +639,10 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 		SuccessRate:             successRate,
 		PlanRun:                 planRun,
 		ReviewRun:               reviewRun,
+		PlanSymbols:             sortedKeys(planSet),
+		ReviewTargets:           sortedKeys(reviewSet),
+		UnattributedPlan:        unattributedPlan,
+		UnattributedReview:      unattributedReview,
 		ComposedCount:           composedCount,
 		RawQueryCount:           rawQueryCount,
 		Composability:           composability,
@@ -645,6 +661,57 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 		return 1
 	}
 	return 0
+}
+
+// addCoverage records the symbol or mode a plan/review call named.
+func addCoverage(set map[string]bool, args []string) map[string]bool {
+	if len(args) > 0 {
+		set[args[0]] = true
+	}
+	return set
+}
+
+func sortedKeys(set map[string]bool) []string {
+	if len(set) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(set))
+	for key := range set {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// creditUnattributed counts successful plan/review calls that selected no
+// session and ran inside [start, end] (end zero means still open). Their
+// coverage is added to the sets. The caller is unknown, so the audit labels
+// them rather than treating them as this session's own calls.
+func creditUnattributed(store *sessionStore, start, end time.Time, planSet, reviewSet map[string]bool) (plans, reviews int) {
+	data, err := store.files.ReadRegularFile(relUnattributedJournal)
+	if err != nil || start.IsZero() {
+		return 0, 0
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		var l GenericLogLine
+		if json.Unmarshal(scanner.Bytes(), &l) != nil || l.Status != "success" {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, l.Timestamp)
+		if err != nil || at.Before(start) || (!end.IsZero() && at.After(end)) {
+			continue
+		}
+		switch l.Command {
+		case "plan":
+			plans++
+			addCoverage(planSet, l.Args)
+		case "review":
+			reviews++
+			addCoverage(reviewSet, l.Args)
+		}
+	}
+	return plans, reviews
 }
 
 func formatAudit(report AuditReport, jsonMode bool, duration time.Duration) (string, error) {
@@ -680,6 +747,11 @@ func formatAudit(report AuditReport, jsonMode bool, duration time.Duration) (str
 	write("━━━ COMPLIANCE SCORE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 	write("Plan Rule Run   : %t (Weight: 35%%)\n", report.PlanRun)
 	write("Review Rule Run : %t (Weight: 35%%)\n", report.ReviewRun)
+	write("Plan symbols    : %s\n", strings.Join(report.PlanSymbols, ", "))
+	write("Review targets  : %s\n", strings.Join(report.ReviewTargets, ", "))
+	if report.UnattributedPlan+report.UnattributedReview > 0 {
+		write("Credited from unselected calls in this session's window (caller unknown): plan %d, review %d. Select a session with --session-id or GOGRAPH_SESSION to attribute them.\n", report.UnattributedPlan, report.UnattributedReview)
+	}
 	write("Composability   : %.1f%% (Weight: 30%%)\n\n", report.Composability)
 	write("%s\n\n", report.ComposabilityDefinition)
 	write("Overall Score   : %.1f%%\n", report.ComplianceScore)

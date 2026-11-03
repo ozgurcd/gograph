@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -70,6 +71,9 @@ func UncommittedSymbolsContext(ctx context.Context, g *graph.Graph) ([]string, e
 	return CurrentChangedSymbolIDs(g, changes)
 }
 
+// ErrGraphStale marks a changed declaration the loaded graph does not contain.
+var ErrGraphStale = errors.New("graph is stale")
+
 // CurrentChangedSymbolIDs is the gate for consumers that traverse only the
 // current graph. A historical declaration census can explain deletions; it does
 // not contain historical call edges and cannot prove a deleted symbol's impact.
@@ -101,7 +105,7 @@ func CurrentChangedSymbolIDs(g *graph.Graph, changes *ChangesResult) ([]string, 
 		}
 		matches := present[change.StableID]
 		if change.StableID == "" || len(matches) == 0 {
-			return nil, fmt.Errorf("changed declaration %q is absent from the graph; rebuild the graph and retry", change.StableID)
+			return nil, fmt.Errorf("changed declaration %q is absent from the graph: the graph predates this edit (%w); run `gograph build` in the repository root and retry", change.StableID, ErrGraphStale)
 		}
 		if len(matches) != 1 || change.PackageName != "" && matches[0].PackageName != change.PackageName {
 			return nil, fmt.Errorf("changed declaration %q has ambiguous graph identity; inspect changes for file/package details", change.StableID)

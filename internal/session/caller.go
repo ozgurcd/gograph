@@ -382,8 +382,14 @@ func EndCallerSessionAt(root, id string) (string, error) {
 	return id, nil
 }
 
+// maxUnattributedJournalBytes caps unattributed.jsonl; later calls are dropped.
+const maxUnattributedJournalBytes = 64 << 10
+
 // LogCallerCommandAt never writes observational calls to an unselected session.
 func LogCallerCommandAt(root, id, command string, args []string, intention string, elapsed time.Duration, status string) error {
+	if id == "" && (command == "plan" || command == "review") {
+		return logUnattributedAt(root, command, args, intention, elapsed, status)
+	}
 	if id == "" || command == "hook-guard" && status == "success" {
 		return nil
 	}
@@ -404,6 +410,41 @@ func LogCallerCommandAt(root, id, command string, args []string, intention strin
 		return err
 	}
 	return store.files.AppendRegularFile(path, append(data, '\n'))
+}
+
+// relUnattributedJournal records plan/review calls that selected no session
+// while at least one was active (several sessions, so none could be adopted).
+// An audit credits the entries made inside its session window.
+var relUnattributedJournal = filepath.Join(relSessionsDir, "unattributed.jsonl")
+
+func logUnattributedAt(root, command string, args []string, intention string, elapsed time.Duration, status string) error {
+	store, err := openSessionStore(root)
+	if err != nil {
+		return err
+	}
+	defer store.close()
+	ids, err := store.activeCallerIDs()
+	if err != nil || len(ids) == 0 {
+		return err
+	}
+	data, err := json.Marshal(CommandLogEntry{Type: "command", Timestamp: time.Now().Format(time.RFC3339), Command: command, Args: redactArgs(args), Intention: intention, ExecutionMs: elapsed.Milliseconds(), Status: status})
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	existing, err := store.files.ReadRegularFile(relUnattributedJournal)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		if err := store.files.WriteRegularFile(relUnattributedJournal, data, 0644, true); err == nil {
+			return nil
+		}
+	case err != nil:
+		return err
+	case len(existing) >= maxUnattributedJournalBytes:
+		return nil
+	}
+	// Lost the creation race to another caller, or the journal exists.
+	return store.files.AppendRegularFile(relUnattributedJournal, data)
 }
 
 // CleanupReport lists what one cleanup pass changed.

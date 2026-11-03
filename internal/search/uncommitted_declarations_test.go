@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -63,6 +64,27 @@ func TestUncommittedDeclarationsAreNestedRootScoped(t *testing.T) {
 	cancel()
 	if _, err := UncommittedSymbolsContext(ctx, g); err == nil {
 		t.Fatal("canceled selection succeeded")
+	}
+}
+
+// GG-07: a stale graph must fail with one exact rebuild command and the reason.
+func TestCurrentChangedSymbolIDsStaleGraphNamesRebuildCommand(t *testing.T) {
+	g := &graph.Graph{Symbols: []graph.SymbolNode{{ID: "p::Keep", Name: "Keep", PackageName: "p"}}}
+	changes := &ChangesResult{Evaluation: "complete", Symbols: []ChangedSymbol{{StableID: "p::Gone", Name: "Gone", Status: ChangeNew}}}
+	_, err := CurrentChangedSymbolIDs(g, changes)
+	if err == nil {
+		t.Fatal("stale graph accepted")
+	}
+	if !errors.Is(err, ErrGraphStale) {
+		t.Fatalf("error is not ErrGraphStale: %v", err)
+	}
+	for _, want := range []string{"p::Gone", "absent from the graph", "graph predates", "`gograph build`"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("message %q lacks %q", err, want)
+		}
+	}
+	if strings.Count(err.Error(), "gograph build") != 1 {
+		t.Fatalf("want exactly one rebuild command: %v", err)
 	}
 }
 
