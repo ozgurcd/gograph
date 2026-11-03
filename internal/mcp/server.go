@@ -234,6 +234,25 @@ func persistRefreshDescription(description string) string {
 	return description + " Because this server was started with --persist-refresh, a successful stale-graph refresh may replace generated artifacts under .gograph before this tool runs."
 }
 
+// degradedGraphWarning names a served graph that is stale or whose refresh
+// failed. The state is also attached as metadata, but agents read the text, so
+// a degraded answer must say so where it is read.
+func degradedGraphWarning(state graphstate.State, g *graph.Graph) string {
+	failed := state.Refresh.Outcome == "failed"
+	if state.Freshness != graphstate.FreshnessStale && !failed {
+		return ""
+	}
+	root := ""
+	if g != nil {
+		root = " for " + g.Root
+	}
+	warning := fmt.Sprintf("WARNING: this answer comes from a stale graph%s (refresh %s", root, state.Refresh.Outcome)
+	if state.Refresh.Diagnostic != "" {
+		warning += ": " + state.Refresh.Diagnostic
+	}
+	return warning + "). Recent source changes may be missing and an empty result is not proof of absence; fix the refresh error or run `gograph build .`, then repeat the call."
+}
+
 type graphStateResult struct {
 	SchemaVersion string           `json:"schema_version"`
 	GraphState    graphstate.State `json:"graph_state"`
@@ -490,6 +509,12 @@ func NewServer(
 			if result != nil && requestRefreshesGraph(toolName, req) && (result.Meta == nil || result.Meta.AdditionalFields["gograph_graph_state"] == nil) {
 				attachGraphState(result, ctx.Value(requestSnapshotKey{}).(requestSnapshot).state)
 			}
+			if result != nil && !result.IsError && requestRefreshesGraph(toolName, req) {
+				snapshot := ctx.Value(requestSnapshotKey{}).(requestSnapshot)
+				if warning := degradedGraphWarning(snapshot.state, snapshot.graph); warning != "" {
+					result.Content = append([]mcp.Content{mcp.NewTextContent(warning)}, result.Content...)
+				}
+			}
 			return result, err
 		}
 
@@ -517,8 +542,8 @@ func NewServer(
 			"installation":         installation.Inspect(version),
 			"prerequisite":         "The MCP server loads only a regular, repository-confined .gograph/graph.json with the current source-policy marker and " + startupGraph + ". Whole graph, saved-baseline, validation, MCP-reload, and workspace-overlay JSON reads reject artifacts larger than 512 MiB before allocation; startup recovery rebuilds an oversized graph from source. Its serialized root is ignored. Source-analysis tools compare selected-file content digests and the build/module fingerprint per call, then incrementally rebuild changed package ASTs after edits using the latest requested analysis mode and build tags selected at MCP startup; precise CHA/SSA enrichment remains repository-wide for selected project packages but does not build dependency SSA bodies, and separately attempts typed test-call attribution without making test compilation a prerequisite for production precision. Typed-only test targets are recomputed rather than restored as parser facts. Every refresh-backed result adds gograph.graph-state.v1 provenance. Bounded row lists use gograph.results.v1 JSON text and structured content; native explain/changes retain their own schemas, while other legacy payloads retain a gograph.mcp-result.v1 graph-state companion. A failed precise enrichment can therefore serve an explicitly marked in-memory fallback, and an operational refresh failure can serve the last trusted stale graph. Neither degraded state is silently published. A persisted graph from a different effective GOWORK or build selection is never served after a failed refresh. gograph_stale, gograph_changes without git_ref, and gograph_stats inspect that trusted persisted index, or the startup auto-build fallback when no usable artifact exists. Linked directories and linked or special files recognized as Go build inputs are excluded, while unrelated regular-file or dangling links with non-Go extensions do not block precision. Linked/non-regular Go tool metadata (go.mod, go.sum, go.work, go.work.sum, and vendor/modules.txt) is rejected before toolchain use. Applicable go.work members may be sibling modules beneath the nearest real Git checkout; without that boundary they remain confined beneath the workspace directory. Each member directory, go.mod, and optional go.sum is validated before cmd/go. Use the current binary for untrusted repositories because older binaries do not enforce this contract. Run `gograph build . --precise --tags=integration` for type-checked CHA/SSA enrichment of an explicitly tagged selection; MCP accepts the same --tags selector, adopts a newer precise graph, and re-runs precision after source changes without silently changing that context. `gograph doctor --json` reports persisted-artifact diagnostics. On constrained hosts, project MCP startup accepts `--memory-mode=low --max-memory=1GiB`; analysis_memory reports the requested/effective soft Go runtime memory target, which is not a hard RSS cap. Session lifecycle tools write local telemetry, gograph_session_cleanup deletes stale logs, gograph_boundaries_create writes configuration, and gograph_wiki writes documentation; wiki regeneration prunes only obsolete generator-owned package pages and preserves custom pages plus packages/README.md. Their repository-controlled paths use rooted regular-file operations that reject descendant links. Only calls explicitly selecting session_id append owner telemetry. Selected analytical calls require intention; unselected readers never require intentions or change another audit. Other callers' mutations/end/cleanup refuse naming the active session, while independent callers may create concurrently. MCP never inherits GOGRAPH_SESSION. Saved graph baselines must be regular files inside the project root, have no linked path component, and carry the exact current source-policy marker; their serialized root is ignored. gograph_doc rejects filesystem-shaped queries and source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees; .git and .gograph are excluded from that preflight. It invokes the local Go toolchain after repository source/metadata validation and is annotated open-world because dependency resolution follows the user's Go environment.",
 			"transport_contract": map[string]any{
-				"project_server_tools": 68,
-				"cli_equivalent_tools": 64,
+				"project_server_tools": 69,
+				"cli_equivalent_tools": 65,
 				"session_tools":        []string{"gograph_session_create", "gograph_session_end", "gograph_session_audit", "gograph_session_cleanup"},
 				"standard_mapping":     "CLI <command> maps to MCP gograph_<command>",
 				"special_mappings": map[string]string{
@@ -648,7 +673,8 @@ func NewServer(
 				{"name": "gograph_session_end", "purpose": "End the active telemetry session cleanly and write end-of-session logs."},
 				{"name": "gograph_session_audit", "purpose": "Review and grade agent compliance (Plan rule, Review rule, Composability/Efficiency) and tool success rates."},
 				{"name": "gograph_session_cleanup", "purpose": "Delete stale inactive regular session logs without following linked repository paths; preserves active logs and refuses while another caller is active."},
-				{"name": "gograph_query", "purpose": "Search symbols, packages, files, and imports by one term or an OR-combined terms array."},
+				{"name": "gograph_query", "purpose": "Search symbols, packages, files, imports, and HTTP route patterns by one term or an OR-combined terms array."},
+				{"name": "gograph_strings", "purpose": "Search Go string literals (raw route strings, URLs, SQL fragments, messages) with their enclosing function."},
 				{"name": "gograph_explore", "purpose": "Bounded first-call discovery with compact, standard, and deep response modes; compact preserves identity/counts, while deep adds depth-3 exact evidence, package context, and explanation."},
 				{"name": "gograph_focus", "purpose": "Full structural summary of one package: files, symbols, internal call edges, and imports. Use before editing an unfamiliar package."},
 				{"name": "gograph_context", "purpose": "Pre-flight bundle: first node plus all ambiguous nodes, source/source_error, callers, callees, structured tests, and top-level role. Use uncommitted=true for all modified symbols."},
@@ -733,7 +759,7 @@ func NewServer(
 				"The MCP transport is local stdio. Default AST analysis does not call application services, but indexing asks the installed Go toolchain for effective build/module context. Precise analysis additionally type-loads packages and gograph_doc runs go doc; dependency/toolchain resolution follows the user's configured module/cache/network policy and remains open-world.",
 				"Repository-directed source, Go build inputs, module/workspace metadata, configs, and persisted-index reads reject relevant linked or special entries. Applicable workspace members are confined beneath their workspace directory and validated before cmd/go; precise package loading and gograph_doc reject source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees (.git/.gograph excluded). Graphs missing the current source-policy marker are rebuilt, and serialized roots are ignored. Older binaries do not enforce this contract and should not be used for untrusted repositories.",
 				"Errorflow uses heuristic static call-graph and AST reference analysis. It does not perform SSA or full data-flow tracking.",
-				"Security flow analysis is interprocedural and path-insensitive, with call/return matching across at most 16 nested repository calls. Findings are review leads, not proof; unresolved external calls lower confidence.",
+				"Security flow analysis is interprocedural and path-insensitive, with call/return context for the 3 most recent call sites by default (context depth up to 16; deeper returns that lose their call site are kept at low confidence), bounded by a size-derived work budget that reports incomplete runs explicitly. Findings are review leads, not proof; unresolved external calls lower confidence.",
 				"Ambiguous short names can be disambiguated in MCP tools whose symbol argument advertises standard Go dot-separated package qualification or fully-qualified IDs. gograph_callers additionally supports Interface.Method and expands every recorded precise implementation.",
 				"Precise interface dispatch uses conservative CHA unless SSA proves one concrete dynamic receiver type at the call site. A single visible implementation is never enough to claim exactness. Open invokes retain every valid named in-repository implementation, including promoted methods through hidden traversal-only wrapper edges; reflection, unsafe, plugins, unresolved function values, test-only packages, unnamed concrete types, and module-external implementations can remain incomplete.",
 				"Test-call attribution is independent from production precision. AST graphs use selector-name heuristics; precise builds bind direct calls and single-assignment non-escaping concrete interface locals exactly while retaining open interface candidates as possible. typed_partial means some tests stayed heuristic. Transitive tests/untested propagate uncertainty, and static attribution never proves runtime coverage.",
@@ -751,7 +777,8 @@ func NewServer(
 	queryTool := mcp.NewTool("gograph_query",
 		mcp.WithBoolean("no_tests", mcp.Description("Exclude rows located in *_test.go files, matching CLI --no-tests")),
 		mcp.WithDescription("Search the graph index for symbols, packages, files, and import edges that match one or more keyword substrings. Multiple terms use OR semantics, matching CLI `query term...`. The MCP server refreshes source analysis before the call. Read-only; no persistent side effects. WHEN TO USE: During initial exploration when you have a keyword or feature name but do not know its package. NOT TO USE: When you already know the exact symbol (use gograph_source or gograph_node); for package dependency trees (use gograph_deps). RETURNS: Matching symbols, files, and imports; empty when no terms match."),
-		mcp.WithString("term", mcp.Description("One keyword search term (e.g. 'AuthService')")),
+		mcp.WithString("term", mcp.Description("One keyword search term (e.g. 'AuthService' or a route path such as '/api/v1/users/{id}')")),
+		mcp.WithString("query", mcp.Description("Alias of term")),
 		mcp.WithArray("terms", mcp.Description("Optional list of keyword terms combined with OR semantics"), mcp.WithStringItems()),
 	)
 	addTool(queryTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -761,8 +788,16 @@ func NewServer(
 			return mcp.NewToolResultError("invalid arguments"), nil
 		}
 		var terms []string
-		if term, ok := args["term"].(string); ok && term != "" {
-			terms = append(terms, term)
+		for _, name := range []string{"term", "query"} {
+			if value, exists := args[name]; exists {
+				term, ok := value.(string)
+				if !ok {
+					return mcp.NewToolResultError(name + " must be a string"), nil
+				}
+				if term != "" {
+					terms = append(terms, term)
+				}
+			}
 		}
 		if rawTerms, ok := args["terms"].([]any); ok {
 			for _, raw := range rawTerms {
@@ -781,6 +816,63 @@ func NewServer(
 			results = search.WithoutTestResults(results)
 		}
 		return formatResults(g, results), nil
+	})
+
+	// Tool: gograph_strings
+	stringsTool := mcp.NewTool("gograph_strings",
+		mcp.WithDescription("Search Go string literals in the indexed source files for one or more case-insensitive substrings (OR semantics), returning file, line, the literal, and its enclosing function. Route-shaped terms match any path-parameter spelling (:id, {id}, *id). Source is read through the confined repository reader; unreadable files are named in a warning. The MCP server refreshes source analysis before the call. Read-only; no side effects. WHEN TO USE: To find raw route strings, URLs, SQL fragments, header names, or messages that are not symbols, instead of grep. NOT TO USE: For symbols (use gograph_query) or registered routes with handlers (use gograph_routes). RETURNS: gograph.results.v1 rows of kind string with total/returned/truncated/next_cursor."),
+		mcp.WithString("term", mcp.Description("Substring to find inside string literals (e.g. '/api/setup/license')")),
+		mcp.WithString("query", mcp.Description("Alias of term")),
+		mcp.WithArray("terms", mcp.Description("Optional list of substrings combined with OR semantics"), mcp.WithStringItems()),
+		mcp.WithBoolean("no_tests", mcp.Description("Exclude *_test.go files")),
+		mcp.WithInteger("limit", mcp.Description("Maximum rows in this page")),
+		mcp.WithString("cursor", mcp.Description("Opaque next_cursor from the previous gograph_strings result")),
+	)
+	addTool(stringsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		g := graphForRequest(ctx)
+		args, ok := request.Params.Arguments.(map[string]any)
+		if !ok {
+			return mcp.NewToolResultError("invalid arguments"), nil
+		}
+		var terms []string
+		for _, name := range []string{"term", "query"} {
+			if value, exists := args[name]; exists {
+				term, ok := value.(string)
+				if !ok {
+					return mcp.NewToolResultError(name + " must be a string"), nil
+				}
+				if term != "" {
+					terms = append(terms, term)
+				}
+			}
+		}
+		if rawTerms, exists := args["terms"]; exists {
+			list, ok := rawTerms.([]any)
+			if !ok {
+				return mcp.NewToolResultError("terms must be an array of strings"), nil
+			}
+			for _, raw := range list {
+				term, ok := raw.(string)
+				if !ok {
+					return mcp.NewToolResultError("terms must be an array of strings"), nil
+				}
+				if term != "" {
+					terms = append(terms, term)
+				}
+			}
+		}
+		if len(terms) == 0 {
+			return mcp.NewToolResultError("provide term or at least one terms entry"), nil
+		}
+		results, diagnostic, err := search.StringLiterals(g, terms, !boolArg(args, "no_tests"))
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		result := formatResults(g, results)
+		if diagnostic != "" {
+			result.Content = append(result.Content, mcp.NewTextContent("WARNING: "+diagnostic))
+		}
+		return result, nil
 	})
 
 	// Tool: gograph_explore
@@ -1231,7 +1323,8 @@ func NewServer(
 	// Tool: gograph_routes
 	routesTool := mcp.NewTool("gograph_routes",
 		mcp.WithDescription("List a deterministic bounded page of HTTP routes with methods, URL patterns, handler names, and source locations. Production routes are returned by default; include_tests=true adds *_test.go registrations. Optional term matches method/path, handler, or file. module selects an exact module path/directory, a unique nested-module directory basename, or the repository directory name for a root module. limit defaults to 100 and is restricted to 1-200; next_cursor continues the same filtered census. Each page is also bounded to 64 KiB so the result stays directly consumable instead of spilling to an out-of-band file. Constant nested Gin/Echo/Fiber Group prefixes and Chi Route closure prefixes are composed; Gin/Fiber use the final variadic argument as the terminal handler, while Echo uses the handler immediately after the path. Dynamically computed prefixes remain unresolved. The MCP server refreshes source analysis before this call. Read-only; no side effects. WHEN TO USE: To inventory one service/module or find a route before gograph_endpoint. NOT TO USE: For a handler's downstream call chain (use gograph_endpoint). RETURNS: gograph.routes.v1 JSON with total, returned, truncated, routes[], and next_cursor when more matches exist."),
-		mcp.WithString("term", mcp.Description("Optional case-insensitive substring matched against method/path, handler, or file")),
+		mcp.WithString("term", mcp.Description("Optional case-insensitive substring matched against method/path, handler, or file. Path parameters match in any spelling: :id, {id}, and *id are equivalent")),
+		mcp.WithString("query", mcp.Description("Alias of term")),
 		mcp.WithString("module", mcp.Description("Optional exact module path/directory, unique nested-module directory basename, or repository directory name for a root module (for example identuum-idp)")),
 		mcp.WithBoolean("include_tests", mcp.Description("Include routes registered in *_test.go files; false by default")),
 		mcp.WithInteger("limit", mcp.Description("Maximum rows in this page, 1-200 (default: 100); the 64 KiB byte budget may return fewer")),
@@ -1260,6 +1353,16 @@ func NewServer(
 		term, err := stringOption("term")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
+		}
+		alias, err := stringOption("query")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if term != "" && alias != "" && term != alias {
+			return mcp.NewToolResultError("term and query are aliases; supply one"), nil
+		}
+		if term == "" {
+			term = alias
 		}
 		module, err := stringOption("module")
 		if err != nil {
@@ -1531,12 +1634,14 @@ func NewServer(
 
 	// Tool: gograph_errorflow
 	flowTool := mcp.NewTool("gograph_flow",
-		mcp.WithDescription("Find potential untrusted-data paths from HTTP request objects, decoded JSON values, or environment variables to SQL query text, process execution arguments, filesystem paths, or outbound HTTP targets. The MCP server refreshes source analysis before this call; run `gograph build . --precise` first for stronger method/interface targets. Read-only; no side effects. WHEN TO USE: During a security review or before changing request parsing, command execution, file access, SQL construction, or URL handling. NOT TO USE: As proof of exploitability; the analysis is path-insensitive and matches call/return context for at most 16 nested repository calls. RETURNS: Structured findings with source, sink, severity, confidence, and path steps. Configure trusted return-value sanitizers in .gograph/flow.json or with config."),
+		mcp.WithDescription("Find potential untrusted-data paths from HTTP request objects, decoded JSON values, or environment variables to SQL query text, process execution arguments, filesystem paths, or outbound HTTP targets. The MCP server refreshes source analysis before this call; run `gograph build . --precise` first for stronger method/interface targets. Read-only; no side effects. WHEN TO USE: During a security review or before changing request parsing, command execution, file access, SQL construction, or URL handling. NOT TO USE: As proof of exploitability; the analysis is path-insensitive and call/return context for the 3 most recent call sites by default (context depth up to 16; deeper returns that lose their call site are kept at low confidence), bounded by a size-derived work budget that reports incomplete runs explicitly. RETURNS: Structured findings with source, sink, severity, confidence, and path steps. Configure trusted return-value sanitizers in .gograph/flow.json or with config."),
 		mcp.WithString("term", mcp.Description("Optional substring filter matched against functions, files, endpoints, and path steps")),
 		mcp.WithString("source", mcp.Description("Optional source kind: http_request, decoded_json, or environment")),
 		mcp.WithString("sink", mcp.Description("Optional sink kind: sql_query, process_execution, filesystem, or outbound_http")),
 		mcp.WithString("config", mcp.Description("Sanitizer policy path inside the graph root (default .gograph/flow.json when present)")),
 		mcp.WithBoolean("no_tests", mcp.Description("Exclude functions in *_test.go files")),
+		mcp.WithNumber("max_work", mcp.Description("Optional propagation work budget; defaults to a value derived from the number of flow facts. An exhausted budget returns completeness.complete=false with partial findings.")),
+		mcp.WithNumber("context_depth", mcp.Description("Optional call-site frames kept per value (default 3, max 16). Deeper settings are more precise and need more work.")),
 	)
 	addTool(flowTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
@@ -1571,21 +1676,46 @@ func NewServer(
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		results, err := search.Flow(g, search.FlowOptions{
+		positive := func(name string) (int, error) {
+			value, exists := args[name]
+			if !exists || value == nil {
+				return 0, nil
+			}
+			number, ok := value.(float64)
+			if !ok || number < 1 || number != float64(int(number)) {
+				return 0, fmt.Errorf("%s must be a positive integer", name)
+			}
+			return int(number), nil
+		}
+		maxWork, err := positive("max_work")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		contextDepth, err := positive("context_depth")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		report, err := search.FlowWithReport(g, search.FlowOptions{
 			Term: term, Source: source, Sink: sink, ConfigPath: config,
-			IncludeTests: !boolArg(args, "no_tests"),
+			IncludeTests: !boolArg(args, "no_tests"), MaxWork: maxWork, ContextDepth: contextDepth,
 		})
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		results := report.Results
+		limitations := []string{fmt.Sprintf("Path-insensitive static analysis keeping %d call-site frames per value; returns past a dropped frame are low confidence. Review findings in source before acting.", report.Completeness.ContextDepth)}
+		if !report.Completeness.Complete {
+			limitations = append([]string{report.Completeness.Reason}, limitations...)
+		}
 		response := struct {
-			Query       string              `json:"query,omitempty"`
-			Count       int                 `json:"count"`
-			Findings    []search.FlowResult `json:"findings"`
-			Limitations []string            `json:"limitations"`
+			Query        string                  `json:"query,omitempty"`
+			Count        int                     `json:"count"`
+			Findings     []search.FlowResult     `json:"findings"`
+			Completeness search.FlowCompleteness `json:"completeness"`
+			Limitations  []string                `json:"limitations"`
 		}{
-			Query: term, Count: len(results), Findings: results,
-			Limitations: []string{"Path-insensitive static analysis with at most 16 nested call-site frames; review findings in source before acting."},
+			Query: term, Count: len(results), Findings: results, Completeness: report.Completeness,
+			Limitations: limitations,
 		}
 		data, err := json.MarshalIndent(response, "", "  ")
 		if err != nil {
@@ -1861,8 +1991,8 @@ func initNewTools(
 
 	// Tool: gograph_usages
 	usagesTool := mcp.NewTool("gograph_usages",
-		mcp.WithDescription("Find every place a named Go type appears in function parameter lists, return type signatures, struct field or interface method declarations, and composite-literal construction. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: Before changing an interface or type definition — see the consumption and construction blast radius. NOT TO USE: For call sites of a function (use gograph_callers); use gograph_literals when only struct Foo{...} initialization sites are needed; for all transitive callers use gograph_impact. RETURNS: File paths and line locations where the type appears; empty when the type is not referenced."),
-		mcp.WithString("type", mcp.Required(), mcp.Description("The type name to search for (e.g., 'AuthService', 'Repository')")),
+		mcp.WithDescription("Find every place a named Go type appears in function parameter lists, return type signatures, struct field or interface method declarations, and composite-literal construction. The MCP server checks freshness before this call and refreshes in the current requested analysis mode; precise and precise_fallback graphs retry CHA/SSA after source changes. Read-only; no side effects. WHEN TO USE: Before changing an interface or type definition — see the consumption and construction blast radius. NOT TO USE: For call sites of a function (use gograph_callers); use gograph_literals when only struct Foo{...} initialization sites are needed; for all transitive callers use gograph_impact. Also answers struct fields: 'Type.Field', 'pkg.Type.Field', or a bare field name returns the declaration plus every field_read, field_write, field_address, and field_literal site, attributed to the declaring struct so promoted fields resolve; typed rows come from precise builds of production packages, while AST graphs return labelled name-only possible_field_use rows. RETURNS: File paths and line locations where the type or field appears; empty when the type is not referenced."),
+		mcp.WithString("type", mcp.Required(), mcp.Description("The type name (e.g., 'AuthService') or struct field ('Config.Limit', or a bare field name) to search for")),
 	)
 	addTool(usagesTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)

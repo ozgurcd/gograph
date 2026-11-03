@@ -50,6 +50,9 @@ type Envelope struct {
 	Returned   *int    `json:"returned,omitempty"`
 	Truncated  *bool   `json:"truncated,omitempty"`
 	NextCursor *string `json:"next_cursor,omitempty"`
+	// Completeness is additive evidence that a bounded analysis stopped
+	// before a fixed point. Only commands with such a bound set it.
+	Completeness interface{} `json:"completeness,omitempty"`
 	// GraphState is additive request provenance for repository graph-backed
 	// JSON commands. It is omitted for host, lifecycle, and hard-error results.
 	GraphState *graphstate.State `json:"graph_state,omitempty"`

@@ -138,6 +138,7 @@ func main() { _ = Work() }
 		"gograph_wiki":              {"output": filepath.Join(root, "wiki")},
 		"gograph_untested":          {"pkg": "sample", "top": float64(5)},
 		"gograph_doc":               {"query": "fmt.Errorf"},
+		"gograph_strings":           {"term": "sample", "no_tests": true},
 	}
 
 	called := 0
@@ -148,7 +149,7 @@ func main() { _ = Work() }
 		called++
 		callTool(t, handler, args[name])
 	}
-	if called != 64 {
-		t.Fatalf("executed %d non-session MCP tools, want 64", called)
+	if called != 65 {
+		t.Fatalf("executed %d non-session MCP tools, want 65", called)
 	}
 }

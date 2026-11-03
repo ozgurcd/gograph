@@ -55,6 +55,7 @@ type Graph struct {
 	Calls           []CallEdge        `json:"calls"`
 	EnvReads        []EnvRead         `json:"env_reads"`
 	VariableUses    []VariableUse     `json:"variable_uses,omitempty"`
+	FieldUses       []FieldUse        `json:"field_uses,omitempty"`
 	Dependencies    []Dependency      `json:"dependencies"`
 	Modules         []ModuleNode      `json:"modules,omitempty"`
 	Routes          []HTTPRoute       `json:"routes,omitempty"`
@@ -82,6 +83,22 @@ type VariableUse struct {
 	File        string `json:"file"`
 	Line        int    `json:"line"`
 	Column      int    `json:"column"`
+}
+
+// FieldUse is a type-checked access to a struct field. TypeName and Package
+// name the struct that declares the field, so promoted fields are attributed
+// to their embedded struct. Access is read, write, address, or literal (a
+// keyed composite-literal element). Precise builds record field uses; AST-only
+// graphs have none.
+type FieldUse struct {
+	TypeName string `json:"type_name"`
+	Package  string `json:"package,omitempty"`
+	Field    string `json:"field"`
+	Access   string `json:"access"`
+	Function string `json:"function,omitempty"`
+	File     string `json:"file"`
+	Line     int    `json:"line"`
+	Column   int    `json:"column"`
 }
 
 // ModuleNode records a Go module owned by the repository graph. Workspace

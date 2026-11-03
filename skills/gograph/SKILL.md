@@ -1,7 +1,7 @@
 ---
 name: gograph
 version: "0.1.0"
-description: "Go repository intelligence for Claude Code. Use when reading, navigating, editing, reviewing, or refactoring a Go codebase. Exposes 64 query, analysis, and workflow capabilities through the local gograph MCP server, including bounded first-call exploration, AST-aware call graphs, blast-radius analysis, impact, and security-flow candidates."
+description: "Go repository intelligence for Claude Code. Use when reading, navigating, editing, reviewing, or refactoring a Go codebase. Exposes 65 query, analysis, and workflow capabilities through the local gograph MCP server, including bounded first-call exploration, AST-aware call graphs, blast-radius analysis, impact, and security-flow candidates."
 argument-hint: "gograph stats | gograph plan UserService.Login | gograph review --uncommitted"
 allowed-tools: Bash, Read
 homepage: https://gograph.identuum.ai
@@ -13,7 +13,7 @@ user-invocable: true
 
 # gograph: Go Repository Intelligence
 
-`gograph` is a local, AST-aware Go code intelligence engine that exposes 64 query, analysis, and workflow capabilities over the Model Context Protocol (68 endpoints including session lifecycle). It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) a structural view backed by a persisted or in-memory graph. `gograph_explore` offers compact, standard, and deep bounded discovery over one shared native result: compact preserves identity/role and complete counts, standard includes source/direct evidence and exact impact, and deep adds depth-3 exact evidence, package context, and explanation. `gograph_context` remains the focused known-symbol bundle. Actual savings depend on the task.
+`gograph` is a local, AST-aware Go code intelligence engine that exposes 65 query, analysis, and workflow capabilities over the Model Context Protocol (69 endpoints including session lifecycle). It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) a structural view backed by a persisted or in-memory graph. `gograph_explore` offers compact, standard, and deep bounded discovery over one shared native result: compact preserves identity/role and complete counts, standard includes source/direct evidence and exact impact, and deep adds depth-3 exact evidence, package context, and explanation. `gograph_context` remains the focused known-symbol bundle. Actual savings depend on the task.
 
 `gopls` provides live compiler-backed navigation, diagnostics, implementations,
 refactoring, and experimental MCP support. `gograph` complements it with a
@@ -137,7 +137,7 @@ new declarations. CLI uses the same rules.
 | `gograph_identity` with `symbol=<symbol-or-stable-id>` | Print or re-resolve canonical symbol identity without silently choosing ambiguity; optional `package` disambiguation |
 | `gograph_check` | Policy checks, including changed-route tests, coverage, orphans, API drift, arity, and complexity |
 
-The live surface is 68 MCP endpoints; `gograph_capabilities` is the tested source of truth. `gograph_flow` is path-insensitive with bounded call-site matching; use it for security review leads, not exploitability proof.
+The live surface is 69 MCP endpoints; `gograph_capabilities` is the tested source of truth. `gograph_flow` is path-insensitive with bounded call-site matching; use it for security review leads, not exploitability proof.
 Common list tools (including query, callers/callees, impact, types/usages,
 errors/envs, and httpcalls) default to 100 rows, maximum 200, within a 16 KiB
 native-page budget. Inspect `total`, `returned`, `truncated`, and `next_cursor`;

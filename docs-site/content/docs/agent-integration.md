@@ -185,7 +185,7 @@ exact before possible, then shorter paths, production before tests, typed
 resolution before heuristics, and a canonical tie-breaker. Workspace path uses
 the same ordering and finally prefers fewer cross-repository transitions.
 
-The server exposes 68 endpoints: 64 tools corresponding to CLI query,
+The server exposes 69 endpoints: 65 tools corresponding to CLI query,
 analysis, and workflow commands plus four session lifecycle tools. Tool
 arguments and transport-level status presentation can differ from CLI flags
 and process exit codes. `gograph_flow` matches the CLI `flow` filters (`term`,

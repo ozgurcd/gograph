@@ -395,6 +395,26 @@ gograph constructors <struct>
 ```
 Finds factory and constructor functions that return the named struct (e.g., `NewClient`, `New*`).
 
+### strings
+
+```bash
+gograph strings <term...> [--no-tests] [--path DIR]
+```
+
+Searches Go string literals in the indexed source files and reports each
+match with its file, line, and enclosing function. Use it for raw route
+strings, URLs, SQL fragments, header names, and messages that are not
+symbols, instead of grep. Matching is a case-insensitive substring test
+with OR semantics across terms. Route-shaped terms match any path-parameter
+spelling, so `/users/{id}`, `/users/:id`, and `/users/*id` find each other.
+Files are read through the confined repository reader; files that cannot be
+read safely are named in a warning. MCP: `gograph_strings` (`term`, `query`,
+or `terms`; `no_tests`; `limit`/`cursor`).
+
+`query` also matches registered HTTP route patterns with the same parameter
+normalization, and both `query` and `strings` accept a repository path as
+`--path DIR` or as a trailing directory argument (`gograph query org-link .`).
+
 ### literals
 ```bash
 gograph literals <struct>
@@ -422,6 +442,15 @@ references in comparisons, switch cases, composite values, and function
 arguments. Typed enum-like constants retain their resolved identity, excluding
 local shadows. Broad `query` includes these sites as `usage` rows. AST-only
 indexes do not claim type-resolved constant references.
+
+`gograph usages <Type.Field>` (also `pkg.Type.Field`, or a bare field name that
+is not a type) answers struct fields: the declaration plus every `field_read`,
+`field_write`, `field_address`, and keyed `field_literal` site. Uses are
+attributed to the struct that declares the field, so promoted fields through
+embedding resolve to their embedded struct, and a same-named field of another
+struct is not included. A precise build records these type-checked rows for
+production packages in the `field_uses` graph section. An AST-only graph
+returns a `limit` row and name-only `possible_field_use` rows instead.
 
 Uncommitted `plan` and `review` omit blank-identifier declarations from symbol
 traversal. Review preserves the declaration evidence and names that limit;
@@ -648,7 +677,7 @@ Finds potential paths from untrusted inputs to security-sensitive operations. Te
   ```
 
   Omit `for` to apply a sanitizer to every sink kind. `function` accepts the call spelling or a fully-qualified symbol ID; use the fully-qualified form for duplicate names. Validators that only return `bool` or `error` do not sanitize the original value.
-- **Limitations**: Interprocedural and path-insensitive, with call/return matching across at most 16 nested repository calls. Default graphs resolve direct local/imported functions; run `build . --precise` for stronger method/interface targets. Reflection, globals, arbitrary heap aliases, and unresolved dynamic calls may be missed or over-approximated. Unresolved external transformations lower confidence. Findings require source review and do not prove exploitability.
+- **Limitations**: Interprocedural and path-insensitive, with call/return context for the 3 most recent call sites by default (context depth up to 16; deeper returns that lose their call site are kept at low confidence), bounded by a size-derived work budget that reports incomplete runs explicitly. Default graphs resolve direct local/imported functions; run `build . --precise` for stronger method/interface targets. Reflection, globals, arbitrary heap aliases, and unresolved dynamic calls may be missed or over-approximated. Unresolved external transformations lower confidence. Findings require source review and do not prove exploitability.
 
 ### tests
 ```bash
@@ -1064,7 +1093,7 @@ transport has an undocumented analytical feature.
 | Capability group | CLI ↔ project MCP |
 |---|---|
 | Core | `capabilities` ↔ `gograph_capabilities`; `stale` ↔ `gograph_stale`; `stats` ↔ `gograph_stats` |
-| Search/navigation | `query` ↔ `gograph_query`; `focus` ↔ `gograph_focus`; `node` ↔ `gograph_node`; `source` ↔ `gograph_source`; `public` ↔ `gograph_public` |
+| Search/navigation | `query` ↔ `gograph_query`; `strings` ↔ `gograph_strings`; `focus` ↔ `gograph_focus`; `node` ↔ `gograph_node`; `source` ↔ `gograph_source`; `public` ↔ `gograph_public` |
 | Calls/reachability | `callers` ↔ `gograph_callers`; `callees` ↔ `gograph_callees`; `impact` ↔ `gograph_impact`; `path` ↔ `gograph_path`; `orphans` ↔ `gograph_orphans` |
 | Types/tests | `implementers` ↔ `gograph_implementers`; `interfaces` ↔ `gograph_interfaces`; `fields` ↔ `gograph_fields`; `embeds` ↔ `gograph_embeds`; `constructors` ↔ `gograph_constructors`; `literals` ↔ `gograph_literals`; `usages` ↔ `gograph_usages`; `returnusage` ↔ `gograph_returnusage`; `schema` ↔ `gograph_schema`; `globals` ↔ `gograph_globals`; `mocks` ↔ `gograph_mocks`; `fixtures` ↔ `gograph_fixtures`; `identity` ↔ `gograph_identity` |
 | Packages/changes | `imports` ↔ `gograph_imports`; `deps` ↔ `gograph_deps`; `dependents` ↔ `gograph_dependents`; `changes` ↔ `gograph_changes` |
@@ -1074,7 +1103,7 @@ transport has an undocumented analytical feature.
 | Documentation/toolchain | `wiki` ↔ `gograph_wiki`; `doc` ↔ `gograph_doc` |
 | Session lifecycle | `session create` ↔ `gograph_session_create`; `session end` ↔ `gograph_session_end`; `session audit` ↔ `gograph_session_audit`; `session cleanup` ↔ `gograph_session_cleanup` |
 
-That is 64 CLI-equivalent project capabilities plus four session tools: 68
+That is 65 CLI-equivalent project capabilities plus four session tools: 69
 tools on `gograph mcp`. The separate `gograph workspace mcp` server adds these
 four exact pairs:
 
@@ -1170,8 +1199,8 @@ AI clients (e.g., Claude Code, Cursor).
   `gograph_impact`, `gograph_endpoint`, `gograph_dependents`, `gograph_deps`,
   `gograph_path`, or `gograph_coupling`. The tool returns Mermaid flowchart
   text instead of its normal response.
-- **Parity**: 64 query, analysis, and workflow commands have corresponding MCP
-  endpoints; four additional endpoints manage sessions (68 endpoints total).
+- **Parity**: 65 query, analysis, and workflow commands have corresponding MCP
+  endpoints; four additional endpoints manage sessions (69 endpoints total).
   MCP uses typed tool arguments rather than CLI global flags, and some
   not-found and status results have different transport-level presentation.
   `gograph_explore` and CLI `explore --json` share the native
@@ -1229,7 +1258,7 @@ must already have started with a usable artifact or buildable Go source.
 ### session
 ```bash
 gograph session create [word]
-gograph session end --session-id ID
+gograph session end [session_id]
 gograph session audit [session_id]
 gograph session cleanup
 ```
@@ -1239,8 +1268,11 @@ be real, and markers/logs must be regular non-linked entries. Audit reads and
 cleanup are confined to the project; cleanup removes only validated inactive
 regular logs with an end record. Each created session has an independent active
 marker and random suffix, so equal labels and simultaneous creation do not share
-a pointer. Owners keep the existing scoring rules. An unselected caller cannot
-end a session. Markers hold only the session ID; a `session_<id>.meta.json`
+a pointer. Owners keep the existing scoring rules. A CLI command without
+`--session-id`/`GOGRAPH_SESSION` uses the repository's only active session
+when this host's CLI created it; with several sessions, or a session that is
+MCP-owned, from another host, or without owner metadata, an unselected caller
+cannot end a session and must name it (`session end ID`). Markers hold only the session ID; a `session_<id>.meta.json`
 sidecar records the owner (`cli` or `mcp`), process ID, host, working directory
 and creation time. Cleanup never deletes: it moves files into
 `.gograph/_to_delete/<UTC time>_<suffix>/`. It first ends and archives other

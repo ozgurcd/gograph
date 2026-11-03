@@ -24,7 +24,7 @@ var ListPaginationCommands = []string{
 	"fields", "envs", "interfaces", "concurrency", "dependents", "public",
 	"embeds", "imports", "impact", "errors", "httpcalls", "mutate",
 	"constructors", "usages", "returnusage", "literals", "schema", "globals",
-	"fixtures", "orphans", "boundaries",
+	"fixtures", "orphans", "boundaries", "strings",
 }
 
 func SupportsListPagination(command string) bool {

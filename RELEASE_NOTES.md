@@ -1,5 +1,47 @@
 # Release Notes
 
+## Unreleased
+
+- `flow` completes on large graphs. Propagation is a worklist over shared,
+  interned call contexts and paths instead of repeated whole-graph sweeps.
+  Each value keeps its 3 most recent call sites by default (`--context-depth`,
+  MCP `context_depth`, 1-16); deeper chains are still followed, and a return
+  past a dropped call site is reported with low confidence instead of being
+  lost. Work is bounded by a budget derived from the number of flow facts
+  (`--max-work`, MCP `max_work`). An exhausted budget is never silent: text
+  prints `INCOMPLETE`, JSON and MCP add `completeness`, and the CLI exits 2.
+  On gograph's own 37 MB graph, flow went from being killed for memory to
+  completing in about 9 seconds.
+- MCP answers are never silently empty or stale. Empty route and list pages
+  carry a warning naming the analyzed root and indexed totals, and a result
+  served from a stale graph after a failed refresh starts with a warning that
+  names the refresh error. `gograph_routes` and `gograph_query` accept
+  `query` as an alias of `term`; `gograph_routes` previously ignored it and
+  returned every route unfiltered.
+- Route paths match any parameter spelling: `/users/{id}`, `/users/:id`,
+  `/users/{id:[0-9]+}` and `/users/*id` find each other in `routes`, `query`
+  and `strings`. `query` also returns HTTP route patterns as `route` rows.
+- New `strings <term...>` (MCP `gograph_strings`) searches Go string literals
+  in indexed files with their enclosing function, for raw route strings, URLs,
+  SQL fragments and messages that are not symbols.
+- `query` and `strings` accept a repository path: `--path DIR`, or a trailing
+  directory argument such as `gograph query org-link .`.
+- `usages Type.Field` (also `pkg.Type.Field`, or a bare field name) lists a
+  struct field's declaration and every read, write, address-of and keyed
+  literal site. Precise builds record these type-checked uses in a new
+  `field_uses` graph section, attributed to the declaring struct so promoted
+  fields resolve; AST graphs return labelled name-only rows.
+- CLI sessions survive separate shell calls. Without `--session-id` or
+  `GOGRAPH_SESSION`, a CLI command uses the repository's only active session
+  when this host's CLI created it, so `build`, `plan`, `review` and
+  `session end` work and are audited without a selector. Several sessions, or
+  an MCP-owned, other-host or metadata-less session, adopt nothing. `session
+  end <ID>` ends a named session, and refusals say how to select a session.
+  The audit no longer reports plan and review as not executed when they ran
+  from fresh shells.
+- `source` refuses a file that changed after the graph was built instead of
+  printing the indexed line range from the changed file.
+
 ## v1.7.15 — 2026-10-30
 
 - One project root for sessions, build, queries and cleanup: the nearest

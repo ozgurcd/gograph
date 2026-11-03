@@ -101,6 +101,18 @@ func Query(g *graph.Graph, terms []string) []Result {
 			add(Result{Kind: "package", Name: pkg.Name, File: pkg.Dir, Score: 1})
 		}
 	}
+	// Route patterns are string literals in source, so they are not symbols;
+	// match them here so a path such as /api/v1/users/{id} finds its route.
+	for _, route := range g.Routes {
+		pattern := route.Method + " " + route.Path
+		matched := match(pattern) > 0
+		for _, term := range terms {
+			matched = matched || RoutePatternContains(pattern, term)
+		}
+		if matched {
+			add(Result{Kind: "route", Name: pattern, File: route.File, Line: route.Line, Detail: "handled by " + route.Handler, Score: 2})
+		}
+	}
 	for _, f := range g.Files {
 		if match(f.Path) > 0 {
 			add(Result{Kind: "file", Name: f.Path, File: f.Path, Score: 1})
@@ -1144,6 +1156,13 @@ func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
 			readErrs = append(readErrs, fmt.Errorf("read source file %s: %w", target.File, err))
 			continue
 		}
+		// Indexed line ranges belong to the bytes that were indexed. Serving
+		// them from a changed file returns the wrong code without any sign of
+		// it, so a changed file is refused with the remedy instead.
+		if recorded := indexedFileDigest(g, target.File); recorded != "" && recorded != graph.SourceDigest(data) {
+			readErrs = append(readErrs, fmt.Errorf("%s changed after the graph was built, so its indexed line range is stale; run gograph build . and retry", target.File))
+			continue
+		}
 
 		lines := strings.Split(string(data), "\n")
 		start := target.Line - 1
@@ -1972,4 +1991,15 @@ func (snapshot *Snapshot) Untested() []UntestedResult {
 		results = []UntestedResult{}
 	}
 	return results
+}
+
+// indexedFileDigest returns the content digest recorded for an indexed file,
+// or "" when the graph predates content digests.
+func indexedFileDigest(g *graph.Graph, path string) string {
+	for _, file := range g.Files {
+		if file.Path == path {
+			return file.ContentDigest
+		}
+	}
+	return ""
 }

@@ -17,6 +17,8 @@ func Usages(g *graph.Graph, typeName string) []Result {
 				Detail: "usages file-selector limit: type-reference records contain lexical type spellings, not declaration identities; use the documented type-name query and inspect its heuristic results. File-qualified variables and constants remain supported."}}
 		}
 		typeName = target.ID
+	} else if rows, isField := fieldUsages(g, typeName); isField {
+		return rows
 	}
 	nl := strings.ToLower(typeName)
 	var results []Result

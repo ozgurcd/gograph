@@ -184,6 +184,53 @@ func ActiveCallerSessionAt(root, id string) (string, error) {
 	return id, nil
 }
 
+// ImplicitCallerSessionAt returns the session a CLI call without a selector
+// belongs to. Agent shells do not keep GOGRAPH_SESSION between commands, so
+// each command would otherwise count as a different caller. A session is
+// adopted only when it is unambiguous: it is the only active session in the
+// repository, it was created by the CLI, and it was created on this host.
+// Anything else (no session, several sessions, an MCP-owned session, another
+// host, or a marker without owner metadata) adopts nothing.
+func ImplicitCallerSessionAt(root string) (string, error) {
+	store, err := openSessionStore(root)
+	if err != nil {
+		return "", err
+	}
+	defer store.close()
+	legacy, err := store.activeSessionID()
+	if err != nil {
+		return "", err
+	}
+	markers, err := store.callerMarkers()
+	if err != nil {
+		return "", err
+	}
+	if legacy != "" || len(markers) != 1 {
+		return "", nil
+	}
+	host, err := os.Hostname()
+	if err != nil {
+		return "", nil
+	}
+	for id, marker := range markers {
+		if marker.Owner == OwnerCLI && marker.Host == host {
+			return id, nil
+		}
+	}
+	return "", nil
+}
+
+// ActiveCallerSessionIDs lists the active sessions of a repository, for
+// messages that must tell a caller which session to select.
+func ActiveCallerSessionIDs(root string) ([]string, error) {
+	store, err := openSessionStore(root)
+	if err != nil {
+		return nil, err
+	}
+	defer store.close()
+	return store.activeCallerIDs()
+}
+
 // GuardCallerMutationAt refuses writes while a different caller owns a session.
 // A legacy active_session.json pointer has no caller marker: it stays usable
 // when selected by its ID, but it never blocks other callers.
@@ -204,7 +251,7 @@ func GuardCallerMutationAt(root, id string) error {
 	}
 	for _, active := range ids {
 		if active != id {
-			return fmt.Errorf("active session %q belongs to another caller; repository mutation refused", active)
+			return fmt.Errorf("active session %q belongs to another caller; repository mutation refused. If it is your session, select it with --session-id %s or GOGRAPH_SESSION=%s (MCP: session_id)", active, active, active)
 		}
 	}
 	return nil
@@ -294,7 +341,7 @@ func EndCallerSessionAt(root, id string) (string, error) {
 		if err := GuardCallerMutationAt(root, id); err != nil {
 			return "", err
 		}
-		return "", fmt.Errorf("no selected session to end; supply --session-id or GOGRAPH_SESSION")
+		return "", fmt.Errorf("no selected session to end; run `gograph session end <ID>` or supply --session-id or GOGRAPH_SESSION")
 	}
 	if _, err := ActiveCallerSessionAt(root, id); err != nil {
 		return "", err

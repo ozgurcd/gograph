@@ -47,6 +47,8 @@ type RoutePage struct {
 	Truncated     bool     `json:"truncated"`
 	NextCursor    string   `json:"next_cursor,omitempty"`
 	Routes        []Result `json:"routes"`
+	// Warning explains an empty page; it is never set when routes match.
+	Warning string `json:"warning,omitempty"`
 }
 
 // QueryRoutes filters the full route inventory before applying a cursor. Pages
@@ -143,6 +145,12 @@ func (snapshot *Snapshot) QueryRoutes(query RouteQuery) (RoutePage, error) {
 		break
 	}
 	finalizeRoutePage(&page, offset, binding)
+	if page.Total == 0 {
+		page.Warning = EmptyResultContext(g, "route")
+		if len(all) > 0 {
+			page.Warning = fmt.Sprintf("0 of %d indexed routes matched. ", len(all)) + page.Warning
+		}
+	}
 	encoded, err := json.Marshal(page)
 	if err != nil {
 		return RoutePage{}, fmt.Errorf("encode route page: %w", err)
@@ -166,7 +174,28 @@ func finalizeRoutePage(page *RoutePage, offset int, binding string) {
 func routeResultContains(result Result, term string) bool {
 	return strings.Contains(strings.ToLower(result.Name), term) ||
 		strings.Contains(strings.ToLower(result.Detail), term) ||
-		strings.Contains(strings.ToLower(result.File), term)
+		strings.Contains(strings.ToLower(result.File), term) ||
+		RoutePatternContains(result.Name, term)
+}
+
+// RoutePatternContains matches a route against a term regardless of how
+// either spells path parameters: /users/:id, /users/{id}, /users/{id:[0-9]+}
+// and /users/*id all match each other.
+func RoutePatternContains(route, term string) bool {
+	normalized := normalizeRoutePattern(term)
+	return normalized != "" && strings.Contains(normalizeRoutePattern(route), normalized)
+}
+
+func normalizeRoutePattern(value string) string {
+	segments := strings.Split(strings.ToLower(strings.TrimSpace(value)), "/")
+	for index, segment := range segments {
+		switch {
+		case strings.HasPrefix(segment, ":"), strings.HasPrefix(segment, "*"),
+			strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}"):
+			segments[index] = "{}"
+		}
+	}
+	return strings.Join(segments, "/")
 }
 
 func encodeRouteCursor(offset int) string {

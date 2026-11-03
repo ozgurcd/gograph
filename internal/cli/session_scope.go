@@ -16,6 +16,28 @@ func callerCommandRoot(args []string) string {
 	return ""
 }
 
+// callerAdoptsImplicitSession reports whether a command without a selector may
+// adopt the repository's only CLI session. Creating a session, naming one
+// positionally, serving MCP (which never inherits a caller session), and the
+// per-tool-call hook guard never adopt.
+func callerAdoptsImplicitSession(args []string) bool {
+	switch args[0] {
+	case "mcp", "hook-guard":
+		return false
+	case "session", "--session":
+		if len(args) < 2 {
+			return false
+		}
+		switch args[1] {
+		case "create":
+			return false
+		case "end", "audit":
+			return len(args) < 3
+		}
+	}
+	return true
+}
+
 func callerCommandMutates(args []string) bool {
 	switch args[0] {
 	case "build", "wiki", "add-claude-plugin":

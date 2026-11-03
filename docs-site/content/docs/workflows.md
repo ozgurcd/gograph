@@ -112,7 +112,7 @@ gograph flow --sink process_execution --no-tests
 gograph flow --source decoded_json --sink sql_query --no-tests --json
 ```
 
-Treat findings as review leads. The analysis is interprocedural and path-insensitive, with call/return matching across up to 16 nested repository calls. When a project has a function that returns a validated or normalized value, declare it in `.gograph/flow.json`; scope it to the sink kind it actually protects. Do not mark a boolean/error-only validator as a sanitizer for an unchanged input value.
+Treat findings as review leads. The analysis is interprocedural and path-insensitive, with call/return context for the 3 most recent call sites by default (context depth up to 16; deeper returns that lose their call site are kept at low confidence), bounded by a size-derived work budget that reports incomplete runs explicitly. When a project has a function that returns a validated or normalized value, declare it in `.gograph/flow.json`; scope it to the sink kind it actually protects. Do not mark a boolean/error-only validator as a sanitizer for an unchanged input value.
 
 ---
 

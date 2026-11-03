@@ -158,6 +158,15 @@ func Run(args []string) int {
 		return 0
 	}
 
+	// Agent shells do not keep GOGRAPH_SESSION between commands. Without an
+	// explicit selector, adopt the repository's only active session when this
+	// host's CLI created it; ambiguous or foreign sessions adopt nothing.
+	if callerSessionID == "" && callerAdoptsImplicitSession(args) {
+		if implicit, err := session.ImplicitCallerSessionAt(callerCommandRoot(args)); err == nil {
+			callerSessionID = implicit
+		}
+	}
+
 	// Enforce active session constraints
 	nonAnalytical := map[string]bool{
 		"session":           true,
@@ -241,6 +250,8 @@ func dispatch(args []string) int {
 		return runDoctor(args[1:])
 	case "query":
 		return runQuery(args[1:])
+	case "strings":
+		return runStrings(args[1:])
 	case "explore":
 		return runExplore(args[1:])
 	case "focus":
@@ -577,8 +588,9 @@ transport-specific (CLI flags/envelopes versus typed MCP arguments/content).
 ━━━ WHEN TO USE WHAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FINDING THINGS — four different scopes:
   explore <term>    bounded first call; add --compact for counts/identity or --deep for depth-3 evidence
-  query <term> [--no-tests] broad: searches symbols, struct fields, files, packages, imports, call sites
-  node <sym>        exact: AST metadata for one named symbol (kind, file, line, signature, doc)
+  query <term> [--no-tests] broad: searches symbols, struct fields, files, packages, imports, call sites, routes
+  strings <term>    literal: Go string literals (raw route strings, URLs, messages) with enclosing function
+  node <sym>       exact: AST metadata for one named symbol (kind, file, line, signature, doc)
   source <sym>      body: extracts the actual source code block — use instead of reading the file
 
 CALL GRAPH — two different depths:
@@ -612,6 +624,8 @@ STRUCT / TYPE — five different angles:
   usages <type>          where is this type used? (param/return types, struct fields,
                          iface methods, and composite Foo{...} construction)
                          Use literals <type> for only the construction subset.
+                         usages Type.Field (or a bare field name) lists field reads,
+                         writes, address-of and literal sites (typed with --precise).
                          → use before changing any interface or type — shows the full blast radius
 
 PACKAGE vs SYMBOL scope:
@@ -688,7 +702,10 @@ Know these before trusting results:
   errorflow             heuristic AST traversal — NOT SSA/data-flow. Useful for navigation,
                         not proof. Confidence rating (HIGH/MEDIUM) is a heuristic estimate.
   flow                  interprocedural, path-insensitive AST taint analysis with call/return
-                        matching across at most 16 nested repository calls. Findings are review
+                        context for the 3 most recent call sites (--context-depth, max 16).
+                        Deeper chains are still followed; returns past a dropped call site
+                        are low confidence. A size-derived --max-work budget bounds the run;
+                        an exhausted budget is reported as INCOMPLETE (exit 2). Findings are review
                         leads, not proof; globals, reflection, arbitrary heap aliases, and some
                         dynamic calls are not modeled. Use a precise build for stronger method/
                         interface targets. External calls lower confidence.
@@ -772,7 +789,8 @@ node <sym>           : AST metadata for one symbol (kind, file, line, signature,
 orphans              : symbols unreachable via BFS from main/init, test, route, and eligible public roots
 path <from> <to>     : best ranked call chain between two symbols
 public <pkg>         : exported symbols only
-query <term...> [--no-tests] : broad OR search — symbols, struct fields, files, packages, imports, call sites
+query <term...> [--no-tests] [--path DIR] : broad OR search — symbols, struct fields, files, packages, imports, call sites, routes
+strings <term...> [--no-tests] [--path DIR] : Go string literals containing a term, with enclosing function
 routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor CURSOR]
                      : deterministic HTTP route pages. Production only by default;
                        term matches method/path, handler, or file; module accepts
@@ -821,6 +839,7 @@ explore <term...> [--compact|--deep] [--limit N] [--exact]
 literals <struct>    : composite literal sites Foo{...} — run before adding/removing a required field
 usages <type>        : where a type appears in signatures, fields, interface methods,
                        or composite literals; use literals <type> for only Foo{...} sites
+usages <Type.Field>  : every read/write/address/literal use of a struct field (precise build)
 returnusage <fn>     : how each caller uses the return value of fn (discarded/assigned/returned/passed)
 risk <sym>           : risk evaluation — blast radius, complexity, tests, SQL/env (0-100 score + verdict)
 risk --uncommitted   : risk evaluation for all uncommitted changes
@@ -832,7 +851,7 @@ deps <pkg> [--transitive]: import dependency tree (add --transitive for full BFS
 endpoint <handler>   : route + handler + full call chain + SQL + env reads
                        INPUT: handler symbol name (always works) or flat route string (flat routers only)
 errorflow <term> [--no-tests]: error definition → return sites → likely HTTP entry point path
-flow [term] [--source kind] [--sink kind] [--config path] [--no-tests]
+flow [term] [--source kind] [--sink kind] [--config path] [--no-tests] [--max-work N] [--context-depth N]
                      : potential HTTP/JSON/env input paths to SQL, process, file, or HTTP sinks
                        source: http_request | decoded_json | environment
                        sink: sql_query | process_execution | filesystem | outbound_http
@@ -1686,32 +1705,94 @@ func printResults(cmd, query string, results []search.Result, emptyMsg string) i
 	return 0
 }
 
-func runQuery(args []string) int {
-	noTests := false
-	var terms []string
-	for _, arg := range args {
-		if arg == "--no-tests" {
+// termsAndPath splits search arguments into terms and an optional repository
+// path. The path is given with --path DIR, or as a trailing argument after at
+// least one term when it names an existing directory and is spelled as a path
+// (".", "..", or containing a path separator), as in `query org-link .`.
+func termsAndPath(command string, args []string) (terms []string, path string, noTests bool, err error) {
+	path = "."
+	explicit := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--no-tests":
 			noTests = true
-			continue
+		case arg == "--path":
+			if index+1 >= len(args) || args[index+1] == "" {
+				return nil, "", false, fmt.Errorf("--path requires a directory")
+			}
+			index++
+			path, explicit = args[index], true
+		case strings.HasPrefix(arg, "--path="):
+			path, explicit = strings.TrimPrefix(arg, "--path="), true
+			if path == "" {
+				return nil, "", false, fmt.Errorf("--path requires a directory")
+			}
+		case strings.HasPrefix(arg, "-"):
+			return nil, "", false, fmt.Errorf("unknown flag: %s", arg)
+		default:
+			terms = append(terms, arg)
 		}
-		if strings.HasPrefix(arg, "-") {
-			return failCommandf("query", "unknown flag: %s", arg)
+	}
+	if !explicit && len(terms) > 1 {
+		last := terms[len(terms)-1]
+		if last == "." || last == ".." || strings.ContainsRune(last, filepath.Separator) || strings.Contains(last, "/") {
+			if info, statErr := os.Stat(last); statErr == nil && info.IsDir() {
+				path, terms = last, terms[:len(terms)-1]
+			}
 		}
-		terms = append(terms, arg)
 	}
-	args = terms
-	if len(args) == 0 {
-		return failCommand("query", "usage: gograph query <term...>")
+	if len(terms) == 0 {
+		return nil, "", false, fmt.Errorf("usage: gograph %s <term...> [--path DIR] [--no-tests]", command)
 	}
-	g, err := loadGraph(".")
+	if explicit {
+		if info, statErr := os.Stat(path); statErr != nil || !info.IsDir() {
+			return nil, "", false, fmt.Errorf("--path %q is not a directory", path)
+		}
+	}
+	return terms, path, noTests, nil
+}
+
+func loadGraphAt(path string) (*graph.Graph, error) {
+	if path == "." {
+		return loadGraph(".")
+	}
+	return loadGraph(projectRoot(path))
+}
+
+func runQuery(args []string) int {
+	terms, path, noTests, err := termsAndPath("query", args)
 	if err != nil {
 		return failCommand("query", err.Error())
 	}
-	results := search.Query(g, args)
+	g, err := loadGraphAt(path)
+	if err != nil {
+		return failCommand("query", err.Error())
+	}
+	results := search.Query(g, terms)
 	if noTests {
 		results = search.WithoutTestResults(results)
 	}
-	return printResults("query", strings.Join(args, " "), results, "no results")
+	return printResults("query", strings.Join(terms, " "), results, "no results")
+}
+
+func runStrings(args []string) int {
+	terms, path, noTests, err := termsAndPath("strings", args)
+	if err != nil {
+		return failCommand("strings", err.Error())
+	}
+	g, err := loadGraphAt(path)
+	if err != nil {
+		return failCommand("strings", err.Error())
+	}
+	results, diagnostic, err := search.StringLiterals(g, terms, !noTests)
+	if err != nil {
+		return failCommand("strings", err.Error())
+	}
+	if diagnostic != "" {
+		fmt.Fprintln(os.Stderr, "WARNING: "+diagnostic)
+	}
+	return printResults("strings", strings.Join(terms, " "), results, "No string literals matched.")
 }
 
 func runFocus(args []string) int {
@@ -3240,9 +3321,18 @@ SEARCH & NAVIGATION
                              overrides mode defaults and clamps to 1-100; response modes
                              are mutually exclusive. --exact disables promotion
                              of a fuzzy lexical match into selected-symbol context.
-  query <term...> [--no-tests] Search across symbols, struct fields, packages, files, imports, and
-                             call sites. Case-insensitive, OR logic across terms.
-  focus <package>            Show all symbols, imports, and call edges for one
+  query <term...> [--no-tests] [--path DIR]
+                             Search across symbols, struct fields, packages, files, imports,
+                             call sites, and HTTP route patterns. Case-insensitive, OR logic
+                             across terms. Route paths match any parameter spelling
+                             (:id, {id}, *id). A trailing directory argument (., .., or a
+                             path with /) or --path DIR selects another repository.
+  strings <term...> [--no-tests] [--path DIR]
+                             Search Go string literals in indexed source files, with the
+                             enclosing function. Use for raw route strings, URLs, SQL
+                             fragments, and messages that are not symbols. Route-shaped
+                             terms match any parameter spelling.
+  focus <package>           Show all symbols, imports, and call edges for one
                              package. Token-efficient alternative to reading files.
   node <name>                Show indexed AST metadata for a symbol, package, or file.
   source <name>              Extract confined raw source for functions, methods,
@@ -3310,7 +3400,13 @@ INTERFACES & TYPES
                              or composite-literal construction. Use 'literals <type>' when
                              only Foo{...} sites are needed.
                              Run before changing an interface — shows the full consumption blast radius.
-  schema <table>             Find structs mapped to a database table/schema via tags.
+  usages <Type.Field|Field>  Struct-field uses: declaration plus every read, write, address-of,
+                             and keyed-literal site (field_read/field_write/field_address/
+                             field_literal), attributed to the declaring struct, so promoted
+                             fields resolve. A bare name covers every struct declaring it.
+                             Typed rows need a precise build (production packages); AST graphs
+                             return labelled name-only possible_field_use rows.
+  schema <table>            Find structs mapped to a database table/schema via tags.
   globals <pkg>              Find pkg-level vars, consts, and mutators.
   mocks <interface>          Alias for 'implementers --test-only'. Kept for compatibility.
   fixtures <pkg>             Find test helper structs and functions in test files.
@@ -3341,7 +3437,7 @@ CODE QUALITY
   boundaries --create [--config PATH]
                              Auto-generate a baseline boundaries.json from the current repo;
                              refuses linked output paths and overwrite.
-  flow [term] [--source kind] [--sink kind] [--config path] [--no-tests]
+  flow [term] [--source kind] [--sink kind] [--config path] [--no-tests] [--max-work N] [--context-depth N]
                              Find potential untrusted-data paths to SQL query text,
                              process execution, filesystem access, or outbound HTTP.
                              Sources: http_request, decoded_json, environment.
@@ -3351,6 +3447,9 @@ CODE QUALITY
                              Policy changes apply without rebuilding graph.json.
                              Schema: {"sanitizers":[{"function":"pkg.Clean",
                                "for":["filesystem"]}]}; omit "for" for all sinks.
+                             --context-depth N (default 3, max 16) call-site frames per value;
+                             --max-work N overrides the size-derived work budget. An exhausted
+                             budget prints INCOMPLETE, adds JSON completeness, and exits 2.
   complexity [symbol]        Cyclomatic complexity per function, highest first.
                              Filter by symbol name substring. Labels: LOW / MEDIUM /
                              HIGH / VERY HIGH (McCabe thresholds: 5 / 10 / 20), or
@@ -3613,7 +3712,7 @@ func printHelp() {
 }
 
 func printCommandHelp(cmd string) {
-	defer fmt.Println("\nCALLER SESSION\n  --session-id ID or GOGRAPH_SESSION selects the session printed by create.\n  Selected analytical calls require --intention; unselected readers are not logged.\n  Writes refuse while another caller owns an active session.")
+	defer fmt.Println("\nCALLER SESSION\n  --session-id ID or GOGRAPH_SESSION selects the session printed by create.\n  Without a selector, the repository's only active session is used when this host's CLI created it.\n  Selected analytical calls require --intention; unselected readers are not logged.\n  Writes refuse while another caller owns an active session.")
 	defer printExcludeDirsHelp(cmd)
 	lines := strings.Split(helpText, "\n")
 	found := false
@@ -3648,9 +3747,31 @@ func printCommandHelp(cmd string) {
 	}
 }
 
+func setFlowOption(options *search.FlowOptions, name, value string) error {
+	switch name {
+	case "--source":
+		options.Source = value
+	case "--sink":
+		options.Sink = value
+	case "--config":
+		options.ConfigPath = value
+	case "--max-work", "--context-depth":
+		number, err := strconv.Atoi(value)
+		if err != nil || number < 1 {
+			return fmt.Errorf("%s requires a positive integer", name)
+		}
+		if name == "--max-work" {
+			options.MaxWork = number
+		} else {
+			options.ContextDepth = number
+		}
+	}
+	return nil
+}
+
 func runFlow(args []string) int {
 	options := search.FlowOptions{IncludeTests: true}
-	usage := "usage: gograph flow [term] [--source http_request|decoded_json|environment] [--sink sql_query|process_execution|filesystem|outbound_http] [--config path] [--no-tests]"
+	usage := "usage: gograph flow [term] [--source http_request|decoded_json|environment] [--sink sql_query|process_execution|filesystem|outbound_http] [--config path] [--no-tests] [--max-work N] [--context-depth N]"
 	fail := func(message string) int {
 		return failCommand("flow", message)
 	}
@@ -3660,20 +3781,21 @@ func runFlow(args []string) int {
 		switch argument {
 		case "--no-tests":
 			options.IncludeTests = false
-		case "--source", "--sink", "--config":
+		case "--source", "--sink", "--config", "--max-work", "--context-depth":
 			if index+1 >= len(args) {
 				return fail(fmt.Sprintf("%s requires a value\n%s", argument, usage))
 			}
 			index++
-			switch argument {
-			case "--source":
-				options.Source = args[index]
-			case "--sink":
-				options.Sink = args[index]
-			case "--config":
-				options.ConfigPath = args[index]
+			if err := setFlowOption(&options, argument, args[index]); err != nil {
+				return fail(err.Error() + "\n" + usage)
 			}
 		default:
+			if name, value, ok := strings.Cut(argument, "="); ok && (name == "--max-work" || name == "--context-depth") {
+				if err := setFlowOption(&options, name, value); err != nil {
+					return fail(err.Error() + "\n" + usage)
+				}
+				continue
+			}
 			switch {
 			case strings.HasPrefix(argument, "--source="):
 				options.Source = strings.TrimPrefix(argument, "--source=")
@@ -3695,12 +3817,32 @@ func runFlow(args []string) int {
 	if err != nil {
 		return fail(err.Error())
 	}
-	results, err := search.Flow(g, options)
+	report, err := search.FlowWithReport(g, options)
 	if err != nil {
 		return fail(err.Error())
 	}
+	results := report.Results
+	incomplete := !report.Completeness.Complete
 	if jsonMode {
-		return PrintJSON(okEnvelope("flow", options.Term, results, len(results)))
+		envelope := okEnvelope("flow", options.Term, results, len(results))
+		envelope.Completeness = report.Completeness
+		code := PrintJSON(envelope)
+		if code == 0 && incomplete {
+			return exitStale
+		}
+		return code
+	}
+	if incomplete {
+		fmt.Fprintln(os.Stderr, "WARNING: "+report.Completeness.Reason)
+		if !filesOnlyMode {
+			defer fmt.Println("INCOMPLETE: " + report.Completeness.Reason)
+		}
+	}
+	exit := func() int {
+		if incomplete {
+			return exitStale
+		}
+		return 0
 	}
 	if filesOnlyMode {
 		seen := make(map[string]bool)
@@ -3712,11 +3854,11 @@ func runFlow(args []string) int {
 				}
 			}
 		}
-		return 0
+		return exit()
 	}
 	if len(results) == 0 {
 		fmt.Println("No potential untrusted-data flows found.")
-		return 0
+		return exit()
 	}
 
 	fmt.Printf("Potential security flows (%d):\n\n", len(results))
@@ -3727,7 +3869,7 @@ func runFlow(args []string) int {
 		}
 		fmt.Println()
 	}
-	return 0
+	return exit()
 }
 
 // runPath finds the best ranked call chain between two symbols.

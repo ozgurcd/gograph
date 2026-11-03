@@ -331,6 +331,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 		"validate",
 		"doctor",
 		"query",
+		"strings",
 		"explore",
 		"focus",
 		"node",

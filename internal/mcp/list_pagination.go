@@ -18,6 +18,9 @@ func finishListResult(command string, request mcp.CallToolRequest, pending pendi
 	if pending.Graph != nil && pending.Graph.Build != nil {
 		warning = search.EmptyAnswerWarning(command, string(pending.Graph.Build.Precision), len(pending.Rows))
 	}
+	if len(pending.Rows) == 0 {
+		warning = search.JoinWarnings(warning, search.EmptyResultContext(pending.Graph, command))
+	}
 	if !search.SupportsListPagination(command) {
 		if warning != "" {
 			result := mcp.NewToolResultText("No results found.\n" + warning)

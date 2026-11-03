@@ -549,6 +549,7 @@ func enrichProductionWithConfig(ctx context.Context, absRoot, analysisRoot strin
 	indirect := collectIndirectMutations(prog, analysisRoot, userMutators)
 	g.Mutations = append(g.Mutations, indirect...)
 	enrichMutationTypes(initial, g)
+	collectFieldUses(initial, g)
 	verifyRouteReceivers(initial, g)
 	enrichRouteFactories(initial, g)
 	if err := scanner.ValidateMaskedSourceLinks(absRoot, links); err != nil {
