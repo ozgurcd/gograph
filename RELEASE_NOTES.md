@@ -1,5 +1,25 @@
 # Release Notes
 
+## v1.7.17 — 2026-11-03
+
+- A session its job forgot no longer blocks later jobs (GG-11). Before anything
+  else, every CLI command and MCP call ends other callers' abandoned sessions:
+  CLI sessions with no activity for `GOGRAPH_SESSION_IDLE_LIMIT` (a Go
+  duration, default `2h`; `0` or `off` disables) and sessions of MCP servers
+  that have exited on this host. Each gets a `stale` end record and loses its
+  marker; its log and metadata stay for `session audit` and `session cleanup`.
+  The CLI names each ended session on stderr.
+- Refused calls, such as an adopted call without `--intention`, no longer count
+  as session activity, so later jobs being refused cannot keep a forgotten
+  session alive.
+- A call's own selected session is never ended. If it was ended while its owner
+  was away, the owner's next call says it was ended as abandoned instead of
+  only "not active".
+- `session cleanup` uses the same idle limit instead of a fixed 24 hours (24
+  hours when automatic expiry is disabled).
+- No installation or MCP restart happens automatically. Restart an existing MCP
+  server after choosing to upgrade.
+
 ## v1.7.16 — 2026-11-03
 
 - `flow` completes on large graphs. Propagation is a worklist over shared,
