@@ -1,6 +1,8 @@
 package session
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -417,7 +419,21 @@ func LogCallerCommandAt(root, id, command string, args []string, intention strin
 // An audit credits the entries made inside its session window.
 var relUnattributedJournal = filepath.Join(relSessionsDir, "unattributed.jsonl")
 
+// unattributedLogEntry is a plan/review call that selected no session. It names
+// every session active at the time: an audit credits it only to a session that
+// was the sole one (the call can belong to no other) and otherwise reports it
+// as unattributed.
+type unattributedLogEntry struct {
+	CommandLogEntry
+	ActiveSessions []string `json:"active_sessions"`
+}
+
+// logUnattributedAt journals successful calls only: failures are never
+// credited, so they must not use up the cap.
 func logUnattributedAt(root, command string, args []string, intention string, elapsed time.Duration, status string) error {
+	if status != "success" {
+		return nil
+	}
 	store, err := openSessionStore(root)
 	if err != nil {
 		return err
@@ -427,7 +443,10 @@ func logUnattributedAt(root, command string, args []string, intention string, el
 	if err != nil || len(ids) == 0 {
 		return err
 	}
-	data, err := json.Marshal(CommandLogEntry{Type: "command", Timestamp: time.Now().Format(time.RFC3339), Command: command, Args: redactArgs(args), Intention: intention, ExecutionMs: elapsed.Milliseconds(), Status: status})
+	data, err := json.Marshal(unattributedLogEntry{
+		CommandLogEntry: CommandLogEntry{Type: "command", Timestamp: time.Now().Format(time.RFC3339), Command: command, Args: redactArgs(args), Intention: intention, ExecutionMs: elapsed.Milliseconds(), Status: status},
+		ActiveSessions:  ids,
+	})
 	if err != nil {
 		return err
 	}
@@ -440,11 +459,33 @@ func logUnattributedAt(root, command string, args []string, intention string, el
 		}
 	case err != nil:
 		return err
-	case len(existing) >= maxUnattributedJournalBytes:
-		return nil
+	case len(existing)+len(data) > maxUnattributedJournalBytes:
+		// Full: keep only entries that name a still-active session, so entries
+		// of ended sessions cannot starve live ones. A concurrent append during
+		// the rewrite can be lost; the journal is best-effort telemetry.
+		kept := pruneUnattributed(existing, ids)
+		if len(kept)+len(data) > maxUnattributedJournalBytes {
+			return nil
+		}
+		return store.files.WriteRegularFile(relUnattributedJournal, append(kept, data...), 0644, false)
 	}
 	// Lost the creation race to another caller, or the journal exists.
 	return store.files.AppendRegularFile(relUnattributedJournal, data)
+}
+
+// pruneUnattributed returns the journal lines that parse and name at least one
+// of the active sessions.
+func pruneUnattributed(journal []byte, active []string) []byte {
+	var kept []byte
+	scanner := bufio.NewScanner(bytes.NewReader(journal))
+	for scanner.Scan() {
+		var l GenericLogLine
+		if json.Unmarshal(scanner.Bytes(), &l) != nil || !slices.ContainsFunc(l.ActiveSessions, func(id string) bool { return slices.Contains(active, id) }) {
+			continue
+		}
+		kept = append(append(kept, scanner.Bytes()...), '\n')
+	}
+	return kept
 }
 
 // CleanupReport lists what one cleanup pass changed.

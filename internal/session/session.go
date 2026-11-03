@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -377,6 +378,8 @@ type GenericLogLine struct {
 	Intention   string   `json:"intention"`
 	ExecutionMs int64    `json:"execution_ms"`
 	Status      string   `json:"status"`
+	// ActiveSessions is set only on unattributed.jsonl entries.
+	ActiveSessions []string `json:"active_sessions,omitempty"`
 }
 
 // AuditReport holds the calculated compliance and success metrics of a session.
@@ -397,6 +400,8 @@ type AuditReport struct {
 	ReviewRun               bool     `json:"review_run"`
 	PlanSymbols             []string `json:"plan_symbols,omitempty"`
 	ReviewTargets           []string `json:"review_targets,omitempty"`
+	UnselectedPlan          int      `json:"unselected_plan,omitempty"`
+	UnselectedReview        int      `json:"unselected_review,omitempty"`
 	UnattributedPlan        int      `json:"unattributed_plan,omitempty"`
 	UnattributedReview      int      `json:"unattributed_review,omitempty"`
 	ComposedCount           int      `json:"composed_count"`
@@ -565,9 +570,9 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 		}
 	}
 
-	unattributedPlan, unattributedReview := creditUnattributed(store, start, end, planSet, reviewSet)
-	planRun = planRun || unattributedPlan > 0
-	reviewRun = reviewRun || unattributedReview > 0
+	unselected, unattributed := creditUnselected(store, sessionID, planSet, reviewSet)
+	planRun = planRun || unselected.plan > 0
+	reviewRun = reviewRun || unselected.review > 0
 
 	if end.IsZero() && !start.IsZero() && len(lines) > 0 {
 		lastLine := lines[len(lines)-1]
@@ -641,8 +646,10 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 		ReviewRun:               reviewRun,
 		PlanSymbols:             sortedKeys(planSet),
 		ReviewTargets:           sortedKeys(reviewSet),
-		UnattributedPlan:        unattributedPlan,
-		UnattributedReview:      unattributedReview,
+		UnselectedPlan:          unselected.plan,
+		UnselectedReview:        unselected.review,
+		UnattributedPlan:        unattributed.plan,
+		UnattributedReview:      unattributed.review,
 		ComposedCount:           composedCount,
 		RawQueryCount:           rawQueryCount,
 		Composability:           composability,
@@ -683,35 +690,44 @@ func sortedKeys(set map[string]bool) []string {
 	return keys
 }
 
-// creditUnattributed counts successful plan/review calls that selected no
-// session and ran inside [start, end] (end zero means still open). Their
-// coverage is added to the sets. The caller is unknown, so the audit labels
-// them rather than treating them as this session's own calls.
-func creditUnattributed(store *sessionStore, start, end time.Time, planSet, reviewSet map[string]bool) (plans, reviews int) {
+// planReviewCount counts plan and review calls.
+type planReviewCount struct{ plan, review int }
+
+// creditUnselected reads the unselected plan/review journal for one session.
+// An entry whose only active session was this one is exact: it is credited and
+// its coverage added to the sets. An entry that also names other sessions could
+// belong to any of them: it is counted as unattributed, never credited. Entries
+// that do not name this session, or lack the active list, are ignored.
+func creditUnselected(store *sessionStore, sessionID string, planSet, reviewSet map[string]bool) (credited, unattributed planReviewCount) {
 	data, err := store.files.ReadRegularFile(relUnattributedJournal)
-	if err != nil || start.IsZero() {
-		return 0, 0
+	if err != nil {
+		return credited, unattributed
 	}
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
 		var l GenericLogLine
-		if json.Unmarshal(scanner.Bytes(), &l) != nil || l.Status != "success" {
+		if json.Unmarshal(scanner.Bytes(), &l) != nil || l.Status != "success" || !slices.Contains(l.ActiveSessions, sessionID) {
 			continue
 		}
-		at, err := time.Parse(time.RFC3339, l.Timestamp)
-		if err != nil || at.Before(start) || (!end.IsZero() && at.After(end)) {
-			continue
-		}
+		exact := len(l.ActiveSessions) == 1
 		switch l.Command {
 		case "plan":
-			plans++
+			if !exact {
+				unattributed.plan++
+				continue
+			}
+			credited.plan++
 			addCoverage(planSet, l.Args)
 		case "review":
-			reviews++
+			if !exact {
+				unattributed.review++
+				continue
+			}
+			credited.review++
 			addCoverage(reviewSet, l.Args)
 		}
 	}
-	return plans, reviews
+	return credited, unattributed
 }
 
 func formatAudit(report AuditReport, jsonMode bool, duration time.Duration) (string, error) {
@@ -749,8 +765,11 @@ func formatAudit(report AuditReport, jsonMode bool, duration time.Duration) (str
 	write("Review Rule Run : %t (Weight: 35%%)\n", report.ReviewRun)
 	write("Plan symbols    : %s\n", strings.Join(report.PlanSymbols, ", "))
 	write("Review targets  : %s\n", strings.Join(report.ReviewTargets, ", "))
+	if report.UnselectedPlan+report.UnselectedReview > 0 {
+		write("Credited from unselected calls made while this was the only active session: plan %d, review %d.\n", report.UnselectedPlan, report.UnselectedReview)
+	}
 	if report.UnattributedPlan+report.UnattributedReview > 0 {
-		write("Credited from unselected calls in this session's window (caller unknown): plan %d, review %d. Select a session with --session-id or GOGRAPH_SESSION to attribute them.\n", report.UnattributedPlan, report.UnattributedReview)
+		write("Unattributed (NOT credited): plan %d, review %d unselected calls ran while several sessions were active. Select a session with --session-id or GOGRAPH_SESSION to attribute them.\n", report.UnattributedPlan, report.UnattributedReview)
 	}
 	write("Composability   : %.1f%% (Weight: 30%%)\n\n", report.Composability)
 	write("%s\n\n", report.ComposabilityDefinition)
