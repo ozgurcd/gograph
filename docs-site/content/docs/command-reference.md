@@ -1272,11 +1272,16 @@ a pointer. Owners keep the existing scoring rules. A CLI command without
 `--session-id`/`GOGRAPH_SESSION` uses the repository's only active session
 when this host's CLI created it; with several sessions, or a session that is
 MCP-owned, from another host, or without owner metadata, an unselected caller
-cannot end a session and must name it (`session end ID`). Markers hold only the session ID; a `session_<id>.meta.json`
+cannot end a session and must name it (`session end ID`). Abandoned sessions also expire
+automatically: every CLI command and MCP call first ends other callers' CLI
+sessions idle past `GOGRAPH_SESSION_IDLE_LIMIT` (a Go duration, default `2h`;
+`0` or `off` disables) and sessions of exited MCP servers, naming each on
+stderr. Refused calls are not activity, and a call's own selected session is
+never ended. Markers hold only the session ID; a `session_<id>.meta.json`
 sidecar records the owner (`cli` or `mcp`), process ID, host, working directory
 and creation time. Cleanup never deletes: it moves files into
 `.gograph/_to_delete/<UTC time>_<suffix>/`. It first ends and archives other
-callers' CLI-owned sessions idle over 24 hours or MCP-owned sessions of an
+callers' CLI-owned sessions idle past `GOGRAPH_SESSION_IDLE_LIMIT` (default 2h) or MCP-owned sessions of an
 exited server process on this host (sessions without owner metadata, or owned
 on another host, are kept), printing each, and archives an unselected legacy
 pointer; it then refuses while another owner is still live. A legacy pointer never blocks other callers;

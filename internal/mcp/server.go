@@ -423,6 +423,9 @@ func NewServer(
 					}
 				}
 			}
+			// End other callers' abandoned sessions first, as the CLI does,
+			// so a forgotten session cannot refuse or absorb this call.
+			_, _ = session.ExpireAbandonedSessionsAt(serverRoot, callerID)
 			if !sessionTools[toolName] {
 				if !readOnly {
 					if err := session.GuardCallerMutationAt(serverRoot, callerID); err != nil {
@@ -2876,7 +2879,7 @@ func initNewTools(
 
 	// Tool: gograph_session_cleanup
 	sessionCleanupTool := mcp.NewTool("gograph_session_cleanup",
-		mcp.WithDescription("Archive stale and inactive session telemetry without following linked repository paths; never deletes. Each pass moves files into .gograph/_to_delete/<UTC time>_<suffix>/. First ends other callers' CLI-owned sessions idle over 24h or MCP-owned sessions whose server process exited on this host (owners without metadata or on another host are kept), listing each, and archives an unselected legacy active_session.json; then archives logs with end records; preserves the selected active log and refuses while any other caller is still live. MCP annotations mark this operation mutating and destructive. No prerequisites. WHEN TO USE: Call after auditing to keep the repository clean. RETURNS: Each ended session, any archived legacy pointer, and the number of session logs moved with the archive folder, or Nothing to archive."),
+		mcp.WithDescription("Archive stale and inactive session telemetry without following linked repository paths; never deletes. Each pass moves files into .gograph/_to_delete/<UTC time>_<suffix>/. First ends other callers' CLI-owned sessions idle past the idle limit (GOGRAPH_SESSION_IDLE_LIMIT, default 2h) or MCP-owned sessions whose server process exited on this host (owners without metadata or on another host are kept), listing each, and archives an unselected legacy active_session.json; then archives logs with end records; preserves the selected active log and refuses while any other caller is still live. MCP annotations mark this operation mutating and destructive. No prerequisites. WHEN TO USE: Call after auditing to keep the repository clean. RETURNS: Each ended session, any archived legacy pointer, and the number of session logs moved with the archive folder, or Nothing to archive."),
 	)
 	addTool(sessionCleanupTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args, _ := request.Params.Arguments.(map[string]any)

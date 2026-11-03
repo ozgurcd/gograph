@@ -158,6 +158,16 @@ func Run(args []string) int {
 		return 0
 	}
 
+	// A forgotten session must not block or absorb later callers. End other
+	// callers' abandoned sessions before any session is adopted or enforced;
+	// the explicitly selected session is never ended.
+	if args[0] != "mcp" && args[0] != "hook-guard" {
+		expired, _ := session.ExpireAbandonedSessionsAt(callerCommandRoot(args), callerSessionID)
+		for _, ended := range expired {
+			fmt.Fprintf(os.Stderr, "gograph: ended abandoned session %q: %s\n", ended.ID, ended.Reason)
+		}
+	}
+
 	// Agent shells do not keep GOGRAPH_SESSION between commands. Without an
 	// explicit selector, adopt the repository's only active session when this
 	// host's CLI created it; ambiguous or foreign sessions adopt nothing.
@@ -3712,7 +3722,7 @@ func printHelp() {
 }
 
 func printCommandHelp(cmd string) {
-	defer fmt.Println("\nCALLER SESSION\n  --session-id ID or GOGRAPH_SESSION selects the session printed by create.\n  Without a selector, the repository's only active session is used when this host's CLI created it.\n  Selected analytical calls require --intention; unselected readers are not logged.\n  Writes refuse while another caller owns an active session.")
+	defer fmt.Println("\nCALLER SESSION\n  --session-id ID or GOGRAPH_SESSION selects the session printed by create.\n  Without a selector, the repository's only active session is used when this host's CLI created it.\n  Sessions idle past GOGRAPH_SESSION_IDLE_LIMIT (default 2h) are ended as abandoned by the next command.\n  Selected analytical calls require --intention; unselected readers are not logged.\n  Writes refuse while another caller owns an active session.")
 	defer printExcludeDirsHelp(cmd)
 	lines := strings.Split(helpText, "\n")
 	found := false
