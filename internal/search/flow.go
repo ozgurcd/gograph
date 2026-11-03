@@ -1074,17 +1074,3 @@ func flowResultMatches(result FlowResult, term string) bool {
 	}
 	return false
 }
-
-func uniqueFlowStrings(values []string) []string {
-	seen := make(map[string]bool, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result
-}
