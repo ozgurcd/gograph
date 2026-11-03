@@ -1,6 +1,6 @@
 # Release Notes
 
-## Unreleased
+## v1.7.16 — 2026-11-03
 
 - `flow` completes on large graphs. Propagation is a worklist over shared,
   interned call contexts and paths instead of repeated whole-graph sweeps.
@@ -41,6 +41,11 @@
   from fresh shells.
 - `source` refuses a file that changed after the graph was built instead of
   printing the indexed line range from the changed file.
+- Rebuild with `gograph build . --precise` to record `field_uses`; graphs from
+  earlier releases still load, and `usages Type.Field` answers them with
+  name-only rows until rebuilt. No installation or MCP restart happens
+  automatically. Restart an existing MCP server after choosing to upgrade to
+  get `gograph_strings` and the new flow and session behavior.
 
 ## v1.7.15 — 2026-10-30
 
