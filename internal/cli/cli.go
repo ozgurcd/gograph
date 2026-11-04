@@ -2523,6 +2523,38 @@ type mcpOptions struct {
 	PersistRefresh bool
 	Tags           []string
 	Memory         memorylimit.Policy
+	MaxScopes      int           // 0 selects mcp.DefaultMaxScopes
+	ScopeIdleTTL   time.Duration // 0 selects mcp.DefaultScopeIdleTTL
+}
+
+// parseMCPScopeOption reads --max-scopes and --scope-idle-ttl.
+func parseMCPScopeOption(args []string, index int, options *mcpOptions) (bool, int, error) {
+	argument := args[index]
+	name, value, hasValue := strings.Cut(argument, "=")
+	if name != "--max-scopes" && name != "--scope-idle-ttl" {
+		return false, index, nil
+	}
+	if !hasValue {
+		if index+1 >= len(args) {
+			return true, index, fmt.Errorf("%s requires a value", name)
+		}
+		index++
+		value = args[index]
+	}
+	if name == "--max-scopes" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 64 {
+			return true, index, fmt.Errorf("invalid --max-scopes %q: want an integer from 1 to 64", value)
+		}
+		options.MaxScopes = parsed
+		return true, index, nil
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed < time.Second {
+		return true, index, fmt.Errorf("invalid --scope-idle-ttl %q: want a duration of at least 1s such as 10m", value)
+	}
+	options.ScopeIdleTTL = parsed
+	return true, index, nil
 }
 
 func parseMCPArgs(args []string) (mcpOptions, error) {
@@ -2565,6 +2597,14 @@ func parseMCPArgs(args []string) (mcpOptions, error) {
 				continue
 			}
 			handled, consumedThrough, err = parseMemoryOption(args, index, &options.Memory)
+			if err != nil {
+				return mcpOptions{}, err
+			}
+			if handled {
+				index = consumedThrough
+				continue
+			}
+			handled, consumedThrough, err = parseMCPScopeOption(args, index, &options)
 			if err != nil {
 				return mcpOptions{}, err
 			}
@@ -2658,10 +2698,56 @@ func runMCP(args []string) int {
 		return 1
 	}
 	defer controller.Restore()
+	// Nothing is loaded here: an idle server holds no graph. Each checkout's graph
+	// is built on its first request by newMCPScopeHandlers.
+	configuredRoot, err := filepath.Abs(projectRoot(options.Root))
+	if err == nil {
+		err = buildctx.ValidateExcludeDirs(configuredRoot, options.ExcludeDirs)
+	}
+	var router *mcp.ScopeRouter
+	if err == nil {
+		router, err = mcp.NewScopeRouter(mcp.ScopeConfig{
+			Root:      configuredRoot,
+			MaxScopes: options.MaxScopes,
+			IdleTTL:   options.ScopeIdleTTL,
+			Load: func(root string) (mcp.ScopeHandlers, error) {
+				scoped := options
+				scoped.Root = root
+				return newMCPScopeHandlers(scoped, controller)
+			},
+		})
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to prepare MCP server: %v\n", err)
+		return 1
+	}
+	unloaded := func() error { return errors.New("gograph MCP router has no graph of its own") }
+	if err := mcp.Serve(&graph.Graph{Root: router.Primary()},
+		func() (*graph.Graph, error) { return nil, unloaded() },
+		func(string) (*graph.Graph, error) { return nil, unloaded() },
+		func(context.Context, string) (*graph.Graph, error) { return nil, unloaded() },
+		Version, mcp.ServerOptions{
+			PersistRefresh:          options.PersistRefresh,
+			MemoryMode:              string(options.Memory.Mode),
+			RequestedMaxMemoryBytes: options.Memory.MaxBytes,
+			EffectiveMaxMemoryBytes: controller.BoundedEffectiveLimit(),
+			RequestedBuildTags:      append([]string(nil), options.Tags...),
+			ExcludeDirs:             append([]string(nil), options.ExcludeDirs...),
+			EffectiveBuildTags:      append([]string(nil), options.Tags...),
+			Scopes:                  router,
+		}); err != nil {
+		fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// newMCPScopeHandlers loads or builds the graph for options.Root and returns a
+// complete single-graph tool set bound to that checkout.
+func newMCPScopeHandlers(options mcpOptions, controller *memorylimit.Controller) (mcp.ScopeHandlers, error) {
 	g, absRoot, initialState, err := prepareMCPGraphWithState(options)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to prepare MCP graph: %v\n", err)
-		return 1
+		return nil, fmt.Errorf("preparing MCP graph: %w", err)
 	}
 	buildConfig, configErr := resolveBuildConfigWithTags(absRoot, options.Tags, options.ExcludeDirs)
 	if configErr != nil {
@@ -2696,7 +2782,7 @@ func runMCP(args []string) int {
 	}
 
 	rebuild := func() (*graph.Graph, error) { return refreshContext(context.Background()) }
-	if err := mcp.Serve(g, rebuild, buildAST, buildBaseline, Version, mcp.ServerOptions{
+	return mcp.NewHandlers(g, rebuild, buildAST, buildBaseline, Version, mcp.ServerOptions{
 		PersistRefresh:          options.PersistRefresh,
 		MemoryMode:              string(options.Memory.Mode),
 		RequestedMaxMemoryBytes: options.Memory.MaxBytes,
@@ -2706,11 +2792,7 @@ func runMCP(args []string) int {
 		EffectiveBuildTags:      buildConfig.BuildContext().BuildTags,
 		GraphState:              graphState,
 		RefreshContext:          refreshContext,
-	}); err != nil {
-		fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
-		return 1
-	}
-	return 0
+	}), nil
 }
 
 func loadGraph(root string) (*graph.Graph, error) {

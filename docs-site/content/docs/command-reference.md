@@ -1158,11 +1158,24 @@ refreshes, and baselines retain it; capabilities exposes
 `analysis_build_context.exclude_dirs`. This is a startup option, not a per-tool
 argument. Restart the server after changing it.
 ```bash
-gograph mcp [path] [--persist-refresh] [--tags=integration[,tag...]] [--exclude-dirs=dir1,dir2] [--memory-mode=low] [--max-memory=1GiB]
+gograph mcp [path] [--persist-refresh] [--tags=integration[,tag...]] [--exclude-dirs=dir1,dir2] [--memory-mode=low] [--max-memory=1GiB] [--max-scopes=4] [--scope-idle-ttl=10m]
 ```
 Starts a Model Context Protocol (MCP) server over `stdio`, exposing gograph's
 query, analysis, and workflow capabilities as native tools for integration with
 AI clients (e.g., Claude Code, Cursor).
+- **Checkout selection**: Every tool accepts `root` (alias `cwd`): the absolute
+  path of the caller's checkout. It must be `path` or one of its
+  `git worktree list` entries (a subdirectory selects its checkout) and is
+  answered from that checkout's own graph. Without it, the client's MCP roots
+  are used when the client declares them (a root that merely contains the
+  repository is ignored); otherwise `path` answers. A path outside the
+  repository and its worktrees is refused, naming the indexed and the asked
+  root. Results carry `_meta.gograph_scope`.
+- **Load limits**: Startup loads no graph and starts no background work; a
+  checkout's graph loads on its first request. `--max-scopes` (1-64, default 4)
+  bounds the checkouts held in memory and `--scope-idle-ttl` (at least 1s,
+  default 10m) drops an idle one on a later request. A checkout with a running
+  request is never dropped; when all slots are busy a new checkout is refused.
 - **Freshness**: If `graph.json` is missing, unreadable, linked through a descendant path, or has a missing/unsupported source-policy marker, startup builds a safe in-memory AST graph. Source-analysis tools compare selected source digests plus the build/module fingerprint and newer persisted artifacts per call, then reparse changed packages while reusing unchanged package AST records. Refresh-backed results attach per-request `_meta.gograph_graph_state` and `structuredContent.graph_state`. Bounded row lists use native `gograph.results.v1` JSON text and structured content; explain/changes retain their own native schemas, and other legacy results use a `gograph.mcp-result.v1` (source/context instead use `gograph.read.v1` with the answer or refusal) graph-state companion. The nested `gograph.graph-state.v1` independently reports persisted/in-memory source, current/stale freshness, complete/partial parsing, AST/precise/fallback analysis, refresh outcome, and persistence outcome; each operation owns its bounded diagnostic. Failed precise enrichment can serve a marked current in-memory fallback; an ordinary refresh failure can serve the last trusted stale graph. Degraded states are not silently published. MCP `stale`, default `changes`, and `stats` inspect the trusted persisted snapshot, or the startup in-memory fallback when no usable artifact exists, and attach the exact state they inspect.
 - **Build tags**: `--tags` uses the same validated selection and precedence as
   CLI `build`. Startup analysis, incremental AST rebuilds, precise refreshes,

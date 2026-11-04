@@ -117,9 +117,38 @@ your host rather than assuming identical behavior across every MCP client.
 
 To start the MCP JSON-RPC server over standard I/O:
 ```bash
-gograph mcp [path] [--persist-refresh] [--tags=integration[,tag...]] [--memory-mode=low] [--max-memory=1GiB]
+gograph mcp [path] [--persist-refresh] [--tags=integration[,tag...]] [--memory-mode=low] [--max-memory=1GiB] [--max-scopes=4] [--scope-idle-ttl=10m]
 ```
-By default, if `.gograph/graph.json` is missing, unreadable, unsafe, or has a
+
+**Checkouts and git worktrees.** A server is configured for one repository
+(`path`) but answers for the checkout the caller names. Pass the absolute path
+of the directory you work in as the `root` argument (alias `cwd`) of any tool;
+it must be `path` or one of its `git worktree list` entries (a subdirectory
+resolves to its checkout). The answer then comes from that checkout's own
+graph, refreshed per call like any other, so a job in a worktree sees its own
+edits rather than the main checkout's. If the client declares the MCP `roots`
+capability and no `root` is given, the client's roots select the checkout in the
+same way; a root that only contains the repository (a workspace folder) is
+ignored. A `root` (or client root) outside the repository and its worktrees is
+refused with an error naming the indexed root and the asked root; the server
+never falls back to its own checkout for a path it does not own. With no
+selector the configured checkout answers, and every result carries
+`_meta.gograph_scope` (`indexed_root`, `scope_root`, `worktree`, `selected_by`);
+an empty answer names the checkout it was empty for. Running several servers
+for sibling repositories therefore cannot give one repository's answer to
+another's question.
+
+**Idle cost.** Startup reads no graph and starts no background goroutine or
+timer; `tools/list` and `gograph_capabilities` never load one. A checkout's
+graph is loaded (or built in memory) on its first request, one load at a time.
+At most `--max-scopes` checkouts (default 4, range 1-64) stay in memory; a
+checkout idle longer than `--scope-idle-ttl` (default 10m) is dropped by a later
+request, and the least recently used idle one is dropped at the limit. A
+checkout with a request running is never dropped; if every slot is busy a new
+checkout is refused with a "scope cache is full" error, never answered from
+another graph. `gograph_capabilities` reports the policy under `scope`.
+
+Within one checkout, if `.gograph/graph.json` is missing, unreadable, unsafe, or has a
 missing/unsupported source-policy marker, startup creates an in-memory AST
 graph without publishing CLI build artifacts. A loaded graph's serialized root
 is ignored in favor of the selected project. Source-analysis tools compare

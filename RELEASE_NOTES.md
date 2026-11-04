@@ -1,5 +1,25 @@
 # Release Notes
 
+## Unreleased
+
+- MCP servers answer for the caller's git worktree. Every tool takes `root`
+  (alias `cwd`), or the client's MCP `roots` are used; it must be the
+  configured repository or one of its `git worktree list` entries, and the
+  answer comes from that checkout's own graph. A path outside the repository
+  and its worktrees is refused with an error naming the indexed root and the
+  asked root, and the server never falls back to its own checkout for a path
+  it does not own. Results carry `_meta.gograph_scope`, and an empty answer
+  names the checkout it was empty for. Before this, a server started on a main
+  checkout silently answered worktree and other-repository questions from the
+  main checkout's graph.
+- Idle MCP servers are cheap. Startup reads no graph and starts no background
+  work; `tools/list` and `gograph_capabilities` never load one. A graph loads on
+  its first request, loads are serialized, at most `--max-scopes` (default 4)
+  checkouts stay in memory, and one idle longer than `--scope-idle-ttl`
+  (default 10m) is dropped by a later request. A checkout with a running
+  request is never dropped. A root that cannot be built now fails on the first
+  request instead of at startup.
+
 ## v1.7.17 — 2026-11-04
 
 - A session its job forgot no longer blocks later jobs (GG-11). Before anything

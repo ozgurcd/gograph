@@ -191,6 +191,12 @@ type ServerOptions struct {
 	// RefreshContext supersedes the legacy rebuild callback when provided.
 	// A published graph must never be mutated in place by a later refresh.
 	RefreshContext func(context.Context) (*graph.Graph, error)
+	// Scopes turns the server into a router: every tool call is answered by a
+	// lazily built server for the checkout the caller names (tool argument
+	// root/cwd, or the client's MCP roots), which must be the configured
+	// repository or one of its git worktrees. The graph passed to NewServer then
+	// only supplies the root and tool schemas; it is never queried.
+	Scopes *ScopeRouter
 }
 
 func resolveServerOptions(options []ServerOptions) ServerOptions {
@@ -329,11 +335,11 @@ func NewServer(
 		}, graphstate.Persistence{Requested: selectedOptions.PersistRefresh, Outcome: "not_requested"})
 		graphState = func() graphstate.State { return initialState }
 	}
-	s := server.NewMCPServer(
-		"gograph",
-		version,
-		server.WithToolCapabilities(true),
-	)
+	serverOptions := []server.ServerOption{server.WithToolCapabilities(true)}
+	if selectedOptions.Scopes != nil {
+		serverOptions = append(serverOptions, server.WithRoots())
+	}
+	s := server.NewMCPServer("gograph", version, serverOptions...)
 	serverRoot := graphRoot(g)
 
 	// sessionTools lists the tool names that manage the session lifecycle itself.
@@ -379,6 +385,9 @@ func NewServer(
 			tool.InputSchema.Properties["session_id"] = map[string]any{"type": "string", "description": "Caller selector returned by session_create. Omission means an independent caller; never inherits server environment or another caller's session."}
 		}
 		tool.InputSchema.Properties["intention"] = map[string]any{"type": "string", "description": "Technical rationale, required for analytical calls selecting an active session."}
+		if selectedOptions.Scopes != nil {
+			tool.InputSchema.Properties["root"] = map[string]any{"type": "string", "description": "Absolute path of the checkout you are working in (your cwd or git worktree). Must be this server's repository or one of its git worktrees; the answer then comes from that checkout's own graph. A path elsewhere is refused. Alias: cwd. Omit only when the configured checkout is the one you mean."}
+		}
 		switch tool.Name {
 		case "gograph_impact", "gograph_context", "gograph_plan", "gograph_review", "gograph_risk", "gograph_check", "gograph_changes":
 			tool.Description += " " + search.CurrentChangeSelectionContract
@@ -413,6 +422,12 @@ func NewServer(
 		// Omit arguments/results from telemetry; preserve the owner's rationale.
 		toolName := tool.Name
 		instrumentedHandler := func(ctx context.Context, req mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
+			if router := selectedOptions.Scopes; router != nil {
+				routed, local, routeErr := router.route(ctx, s, toolName, req)
+				if !local {
+					return routed, routeErr
+				}
+			}
 			args, _ := req.Params.Arguments.(map[string]any)
 			callerID, _ := args["session_id"].(string)
 			intention, _ := args["intention"].(string)
@@ -658,6 +673,7 @@ func NewServer(
 				"degraded_serving":   "failed precise enrichment may serve current in-memory fallback; ordinary refresh failure may serve the last trusted stale graph; a mismatched Go build context still fails closed",
 				"cli_correspondence": "repository graph-backed CLI --json envelopes expose the same graph_state schema; CLI text stats/stale report the persisted state",
 			},
+			"scope": scopeCapabilities(selectedOptions.Scopes),
 			"analysis_memory": map[string]any{
 				"mode":                       selectedOptions.MemoryMode,
 				"requested_max_memory_bytes": selectedOptions.RequestedMaxMemoryBytes,
