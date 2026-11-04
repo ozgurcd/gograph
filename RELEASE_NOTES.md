@@ -1,9 +1,23 @@
 # Release Notes
 
-## Unreleased
+## v1.7.18 — 2026-11-04
 
-- MCP servers answer for the caller's git worktree. Every tool takes `root`
-  (alias `cwd`), or the client's MCP `roots` are used; it must be the
+- `session audit` credits plan and review calls made without a session
+  selected (GG-07). Before, they were reported as not executed whenever several
+  sessions were active. Now each such call is journaled when it starts and
+  credited only if exactly one session was active and the call would have
+  adopted it; calls that cannot be credited to one session are listed as
+  unattributed and credit nothing. The audit also lists plan symbols and review
+  targets.
+- The unattributed journal stays bounded and exact. A full journal merges
+  identical calls into counted lines and reports what no longer fits as
+  `journal_dropped`; failed calls are not journaled. Appends and compaction run
+  under a file lock and replace the journal atomically, so concurrent callers
+  no longer lose or miscount calls.
+- A plan or review whose changed declaration is missing from the graph now
+  fails with the exact `gograph build` command to run.
+- MCP servers answer for the caller's git worktree (GG-10). Every tool takes
+  `root` (alias `cwd`), or the client's MCP `roots` are used; it must be the
   configured repository or one of its `git worktree list` entries, and the
   answer comes from that checkout's own graph. A path outside the repository
   and its worktrees is refused with an error naming the indexed root and the
