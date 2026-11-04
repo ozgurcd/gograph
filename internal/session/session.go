@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -376,6 +378,8 @@ type GenericLogLine struct {
 	Intention   string   `json:"intention"`
 	ExecutionMs int64    `json:"execution_ms"`
 	Status      string   `json:"status"`
+	// ActiveSessions is set only on unattributed.jsonl entries.
+	ActiveSessions []string `json:"active_sessions,omitempty"`
 }
 
 // AuditReport holds the calculated compliance and success metrics of a session.
@@ -394,6 +398,13 @@ type AuditReport struct {
 	SuccessRate             float64  `json:"success_rate"`
 	PlanRun                 bool     `json:"plan_run"`
 	ReviewRun               bool     `json:"review_run"`
+	PlanSymbols             []string `json:"plan_symbols,omitempty"`
+	ReviewTargets           []string `json:"review_targets,omitempty"`
+	UnselectedPlan          int      `json:"unselected_plan,omitempty"`
+	UnselectedReview        int      `json:"unselected_review,omitempty"`
+	UnattributedPlan        int      `json:"unattributed_plan,omitempty"`
+	UnattributedReview      int      `json:"unattributed_review,omitempty"`
+	JournalDropped          int      `json:"journal_dropped,omitempty"`
 	ComposedCount           int      `json:"composed_count"`
 	RawQueryCount           int      `json:"raw_query_count"`
 	Composability           float64  `json:"composability"`
@@ -521,6 +532,7 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 	var planRun, reviewRun bool
 	var composedCount, rawQueryCount int
 	var invocationErrors []string
+	planSet, reviewSet := map[string]bool{}, map[string]bool{}
 
 	for _, l := range lines {
 		switch l.Type {
@@ -546,9 +558,11 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 			case "plan":
 				planRun = true
 				composedCount++
+				planSet = addCoverage(planSet, l.Args)
 			case "review":
 				reviewRun = true
 				composedCount++
+				reviewSet = addCoverage(reviewSet, l.Args)
 			case "context", "explain", "api", "changes", "mutate":
 				composedCount++
 			case "node", "callers", "callees", "source":
@@ -556,6 +570,10 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 			}
 		}
 	}
+
+	unselected, unattributed, journalDropped := creditUnselected(store, sessionID, planSet, reviewSet)
+	planRun = planRun || unselected.plan > 0
+	reviewRun = reviewRun || unselected.review > 0
 
 	if end.IsZero() && !start.IsZero() && len(lines) > 0 {
 		lastLine := lines[len(lines)-1]
@@ -627,6 +645,13 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 		SuccessRate:             successRate,
 		PlanRun:                 planRun,
 		ReviewRun:               reviewRun,
+		PlanSymbols:             sortedKeys(planSet),
+		ReviewTargets:           sortedKeys(reviewSet),
+		UnselectedPlan:          unselected.plan,
+		UnselectedReview:        unselected.review,
+		UnattributedPlan:        unattributed.plan,
+		UnattributedReview:      unattributed.review,
+		JournalDropped:          journalDropped,
 		ComposedCount:           composedCount,
 		RawQueryCount:           rawQueryCount,
 		Composability:           composability,
@@ -645,6 +670,77 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 		return 1
 	}
 	return 0
+}
+
+// addCoverage records the symbol or mode a plan/review call named.
+func addCoverage(set map[string]bool, args []string) map[string]bool {
+	if len(args) > 0 {
+		set[args[0]] = true
+	}
+	return set
+}
+
+func sortedKeys(set map[string]bool) []string {
+	if len(set) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(set))
+	for key := range set {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// planReviewCount counts plan and review calls.
+type planReviewCount struct{ plan, review int }
+
+// creditUnselected reads the unselected plan/review journal for one session.
+// An entry is credited, and its coverage added to the sets, only when implicit
+// adoption would have chosen this session (the journal records that choice when
+// the call is made). An entry that names this session among the active ones but
+// was not adopted could belong to any of them: it is counted as unattributed,
+// never credited. dropped counts calls that named this session but did not fit
+// the journal. Entries that do not name this session, or lack the active list,
+// are ignored.
+func creditUnselected(store *sessionStore, sessionID string, planSet, reviewSet map[string]bool) (credited, unattributed planReviewCount, dropped int) {
+	data, err := store.files.ReadRegularFile(relUnattributedJournal)
+	if err != nil {
+		return credited, unattributed, 0
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(nil, len(data)+1)
+	for scanner.Scan() {
+		var l unattributedLogEntry
+		if json.Unmarshal(scanner.Bytes(), &l) != nil || !slices.Contains(l.ActiveSessions, sessionID) {
+			continue
+		}
+		if l.Type == journalDroppedType {
+			dropped += l.calls()
+			continue
+		}
+		if l.Status != "success" {
+			continue
+		}
+		exact := l.AdoptableSession == sessionID
+		switch l.Command {
+		case "plan":
+			if !exact {
+				unattributed.plan += l.calls()
+				continue
+			}
+			credited.plan += l.calls()
+			addCoverage(planSet, l.Args)
+		case "review":
+			if !exact {
+				unattributed.review += l.calls()
+				continue
+			}
+			credited.review += l.calls()
+			addCoverage(reviewSet, l.Args)
+		}
+	}
+	return credited, unattributed, dropped
 }
 
 func formatAudit(report AuditReport, jsonMode bool, duration time.Duration) (string, error) {
@@ -680,6 +776,17 @@ func formatAudit(report AuditReport, jsonMode bool, duration time.Duration) (str
 	write("━━━ COMPLIANCE SCORE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 	write("Plan Rule Run   : %t (Weight: 35%%)\n", report.PlanRun)
 	write("Review Rule Run : %t (Weight: 35%%)\n", report.ReviewRun)
+	write("Plan symbols    : %s\n", strings.Join(report.PlanSymbols, ", "))
+	write("Review targets  : %s\n", strings.Join(report.ReviewTargets, ", "))
+	if report.UnselectedPlan+report.UnselectedReview > 0 {
+		write("Credited from unselected calls made while this was the only active session: plan %d, review %d.\n", report.UnselectedPlan, report.UnselectedReview)
+	}
+	if report.UnattributedPlan+report.UnattributedReview > 0 {
+		write("Unattributed (NOT credited): plan %d, review %d unselected calls ran while several sessions were active. Select a session with --session-id or GOGRAPH_SESSION to attribute them.\n", report.UnattributedPlan, report.UnattributedReview)
+	}
+	if report.JournalDropped > 0 {
+		write("Journal full: %d unselected plan/review calls made while this session was active were not recorded and are not credited.\n", report.JournalDropped)
+	}
 	write("Composability   : %.1f%% (Weight: 30%%)\n\n", report.Composability)
 	write("%s\n\n", report.ComposabilityDefinition)
 	write("Overall Score   : %.1f%%\n", report.ComplianceScore)

@@ -1,5 +1,46 @@
 # Release Notes
 
+## v1.7.18 — 2026-11-04
+
+- `session audit` credits plan and review calls made without a session
+  selected (GG-07). Before, they were reported as not executed whenever several
+  sessions were active. Now each such call is journaled when it starts and
+  credited only if exactly one session was active and the call would have
+  adopted it; calls that cannot be credited to one session are listed as
+  unattributed and credit nothing. The audit also lists plan symbols and review
+  targets.
+- The unattributed journal stays bounded and exact. A full journal merges
+  identical calls into counted lines and reports what no longer fits as
+  `journal_dropped`; failed calls are not journaled. Appends and compaction run
+  under a file lock and replace the journal atomically, so concurrent callers
+  no longer lose or miscount calls.
+- A plan or review whose changed declaration is missing from the graph now
+  fails with the exact `gograph build` command to run.
+- MCP servers answer for the caller's git worktree (GG-10). Every tool takes
+  `root` (alias `cwd`), or the client's MCP `roots` are used; it must be the
+  configured repository or one of its `git worktree list` entries, and the
+  answer comes from that checkout's own graph. A path outside the repository
+  and its worktrees is refused with an error naming the indexed root and the
+  asked root, and the server never falls back to its own checkout for a path
+  it does not own. Results carry `_meta.gograph_scope`, and an empty answer
+  names the checkout it was empty for. Before this, a server started on a main
+  checkout silently answered worktree and other-repository questions from the
+  main checkout's graph.
+- Idle MCP servers are cheap. Startup reads no graph and starts no background
+  work; `tools/list` and `gograph_capabilities` never load one. A graph loads on
+  its first request, loads are serialized, at most `--max-scopes` (default 4)
+  checkouts stay in memory, and one idle longer than `--scope-idle-ttl`
+  (default 10m) is dropped when a request needs an unloaded checkout (there is
+  no background timer). Every `git` call the server makes now runs without
+  `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` and the other repository-selecting
+  `GIT_*` variables, and a worktree is accepted only if its git common directory
+  is the configured repository's; before, an inherited `GIT_DIR` made another
+  repository's worktrees valid. Refusals name only the indexed root and the
+  asked root. Client roots that name several checkouts are refused as
+  ambiguous. A checkout with a running
+  request is never dropped. A root that cannot be built now fails on the first
+  request instead of at startup.
+
 ## v1.7.17 — 2026-11-04
 
 - A session its job forgot no longer blocks later jobs (GG-11). Before anything

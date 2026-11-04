@@ -1,6 +1,9 @@
 package session
 
 import (
+	"bufio"
+	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +15,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/gofrs/flock"
 )
 
 // Caller selectors are session IDs, not authentication credentials. They provide
@@ -200,11 +205,18 @@ func ImplicitCallerSessionAt(root string) (string, error) {
 		return "", err
 	}
 	defer store.close()
-	legacy, err := store.activeSessionID()
+	return store.adoptableSession()
+}
+
+// adoptableSession is the one eligibility rule for attributing a call that
+// selected no session: implicit adoption and the unselected plan/review journal
+// both use it, so a call is credited exactly when it would have been adopted.
+func (s *sessionStore) adoptableSession() (string, error) {
+	legacy, err := s.activeSessionID()
 	if err != nil {
 		return "", err
 	}
-	markers, err := store.callerMarkers()
+	markers, err := s.callerMarkers()
 	if err != nil {
 		return "", err
 	}
@@ -382,8 +394,71 @@ func EndCallerSessionAt(root, id string) (string, error) {
 	return id, nil
 }
 
-// LogCallerCommandAt never writes observational calls to an unselected session.
+// maxUnattributedJournalBytes caps unattributed.jsonl. A full journal is
+// compacted, never pruned; a call that still does not fit is counted in a
+// journal_dropped entry that the audit reports.
+const maxUnattributedJournalBytes = 64 << 10
+
+// unattributedDroppedReserve keeps room for journal_dropped entries, so the
+// count of calls that did not fit can always be recorded.
+const unattributedDroppedReserve = 4 << 10
+
+const journalDroppedType = "journal_dropped"
+
+// UnselectedStart is what a call that selected no session could belong to,
+// decided once when the call starts.
+type UnselectedStart struct {
+	Active    []string
+	Adoptable string
+}
+
+// UnselectedStartAt reads the active sessions and the adoptable one together.
+// The adoptable session is kept only when it is the one active session, so a
+// session that starts between the two reads makes the call ambiguous, never
+// credited.
+func UnselectedStartAt(root string) (UnselectedStart, error) {
+	store, err := openSessionStore(root)
+	if err != nil {
+		return UnselectedStart{}, err
+	}
+	defer store.close()
+	active, err := store.activeCallerIDs()
+	if err != nil {
+		return UnselectedStart{}, err
+	}
+	adoptable, err := store.adoptableSession()
+	if err != nil {
+		return UnselectedStart{}, err
+	}
+	if adoptable != "" && !slices.Equal(active, []string{adoptable}) {
+		adoptable = ""
+	}
+	return UnselectedStart{Active: active, Adoptable: adoptable}, nil
+}
+
+// LogCallerCommandAt logs a call that took no time: an unselected plan/review
+// is attributed by the sessions active now.
 func LogCallerCommandAt(root, id, command string, args []string, intention string, elapsed time.Duration, status string) error {
+	return LogCallerCommandStartedAt(root, id, nil, command, args, intention, elapsed, status)
+}
+
+// LogCallerCommandStartedAt never writes observational calls to an unselected
+// session. An unselected plan/review is attributed by start, the decision taken
+// when the call began (UnselectedStartAt), so sessions that begin or end while
+// it runs cannot change its credit; a nil start decides now.
+func LogCallerCommandStartedAt(root, id string, start *UnselectedStart, command string, args []string, intention string, elapsed time.Duration, status string) error {
+	if id == "" && (command == "plan" || command == "review") {
+		decided := UnselectedStart{}
+		if start != nil {
+			decided = *start
+		} else if status == "success" {
+			var err error
+			if decided, err = UnselectedStartAt(root); err != nil {
+				return err
+			}
+		}
+		return logUnattributedAt(root, decided, command, args, intention, elapsed, status)
+	}
 	if id == "" || command == "hook-guard" && status == "success" {
 		return nil
 	}
@@ -404,6 +479,193 @@ func LogCallerCommandAt(root, id, command string, args []string, intention strin
 		return err
 	}
 	return store.files.AppendRegularFile(path, append(data, '\n'))
+}
+
+// relUnattributedJournal records plan/review calls that selected no session
+// while at least one was active (several sessions, so none could be adopted).
+// An audit credits the entries made inside its session window.
+var relUnattributedJournal = filepath.Join(relSessionsDir, "unattributed.jsonl")
+
+// unattributedLogEntry is a plan/review call that selected no session. It names
+// every session active when the call started and the session implicit adoption
+// would have chosen then: an audit credits it only to that session and otherwise reports it as
+// unattributed. Count is the number of identical calls compaction merged
+// (0 means 1).
+type unattributedLogEntry struct {
+	CommandLogEntry
+	ActiveSessions   []string `json:"active_sessions"`
+	AdoptableSession string   `json:"adoptable_session,omitempty"`
+	Count            int      `json:"count,omitempty"`
+}
+
+func (e unattributedLogEntry) calls() int { return max(e.Count, 1) }
+
+// key identifies what an audit can tell apart: the command, its coverage
+// (first argument), the sessions it may belong to and the adopted one.
+func (e unattributedLogEntry) key() string {
+	active := strings.Join(e.ActiveSessions, ",")
+	if e.Type == journalDroppedType {
+		return journalDroppedType + "|" + active
+	}
+	var first string
+	if len(e.Args) > 0 {
+		first = e.Args[0]
+	}
+	return strings.Join([]string{e.Command, first, e.AdoptableSession, active}, "\x00")
+}
+
+// logUnattributedAt journals successful calls only: failures are never
+// credited, so they must not use up the cap.
+func logUnattributedAt(root string, start UnselectedStart, command string, args []string, intention string, elapsed time.Duration, status string) error {
+	if status != "success" || len(start.Active) == 0 {
+		return nil
+	}
+	store, err := openSessionStore(root)
+	if err != nil {
+		return err
+	}
+	defer store.close()
+	entry := unattributedLogEntry{
+		CommandLogEntry:  CommandLogEntry{Type: "command", Timestamp: time.Now().Format(time.RFC3339), Command: command, Args: redactArgs(args), Intention: intention, ExecutionMs: elapsed.Milliseconds(), Status: status},
+		ActiveSessions:   start.Active,
+		AdoptableSession: start.Adoptable,
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	// Append, compaction and the dropped count are one read-modify-write: every
+	// caller (each CLI call is its own process) takes the journal lock first, so
+	// no call is lost or miscounted.
+	unlock, err := store.lockUnattributed()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	existing, err := store.files.ReadRegularFile(relUnattributedJournal)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return store.files.AtomicReplaceRegularFile(relUnattributedJournal, data, 0644)
+	case err != nil:
+		return err
+	case len(existing)+len(data) > maxUnattributedJournalBytes-unattributedDroppedReserve:
+		// Full: merge identical calls (an audit needs counts and coverage, not
+		// every line). Nothing recorded is removed. The atomic replace leaves
+		// lock-free readers (the audit) a whole old or new journal.
+		compacted, err := compactUnattributed(existing, entry)
+		if err != nil {
+			return err
+		}
+		return store.files.AtomicReplaceRegularFile(relUnattributedJournal, compacted, 0644)
+	}
+	return store.files.AppendRegularFile(relUnattributedJournal, data)
+}
+
+// relUnattributedLock is the cross-process lock of the unattributed journal. It
+// is a separate file because the journal itself is replaced by rename, which
+// would orphan a lock held on it.
+var relUnattributedLock = filepath.Join(relSessionsDir, "unattributed.lock")
+
+// unattributedLockWait bounds how long a call waits for the journal lock. The
+// lock is held for one read and one write of at most maxUnattributedJournalBytes.
+const unattributedLockWait = 10 * time.Second
+
+// unattributedLockRetry is the poll interval while another caller holds the lock.
+const unattributedLockRetry = 2 * time.Millisecond
+
+// lockUnattributed takes the exclusive journal lock and returns its release.
+func (s *sessionStore) lockUnattributed() (func(), error) {
+	if err := s.files.EnsureRealDirectory(relSessionsDir, 0755); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(s.rootPath, relUnattributedLock)
+	if info, err := os.Lstat(path); err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
+		return nil, fmt.Errorf("unsafe unattributed journal lock %s", path)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("inspect unattributed journal lock: %w", err)
+	}
+	lock := flock.New(path, flock.SetPermissions(0o644))
+	ctx, cancel := context.WithTimeout(context.Background(), unattributedLockWait)
+	defer cancel()
+	locked, err := lock.TryLockContext(ctx, unattributedLockRetry)
+	if err != nil || !locked {
+		if err == nil {
+			err = errors.New("timed out")
+		}
+		return nil, fmt.Errorf("acquire unattributed journal lock: %w", err)
+	}
+	return func() { _ = lock.Unlock() }, nil
+}
+
+// compactUnattributed merges journal entries with the same key, then adds
+// entry. Every call stays counted: when entry is new and no longer fits, it is
+// added to a journal_dropped entry for its sessions instead. Lines an audit
+// never reads (unparsable, failed, or without recorded sessions) are removed.
+func compactUnattributed(journal []byte, entry unattributedLogEntry) ([]byte, error) {
+	var entries []unattributedLogEntry
+	scanner := bufio.NewScanner(bytes.NewReader(journal))
+	scanner.Buffer(nil, maxUnattributedJournalBytes)
+	for scanner.Scan() {
+		var e unattributedLogEntry
+		if json.Unmarshal(scanner.Bytes(), &e) != nil || len(e.ActiveSessions) == 0 || e.Type != journalDroppedType && e.Status != "success" {
+			continue
+		}
+		entries = append(entries, e)
+	}
+	entries = mergeUnattributed(entries)
+	budget := maxUnattributedJournalBytes - unattributedDroppedReserve
+	withEntry := mergeUnattributed(append(slices.Clone(entries), entry))
+	if encodedSize(withEntry, false) <= budget {
+		entries = withEntry
+	} else {
+		entry.Type, entry.Args, entry.AdoptableSession = journalDroppedType, nil, ""
+		entries = mergeUnattributed(append(entries, entry))
+	}
+	if encodedSize(entries, true) > maxUnattributedJournalBytes {
+		return nil, fmt.Errorf("unattributed journal is full: %d bytes after compaction", encodedSize(entries, true))
+	}
+	var out []byte
+	for _, e := range entries {
+		line, err := json.Marshal(e)
+		if err != nil {
+			return nil, err
+		}
+		out = append(append(out, line...), '\n')
+	}
+	return out, nil
+}
+
+// mergeUnattributed sums the counts of entries with equal keys, keeping the
+// first-seen order and the latest timestamp.
+func mergeUnattributed(entries []unattributedLogEntry) []unattributedLogEntry {
+	index := map[string]int{}
+	var merged []unattributedLogEntry
+	for _, e := range entries {
+		at, seen := index[e.key()]
+		if !seen {
+			index[e.key()] = len(merged)
+			merged = append(merged, e)
+			continue
+		}
+		merged[at].Count = merged[at].calls() + e.calls()
+		merged[at].Timestamp = e.Timestamp
+	}
+	return merged
+}
+
+// encodedSize is the journal size of entries; markers count only when
+// withMarkers is set, because their reserve is kept outside the content budget.
+func encodedSize(entries []unattributedLogEntry, withMarkers bool) int {
+	size := 0
+	for _, e := range entries {
+		if e.Type == journalDroppedType && !withMarkers {
+			continue
+		}
+		line, _ := json.Marshal(e)
+		size += len(line) + 1
+	}
+	return size
 }
 
 // CleanupReport lists what one cleanup pass changed.
