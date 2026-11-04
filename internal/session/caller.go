@@ -3,6 +3,7 @@ package session
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +15,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/gofrs/flock"
 )
 
 // Caller selectors are session IDs, not authentication credentials. They provide
@@ -491,26 +494,67 @@ func logUnattributedAt(root, command string, args []string, intention string, el
 		return err
 	}
 	data = append(data, '\n')
+	// Append, compaction and the dropped count are one read-modify-write: every
+	// caller (each CLI call is its own process) takes the journal lock first, so
+	// no call is lost or miscounted.
+	unlock, err := store.lockUnattributed()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	existing, err := store.files.ReadRegularFile(relUnattributedJournal)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		if err := store.files.WriteRegularFile(relUnattributedJournal, data, 0644, true); err == nil {
-			return nil
-		}
+		return store.files.AtomicReplaceRegularFile(relUnattributedJournal, data, 0644)
 	case err != nil:
 		return err
 	case len(existing)+len(data) > maxUnattributedJournalBytes-unattributedDroppedReserve:
 		// Full: merge identical calls (an audit needs counts and coverage, not
-		// every line). Nothing recorded is removed. A concurrent append during
-		// the rewrite can be lost; the journal is best-effort telemetry.
+		// every line). Nothing recorded is removed. The atomic replace leaves
+		// lock-free readers (the audit) a whole old or new journal.
 		compacted, err := compactUnattributed(existing, entry)
 		if err != nil {
 			return err
 		}
-		return store.files.WriteRegularFile(relUnattributedJournal, compacted, 0644, false)
+		return store.files.AtomicReplaceRegularFile(relUnattributedJournal, compacted, 0644)
 	}
-	// Lost the creation race to another caller, or the journal exists.
 	return store.files.AppendRegularFile(relUnattributedJournal, data)
+}
+
+// relUnattributedLock is the cross-process lock of the unattributed journal. It
+// is a separate file because the journal itself is replaced by rename, which
+// would orphan a lock held on it.
+var relUnattributedLock = filepath.Join(relSessionsDir, "unattributed.lock")
+
+// unattributedLockWait bounds how long a call waits for the journal lock. The
+// lock is held for one read and one write of at most maxUnattributedJournalBytes.
+const unattributedLockWait = 10 * time.Second
+
+// unattributedLockRetry is the poll interval while another caller holds the lock.
+const unattributedLockRetry = 2 * time.Millisecond
+
+// lockUnattributed takes the exclusive journal lock and returns its release.
+func (s *sessionStore) lockUnattributed() (func(), error) {
+	if err := s.files.EnsureRealDirectory(relSessionsDir, 0755); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(s.rootPath, relUnattributedLock)
+	if info, err := os.Lstat(path); err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
+		return nil, fmt.Errorf("unsafe unattributed journal lock %s", path)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("inspect unattributed journal lock: %w", err)
+	}
+	lock := flock.New(path, flock.SetPermissions(0o644))
+	ctx, cancel := context.WithTimeout(context.Background(), unattributedLockWait)
+	defer cancel()
+	locked, err := lock.TryLockContext(ctx, unattributedLockRetry)
+	if err != nil || !locked {
+		if err == nil {
+			err = errors.New("timed out")
+		}
+		return nil, fmt.Errorf("acquire unattributed journal lock: %w", err)
+	}
+	return func() { _ = lock.Unlock() }, nil
 }
 
 // compactUnattributed merges journal entries with the same key, then adds

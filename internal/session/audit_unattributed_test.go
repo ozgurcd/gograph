@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -352,4 +354,112 @@ func TestUnattributedJournalIsBounded(t *testing.T) {
 	if report.JournalDropped != 1 {
 		t.Fatalf("dropped call not reported: %+v", report)
 	}
+}
+
+// fillJournal seeds the journal of a sole session with distinct plan calls up to
+// its budget, so later calls compact or drop. It returns the calls seeded.
+func fillJournal(t *testing.T) (id string, calls int) {
+	t.Helper()
+	chdir(t)
+	id, err := StartCallerSessionAt("", "solo", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seed []byte
+	for ; len(seed) < maxUnattributedJournalBytes-unattributedDroppedReserve-512; calls++ {
+		line, err := json.Marshal(unattributedLogEntry{
+			CommandLogEntry:  CommandLogEntry{Type: "command", Timestamp: time.Now().Format(time.RFC3339), Command: "plan", Args: []string{fmt.Sprintf("Fill%04d", calls)}, Status: "success"},
+			ActiveSessions:   []string{id},
+			AdoptableSession: id,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		seed = append(append(seed, line...), '\n')
+	}
+	if err := os.WriteFile(filepath.Join(sessionsDirAbs(), "unattributed.jsonl"), seed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return id, calls
+}
+
+// requireExactJournal fails unless every call is credited or counted as dropped
+// and the journal is inside its cap.
+func requireExactJournal(t *testing.T, id string, calls int) {
+	t.Helper()
+	report := auditJSON(t, id)
+	if got := report.UnselectedPlan + report.UnattributedPlan + report.JournalDropped; got != calls {
+		t.Fatalf("credited %d + unattributed %d + dropped %d = %d, want exactly %d calls",
+			report.UnselectedPlan, report.UnattributedPlan, report.JournalDropped, got, calls)
+	}
+	info, err := os.Stat(filepath.Join(sessionsDirAbs(), "unattributed.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() > int64(maxUnattributedJournalBytes) {
+		t.Fatalf("journal over cap: %d", info.Size())
+	}
+}
+
+// R3-1: concurrent callers on a full journal neither lose credit nor miscount
+// the dropped calls. Probe: 8 callers x 25 distinct calls on a full journal.
+func TestUnattributedJournalExactUnderConcurrentCallers(t *testing.T) {
+	id, calls := fillJournal(t)
+	const callers, each = 8, 25
+	errs := make(chan error, callers*each)
+	var wg sync.WaitGroup
+	for c := 0; c < callers; c++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < each; i++ {
+				errs <- LogCallerCommandAt("", "", "plan", []string{fmt.Sprintf("Conc%d_%02d", c, i)}, "", 0, "success")
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	requireExactJournal(t, id, calls+callers*each)
+}
+
+// TestHelperLogJournalCalls is the child of the cross-process test; it skips in
+// a normal run.
+func TestHelperLogJournalCalls(t *testing.T) {
+	prefix := os.Getenv("GG07_JOURNAL_HELPER")
+	if prefix == "" {
+		t.Skip("child of TestUnattributedJournalExactAcrossProcesses")
+	}
+	for i := 0; i < 25; i++ {
+		if err := LogCallerCommandAt("", "", "plan", []string{fmt.Sprintf("%s_%02d", prefix, i)}, "", 0, "success"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Each CLI call is its own process, so the journal needs a cross-process lock.
+func TestUnattributedJournalExactAcrossProcesses(t *testing.T) {
+	id, calls := fillJournal(t)
+	const procs = 6
+	cmds := make([]*exec.Cmd, procs)
+	outs := make([]*bytes.Buffer, procs)
+	for p := range cmds {
+		cmds[p] = exec.Command(os.Args[0], "-test.run=^TestHelperLogJournalCalls$")
+		cmds[p].Env = append(os.Environ(), fmt.Sprintf("GG07_JOURNAL_HELPER=Proc%d", p))
+		outs[p] = &bytes.Buffer{}
+		cmds[p].Stdout, cmds[p].Stderr = outs[p], outs[p]
+		if err := cmds[p].Start(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for p, cmd := range cmds {
+		if err := cmd.Wait(); err != nil {
+			t.Fatalf("process %d: %v: %s", p, err, outs[p])
+		}
+	}
+	requireExactJournal(t, id, calls+procs*25)
 }
