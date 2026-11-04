@@ -143,3 +143,45 @@ func TestCLIAdoptsSoleLocalSessionAcrossShellCalls(t *testing.T) {
 	run(true, "session", "end", first)
 	run(true, "session", "end", second)
 }
+
+// GG-11: a job that forgets its session must not force later jobs in the same
+// repository to pass --intention or refuse their writes. The next command
+// ends the abandoned session and runs as an independent caller.
+func TestCLIExpiresForgottenSessionForLaterJobs(t *testing.T) {
+	t.Setenv("GOGRAPH_SESSION", "")
+	root, bin := setupGraphFixture(t)
+	run := func(wantOK bool, env []string, args ...string) ([]byte, []byte) {
+		t.Helper()
+		cmd := exec.Command(bin, args...)
+		cmd.Dir = root
+		cmd.Env = append(append(os.Environ(), "GOGRAPH_SESSION="), env...)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		if (err == nil) != wantOK {
+			t.Fatalf("%v: success=%t, want %t: %s%s", args, err == nil, wantOK, stdout.String(), stderr.String())
+		}
+		return stdout.Bytes(), stderr.Bytes()
+	}
+	out, _ := run(true, nil, "session", "create", "forgotten")
+	id := strings.Split(string(out), "\"")[1]
+	logPath := filepath.Join(root, ".gograph", "sessions", "session_"+id+".jsonl")
+	idle := `{"type":"session_start","session_id":"` + id + `","created_at":"2026-01-01T00:00:00Z"}` + "\n"
+	if err := os.WriteFile(logPath, []byte(idle), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Expiry disabled: the forgotten session still absorbs the later job.
+	if out, errOut := run(false, []string{"GOGRAPH_SESSION_IDLE_LIMIT=off"}, "query", "RunAudit"); !strings.Contains(string(out)+string(errOut), "requires an intention") {
+		t.Fatalf("with expiry off the forgotten session must still be adopted: %s%s", out, errOut)
+	}
+
+	_, stderr := run(true, nil, "query", "RunAudit")
+	if !strings.Contains(string(stderr), `ended abandoned session "`+id+`": no activity for`) {
+		t.Fatalf("the later job must end the forgotten session and say so: %s", stderr)
+	}
+	run(true, nil, "build", ".")
+	if out, errOut := run(false, nil, "query", "RunAudit", "--session-id", id); !strings.Contains(string(out)+string(errOut), "ended as abandoned") {
+		t.Fatalf("the forgotten owner must learn why its session ended: %s%s", out, errOut)
+	}
+}

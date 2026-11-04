@@ -289,7 +289,14 @@ created it; that covers `build`, `plan`, `review`, and `session end`. When
 several sessions are active, or the only one is MCP-owned, from another host, or
 lacks owner metadata, nothing is adopted: read-only commands then require no
 intention and never write to another caller's audit. `gograph session end ID`
-ends a named session. Independent callers may create separate sessions concurrently.
+ends a named session.
+A session its job forgot cannot block later jobs: every CLI command and MCP
+call first ends other callers' abandoned sessions, meaning CLI sessions with no
+activity for `GOGRAPH_SESSION_IDLE_LIMIT` (a Go duration, default `2h`; `0` or
+`off` disables) and sessions of MCP servers that have exited on this host. It
+prints each one it ends on stderr. Refused calls do not count as activity, and
+a call's own selected session is never ended. The forgotten owner's next call
+reports that its session was ended as abandoned. Independent callers may create separate sessions concurrently.
 Repository writes and session end/cleanup refuse while another caller owns an
 active session, naming that session. Ending an owned session remains possible
 while other owners are active. Unset `GOGRAPH_SESSION` after ending it.

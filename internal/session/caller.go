@@ -179,6 +179,9 @@ func ActiveCallerSessionAt(root, id string) (string, error) {
 		return "", err
 	}
 	if !slices.Contains(ids, id) {
+		if store.endedStatus(id) == "stale" {
+			return "", fmt.Errorf("selected session %q was ended as abandoned after no activity for the idle limit (%s); create a new session", id, IdleLimitEnv)
+		}
 		return "", fmt.Errorf("selected session %q is not active in this repository", id)
 	}
 	return id, nil
@@ -426,10 +429,130 @@ func (r CleanupReport) Lines() []string {
 	return lines
 }
 
-// staleSessionAfter is how long another caller's session may record nothing
-// before cleanup ends it. A marker names no owner process (the CLI creator
-// exits at once), so log activity is the only liveness evidence.
-const staleSessionAfter = 24 * time.Hour
+// A marker names no owner process (the CLI creator exits at once), so log
+// activity is the only liveness evidence for a CLI session. IdleLimitEnv sets
+// how long another caller's CLI session may record nothing before it is ended
+// as abandoned, as a Go duration ("90m", "2h"). "0" or "off" disables
+// automatic expiry; cleanup then falls back to cleanupIdleFallback.
+const (
+	IdleLimitEnv        = "GOGRAPH_SESSION_IDLE_LIMIT"
+	DefaultIdleLimit    = 2 * time.Hour
+	cleanupIdleFallback = 24 * time.Hour
+)
+
+// IdleLimit returns the configured automatic-expiry limit; zero means
+// disabled. An unparseable or negative setting keeps the default and is
+// reported, so a typo never silently disables expiry.
+func IdleLimit() (time.Duration, error) {
+	value := strings.TrimSpace(os.Getenv(IdleLimitEnv))
+	switch strings.ToLower(value) {
+	case "":
+		return DefaultIdleLimit, nil
+	case "0", "off":
+		return 0, nil
+	}
+	limit, err := time.ParseDuration(value)
+	if err != nil || limit < 0 {
+		return DefaultIdleLimit, fmt.Errorf("invalid %s %q; using %s", IdleLimitEnv, value, DefaultIdleLimit)
+	}
+	return limit, nil
+}
+
+// staleAfter is the idle time after which a CLI session counts as abandoned.
+func staleAfter() time.Duration {
+	limit, _ := IdleLimit()
+	if limit == 0 {
+		return cleanupIdleFallback
+	}
+	return limit
+}
+
+// ExpiredSession is one session that ExpireAbandonedSessionsAt ended.
+type ExpiredSession struct {
+	ID     string
+	Reason string
+}
+
+// ExpireAbandonedSessionsAt ends other callers' abandoned sessions in place so
+// a forgotten session cannot block or absorb later callers: a CLI session idle
+// past IdleLimit, or an MCP session whose server process exited on this host.
+// The keep session (the caller's explicit selection) is never ended. Each
+// expired session gets a stale end record and loses its marker; its log and
+// sidecar stay for audit and later cleanup. Disabled when IdleLimit is zero.
+func ExpireAbandonedSessionsAt(root, keep string) ([]ExpiredSession, error) {
+	limit, _ := IdleLimit()
+	if limit == 0 {
+		return nil, nil
+	}
+	store, err := openSessionStore(root)
+	if err != nil {
+		return nil, err
+	}
+	defer store.close()
+	markers, err := store.callerMarkers()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(markers))
+	for id := range markers {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	var expired []ExpiredSession
+	for _, id := range ids {
+		if id == keep {
+			continue
+		}
+		last, done, known, err := store.sessionActivity(id)
+		if err != nil {
+			return expired, err
+		}
+		reason := ""
+		switch {
+		case done:
+			reason = "its log already records an end"
+		case markers[id].Owner == OwnerCLI && known && time.Since(last) > limit:
+			reason = fmt.Sprintf("no activity for %s (limit %s, %s)", time.Since(last).Round(time.Minute), limit, IdleLimitEnv)
+		case ownerGone(markers[id]):
+			reason = "its MCP server process has exited"
+		default:
+			continue
+		}
+		if !done {
+			if err := store.appendStaleEnd(id); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return expired, err
+			}
+		}
+		marker, err := callerMarker(id)
+		if err != nil {
+			return expired, err
+		}
+		if err := store.files.RemoveRegularFile(marker); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return expired, err
+		}
+		expired = append(expired, ExpiredSession{ID: id, Reason: reason})
+	}
+	return expired, nil
+}
+
+// endedStatus returns the status of a session log's end record, or "" when
+// the session has no end record.
+func (s *sessionStore) endedStatus(id string) string {
+	path, err := sessionLogPath(id)
+	if err != nil {
+		return ""
+	}
+	data, err := s.files.ReadRegularFile(path)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	var line GenericLogLine
+	if json.Unmarshal([]byte(lines[len(lines)-1]), &line) != nil || line.Type != "session_end" {
+		return ""
+	}
+	return line.Status
+}
 
 // sessionActivity reads a session log's last record. known is false when the
 // log is missing or its last record carries no parseable time.
@@ -451,6 +574,16 @@ func (s *sessionStore) sessionActivity(id string) (last time.Time, ended, known 
 		return time.Time{}, false, false, nil
 	}
 	ended = line.Type == "session_end"
+	// A refused call (for example a later job that adopted the session but
+	// omitted --intention) is not owner activity; counting it would keep a
+	// forgotten session alive for as long as other jobs keep being refused.
+	for index := len(lines) - 1; !ended && index > 0 && line.Type == "command" && line.Status == "invocation_error"; index-- {
+		var previous GenericLogLine
+		if json.Unmarshal([]byte(lines[index-1]), &previous) != nil {
+			break
+		}
+		line = previous
+	}
 	for _, value := range []string{line.Timestamp, line.EndedAt, line.CreatedAt} {
 		if parsed, parseErr := time.Parse(time.RFC3339, value); parseErr == nil {
 			return parsed, ended, true, nil
@@ -487,13 +620,13 @@ func (a *sessionArchive) move(path string) error {
 }
 
 // abandoned reports proof that a session's owner is gone: a known CLI owner
-// whose log recorded nothing for staleSessionAfter, or an MCP owner whose
+// whose log recorded nothing for the idle limit, or an MCP owner whose
 // process has exited on this host. Idle time never ends an MCP session, and
 // unknown, legacy or other-host owners are always kept.
 func abandoned(marker CallerMarker, last time.Time, known bool) bool {
 	switch marker.Owner {
 	case OwnerCLI:
-		return known && time.Since(last) > staleSessionAfter
+		return known && time.Since(last) > staleAfter()
 	case OwnerMCP:
 		return ownerGone(marker)
 	}
@@ -670,13 +803,13 @@ func CleanupCallerSessionsReportAt(root, id string) (report CleanupReport, err e
 			continue
 		}
 		// A creator writes its log before its marker, so an unmarked log is
-		// archived only once it is ended or idle beyond staleSessionAfter.
+		// archived only once it is ended or idle beyond the idle limit.
 		last, done, known, err := store.sessionActivity(logID)
 		if err != nil {
 			return report, err
 		}
 		if !done {
-			if !known || time.Since(last) <= staleSessionAfter {
+			if !known || time.Since(last) <= staleAfter() {
 				continue
 			}
 			if err := store.appendStaleEnd(logID); err != nil {

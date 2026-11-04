@@ -82,6 +82,8 @@ func printSessionHelp() {
 	fmt.Println("  gograph session end [session_id]                 - Ends the selected (or named) audit session")
 	fmt.Println("  gograph session audit [session_id]               - Audits and scores agent compliance & success")
 	fmt.Println("  gograph session cleanup                          - Ends stale sessions, then moves inactive logs into .gograph/_to_delete/")
+	fmt.Println("  Abandoned sessions expire automatically: every command first ends other callers' CLI sessions idle")
+	fmt.Println("  past GOGRAPH_SESSION_IDLE_LIMIT (default 2h; 0 or off disables) and sessions of exited MCP servers.")
 }
 
 func printSessionVerbHelp(verb string) bool {
@@ -99,7 +101,7 @@ func printSessionVerbHelp(verb string) bool {
 		options = "  --json        Print the native structured audit result.\n"
 	case "cleanup":
 		usage = "cleanup"
-		description = "Never deletes: moves files into .gograph/_to_delete/<UTC time>_<suffix>/. First ends other callers' CLI-owned sessions idle over 24h or MCP-owned sessions whose server process exited on this host (owners without metadata or on another host are kept), printing each, and archives an unselected legacy active_session.json; then archives ended logs. Preserves the selected session and refuses while any other caller is still live."
+		description = "Never deletes: moves files into .gograph/_to_delete/<UTC time>_<suffix>/. First ends other callers' CLI-owned sessions idle past the idle limit (GOGRAPH_SESSION_IDLE_LIMIT, default 2h) or MCP-owned sessions whose server process exited on this host (owners without metadata or on another host are kept), printing each, and archives an unselected legacy active_session.json; then archives ended logs. Preserves the selected session and refuses while any other caller is still live."
 	default:
 		return false
 	}
