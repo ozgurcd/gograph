@@ -202,11 +202,18 @@ func ImplicitCallerSessionAt(root string) (string, error) {
 		return "", err
 	}
 	defer store.close()
-	legacy, err := store.activeSessionID()
+	return store.adoptableSession()
+}
+
+// adoptableSession is the one eligibility rule for attributing a call that
+// selected no session: implicit adoption and the unselected plan/review journal
+// both use it, so a call is credited exactly when it would have been adopted.
+func (s *sessionStore) adoptableSession() (string, error) {
+	legacy, err := s.activeSessionID()
 	if err != nil {
 		return "", err
 	}
-	markers, err := store.callerMarkers()
+	markers, err := s.callerMarkers()
 	if err != nil {
 		return "", err
 	}
@@ -384,8 +391,16 @@ func EndCallerSessionAt(root, id string) (string, error) {
 	return id, nil
 }
 
-// maxUnattributedJournalBytes caps unattributed.jsonl; later calls are dropped.
+// maxUnattributedJournalBytes caps unattributed.jsonl. A full journal is
+// compacted, never pruned; a call that still does not fit is counted in a
+// journal_dropped entry that the audit reports.
 const maxUnattributedJournalBytes = 64 << 10
+
+// unattributedDroppedReserve keeps room for journal_dropped entries, so the
+// count of calls that did not fit can always be recorded.
+const unattributedDroppedReserve = 4 << 10
+
+const journalDroppedType = "journal_dropped"
 
 // LogCallerCommandAt never writes observational calls to an unselected session.
 func LogCallerCommandAt(root, id, command string, args []string, intention string, elapsed time.Duration, status string) error {
@@ -420,12 +435,31 @@ func LogCallerCommandAt(root, id, command string, args []string, intention strin
 var relUnattributedJournal = filepath.Join(relSessionsDir, "unattributed.jsonl")
 
 // unattributedLogEntry is a plan/review call that selected no session. It names
-// every session active at the time: an audit credits it only to a session that
-// was the sole one (the call can belong to no other) and otherwise reports it
-// as unattributed.
+// every session active at the time and the session implicit adoption would have
+// chosen: an audit credits it only to that session and otherwise reports it as
+// unattributed. Count is the number of identical calls compaction merged
+// (0 means 1).
 type unattributedLogEntry struct {
 	CommandLogEntry
-	ActiveSessions []string `json:"active_sessions"`
+	ActiveSessions   []string `json:"active_sessions"`
+	AdoptableSession string   `json:"adoptable_session,omitempty"`
+	Count            int      `json:"count,omitempty"`
+}
+
+func (e unattributedLogEntry) calls() int { return max(e.Count, 1) }
+
+// key identifies what an audit can tell apart: the command, its coverage
+// (first argument), the sessions it may belong to and the adopted one.
+func (e unattributedLogEntry) key() string {
+	active := strings.Join(e.ActiveSessions, ",")
+	if e.Type == journalDroppedType {
+		return journalDroppedType + "|" + active
+	}
+	var first string
+	if len(e.Args) > 0 {
+		first = e.Args[0]
+	}
+	return strings.Join([]string{e.Command, first, e.AdoptableSession, active}, "\x00")
 }
 
 // logUnattributedAt journals successful calls only: failures are never
@@ -443,10 +477,16 @@ func logUnattributedAt(root, command string, args []string, intention string, el
 	if err != nil || len(ids) == 0 {
 		return err
 	}
-	data, err := json.Marshal(unattributedLogEntry{
-		CommandLogEntry: CommandLogEntry{Type: "command", Timestamp: time.Now().Format(time.RFC3339), Command: command, Args: redactArgs(args), Intention: intention, ExecutionMs: elapsed.Milliseconds(), Status: status},
-		ActiveSessions:  ids,
-	})
+	adoptable, err := store.adoptableSession()
+	if err != nil {
+		return err
+	}
+	entry := unattributedLogEntry{
+		CommandLogEntry:  CommandLogEntry{Type: "command", Timestamp: time.Now().Format(time.RFC3339), Command: command, Args: redactArgs(args), Intention: intention, ExecutionMs: elapsed.Milliseconds(), Status: status},
+		ActiveSessions:   ids,
+		AdoptableSession: adoptable,
+	}
+	data, err := json.Marshal(entry)
 	if err != nil {
 		return err
 	}
@@ -459,33 +499,88 @@ func logUnattributedAt(root, command string, args []string, intention string, el
 		}
 	case err != nil:
 		return err
-	case len(existing)+len(data) > maxUnattributedJournalBytes:
-		// Full: keep only entries that name a still-active session, so entries
-		// of ended sessions cannot starve live ones. A concurrent append during
+	case len(existing)+len(data) > maxUnattributedJournalBytes-unattributedDroppedReserve:
+		// Full: merge identical calls (an audit needs counts and coverage, not
+		// every line). Nothing recorded is removed. A concurrent append during
 		// the rewrite can be lost; the journal is best-effort telemetry.
-		kept := pruneUnattributed(existing, ids)
-		if len(kept)+len(data) > maxUnattributedJournalBytes {
-			return nil
+		compacted, err := compactUnattributed(existing, entry)
+		if err != nil {
+			return err
 		}
-		return store.files.WriteRegularFile(relUnattributedJournal, append(kept, data...), 0644, false)
+		return store.files.WriteRegularFile(relUnattributedJournal, compacted, 0644, false)
 	}
 	// Lost the creation race to another caller, or the journal exists.
 	return store.files.AppendRegularFile(relUnattributedJournal, data)
 }
 
-// pruneUnattributed returns the journal lines that parse and name at least one
-// of the active sessions.
-func pruneUnattributed(journal []byte, active []string) []byte {
-	var kept []byte
+// compactUnattributed merges journal entries with the same key, then adds
+// entry. Every call stays counted: when entry is new and no longer fits, it is
+// added to a journal_dropped entry for its sessions instead. Lines an audit
+// never reads (unparsable, failed, or without recorded sessions) are removed.
+func compactUnattributed(journal []byte, entry unattributedLogEntry) ([]byte, error) {
+	var entries []unattributedLogEntry
 	scanner := bufio.NewScanner(bytes.NewReader(journal))
+	scanner.Buffer(nil, maxUnattributedJournalBytes)
 	for scanner.Scan() {
-		var l GenericLogLine
-		if json.Unmarshal(scanner.Bytes(), &l) != nil || !slices.ContainsFunc(l.ActiveSessions, func(id string) bool { return slices.Contains(active, id) }) {
+		var e unattributedLogEntry
+		if json.Unmarshal(scanner.Bytes(), &e) != nil || len(e.ActiveSessions) == 0 || e.Type != journalDroppedType && e.Status != "success" {
 			continue
 		}
-		kept = append(append(kept, scanner.Bytes()...), '\n')
+		entries = append(entries, e)
 	}
-	return kept
+	entries = mergeUnattributed(entries)
+	budget := maxUnattributedJournalBytes - unattributedDroppedReserve
+	withEntry := mergeUnattributed(append(slices.Clone(entries), entry))
+	if encodedSize(withEntry, false) <= budget {
+		entries = withEntry
+	} else {
+		entry.Type, entry.Args, entry.AdoptableSession = journalDroppedType, nil, ""
+		entries = mergeUnattributed(append(entries, entry))
+	}
+	if encodedSize(entries, true) > maxUnattributedJournalBytes {
+		return nil, fmt.Errorf("unattributed journal is full: %d bytes after compaction", encodedSize(entries, true))
+	}
+	var out []byte
+	for _, e := range entries {
+		line, err := json.Marshal(e)
+		if err != nil {
+			return nil, err
+		}
+		out = append(append(out, line...), '\n')
+	}
+	return out, nil
+}
+
+// mergeUnattributed sums the counts of entries with equal keys, keeping the
+// first-seen order and the latest timestamp.
+func mergeUnattributed(entries []unattributedLogEntry) []unattributedLogEntry {
+	index := map[string]int{}
+	var merged []unattributedLogEntry
+	for _, e := range entries {
+		at, seen := index[e.key()]
+		if !seen {
+			index[e.key()] = len(merged)
+			merged = append(merged, e)
+			continue
+		}
+		merged[at].Count = merged[at].calls() + e.calls()
+		merged[at].Timestamp = e.Timestamp
+	}
+	return merged
+}
+
+// encodedSize is the journal size of entries; markers count only when
+// withMarkers is set, because their reserve is kept outside the content budget.
+func encodedSize(entries []unattributedLogEntry, withMarkers bool) int {
+	size := 0
+	for _, e := range entries {
+		if e.Type == journalDroppedType && !withMarkers {
+			continue
+		}
+		line, _ := json.Marshal(e)
+		size += len(line) + 1
+	}
+	return size
 }
 
 // CleanupReport lists what one cleanup pass changed.

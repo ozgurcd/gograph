@@ -404,6 +404,7 @@ type AuditReport struct {
 	UnselectedReview        int      `json:"unselected_review,omitempty"`
 	UnattributedPlan        int      `json:"unattributed_plan,omitempty"`
 	UnattributedReview      int      `json:"unattributed_review,omitempty"`
+	JournalDropped          int      `json:"journal_dropped,omitempty"`
 	ComposedCount           int      `json:"composed_count"`
 	RawQueryCount           int      `json:"raw_query_count"`
 	Composability           float64  `json:"composability"`
@@ -570,7 +571,7 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 		}
 	}
 
-	unselected, unattributed := creditUnselected(store, sessionID, planSet, reviewSet)
+	unselected, unattributed, journalDropped := creditUnselected(store, sessionID, planSet, reviewSet)
 	planRun = planRun || unselected.plan > 0
 	reviewRun = reviewRun || unselected.review > 0
 
@@ -650,6 +651,7 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 		UnselectedReview:        unselected.review,
 		UnattributedPlan:        unattributed.plan,
 		UnattributedReview:      unattributed.review,
+		JournalDropped:          journalDropped,
 		ComposedCount:           composedCount,
 		RawQueryCount:           rawQueryCount,
 		Composability:           composability,
@@ -694,40 +696,51 @@ func sortedKeys(set map[string]bool) []string {
 type planReviewCount struct{ plan, review int }
 
 // creditUnselected reads the unselected plan/review journal for one session.
-// An entry whose only active session was this one is exact: it is credited and
-// its coverage added to the sets. An entry that also names other sessions could
-// belong to any of them: it is counted as unattributed, never credited. Entries
-// that do not name this session, or lack the active list, are ignored.
-func creditUnselected(store *sessionStore, sessionID string, planSet, reviewSet map[string]bool) (credited, unattributed planReviewCount) {
+// An entry is credited, and its coverage added to the sets, only when implicit
+// adoption would have chosen this session (the journal records that choice when
+// the call is made). An entry that names this session among the active ones but
+// was not adopted could belong to any of them: it is counted as unattributed,
+// never credited. dropped counts calls that named this session but did not fit
+// the journal. Entries that do not name this session, or lack the active list,
+// are ignored.
+func creditUnselected(store *sessionStore, sessionID string, planSet, reviewSet map[string]bool) (credited, unattributed planReviewCount, dropped int) {
 	data, err := store.files.ReadRegularFile(relUnattributedJournal)
 	if err != nil {
-		return credited, unattributed
+		return credited, unattributed, 0
 	}
 	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(nil, len(data)+1)
 	for scanner.Scan() {
-		var l GenericLogLine
-		if json.Unmarshal(scanner.Bytes(), &l) != nil || l.Status != "success" || !slices.Contains(l.ActiveSessions, sessionID) {
+		var l unattributedLogEntry
+		if json.Unmarshal(scanner.Bytes(), &l) != nil || !slices.Contains(l.ActiveSessions, sessionID) {
 			continue
 		}
-		exact := len(l.ActiveSessions) == 1
+		if l.Type == journalDroppedType {
+			dropped += l.calls()
+			continue
+		}
+		if l.Status != "success" {
+			continue
+		}
+		exact := l.AdoptableSession == sessionID
 		switch l.Command {
 		case "plan":
 			if !exact {
-				unattributed.plan++
+				unattributed.plan += l.calls()
 				continue
 			}
-			credited.plan++
+			credited.plan += l.calls()
 			addCoverage(planSet, l.Args)
 		case "review":
 			if !exact {
-				unattributed.review++
+				unattributed.review += l.calls()
 				continue
 			}
-			credited.review++
+			credited.review += l.calls()
 			addCoverage(reviewSet, l.Args)
 		}
 	}
-	return credited, unattributed
+	return credited, unattributed, dropped
 }
 
 func formatAudit(report AuditReport, jsonMode bool, duration time.Duration) (string, error) {
@@ -770,6 +783,9 @@ func formatAudit(report AuditReport, jsonMode bool, duration time.Duration) (str
 	}
 	if report.UnattributedPlan+report.UnattributedReview > 0 {
 		write("Unattributed (NOT credited): plan %d, review %d unselected calls ran while several sessions were active. Select a session with --session-id or GOGRAPH_SESSION to attribute them.\n", report.UnattributedPlan, report.UnattributedReview)
+	}
+	if report.JournalDropped > 0 {
+		write("Journal full: %d unselected plan/review calls made while this session was active were not recorded and are not credited.\n", report.JournalDropped)
 	}
 	write("Composability   : %.1f%% (Weight: 30%%)\n\n", report.Composability)
 	write("%s\n\n", report.ComposabilityDefinition)
