@@ -1,6 +1,6 @@
 # Release Notes
 
-## v1.7.17 — 2026-11-03
+## v1.7.17 — 2026-11-04
 
 - A session its job forgot no longer blocks later jobs (GG-11). Before anything
   else, every CLI command and MCP call ends other callers' abandoned sessions:
