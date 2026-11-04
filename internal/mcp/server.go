@@ -474,6 +474,16 @@ func NewServer(
 				}
 			}
 			start := time.Now()
+			// An unselected plan/review is credited by the sessions active now,
+			// not by those active when the call ends.
+			var decided *session.UnselectedStart
+			if callerID == "" && (toolName == "gograph_plan" || toolName == "gograph_review") {
+				d, derr := session.UnselectedStartAt(serverRoot)
+				if derr != nil {
+					d = session.UnselectedStart{}
+				}
+				decided = &d
+			}
 			if !sessionTools[toolName] {
 				defer func() {
 					status := "success"
@@ -488,7 +498,7 @@ func NewServer(
 						}
 					}
 					telemetryMu.Lock()
-					_ = session.LogCallerCommandAt(serverRoot, callerID, strings.TrimPrefix(toolName, "gograph_"), nil, intention, time.Since(start), status)
+					_ = session.LogCallerCommandStartedAt(serverRoot, callerID, decided, strings.TrimPrefix(toolName, "gograph_"), nil, intention, time.Since(start), status)
 					telemetryMu.Unlock()
 				}()
 			}

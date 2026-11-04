@@ -405,10 +405,59 @@ const unattributedDroppedReserve = 4 << 10
 
 const journalDroppedType = "journal_dropped"
 
-// LogCallerCommandAt never writes observational calls to an unselected session.
+// UnselectedStart is what a call that selected no session could belong to,
+// decided once when the call starts.
+type UnselectedStart struct {
+	Active    []string
+	Adoptable string
+}
+
+// UnselectedStartAt reads the active sessions and the adoptable one together.
+// The adoptable session is kept only when it is the one active session, so a
+// session that starts between the two reads makes the call ambiguous, never
+// credited.
+func UnselectedStartAt(root string) (UnselectedStart, error) {
+	store, err := openSessionStore(root)
+	if err != nil {
+		return UnselectedStart{}, err
+	}
+	defer store.close()
+	active, err := store.activeCallerIDs()
+	if err != nil {
+		return UnselectedStart{}, err
+	}
+	adoptable, err := store.adoptableSession()
+	if err != nil {
+		return UnselectedStart{}, err
+	}
+	if adoptable != "" && !slices.Equal(active, []string{adoptable}) {
+		adoptable = ""
+	}
+	return UnselectedStart{Active: active, Adoptable: adoptable}, nil
+}
+
+// LogCallerCommandAt logs a call that took no time: an unselected plan/review
+// is attributed by the sessions active now.
 func LogCallerCommandAt(root, id, command string, args []string, intention string, elapsed time.Duration, status string) error {
+	return LogCallerCommandStartedAt(root, id, nil, command, args, intention, elapsed, status)
+}
+
+// LogCallerCommandStartedAt never writes observational calls to an unselected
+// session. An unselected plan/review is attributed by start, the decision taken
+// when the call began (UnselectedStartAt), so sessions that begin or end while
+// it runs cannot change its credit; a nil start decides now.
+func LogCallerCommandStartedAt(root, id string, start *UnselectedStart, command string, args []string, intention string, elapsed time.Duration, status string) error {
 	if id == "" && (command == "plan" || command == "review") {
-		return logUnattributedAt(root, command, args, intention, elapsed, status)
+		decided := UnselectedStart{}
+		if start != nil {
+			decided = *start
+		} else if status == "success" {
+			var err error
+			if decided, err = UnselectedStartAt(root); err != nil {
+				return err
+			}
+		}
+		return logUnattributedAt(root, decided, command, args, intention, elapsed, status)
 	}
 	if id == "" || command == "hook-guard" && status == "success" {
 		return nil
@@ -438,8 +487,8 @@ func LogCallerCommandAt(root, id, command string, args []string, intention strin
 var relUnattributedJournal = filepath.Join(relSessionsDir, "unattributed.jsonl")
 
 // unattributedLogEntry is a plan/review call that selected no session. It names
-// every session active at the time and the session implicit adoption would have
-// chosen: an audit credits it only to that session and otherwise reports it as
+// every session active when the call started and the session implicit adoption
+// would have chosen then: an audit credits it only to that session and otherwise reports it as
 // unattributed. Count is the number of identical calls compaction merged
 // (0 means 1).
 type unattributedLogEntry struct {
@@ -467,8 +516,8 @@ func (e unattributedLogEntry) key() string {
 
 // logUnattributedAt journals successful calls only: failures are never
 // credited, so they must not use up the cap.
-func logUnattributedAt(root, command string, args []string, intention string, elapsed time.Duration, status string) error {
-	if status != "success" {
+func logUnattributedAt(root string, start UnselectedStart, command string, args []string, intention string, elapsed time.Duration, status string) error {
+	if status != "success" || len(start.Active) == 0 {
 		return nil
 	}
 	store, err := openSessionStore(root)
@@ -476,18 +525,10 @@ func logUnattributedAt(root, command string, args []string, intention string, el
 		return err
 	}
 	defer store.close()
-	ids, err := store.activeCallerIDs()
-	if err != nil || len(ids) == 0 {
-		return err
-	}
-	adoptable, err := store.adoptableSession()
-	if err != nil {
-		return err
-	}
 	entry := unattributedLogEntry{
 		CommandLogEntry:  CommandLogEntry{Type: "command", Timestamp: time.Now().Format(time.RFC3339), Command: command, Args: redactArgs(args), Intention: intention, ExecutionMs: elapsed.Milliseconds(), Status: status},
-		ActiveSessions:   ids,
-		AdoptableSession: adoptable,
+		ActiveSessions:   start.Active,
+		AdoptableSession: start.Adoptable,
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {

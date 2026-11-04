@@ -171,10 +171,16 @@ func Run(args []string) int {
 	// Agent shells do not keep GOGRAPH_SESSION between commands. Without an
 	// explicit selector, adopt the repository's only active session when this
 	// host's CLI created it; ambiguous or foreign sessions adopt nothing.
+	// The same read decides what an unselected plan/review is credited to, so
+	// sessions that begin or end while the command runs cannot change it. A
+	// failed read credits nothing.
+	var started *session.UnselectedStart
 	if callerSessionID == "" && callerAdoptsImplicitSession(args) {
-		if implicit, err := session.ImplicitCallerSessionAt(callerCommandRoot(args)); err == nil {
-			callerSessionID = implicit
+		decided, err := session.UnselectedStartAt(callerCommandRoot(args))
+		if err != nil {
+			decided = session.UnselectedStart{}
 		}
+		started, callerSessionID = &decided, decided.Adoptable
 	}
 
 	// Enforce active session constraints
@@ -228,7 +234,7 @@ func Run(args []string) int {
 		if invocationError {
 			status = "invocation_error"
 		}
-		_ = session.LogCallerCommandAt(callerCommandRoot(args), callerSessionID, args[0], args[1:], intention, elapsed, status)
+		_ = session.LogCallerCommandStartedAt(callerCommandRoot(args), callerSessionID, started, args[0], args[1:], intention, elapsed, status)
 		logged = true
 	}
 

@@ -463,3 +463,74 @@ func TestUnattributedJournalExactAcrossProcesses(t *testing.T) {
 	}
 	requireExactJournal(t, id, calls+procs*25)
 }
+
+// R3-2: attribution is decided once, when the call starts. A session that ends
+// or begins while the call runs must not change what the call is credited to.
+func TestUnselectedCallAttributionIsDecidedAtStart(t *testing.T) {
+	t.Run("session ends mid-call", func(t *testing.T) {
+		a, b := startTwoSessions(t)
+		start, err := UnselectedStartAt("")
+		if err != nil || start.Adoptable != "" || len(start.Active) != 2 {
+			t.Fatalf("two active sessions must be ambiguous at start: %+v, %v", start, err)
+		}
+		if _, err := EndCallerSessionAt("", b); err != nil {
+			t.Fatal(err)
+		}
+		if err := LogCallerCommandStartedAt("", "", &start, "plan", []string{"X"}, "", time.Second, "success"); err != nil {
+			t.Fatal(err)
+		}
+		report := auditJSON(t, a)
+		if report.PlanRun || report.UnselectedPlan != 0 || report.UnattributedPlan != 1 {
+			t.Fatalf("call ambiguous at start was credited after the other session ended: %+v", report)
+		}
+	})
+	t.Run("session begins mid-call", func(t *testing.T) {
+		chdir(t)
+		start, err := UnselectedStartAt("")
+		if err != nil || len(start.Active) != 0 {
+			t.Fatalf("no session at start: %+v, %v", start, err)
+		}
+		a, err := StartCallerSessionAt("", "late", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := LogCallerCommandStartedAt("", "", &start, "plan", []string{"X"}, "", time.Second, "success"); err != nil {
+			t.Fatal(err)
+		}
+		report := auditJSON(t, a)
+		if report.PlanRun || report.UnselectedPlan != 0 || report.UnattributedPlan != 0 {
+			t.Fatalf("call that began before the session was credited or shown: %+v", report)
+		}
+	})
+	t.Run("adopted at start, another session begins mid-call", func(t *testing.T) {
+		chdir(t)
+		a, err := StartCallerSessionAt("", "sole", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		start, err := UnselectedStartAt("")
+		if err != nil || start.Adoptable != a {
+			t.Fatalf("sole CLI session must be adoptable at start: %+v, %v", start, err)
+		}
+		if _, err := StartCallerSessionAt("", "other", ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := LogCallerCommandStartedAt("", start.Adoptable, &start, "plan", []string{"X"}, "", time.Second, "success"); err != nil {
+			t.Fatal(err)
+		}
+		if report := auditJSON(t, a); !report.PlanRun {
+			t.Fatalf("call adopted at start lost its credit when another session began: %+v", report)
+		}
+	})
+	t.Run("sole MCP-owned session is never adoptable", func(t *testing.T) {
+		chdir(t)
+		id, err := StartCallerSessionOwnedAt("", "mcp", "", OwnerMCP)
+		if err != nil {
+			t.Fatal(err)
+		}
+		start, err := UnselectedStartAt("")
+		if err != nil || start.Adoptable != "" || len(start.Active) != 1 || start.Active[0] != id {
+			t.Fatalf("MCP-owned sole session: %+v, %v", start, err)
+		}
+	})
+}
