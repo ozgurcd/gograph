@@ -16,7 +16,14 @@
   work; `tools/list` and `gograph_capabilities` never load one. A graph loads on
   its first request, loads are serialized, at most `--max-scopes` (default 4)
   checkouts stay in memory, and one idle longer than `--scope-idle-ttl`
-  (default 10m) is dropped by a later request. A checkout with a running
+  (default 10m) is dropped when a request needs an unloaded checkout (there is
+  no background timer). Every `git` call the server makes now runs without
+  `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` and the other repository-selecting
+  `GIT_*` variables, and a worktree is accepted only if its git common directory
+  is the configured repository's; before, an inherited `GIT_DIR` made another
+  repository's worktrees valid. Refusals name only the indexed root and the
+  asked root. Client roots that name several checkouts are refused as
+  ambiguous. A checkout with a running
   request is never dropped. A root that cannot be built now fails on the first
   request instead of at startup.
 

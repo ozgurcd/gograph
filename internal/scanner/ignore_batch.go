@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+
+	"github.com/ozgurcd/gograph/internal/gitenv"
 )
 
 // One native Git process belongs to one walk. Never reuse its rule/index cache
@@ -12,7 +14,7 @@ import (
 // of source-safety checks instead of gathering files through excluded subtrees.
 func (g *gitIgnoreChecker) startBatch() {
 	cmd := exec.Command("git", "-C", g.root, "check-ignore", "--stdin", "-z", "--verbose", "--non-matching")
-	cmd.Env = append(os.Environ(), "GIT_FLUSH=1")
+	cmd.Env = append(gitenv.Clean(os.Environ()), "GIT_FLUSH=1")
 	input, err := cmd.StdinPipe()
 	if err != nil {
 		return

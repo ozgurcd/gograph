@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ozgurcd/gograph/internal/gitenv"
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/moduleinventory"
 	"github.com/ozgurcd/gograph/internal/validation"
@@ -165,7 +166,7 @@ func repositoryRevision(ctx context.Context, root string) (string, bool) {
 		// Status is advisory and must not execute a repository-configured
 		// fsmonitor hook or update the member index as a side effect.
 		command := exec.CommandContext(ctx, "git", append([]string{"--no-optional-locks", "-c", "core.fsmonitor=false", "-C", root}, arguments...)...)
-		command.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
+		command.Env = append(gitenv.Clean(os.Environ()), "GIT_OPTIONAL_LOCKS=0")
 		return command
 	}
 	output, err := git("rev-parse", "HEAD").Output()

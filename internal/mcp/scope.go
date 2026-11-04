@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ozgurcd/gograph/internal/gitenv"
 	"github.com/ozgurcd/gograph/internal/graph"
 
 	protocol "github.com/mark3labs/mcp-go/mcp"
@@ -70,15 +71,13 @@ type OutOfScopeError struct {
 }
 
 func (e *OutOfScopeError) Error() string {
-	known := "no linked worktrees"
-	if len(e.Worktrees) > 0 {
-		known = "linked worktrees: " + strings.Join(e.Worktrees, ", ")
-	}
+	// Only the two roots are named: no other worktree paths, and one wording for
+	// every refused path so the text is not an existence oracle.
 	reason := ""
 	if e.Reason != "" {
 		reason = " (" + e.Reason + ")"
 	}
-	return fmt.Sprintf("this gograph server indexes %q (%s); the requested root %q is outside it%s. Nothing was answered. Use the gograph MCP server configured for that repository, or run the gograph CLI inside that directory.", e.Indexed, known, e.Asked, reason)
+	return fmt.Sprintf("this gograph server indexes %q and its git worktrees; the requested root %q is outside them%s. Nothing was answered. Use the gograph MCP server configured for that repository, or run the gograph CLI inside that directory.", e.Indexed, e.Asked, reason)
 }
 
 // ScopeConfig configures a ScopeRouter. It is immutable after NewScopeRouter.
@@ -186,10 +185,17 @@ func (r *ScopeRouter) Resolve(ctx context.Context, asked string) (Selection, err
 // elsewhere the request is refused rather than answered from the wrong repo.
 func (r *ScopeRouter) ResolveClientRoots(ctx context.Context, roots []string) (Selection, error) {
 	var foreign []string
+	var chosen *Selection
 	for _, asked := range roots {
 		root, err := r.match(ctx, asked)
 		if err == nil {
-			return Selection{Root: root, Asked: asked, SelectedBy: "client_roots"}, nil
+			if chosen != nil && chosen.Root != root {
+				return Selection{}, r.outOfScope(ctx, strings.Join(roots, ", "), "client roots name several checkouts of this repository; pass root")
+			}
+			if chosen == nil {
+				chosen = &Selection{Root: root, Asked: asked, SelectedBy: "client_roots"}
+			}
+			continue
 		}
 		var scopeErr *OutOfScopeError
 		if !errors.As(err, &scopeErr) {
@@ -199,6 +205,9 @@ func (r *ScopeRouter) ResolveClientRoots(ctx context.Context, roots []string) (S
 			continue
 		}
 		foreign = append(foreign, asked)
+	}
+	if chosen != nil {
+		return *chosen, nil
 	}
 	if len(foreign) > 0 {
 		return Selection{}, r.outOfScope(ctx, strings.Join(foreign, ", "), "client roots")
@@ -217,7 +226,7 @@ func (r *ScopeRouter) match(ctx context.Context, asked string) (string, error) {
 	}
 	canonical, err := canonicalDir(asked)
 	if err != nil {
-		return "", r.outOfScope(ctx, asked, "not an existing directory")
+		return "", r.outOfScope(ctx, asked, "")
 	}
 	if canonical == r.primary {
 		return r.primary, nil
@@ -438,8 +447,12 @@ func (r *ScopeRouter) route(ctx context.Context, s *server.MCPServer, tool strin
 	var sel Selection
 	if asked != "" {
 		sel, err = r.Resolve(ctx, asked)
-	} else if roots := clientRoots(ctx, s); len(roots) > 0 {
+	} else if roots, declared := clientRoots(ctx, s); len(roots) > 0 {
 		sel, err = r.ResolveClientRoots(ctx, roots)
+	} else if declared {
+		// The client can list roots but gave none (or did not answer in time):
+		// say so, because the configured checkout may not be the caller's.
+		sel = Selection{Root: r.primary, SelectedBy: "default_client_roots_unavailable"}
 	} else {
 		sel = Selection{Root: r.primary, SelectedBy: "default"}
 	}
@@ -458,24 +471,23 @@ func (r *ScopeRouter) route(ctx context.Context, s *server.MCPServer, tool strin
 
 // clientRoots asks the client for its MCP roots when it declared the capability.
 // Any failure means "unknown", never a guess.
-func clientRoots(ctx context.Context, s *server.MCPServer) []string {
+func clientRoots(ctx context.Context, s *server.MCPServer) (roots []string, declared bool) {
 	withInfo, ok := server.ClientSessionFromContext(ctx).(server.SessionWithClientInfo)
 	if !ok || withInfo.GetClientCapabilities().Roots == nil {
-		return nil
+		return nil, false
 	}
 	ctx, cancel := context.WithTimeout(ctx, clientRootsTimeout)
 	defer cancel()
 	listed, err := s.RequestRoots(ctx, protocol.ListRootsRequest{})
 	if err != nil || listed == nil {
-		return nil
+		return nil, true
 	}
-	var roots []string
 	for _, root := range listed.Roots {
 		if u, err := url.Parse(root.URI); err == nil && u.Scheme == "file" && u.Path != "" {
 			roots = append(roots, u.Path)
 		}
 	}
-	return roots
+	return roots, true
 }
 
 // gitWorktreeRoots lists every checkout of the repository at root. A directory
@@ -483,20 +495,57 @@ func clientRoots(ctx context.Context, s *server.MCPServer) []string {
 func gitWorktreeRoots(ctx context.Context, root string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, worktreeListTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", root, "worktree", "list", "--porcelain")
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
+	listed, err := gitOutput(ctx, root, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, nil
+	}
+	own, err := gitCommonDir(ctx, root)
+	if err != nil {
 		return nil, nil
 	}
 	var roots []string
-	for _, line := range strings.Split(stdout.String(), "\n") {
-		if path, ok := strings.CutPrefix(line, "worktree "); ok && filepath.IsAbs(path) {
+	for _, line := range strings.Split(listed, "\n") {
+		path, ok := strings.CutPrefix(line, "worktree ")
+		if !ok || !filepath.IsAbs(path) {
+			continue
+		}
+		// Worktree metadata lives inside the repository and can name any path.
+		// Only a checkout whose own common dir is this repository's is a worktree
+		// of it.
+		if common, err := gitCommonDir(ctx, path); err == nil && common == own {
 			roots = append(roots, path)
 		}
 	}
 	return roots, nil
+}
+
+// gitOutput runs git -C dir with an environment that cannot select another
+// repository (no GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, ...), so -C decides.
+func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = append(gitenv.Clean(os.Environ()), "GIT_OPTIONAL_LOCKS=0")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	return stdout.String(), nil
+}
+
+// gitCommonDir is the canonical git common directory of the checkout at dir.
+func gitCommonDir(ctx context.Context, dir string) (string, error) {
+	out, err := gitOutput(ctx, dir, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	common := strings.TrimSpace(out)
+	if common == "" {
+		return "", errors.New("empty git common dir")
+	}
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(dir, common)
+	}
+	return filepath.EvalSymlinks(filepath.Clean(common))
 }
 
 func canonicalDir(path string) (string, error) {

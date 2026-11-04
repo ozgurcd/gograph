@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ozgurcd/gograph/internal/gitenv"
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
@@ -98,6 +99,7 @@ func loadGraphFile(projectRoot, path string) (*graph.Graph, error) {
 
 func gitRoots(ctx context.Context, projectRoot string) (string, string, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", projectRoot, "rev-parse", "--show-toplevel")
+	cmd.Env = gitenv.Clean(os.Environ())
 	out, err := cmd.Output()
 	if err != nil {
 		return "", "", fmt.Errorf("determine repository root: %w", err)
@@ -119,6 +121,7 @@ func extractGitArchive(parent context.Context, repoRoot, projectRel, ref, destin
 		args = append(args, "--", filepath.ToSlash(projectRel))
 	}
 	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = gitenv.Clean(os.Environ())
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()

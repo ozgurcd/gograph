@@ -142,8 +142,16 @@ another's question.
 timer; `tools/list` and `gograph_capabilities` never load one. A checkout's
 graph is loaded (or built in memory) on its first request, one load at a time.
 At most `--max-scopes` checkouts (default 4, range 1-64) stay in memory; a
-checkout idle longer than `--scope-idle-ttl` (default 10m) is dropped by a later
-request, and the least recently used idle one is dropped at the limit. A
+checkout idle longer than `--scope-idle-ttl` (default 10m) is dropped when a
+request needs a checkout that is not loaded yet (there is no background timer,
+so a server that only repeats queries on loaded checkouts keeps them), and the
+least recently used idle one is dropped at the limit. Every `git` call the
+server makes runs with the `GIT_*` repository-selecting variables (`GIT_DIR`,
+`GIT_WORK_TREE`, `GIT_COMMON_DIR`, ...) removed, and a listed worktree counts
+only if its git common directory is the configured repository's. Several client
+roots that name different checkouts are refused as ambiguous (pass `root`); when
+the client declares roots but gives none, the result says
+`selected_by=default_client_roots_unavailable`. A
 checkout with a request running is never dropped; if every slot is busy a new
 checkout is refused with a "scope cache is full" error, never answered from
 another graph. `gograph_capabilities` reports the policy under `scope`.

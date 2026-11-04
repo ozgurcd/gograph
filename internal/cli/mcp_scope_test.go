@@ -130,8 +130,18 @@ func (b *safeBuffer) String() string {
 // non-nil, makes the client advertise roots and answer roots/list with them.
 func startScopeServer(t *testing.T, root string, clientRoots []string, extra ...string) *scopeClient {
 	t.Helper()
+	return startScopeServerEnv(t, root, clientRoots, nil, extra...)
+}
+
+// startScopeServerEnv is startScopeServer with extra NAME=VALUE entries in the
+// server's environment (appended to the inherited one).
+func startScopeServerEnv(t *testing.T, root string, clientRoots, env []string, extra ...string) *scopeClient {
+	t.Helper()
 	cmd := exec.Command(scopeTestBinary(t), append([]string{"mcp", root}, extra...)...)
 	cmd.Dir = t.TempDir()
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -314,6 +324,36 @@ func TestMCPScopeRefusesRootsOutsideTheRepository(t *testing.T) {
 	}
 	if got := c.call("gograph_query", map[string]any{"term": "x", "root": f.Wt1, "cwd": f.Wt2}); !got.IsError {
 		t.Errorf("conflicting root and cwd must be refused: %+v", got)
+	}
+}
+
+// A server started by a git hook, a rebase --exec or a wrapper can inherit
+// GIT_DIR and friends. They must not make another repository's worktrees valid.
+func TestMCPScopeIgnoresGitDiscoveryEnvironment(t *testing.T) {
+	f := newScopeFixture(t)
+	foreign := filepath.Join(f.Parent, "foreign")
+	foreignWt := filepath.Join(f.Parent, "foreign-wt")
+	scopeWrite(t, filepath.Join(foreign, "go.mod"), "module example.com/foreign\n\ngo 1.21\n")
+	scopeWrite(t, filepath.Join(foreign, "a.go"), "package foreign\n\nfunc ForeignBase() {}\n")
+	scopeGit(t, foreign, "init", "-q", "-b", "main")
+	scopeGit(t, foreign, "add", "-A")
+	scopeGit(t, foreign, "commit", "-q", "-m", "init")
+	scopeGit(t, foreign, "worktree", "add", "-q", "-b", "fb", foreignWt)
+	scopeWrite(t, filepath.Join(foreignWt, "b.go"), "package foreign\n\nfunc ForeignOnly() {}\n")
+	for name, env := range map[string][]string{
+		"GIT_DIR":        {"GIT_DIR=" + filepath.Join(foreign, ".git")},
+		"GIT_WORK_TREE":  {"GIT_DIR=" + filepath.Join(foreign, ".git"), "GIT_WORK_TREE=" + foreign},
+		"GIT_COMMON_DIR": {"GIT_COMMON_DIR=" + filepath.Join(foreign, ".git")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := startScopeServerEnv(t, f.Main, nil, env)
+			if got := c.query(foreignWt, "ForeignOnly"); !got.IsError || strings.Contains(got.Text, "ForeignOnly") {
+				t.Fatalf("a worktree of another repository must be refused, got %+v", got)
+			}
+			if got := c.query(f.Wt1, "Wt1Only"); got.IsError || !strings.Contains(got.Text, "Wt1Only") {
+				t.Fatalf("the server's own worktree must still be answered: %+v", got)
+			}
+		})
 	}
 }
 

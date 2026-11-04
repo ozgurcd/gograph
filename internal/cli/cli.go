@@ -21,6 +21,7 @@ import (
 
 	"github.com/ozgurcd/gograph/internal/baseline"
 	"github.com/ozgurcd/gograph/internal/buildctx"
+	"github.com/ozgurcd/gograph/internal/gitenv"
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/graphstate"
 	"github.com/ozgurcd/gograph/internal/mcp"
@@ -2919,6 +2920,7 @@ func writeGitignore(root string) error {
 
 func gitWorktreeRoot(root string) string {
 	cmd := exec.Command("git", "-C", root, "rev-parse", "--show-toplevel")
+	cmd.Env = gitenv.Clean(os.Environ())
 	out, err := cmd.Output()
 	if err != nil {
 		return root

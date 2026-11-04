@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	"github.com/ozgurcd/gograph/internal/buildctx"
+	"github.com/ozgurcd/gograph/internal/gitenv"
 )
 
 // UnsafeSourceFileError reports a Go build input or metadata entry that could
@@ -354,6 +355,7 @@ func (g *gitIgnoreChecker) init() {
 	g.once.Do(func() {
 		// Verify git is available and the directory is inside a repository.
 		cmd := exec.Command("git", "-C", g.root, "rev-parse", "--show-toplevel")
+		cmd.Env = gitenv.Clean(os.Environ())
 		out, err := cmd.Output()
 		if err != nil {
 			g.hasGit = false
@@ -390,6 +392,7 @@ func (g *gitIgnoreChecker) isIgnored(absPath string) bool {
 	}
 	// `git check-ignore --quiet` exits 0 if the path is ignored, 1 if not.
 	cmd := exec.Command("git", "-C", g.root, "check-ignore", "--quiet", absPath)
+	cmd.Env = gitenv.Clean(os.Environ())
 	return cmd.Run() == nil
 }
 
