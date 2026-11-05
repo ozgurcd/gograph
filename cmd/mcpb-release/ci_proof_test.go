@@ -70,7 +70,46 @@ test('PR title and second-parent forgery', false, f => {
   f.policy[F] = M;
   f.policy[P] = sha('f'); // actual producer workflow differs; claimed commit is trusted
 });
-test('PR even with matching head and policy', false, f => { f.run.event = 'pull_request'; });
+test('PR run not associated with the target', false, f => { f.run.event = 'pull_request'; });
+const R = sha('1'), PH = sha('2');
+const asPR = f => {
+  f.run.event = 'pull_request'; f.run.head_branch = 'feature'; f.run.head_sha = PH;
+  f.prs = [{base:{ref:'main'}, head:{sha:PH, repo:{full_name}}}];
+  f.runs = []; f.prRuns = [{id:1}];
+  f.policy[PH] = M; f.policy[R] = M;
+  f.commits[R] = {tree:{sha:T}, parents:[{sha:M},{sha:PH}]};
+  f.jobs[1].name = 'tested-commit-' + R;
+};
+const pr = (name, want, change = () => {}) => test(name, want, f => { asPR(f); change(f); });
+pr('PR run reused by tree', true);
+pr('PR tree mismatch', false, f => { f.commits[R].tree.sha = P; });
+pr('PR merge commit not a child of the run head', false, f => { f.commits[R].parents = [{sha:M},{sha:P}]; });
+pr('PR merge commit with one parent', false, f => { f.commits[R].parents = [{sha:M}]; });
+pr('PR merge commit policy differs', false, f => { f.policy[R] = sha('f'); });
+pr('PR head policy differs', false, f => { f.policy[PH] = sha('f'); });
+pr('PR merge commit missing', false, f => { delete f.commits[R]; });
+pr('PR merge commit policy file missing', false, f => { delete f.policy[R]; });
+pr('PR head not associated with target', false, f => { f.prs = []; });
+pr('PR associated head from fork', false, f => { f.prs[0].head.repo.full_name = 'fork/gograph'; });
+pr('PR associated into another base', false, f => { f.prs[0].base.ref = 'other'; });
+pr('PR run from fork', false, f => { f.run.head_repository.full_name = 'fork/gograph'; });
+pr('PR run head differs from association', false, f => { f.run.head_sha = P; });
+pr('PR marker names unrelated main commit', false, f => {
+  f.jobs[1].name = 'tested-commit-' + H; f.policy[H] = M; f.commits[H] = {tree:{sha:T}, parents:[{sha:M}]};
+});
+pr('PR marker expression', false, f => { f.jobs[1].name = 'tested-commit-${{ github.event.pull_request.title }}'; });
+pr('PR duplicate marker', false, f => { f.jobs.push({...f.jobs[1], id:3}); });
+pr('PR failed race step', false, f => { f.jobs[0].steps[0].conclusion = 'failure'; });
+pr('PR skipped race step', false, f => { f.jobs[0].steps[0].conclusion = 'skipped'; });
+pr('PR failed marker', false, f => { f.jobs[1].conclusion = 'failure'; });
+pr('PR rerun changes attempt', false, f => { f.final = {...f.run, run_attempt:2}; });
+pr('PR association lookup fails', false, f => { f.fail = 'prs'; });
+test('push association lookup fails', false, f => { f.fail = 'prs'; });
+const O = sha('9');
+const older = f => { f.runs = [{id:2}, {id:1}]; f.extra = {2: {...f.run, id:2, head_sha:O}}; f.commits[O] = {tree:{sha:T}, parents:[{sha:M}]}; };
+test('older run without policy file is skipped', true, older);
+test('older run policy read fails', false, f => { older(f); f.policyError = {[O]: 500}; });
+test('trusted main policy file missing', false, f => { delete f.policy[M]; });
 test('schedule producer', false, f => { f.run.event = 'schedule'; });
 test('non-main push', false, f => { f.run.head_branch = 'other'; });
 test('changed producer workflow', false, f => { f.policy[H] = sha('f'); });
@@ -130,7 +169,7 @@ test('run detail identity mismatch', false, f => { f.run.id = 2; });
   const run = {id:1, status:'completed', conclusion:'success', event:'push', head_branch:'main',
     path:'.github/workflows/ci.yml', head_sha:H, run_attempt:1,
     repository:{full_name}, head_repository:{full_name}};
-  const f = {run, event:'push', runs:[{id:1}], policy:{[H]:M,[M]:M}, calls:[],
+  const f = {run, event:'push', runs:[{id:1}], prRuns:[], prs:[], policy:{[H]:M,[M]:M}, calls:[],
     commits:{[H]:{tree:{sha:T},parents:[{sha:M}]}},
     jobs:[{id:1,name:'build-and-test',conclusion:'success',steps:[{name:'Run Race Tests',conclusion:'success'}]},
           {id:2,name:'tested-commit-'+H,conclusion:'success'}], total:(key,page,n)=>n};
@@ -142,15 +181,19 @@ test('run detail identity mismatch', false, f => { f.run.id = 2; });
       [key === 'runs' ? 'workflow_runs' : 'jobs']: rows.slice((page-1)*100,page*100)}};
   };
   const github = {rest:{git:{getCommit:async ({commit_sha})=>{
-    check('commit'); assert.ok(f.commits[commit_sha], 'unknown commit'); return {data:f.commits[commit_sha]};
+    check('commit'); if (!f.commits[commit_sha]) throw Object.assign(Error('Not Found'), {status:404});
+    return {data:f.commits[commit_sha]};
   }},repos:{getCommit:async ({ref})=>{check('ref');return {data:{sha:M,commit:{tree:{sha:T}}}};},
+    listPullRequestsAssociatedWithCommit:async ({commit_sha})=>{check('prs');assert.equal(commit_sha,M);return {data:f.prs};},
     getContent:async ({ref,path})=>{
-      check('blob'); assert.ok(f.policy[ref]);
+      check('blob');
+      if (f.policyError?.[ref]) throw Object.assign(Error('Server Error'), {status:f.policyError[ref]});
+      if (!f.policy[ref]) throw Object.assign(Error('Not Found'), {status:404});
       assert.ok(['.github/workflows/ci.yml','.github/workflows/test-proof.yml'].includes(path));
       return {data:{type:'file',sha:f.changedProof && ref === H && path.endsWith('test-proof.yml') ? P : f.policy[ref]}};
     }
-  },actions:{listWorkflowRuns:async ({page})=>listing('runs',f.runs,page),
-    getWorkflowRun:async ({run_id})=>{check('run');if(run_id!==1)return {data:{id:run_id,status:'failure'}};
+  },actions:{listWorkflowRuns:async ({page,event})=>listing('runs',event==='pull_request'?f.prRuns:f.runs,page),
+    getWorkflowRun:async ({run_id})=>{check('run');if(run_id!==1)return {data:structuredClone(f.extra?.[run_id]??{id:run_id,status:'failure'})};
       f.reads=(f.reads||0)+1;return {data:structuredClone(f.reads>1&&f.final ? f.final : f.run)};}
   }},request:async (route,args)=>{assert.equal(args.attempt_number,1);return listing('jobs',f.jobs,args.page);}};
   const outputs = {};

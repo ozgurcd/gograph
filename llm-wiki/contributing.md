@@ -60,6 +60,7 @@ The daily schedule at 02:37 UTC also runs it without reuse.
 The local `make test` command remains unchanged.
 
 Main can reuse a successful CI run for an identical tree.
+The run is an earlier main push, or a same-repo pull_request run of a PR that GitHub associates with the target commit.
 Every other CI step still runs in its original order.
 Release retains builds, vet, vulnerability scans, bundle checks, documentation, and archive checks.
 Release runs the full race suite when proof is missing.
@@ -77,13 +78,15 @@ The consumer reads the producing run and its exact attempt through GitHub's API.
 It requires successful CI, the successful race step, and the successful isolated marker job.
 It rejects forks and requires the expected repository and workflow path.
 It resolves the tested commit through the API and compares its tree with the target tree.
-For PR runs, the tested merge commit must have the run's head commit as its second parent.
-Both CI workflow files must match their trusted main versions.
+For PR runs, the marker names the executed merge commit.
+That commit must have exactly two parents, one of them the run's head commit, and the target tree.
+Both CI workflow files must match their trusted main versions at the run's head and, for PR runs, at the merge commit.
+A producer commit, merge commit, or workflow file that does not exist (404) is skipped; any other API error causes full tests.
 A producer with changed workflow logic cannot forge accepted commit metadata.
 Release also compares the resolved target commit with the validated checkout commit.
 Artifacts never supply test proof.
 
-The search checks at most three pages of 100 successful runs.
+The search checks at most five pages of 100 successful main push runs, plus the PR runs of each associated PR head.
 Incomplete job pages, API failures, changed attempts, and unsuitable evidence cause full tests.
 The lookup has a three-minute job limit and ten-second API request limits.
 No lookup waits for another run.
