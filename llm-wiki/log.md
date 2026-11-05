@@ -572,3 +572,16 @@ Isolated v1.7.12 fixtures confirm independent read-only callers are unblocked an
 
 Focused concurrent create/end stress reproduced partial-marker reads and disappearance during enumeration. Complete marker bytes now publish through the existing confined atomic rename helper; only concurrently absent markers are skipped. Caller ownership, malformed-marker refusal and audit scoring remain unchanged. Release test fixtures establish exact metadata modes so launching umask does not change their preconditions. Local gates under 077/022, CI and v1.7.14 publication evidence are recorded in reports/GOGRAPH-CONCURRENT-SESSIONS-1.txt in the parent workspace. No owner installation or sibling checkout changed.
 Additional regression coverage preserves fail-closed handling of empty and mismatched markers across mutation, creation, ending and cleanup.
+
+## [2026-11-05] decision | GOGRAPH-CI-DEDUP-1105
+
+CI keeps one full race suite and removes the duplicate plain suite.
+PR and nightly events always test.
+Main and release may reuse an API-bound tested commit with the same tree and unchanged trusted workflows.
+An isolated metadata job supplies the tested commit without source outputs or artifacts.
+Missing proof runs the full race suite.
+All other checks and publishing dependencies remain.
+The local candidate starts from `ea51cd9` and remains unpublished.
+The co-versioned ledger records this change.
+The workspace report GOGRAPH-CI-DEDUP-1105 records local checks, the final commit, and measured timing estimates.
+The existing stale toolchain note remains outside this change and appears under WIKI-DELTA in that report.
