@@ -2,7 +2,7 @@
 title: Contributing Guidelines
 type: workflow
 status: current
-updated: 2026-08-27
+updated: 2026-11-05
 sources:
   - SRC-20260614-gograph-legacy-contributing
 ---
@@ -51,3 +51,47 @@ Use Scrinium when maintained wiki content must change or a material architecture
 ## Shared toolchain record (2026-10-09)
 
 TOOLCHAIN-1 (f68c017 and 6b711c7) uses ozgurcd/lictor/.github/actions/go-toolchain@d35a8ad07dc59bd76153f0ed7d3b1ade22c6cf04 for CI and release setup. The caller go.mod selects Go; the action owns checksum-verified Staticcheck build inputs. Independent govulncheck and GoReleaser pins remain caller-owned.
+
+## CI test reuse (GOGRAPH-CI-DEDUP-1105)
+
+CI runs the full suite once with `go test -count=1 -race ./...`.
+PR events always run this command.
+The daily schedule at 02:37 UTC also runs it without reuse.
+The local `make test` command remains unchanged.
+
+Main can reuse a successful CI run for an identical tree.
+Every other CI step still runs in its original order.
+Release retains builds, vet, vulnerability scans, bundle checks, documentation, and archive checks.
+Release runs the full race suite when proof is missing.
+Publication still requires successful release verification.
+
+The lookup never runs on PR events.
+Main uses inline workflow code.
+Release calls `.github/workflows/test-proof.yml` from `ozgurcd/gograph@main`.
+The lookup job checks out no source and runs no repository helper.
+A separate job records `tested-commit-${{ github.sha }}` after successful full CI tests.
+That job uses no checkout, artifact, or source-controlled output.
+The test job explicitly checks out that same GitHub commit.
+
+The consumer reads the producing run and its exact attempt through GitHub's API.
+It requires successful CI, the successful race step, and the successful isolated marker job.
+It rejects forks and requires the expected repository and workflow path.
+It resolves the tested commit through the API and compares its tree with the target tree.
+For PR runs, the tested merge commit must have the run's head commit as its second parent.
+Both CI workflow files must match their trusted main versions.
+A producer with changed workflow logic cannot forge accepted commit metadata.
+Release also compares the resolved target commit with the validated checkout commit.
+Artifacts never supply test proof.
+
+The search checks at most three pages of 100 successful runs.
+Incomplete job pages, API failures, changed attempts, and unsuitable evidence cause full tests.
+The lookup has a three-minute job limit and ten-second API request limits.
+No lookup waits for another run.
+A missed or failed lookup cannot disable PR, nightly, main fallback, or release fallback tests.
+The first PR works before the new reusable workflow reaches main.
+GitHub may delay scheduled jobs.
+
+Validation and timing estimates belong to the workspace report `GOGRAPH-CI-DEDUP-1105`.
+Local validation uses offline API fixtures and a focused workflow contract test.
+It does not replace the future GitHub run.
+GitHub documents PR merge commits in its [event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows).

@@ -1,0 +1,136 @@
+name: Look up tested tree
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+    outputs:
+      verified:
+        value: ${{ jobs.lookup.outputs.verified }}
+      commit:
+        value: ${{ jobs.lookup.outputs.commit }}
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  lookup:
+    # Callers use @main. Never execute checked-out code in this job.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      verified: ${{ steps.proof.outputs.verified }}
+      commit: ${{ steps.proof.outputs.commit }}
+    steps:
+      - uses: actions/github-script@v8
+        id: proof
+        env:
+          TARGET_REF: ${{ inputs.ref }}
+        with:
+          script: |
+            core.setOutput('verified', 'false');
+            if (context.eventName === 'pull_request') return;
+            const repo = context.repo;
+            const fullName = `${repo.owner}/${repo.repo}`;
+            const request = {timeout: 10000};
+            const isSHA = sha => typeof sha === 'string' && /^[a-f0-9]{40}$/.test(sha);
+            const getCommit = async sha => (await github.rest.git.getCommit({
+              ...repo, commit_sha: sha, request
+            })).data;
+            const blob = async (ref, path) => {
+              const {data} = await github.rest.repos.getContent({...repo, ref, path, request});
+              if (data.type !== 'file' || !isSHA(data.sha)) {
+                throw new Error('Not a regular workflow file');
+              }
+              return data.sha;
+            };
+            // Read the whole bounded list before accepting evidence from any page.
+            // Missing pages, unstable counts, duplicate rows, and caps all fail closed.
+            const listAll = async (fetchPage, key) => {
+              const rows = [];
+              let total;
+              for (let page = 1; page <= 5; page++) {
+                const {data} = await fetchPage(page);
+                if (!Number.isSafeInteger(data.total_count) || data.total_count < 0 ||
+                    data.total_count > 500 || (total !== undefined && total !== data.total_count)) {
+                  throw new Error('Unverifiable list count');
+                }
+                total = data.total_count;
+                const part = data[key];
+                if (!Array.isArray(part) || part.length !== Math.min(100, total - rows.length)) {
+                  throw new Error('Incomplete list');
+                }
+                rows.push(...part);
+                if (rows.length === total) {
+                  const ids = rows.map(row => row.id);
+                  if (ids.some(id => !Number.isSafeInteger(id) || id <= 0) ||
+                      new Set(ids).size !== ids.length) throw new Error('Unverifiable list identity');
+                  return rows;
+                }
+              }
+              throw new Error('List exceeds page cap');
+            };
+            const identity = run => JSON.stringify([
+              run.id, run.run_attempt, run.status, run.conclusion, run.event, run.path,
+              run.head_sha, run.head_branch, run.repository?.full_name, run.head_repository?.full_name
+            ]);
+            try {
+              const {data: target} = await github.rest.repos.getCommit({
+                ...repo, ref: process.env.TARGET_REF, request
+              });
+              if (!isSHA(target.sha) || !isSHA(target.commit?.tree?.sha)) throw new Error('Invalid target');
+              core.setOutput('commit', target.sha);
+              const {data: main} = await github.rest.repos.getCommit({...repo, ref: 'main', request});
+              if (!isSHA(main.sha)) throw new Error('Invalid trusted revision');
+              const policyPaths = ['.github/workflows/ci.yml', '.github/workflows/test-proof.yml'];
+              const policy = await Promise.all(policyPaths.map(path => blob(main.sha, path)));
+              const runs = await listAll(page => github.rest.actions.listWorkflowRuns({
+                ...repo, workflow_id: 'ci.yml', status: 'success', per_page: 100, page, request
+              }), 'workflow_runs');
+              for (const listed of runs) {
+                if (listed.id === context.runId) continue;
+                const {data: run} = await github.rest.actions.getWorkflowRun({
+                  ...repo, run_id: listed.id, request
+                });
+                // PR head_sha does not identify GitHub's executed merge commit.
+                // Accept only main pushes: their API head_sha identifies both source and workflow.
+                if (run.id !== listed.id || run.status !== 'completed' || run.conclusion !== 'success' ||
+                    run.event !== 'push' || run.head_branch !== 'main' ||
+                    run.path !== policyPaths[0] || !isSHA(run.head_sha) ||
+                    !Number.isSafeInteger(run.run_attempt) || run.run_attempt <= 0 ||
+                    run.repository?.full_name !== fullName || run.head_repository?.full_name !== fullName) continue;
+                const testedSHA = run.head_sha;
+                // Bind policy to the actual producer, before consulting any job or marker name.
+                const producedPolicy = await Promise.all(policyPaths.map(path => blob(testedSHA, path)));
+                if (producedPolicy.some((sha, i) => sha !== policy[i])) continue;
+                const tested = await getCommit(testedSHA);
+                if (!isSHA(tested.tree?.sha) || tested.tree.sha !== target.commit.tree.sha) continue;
+                const jobs = await listAll(page => github.request(
+                  'GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs', {
+                    ...repo, run_id: run.id, attempt_number: run.run_attempt,
+                    per_page: 100, page, request
+                  }), 'jobs');
+                const builds = jobs.filter(job => job.name === 'build-and-test');
+                const markers = jobs.filter(job => typeof job.name === 'string' && job.name.startsWith('tested-commit-'));
+                if (builds.length !== 1 || markers.length !== 1 ||
+                    builds[0].conclusion !== 'success' || markers[0].conclusion !== 'success' ||
+                    markers[0].name !== `tested-commit-${testedSHA}`) continue;
+                const tests = builds[0].steps.filter(step => step.name === 'Run Race Tests');
+                if (tests.length !== 1 || tests[0].conclusion !== 'success') continue;
+                const {data: finalRun} = await github.rest.actions.getWorkflowRun({
+                  ...repo, run_id: run.id, request
+                });
+                if (identity(finalRun) !== identity(run)) continue;
+                core.info(`Reusing race suite from run ${run.id}, attempt ${run.run_attempt}, commit ${testedSHA}, tree ${tested.tree.sha}`);
+                core.setOutput('verified', 'true');
+                return;
+              }
+              core.info('No suitable tested tree; run the full race suite.');
+            } catch (error) {
+              // Do not print request headers or API response bodies.
+              core.warning('Proof unavailable; run the full race suite.');
+            }

@@ -572,3 +572,31 @@ Isolated v1.7.12 fixtures confirm independent read-only callers are unblocked an
 
 Focused concurrent create/end stress reproduced partial-marker reads and disappearance during enumeration. Complete marker bytes now publish through the existing confined atomic rename helper; only concurrently absent markers are skipped. Caller ownership, malformed-marker refusal and audit scoring remain unchanged. Release test fixtures establish exact metadata modes so launching umask does not change their preconditions. Local gates under 077/022, CI and v1.7.14 publication evidence are recorded in reports/GOGRAPH-CONCURRENT-SESSIONS-1.txt in the parent workspace. No owner installation or sibling checkout changed.
 Additional regression coverage preserves fail-closed handling of empty and mismatched markers across mutation, creation, ending and cleanup.
+
+## [2026-11-05] decision | GOGRAPH-CI-DEDUP-1105
+
+CI keeps one full race suite and removes the duplicate plain suite.
+PR and nightly events always test.
+Main and release may reuse an API-bound tested commit with the same tree and unchanged trusted workflows.
+An isolated metadata job supplies the tested commit without source outputs or artifacts.
+Missing proof runs the full race suite.
+All other checks and publishing dependencies remain.
+The local candidate starts from `ea51cd9` and remains unpublished.
+The co-versioned ledger records this change.
+The workspace report GOGRAPH-CI-DEDUP-1105 records local checks, the final commit, and measured timing estimates.
+The existing stale toolchain note remains outside this change and appears under WIKI-DELTA in that report.
+
+## [2026-11-05] decision | GOGRAPH-CI-DEDUP-R2-1105
+
+The review found forged proof in `ed00206`.
+Consumers now accept only completed successful push runs on main.
+The API run head identifies the tested commit and the executed workflow revision.
+Both producer workflow blobs must equal trusted main blobs.
+Marker names only confirm that API identity.
+PR claims cannot identify the tested commit.
+Consumers read complete run and attempt-job lists before they accept evidence.
+A cap, changed count, duplicate row, missing page, or API error runs the full race suite.
+The cap is five pages of 100 rows per list.
+Offline API fixtures cover the attack, marker forgery, both workflow blobs, pagination, and reruns.
+The workspace report GOGRAPH-CI-DEDUP-R2-1105 records validation and the local commit.
+The change remains unpublished.

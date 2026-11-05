@@ -27,8 +27,18 @@ env:
   MCP_PUBLISHER_LINUX_AMD64_SHA256: 'ab128162b0616090b47cf245afe0a23f3ef08936fdce19074f5ba0a4469281ac'
 
 jobs:
+  test-proof:
+    uses: ozgurcd/gograph/.github/workflows/test-proof.yml@main
+    permissions:
+      actions: read
+      contents: read
+    with:
+      ref: ${{ inputs.tag || github.ref }}
+
   verify:
     name: Verify release candidate
+    needs: test-proof
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -75,6 +85,7 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "commit=$checked_out_commit" >> "$GITHUB_OUTPUT"
 
       - name: Verify dependencies and formatting
         shell: bash
@@ -90,10 +101,13 @@ jobs:
           fi
 
       - name: Build and test
+        env:
+          SUITE_VERIFIED: ${{ needs.test-proof.outputs.verified == 'true' && needs.test-proof.outputs.commit == steps.metadata.outputs.commit }}
         run: |
           go build -v ./...
-          go test -count=1 -v ./...
-          go test -count=1 -race ./...
+          if [[ "$SUITE_VERIFIED" != 'true' ]]; then
+            go test -count=1 -race ./...
+          fi
           go vet ./...
 
       - name: Install pinned Grype

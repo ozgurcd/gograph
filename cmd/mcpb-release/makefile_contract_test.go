@@ -124,11 +124,10 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				"make govulncheck",
 				"anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2",
 				"grype-version: v0.116.1",
-				"go test -count=1 -v ./...",
 				"go test -count=1 -race ./...",
 				"make vulnerability-check",
 			},
-			forbidden: []string{"grype dir:.", "go install honnef.co/go/tools/cmd/staticcheck", "go install github.com/golangci/golangci-lint", "go install golang.org/x/vuln/cmd/govulncheck"},
+			forbidden: []string{"go test -count=1 -v ./...", "grype dir:.", "go install honnef.co/go/tools/cmd/staticcheck", "go install github.com/golangci/golangci-lint", "go install golang.org/x/vuln/cmd/govulncheck"},
 		},
 		{
 			path: ".github/workflows/release.yml",
@@ -140,12 +139,11 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				"go run golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION} ./...",
 				"anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2",
 				"grype-version: v0.116.1",
-				"go test -count=1 -v ./...",
 				"go test -count=1 -race ./...",
 				"make vulnerability-check",
 				"make scan-release-artifacts RELEASE_DIST=dist",
 			},
-			forbidden: []string{"grype dir:.", "go install honnef.co/go/tools/cmd/staticcheck", "go install github.com/golangci/golangci-lint", "go install golang.org/x/vuln/cmd/govulncheck"},
+			forbidden: []string{"go test -count=1 -v ./...", "grype dir:.", "go install honnef.co/go/tools/cmd/staticcheck", "go install github.com/golangci/golangci-lint", "go install golang.org/x/vuln/cmd/govulncheck"},
 		},
 	}
 	for _, test := range tests {
