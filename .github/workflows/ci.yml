@@ -8,259 +8,98 @@ on:
   schedule:
     - cron: '37 2 * * *'
 
-permissions:
-  contents: read
-  actions: read
+permissions: {}
+
+concurrency:
+  # A newer push to a pull request supersedes its running checks.
+  # Main and nightly runs get their own group and are never cancelled.
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
-  test-proof:
+  release-tag:
+    # A main commit that carries a release tag is verified by the Release
+    # workflow, which runs every gate in checks.yml plus the release gates.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    # Inline on main so the first PR does not require an unmerged reusable file.
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    permissions: {}
     outputs:
-      verified: ${{ steps.proof.outputs.verified }}
+      tagged: ${{ steps.lookup.outputs.tagged }}
     steps:
-      - uses: actions/github-script@v8
-        id: proof
-        env:
-          TARGET_REF: ${{ github.sha }}
-        with:
-          script: |
-            core.setOutput('verified', 'false');
-            if (context.eventName === 'pull_request') return;
-            const repo = context.repo;
-            const fullName = `${repo.owner}/${repo.repo}`;
-            const request = {timeout: 10000};
-            const isSHA = sha => typeof sha === 'string' && /^[a-f0-9]{40}$/.test(sha);
-            // A producer-side object that does not exist (404) is evidence of nothing: callers
-            // pass optional and skip that run. Every other failure, and any 404 on trusted main, aborts.
-            const orNull = async (optional, read) => {
-              try {
-                return await read();
-              } catch (error) {
-                if (optional && error?.status === 404) return null;
-                throw error;
-              }
-            };
-            const getCommit = (sha, optional = false) => orNull(optional, async () => (
-              await github.rest.git.getCommit({...repo, commit_sha: sha, request})
-            ).data);
-            const blob = (ref, path, optional = false) => orNull(optional, async () => {
-              const {data} = await github.rest.repos.getContent({...repo, ref, path, request});
-              if (data.type !== 'file' || !isSHA(data.sha)) {
-                throw new Error('Not a regular workflow file');
-              }
-              return data.sha;
-            });
-            // Read the whole bounded list before accepting evidence from any page.
-            // Missing pages, unstable counts, duplicate rows, and caps all fail closed.
-            const listAll = async (fetchPage, key) => {
-              const rows = [];
-              let total;
-              for (let page = 1; page <= 5; page++) {
-                const {data} = await fetchPage(page);
-                if (!Number.isSafeInteger(data.total_count) || data.total_count < 0 ||
-                    data.total_count > 500 || (total !== undefined && total !== data.total_count)) {
-                  throw new Error('Unverifiable list count');
-                }
-                total = data.total_count;
-                const part = data[key];
-                if (!Array.isArray(part) || part.length !== Math.min(100, total - rows.length)) {
-                  throw new Error('Incomplete list');
-                }
-                rows.push(...part);
-                if (rows.length === total) {
-                  const ids = rows.map(row => row.id);
-                  if (ids.some(id => !Number.isSafeInteger(id) || id <= 0) ||
-                      new Set(ids).size !== ids.length) throw new Error('Unverifiable list identity');
-                  return rows;
-                }
-              }
-              throw new Error('List exceeds page cap');
-            };
-            const identity = run => JSON.stringify([
-              run.id, run.run_attempt, run.status, run.conclusion, run.event, run.path,
-              run.head_sha, run.head_branch, run.repository?.full_name, run.head_repository?.full_name
-            ]);
-            try {
-              const {data: target} = await github.rest.repos.getCommit({
-                ...repo, ref: process.env.TARGET_REF, request
-              });
-              if (!isSHA(target.sha) || !isSHA(target.commit?.tree?.sha)) throw new Error('Invalid target');
-              core.setOutput('commit', target.sha);
-              const {data: main} = await github.rest.repos.getCommit({...repo, ref: 'main', request});
-              if (!isSHA(main.sha)) throw new Error('Invalid trusted revision');
-              const policyPaths = ['.github/workflows/ci.yml', '.github/workflows/test-proof.yml'];
-              const policy = await Promise.all(policyPaths.map(path => blob(main.sha, path)));
-              const policyAt = sha => Promise.all(policyPaths.map(path => blob(sha, path, true)));
-              const sameAsMain = shas => shas.every((sha, i) => sha === policy[i]);
-              // Pull requests are only looked up by the heads of same-repo PRs GitHub associates with
-              // the target. This narrows the search; it is not evidence, everything is re-verified.
-              const {data: associated} = await github.rest.repos.listPullRequestsAssociatedWithCommit({
-                ...repo, commit_sha: target.sha, per_page: 100, request
-              });
-              if (!Array.isArray(associated) || associated.length >= 100) throw new Error('Unverifiable pull request list');
-              const prHeads = [...new Set(associated
-                .filter(pr => pr.base?.ref === 'main' && pr.head?.repo?.full_name === fullName && isSHA(pr.head.sha))
-                .map(pr => pr.head.sha))];
-              const lists = [await listAll(page => github.rest.actions.listWorkflowRuns({
-                ...repo, workflow_id: 'ci.yml', event: 'push', branch: 'main', status: 'success',
-                per_page: 100, page, request
-              }), 'workflow_runs')];
-              for (const head_sha of prHeads) {
-                lists.push(await listAll(page => github.rest.actions.listWorkflowRuns({
-                  ...repo, workflow_id: 'ci.yml', event: 'pull_request', head_sha, status: 'success',
-                  per_page: 100, page, request
-                }), 'workflow_runs'));
-              }
-              const seen = new Set();
-              for (const listed of lists.flat()) {
-                if (listed.id === context.runId || seen.has(listed.id)) continue;
-                seen.add(listed.id);
-                const {data: run} = await github.rest.actions.getWorkflowRun({
-                  ...repo, run_id: listed.id, request
-                });
-                // A push is identified by its head_sha. A pull_request run executes GitHub's merge
-                // commit, which only its marker names; that commit is bound to the run below.
-                const isPush = run.event === 'push' && run.head_branch === 'main';
-                const isPull = run.event === 'pull_request' && prHeads.includes(run.head_sha);
-                if (run.id !== listed.id || run.status !== 'completed' || run.conclusion !== 'success' ||
-                    !(isPush || isPull) ||
-                    run.path !== policyPaths[0] || !isSHA(run.head_sha) ||
-                    !Number.isSafeInteger(run.run_attempt) || run.run_attempt <= 0 ||
-                    run.repository?.full_name !== fullName || run.head_repository?.full_name !== fullName) continue;
-                // Bind policy to the producer commit, before consulting any job or marker name.
-                if (!sameAsMain(await policyAt(run.head_sha))) continue;
-                if (isPush) {
-                  const head = await getCommit(run.head_sha, true);
-                  if (!isSHA(head?.tree?.sha) || head.tree.sha !== target.commit.tree.sha) continue;
-                }
-                const jobs = await listAll(page => github.request(
-                  'GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs', {
-                    ...repo, run_id: run.id, attempt_number: run.run_attempt,
-                    per_page: 100, page, request
-                  }), 'jobs');
-                const builds = jobs.filter(job => job.name === 'build-and-test');
-                const markers = jobs.filter(job => typeof job.name === 'string' && job.name.startsWith('tested-commit-'));
-                if (builds.length !== 1 || markers.length !== 1 ||
-                    builds[0].conclusion !== 'success' || markers[0].conclusion !== 'success') continue;
-                const testedSHA = /^tested-commit-([a-f0-9]{40})$/.exec(markers[0].name)?.[1];
-                if (!testedSHA || (isPush && testedSHA !== run.head_sha)) continue;
-                const tests = builds[0].steps.filter(step => step.name === 'Run Race Tests');
-                if (tests.length !== 1 || tests[0].conclusion !== 'success') continue;
-                if (isPull) {
-                  // The executed merge commit must carry main's policy, descend from this run's head,
-                  // and have exactly the target tree.
-                  if (!sameAsMain(await policyAt(testedSHA))) continue;
-                  const tested = await getCommit(testedSHA, true);
-                  if (!Array.isArray(tested?.parents) || tested.parents.length !== 2 ||
-                      !tested.parents.some(parent => parent.sha === run.head_sha) ||
-                      !isSHA(tested.tree?.sha) || tested.tree.sha !== target.commit.tree.sha) continue;
-                }
-                const {data: finalRun} = await github.rest.actions.getWorkflowRun({
-                  ...repo, run_id: run.id, request
-                });
-                if (identity(finalRun) !== identity(run)) continue;
-                core.info(`Reusing race suite from run ${run.id}, attempt ${run.run_attempt}, event ${run.event}, commit ${testedSHA}, tree ${target.commit.tree.sha}`);
-                core.setOutput('verified', 'true');
-                return;
-              }
-              core.info('No suitable tested tree; run the full race suite.');
-            } catch (error) {
-              // Do not print request headers or API response bodies.
-              core.warning('Proof unavailable; run the full race suite.');
-            }
+      # No checkout. Any failure reports "not tagged", so the checks run.
+      - id: lookup
+        shell: bash
+        run: |
+          set -uo pipefail
+          tagged=false
+          if refs="$(git ls-remote --tags "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" 'v*')"; then
+            while read -r sha ref; do
+              tag="${ref#refs/tags/}"
+              tag="${tag%'^{}'}"
+              if [[ "$sha" == "$GITHUB_SHA" && "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+                echo "Release tag $tag points at $GITHUB_SHA; the Release workflow verifies this commit."
+                tagged=true
+              fi
+            done <<< "$refs"
+          else
+            echo "::warning::Could not list release tags; running the checks."
+          fi
+          echo "tagged=$tagged" >> "$GITHUB_OUTPUT"
+
+  test-proof:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # On a main push the local file is main's own, so it is the trusted lookup.
+    uses: ./.github/workflows/test-proof.yml
+    permissions:
+      actions: read
+      contents: read
+    with:
+      ref: ${{ github.sha }}
+
+  checks:
+    needs: [release-tag, test-proof]
+    # PR and nightly checks do not depend on a source-controlled lookup output.
+    if: ${{ !cancelled() && needs.release-tag.outputs.tagged != 'true' }}
+    uses: ./.github/workflows/checks.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.sha }}
+      # Nightly, and a main push whose identical tree already passed every
+      # gate, only refresh the time-dependent vulnerability scans.
+      vulnerability-only: ${{ github.event_name == 'schedule' || needs.test-proof.outputs.verified == 'true' }}
 
   build-and-test:
-    needs: test-proof
-    # PR and nightly tests do not depend on a source-controlled lookup output.
-    if: ${{ !cancelled() }}
+    # The required status check on main. It reports the outcome of the shared
+    # checks under one stable name. always(): a skipped job would count as a
+    # passed required check.
+    needs: [release-tag, checks]
+    if: ${{ always() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions: {}
     steps:
-    - uses: actions/checkout@v7
-      with:
-        ref: ${{ github.sha }}
-        fetch-depth: 0
-        persist-credentials: false
-
-    - uses: ozgurcd/lictor/.github/actions/go-toolchain@fda0c2afaa765f190b7e331113a71570db802199
-    - name: Verify Dependencies
-      run: go mod verify
-
-    - name: Verify go.mod is tidy
-      run: go mod tidy -diff
-
-    - name: Check formatting
-      shell: bash
-      run: |
-        unformatted="$(gofmt -l .)"
-        if [[ -n "$unformatted" ]]; then
-          echo "The following Go files are not formatted:"
-          echo "$unformatted"
+      - env:
+          RESULT: ${{ needs.checks.result }}
+          TAGGED: ${{ needs.release-tag.outputs.tagged }}
+        shell: bash
+        run: |
+          if [[ "$RESULT" == success ]]; then
+            exit 0
+          fi
+          if [[ "$RESULT" == skipped && "$TAGGED" == true ]]; then
+            echo "The Release workflow verifies this tagged commit."
+            exit 0
+          fi
+          echo "checks finished with: $RESULT" >&2
           exit 1
-        fi
-
-    - name: Build
-      run: go build -v ./...
-
-    - name: Run Race Tests
-      if: github.event_name != 'push' || github.ref != 'refs/heads/main' || needs.test-proof.outputs.verified != 'true'
-      run: go test -count=1 -race ./...
-
-    - name: Vet
-      run: go vet ./...
-
-    - name: Install pinned Grype
-      id: grype
-      uses: anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7
-      with:
-        grype-version: v0.116.1
-
-    - name: Staticcheck
-      run: make staticcheck
-
-    - name: GolangCI-Lint
-      run: make lint
-
-    - name: Vulnerability Check
-      env:
-        GRYPE: ${{ steps.grype.outputs.cmd }}
-      run: |
-        make govulncheck
-        make vulnerability-check
-
-    - name: Build and structurally validate all MCP bundles
-      shell: bash
-      run: |
-        set -euo pipefail
-        make mcpb-build
-        version="$(awk -F ' = ' '$1 == "current_version" { print $2 }' .bumpversion.cfg)"
-        test -n "$version"
-        go run ./cmd/mcpb-release render-server \
-          --version "$version" \
-          --input .release-mcpb \
-          --output "$RUNNER_TEMP/server.json"
-        make mcpb-verify MCPB_SERVER="$RUNNER_TEMP/server.json"
-
-    - name: Smoke-test the native MCP bundle
-      run: make mcpb-smoke
-
-    - name: Install pinned Hugo
-      env:
-        HUGO_VERSION: '0.164.0'
-      run: |
-        wget -q "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.deb" -O "$RUNNER_TEMP/hugo.deb"
-        sudo dpkg -i "$RUNNER_TEMP/hugo.deb"
-
-    - name: Build documentation site
-      run: make docs-check
 
   tested-commit:
     # Separate runner, no checkout, no source outputs, no artifact claims.
     name: tested-commit-${{ github.sha }}
-    needs: [test-proof, build-and-test]
-    if: ${{ !cancelled() && needs.build-and-test.result == 'success' && (github.event_name != 'push' || needs.test-proof.outputs.verified != 'true') }}
+    needs: [release-tag, test-proof, checks]
+    if: ${{ !cancelled() && needs.checks.result == 'success' && github.event_name != 'schedule' && needs.test-proof.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     permissions: {}
     steps:

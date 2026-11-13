@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   lookup:
-    # Callers use @main. Never execute checked-out code in this job.
+    # Release calls this file @main; CI calls it only on main pushes. Never execute checked-out code in this job.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -96,7 +96,7 @@ jobs:
               core.setOutput('commit', target.sha);
               const {data: main} = await github.rest.repos.getCommit({...repo, ref: 'main', request});
               if (!isSHA(main.sha)) throw new Error('Invalid trusted revision');
-              const policyPaths = ['.github/workflows/ci.yml', '.github/workflows/test-proof.yml'];
+              const policyPaths = ['.github/workflows/ci.yml', '.github/workflows/test-proof.yml', '.github/workflows/checks.yml'];
               const policy = await Promise.all(policyPaths.map(path => blob(main.sha, path)));
               const policyAt = sha => Promise.all(policyPaths.map(path => blob(sha, path, true)));
               const sameAsMain = shas => shas.every((sha, i) => sha === policy[i]);
@@ -146,7 +146,8 @@ jobs:
                     ...repo, run_id: run.id, attempt_number: run.run_attempt,
                     per_page: 100, page, request
                   }), 'jobs');
-                const builds = jobs.filter(job => job.name === 'build-and-test');
+                // checks.yml runs the suite: caller job "checks" in ci.yml, job "verify" in checks.yml.
+                const builds = jobs.filter(job => job.name === 'checks / verify');
                 const markers = jobs.filter(job => typeof job.name === 'string' && job.name.startsWith('tested-commit-'));
                 if (builds.length !== 1 || markers.length !== 1 ||
                     builds[0].conclusion !== 'success' || markers[0].conclusion !== 'success') continue;

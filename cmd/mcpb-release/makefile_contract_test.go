@@ -106,44 +106,76 @@ func TestMakeReleaseArtifactScanRequiresTheExactArchiveSet(t *testing.T) {
 	}
 }
 
+// Every verification gate is defined once, in checks.yml. CI and Release call
+// that file and must not carry a second copy of any gate.
 func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 	repositoryRoot, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
+	const (
+		toolchain  = "uses: ozgurcd/lictor/.github/actions/go-toolchain@fda0c2afaa765f190b7e331113a71570db802199"
+		callChecks = "uses: ./.github/workflows/checks.yml"
+	)
+	gateCommands := []string{"go test", "go vet", "staticcheck", "golangci-lint", "govulncheck", "grype", "--snapshot", "hugo "}
 	tests := []struct {
-		path      string
-		required  []string
-		forbidden []string
+		path       string
+		toolchains int
+		required   []string
+		forbidden  []string
 	}{
 		{
-			path: ".github/workflows/ci.yml",
-			required: []string{
-				"make staticcheck",
-				"make lint",
-				"make govulncheck",
-				"anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2",
-				"grype-version: v0.116.1",
-				"go test -count=1 -race ./...",
-				"make vulnerability-check",
-			},
-			forbidden: []string{"go test -count=1 -v ./...", "grype dir:.", "go install honnef.co/go/tools/cmd/staticcheck", "go install github.com/golangci/golangci-lint", "go install golang.org/x/vuln/cmd/govulncheck"},
-		},
-		{
-			path: ".github/workflows/release.yml",
+			path:       ".github/workflows/checks.yml",
+			toolchains: 1,
 			required: []string{
 				"GOLANGCI_LINT_VERSION: 'v2.14.0'",
 				"GOVULNCHECK_VERSION: 'v1.3.0'",
+				"go mod verify",
+				"go mod tidy -diff",
+				"gofmt -l .",
+				"go build -v ./...",
+				"go test -count=1 -race ./...",
+				"go vet ./...",
 				"staticcheck ./...",
 				"go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION} run ./...",
 				"go run golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION} ./...",
 				"anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2",
 				"grype-version: v0.116.1",
-				"go test -count=1 -race ./...",
 				"make vulnerability-check",
+				"cmp server.json \"$server\"",
+				"hugo --source docs-site --renderToMemory --minify",
+				"args: release --snapshot --clean --skip=publish",
 				"make scan-release-artifacts RELEASE_DIST=dist",
+				// test-proof.yml finds the suite by these names.
+				"\n  verify:\n",
+				"      - name: Run Race Tests\n",
 			},
 			forbidden: []string{"go test -count=1 -v ./...", "grype dir:.", "go install honnef.co/go/tools/cmd/staticcheck", "go install github.com/golangci/golangci-lint", "go install golang.org/x/vuln/cmd/govulncheck"},
+		},
+		{
+			path:       ".github/workflows/ci.yml",
+			toolchains: 0,
+			required: []string{
+				callChecks,
+				"uses: ./.github/workflows/test-proof.yml",
+				"\n  checks:\n",
+				// Branch protection on main requires a check with this exact name.
+				"\n  build-and-test:\n",
+				"if: ${{ always() }}",
+				"name: tested-commit-${{ github.sha }}",
+				"vulnerability-only: ${{ github.event_name == 'schedule' || needs.test-proof.outputs.verified == 'true' }}",
+			},
+			forbidden: append([]string{"actions/checkout@"}, gateCommands...),
+		},
+		{
+			path:       ".github/workflows/release.yml",
+			toolchains: 3,
+			required: []string{
+				callChecks,
+				"uses: ozgurcd/gograph/.github/workflows/test-proof.yml@main",
+				"release-tag: ${{ inputs.tag || github.ref_name }}",
+			},
+			forbidden: gateCommands,
 		},
 	}
 	for _, test := range tests {
@@ -152,13 +184,8 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 			t.Fatal(err)
 		}
 		contents := string(data)
-		want := 1
-		if strings.HasSuffix(test.path, "release.yml") {
-			want = 4
-		}
-		const action = "uses: ozgurcd/lictor/.github/actions/go-toolchain@fda0c2afaa765f190b7e331113a71570db802199"
-		if got := strings.Count(contents, action); got != want {
-			t.Errorf("%s has %d shared toolchain steps, want %d", test.path, got, want)
+		if got := strings.Count(contents, toolchain); got != test.toolchains {
+			t.Errorf("%s has %d shared toolchain steps, want %d", test.path, got, test.toolchains)
 		}
 		for _, duplicate := range []string{"actions/setup-go@", "\n  GO_VERSION:", "STATICCHECK_VERSION:", "STATICCHECK_TAG:"} {
 			if strings.Contains(contents, duplicate) {
@@ -172,9 +199,53 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 		}
 		for _, forbidden := range test.forbidden {
 			if strings.Contains(contents, forbidden) {
-				t.Errorf("%s contains ambient scan %q", test.path, forbidden)
+				t.Errorf("%s contains %q, which belongs only in checks.yml", test.path, forbidden)
 			}
 		}
+	}
+}
+
+// A verifier version is pinned in the Makefile for local runs and in the
+// workflows for hosted runs. The copies must name the same version.
+func TestWorkflowVerifierPinsMatchTheMakefile(t *testing.T) {
+	repositoryRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(repositoryRoot, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	pin := func(path, contents, prefix string) string {
+		t.Helper()
+		var found []string
+		for _, line := range strings.Split(contents, "\n") {
+			if value, ok := strings.CutPrefix(strings.TrimSpace(line), prefix); ok {
+				found = append(found, strings.Trim(strings.TrimSpace(value), `'"`))
+			}
+		}
+		if len(found) != 1 || found[0] == "" {
+			t.Fatalf("%s must pin %q exactly once, found %q", path, prefix, found)
+		}
+		return found[0]
+	}
+	makefile := read("Makefile")
+	checks := read(".github/workflows/checks.yml")
+	for _, name := range []string{"GORELEASER_VERSION", "GOLANGCI_LINT_VERSION", "GOVULNCHECK_VERSION"} {
+		want := pin("Makefile", makefile, "override "+name+" :=")
+		if got := pin("checks.yml", checks, name+":"); got != want {
+			t.Errorf("checks.yml pins %s %s, Makefile pins %s", name, got, want)
+		}
+	}
+	if got, want := pin("release.yml", read(".github/workflows/release.yml"), "GORELEASER_VERSION:"), pin("checks.yml", checks, "GORELEASER_VERSION:"); got != want {
+		t.Errorf("release.yml pins GoReleaser %s, checks.yml pins %s", got, want)
+	}
+	if got, want := pin("hugo.yml", read(".github/workflows/hugo.yml"), "HUGO_VERSION:"), pin("checks.yml", checks, "HUGO_VERSION:"); got != want {
+		t.Errorf("hugo.yml pins Hugo %s, checks.yml pins %s", got, want)
 	}
 }
 
