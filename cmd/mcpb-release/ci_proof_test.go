@@ -8,47 +8,58 @@ import (
 	"testing"
 )
 
-// Execute the exact inline consumer with an offline GitHub API fixture.
+// Execute the exact proof consumer with an offline GitHub API fixture.
+// CI and Release both call test-proof.yml, so there is one consumer to test.
 // No checkout, shell, temporary directory, cleanup, or network is involved.
 func TestCIProofProducerBinding(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Fatal("node is required for the workflow API fixtures")
 	}
-	var scripts []string
-	for _, name := range []string{"ci.yml", "test-proof.yml"} {
-		data, err := os.ReadFile(filepath.Join("../..", ".github/workflows", name))
-		if err != nil {
-			t.Fatal(err)
+	data, err := os.ReadFile(filepath.Join("../..", ".github/workflows", "test-proof.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	inScript := false
+	for _, line := range strings.Split(string(data), "\n") {
+		if line == "          script: |" {
+			if inScript || len(lines) > 0 {
+				t.Fatal("test-proof.yml has more than one consumer")
+			}
+			inScript = true
+			continue
 		}
-		var lines []string
-		inScript := false
-		for _, line := range strings.Split(string(data), "\n") {
-			if line == "          script: |" {
-				inScript = true
+		if inScript {
+			if line != "" && !strings.HasPrefix(line, "            ") {
+				inScript = false
 				continue
 			}
-			if inScript {
-				if line != "" && !strings.HasPrefix(line, "            ") {
-					break
-				}
-				lines = append(lines, strings.TrimPrefix(line, "            "))
-			}
+			lines = append(lines, strings.TrimPrefix(line, "            "))
 		}
-		if len(lines) == 0 {
-			t.Fatalf("%s has no inline consumer", name)
-		}
-		scripts = append(scripts, strings.Join(lines, "\n"))
 	}
-	if scripts[0] != scripts[1] {
-		t.Fatal("main and release proof consumers differ")
+	if len(lines) == 0 {
+		t.Fatal("test-proof.yml has no consumer")
 	}
 	cmd := exec.Command(node, "-e", ciProofAPIFixture)
-	cmd.Stdin = strings.NewReader(scripts[0])
+	cmd.Stdin = strings.NewReader(strings.Join(lines, "\n"))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("offline API fixtures: %v\n%s", err, out)
 	} else {
 		t.Log(string(out))
+	}
+}
+
+// The consumer must exist exactly once: a second copy could drift from the tested one.
+func TestProofConsumerIsNotDuplicated(t *testing.T) {
+	for _, name := range []string{"ci.yml", "release.yml", "checks.yml"} {
+		data, err := os.ReadFile(filepath.Join("../..", ".github/workflows", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "actions/github-script") {
+			t.Errorf("%s contains inline script; the proof consumer belongs only in test-proof.yml", name)
+		}
 	}
 }
 
@@ -113,7 +124,8 @@ test('trusted main policy file missing', false, f => { delete f.policy[M]; });
 test('schedule producer', false, f => { f.run.event = 'schedule'; });
 test('non-main push', false, f => { f.run.head_branch = 'other'; });
 test('changed producer workflow', false, f => { f.policy[H] = sha('f'); });
-test('changed producer reusable workflow', false, f => { f.changedProof = true; });
+test('changed producer reusable workflow', false, f => { f.changedPolicy = 'test-proof.yml'; });
+test('changed producer checks workflow', false, f => { f.changedPolicy = 'checks.yml'; });
 test('wrong producer path', false, f => { f.run.path = '.github/workflows/other.yml'; });
 test('fork producer', false, f => { f.run.head_repository.full_name = 'fork/gograph'; });
 test('wrong repository', false, f => { f.run.repository.full_name = 'other/gograph'; });
@@ -162,6 +174,8 @@ test('empty job list', false, f => { f.jobs = []; });
 test('missing job total', false, f => { f.total = (key,page,n) => key === 'jobs' ? undefined : n; });
 test('job cap exceeded', false, f => { f.total = (key,page,n) => key === 'jobs' ? 501 : n; });
 test('missing marker', false, f => { f.jobs.pop(); });
+test('suite job from another caller', false, f => { f.jobs[0].name = 'other / verify'; });
+test('legacy suite job name', false, f => { f.jobs[0].name = 'build-and-test'; });
 test('duplicate race step', false, f => { f.jobs[0].steps.push({...f.jobs[0].steps[0]}); });
 test('run detail identity mismatch', false, f => { f.run.id = 2; });
 (async () => {
@@ -171,7 +185,7 @@ test('run detail identity mismatch', false, f => { f.run.id = 2; });
     repository:{full_name}, head_repository:{full_name}};
   const f = {run, event:'push', runs:[{id:1}], prRuns:[], prs:[], policy:{[H]:M,[M]:M}, calls:[],
     commits:{[H]:{tree:{sha:T},parents:[{sha:M}]}},
-    jobs:[{id:1,name:'build-and-test',conclusion:'success',steps:[{name:'Run Race Tests',conclusion:'success'}]},
+    jobs:[{id:1,name:'checks / verify',conclusion:'success',steps:[{name:'Run Race Tests',conclusion:'success'}]},
           {id:2,name:'tested-commit-'+H,conclusion:'success'}], total:(key,page,n)=>n};
   change(f);
   const check = key => { f.calls.push(key); if (f.fail === key || f.fail === 'any') throw Error('API failure'); };
@@ -189,8 +203,8 @@ test('run detail identity mismatch', false, f => { f.run.id = 2; });
       check('blob');
       if (f.policyError?.[ref]) throw Object.assign(Error('Server Error'), {status:f.policyError[ref]});
       if (!f.policy[ref]) throw Object.assign(Error('Not Found'), {status:404});
-      assert.ok(['.github/workflows/ci.yml','.github/workflows/test-proof.yml'].includes(path));
-      return {data:{type:'file',sha:f.changedProof && ref === H && path.endsWith('test-proof.yml') ? P : f.policy[ref]}};
+      assert.ok(['.github/workflows/ci.yml','.github/workflows/test-proof.yml','.github/workflows/checks.yml'].includes(path));
+      return {data:{type:'file',sha:f.changedPolicy && ref === H && path.endsWith(f.changedPolicy) ? P : f.policy[ref]}};
     }
   },actions:{listWorkflowRuns:async ({page,event})=>listing('runs',event==='pull_request'?f.prRuns:f.runs,page),
     getWorkflowRun:async ({run_id})=>{check('run');if(run_id!==1)return {data:structuredClone(f.extra?.[run_id]??{id:run_id,status:'failure'})};

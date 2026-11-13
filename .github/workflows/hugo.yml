@@ -3,6 +3,11 @@ name: Deploy Hugo site to GitHub Pages
 on:
   push:
     branches: [main]
+    # The site is built only from docs-site, so other pushes cannot change it.
+    paths:
+      - 'docs-site/**'
+      - '.github/workflows/hugo.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
