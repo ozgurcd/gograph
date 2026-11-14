@@ -600,3 +600,12 @@ The cap is five pages of 100 rows per list.
 Offline API fixtures cover the attack, marker forgery, both workflow blobs, pagination, and reruns.
 The workspace report GOGRAPH-CI-DEDUP-R2-1105 records validation and the local commit.
 The change remains unpublished.
+
+## [2026-11-14] decision | GOGRAPH-CI-DEDUP-1114
+
+Owner instruction: CI runs each check once per change.
+A main push whose tree test-proof verified now runs no checks; the nightly run alone refreshes vulnerability scans.
+The redundant `go build ./...` step is removed.
+Release verification of a verified commit skips formatting, vet, static analysis, MCPB smoke, and documentation as it already skipped race.
+The release vulnerability gate moved from a separate snapshot and archive scan to a GoReleaser build hook that scans the binaries the release job publishes.
+contributing.md records the decision and corrects the stale GOGRAPH-CI-DEDUP-1105 statements.
