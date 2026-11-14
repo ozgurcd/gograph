@@ -100,8 +100,10 @@ builds all four MCPBs, renders their immutable URLs and SHA-256 hashes into
 test, verifies modules and `go mod tidy`, runs `go vet`, and builds a pinned,
 non-publishing GoReleaser snapshot in the temporary release directory. The
 gate scans only explicit current inputs: declared modules in `go.mod`, the
-fresh native binary, and each of the exact four newly generated ordinary
-GoReleaser archives. A missing or extra archive fails closed. Ambient ignored
+fresh native binary, and every binary GoReleaser builds. A GoReleaser build
+hook scans each binary before it is archived, so no archive is built from an
+unscanned binary; the hosted release job runs the same hook on the build it
+publishes. Grype refreshes its database once before the build. Ambient ignored
 outputs under `bin/`, `dist/`, `.release-mcpb/`, and `.release-work/` are not
 release evidence and are never included by a repository-wide Grype scan. It
 then commits only the generated version/release metadata and creates an
@@ -145,7 +147,7 @@ make release-verify
 ```
 
 This advanced target runs the cache-disabled local suites; explicit
-source/native/archive vulnerability scans; and the full MCPB, schema, hash,
+source/native/release-binary vulnerability scans; and the full MCPB, schema, hash,
 documentation, and smoke-test checks against the currently declared version
 without creating a commit, tag, or push.
 

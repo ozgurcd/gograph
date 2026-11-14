@@ -85,6 +85,22 @@ jobs:
             *) echo "unexpected release state: $state" >&2; exit 1 ;;
           esac
 
+      # The release vulnerability gate is the GoReleaser build hook in
+      # .goreleaser.yaml: it scans every built binary before archiving, so a
+      # finding fails the run before anything is published and the scanned
+      # bytes are the published ones. The parallel hooks only read the
+      # database, so it is refreshed once here.
+      - name: Install pinned Grype
+        id: grype
+        uses: anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7
+        with:
+          grype-version: v0.116.1
+
+      - name: Update Grype vulnerability database
+        env:
+          GRYPE: ${{ steps.grype.outputs.cmd }}
+        run: '"$GRYPE" db update'
+
       - name: Run GoReleaser
         if: steps.release_state.outputs.publish == 'true'
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
@@ -94,6 +110,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GRYPE: ${{ steps.grype.outputs.cmd }}
 
       - name: Verify published GitHub assets
         env:
@@ -111,6 +128,8 @@ jobs:
           distribution: goreleaser
           version: ${{ env.GORELEASER_VERSION }}
           args: release --clean --skip=publish
+        env:
+          GRYPE: ${{ steps.grype.outputs.cmd }}
 
       - name: Reconcile and verify Homebrew cask
         env:

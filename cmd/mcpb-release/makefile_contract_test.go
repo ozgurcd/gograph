@@ -38,72 +38,75 @@ func TestMakeVulnerabilityChecksUseFreshExplicitInputs(t *testing.T) {
 		"MCPB_OUTPUT="+output,
 		"GRYPE=grype-contract",
 	)
+	// The snapshot is the release artifact gate: its build hook scans each
+	// binary, after one database refresh.
 	assertOrderedText(t, release,
-		"goreleaser/v2@v2.17.0 release",
-		`for artifact in "`+output+`/goreleaser-dist"/gograph_*.tar.gz`,
-		`if [ "$count" -ne 4 ]`,
-		output+`/goreleaser-dist/gograph_Darwin_arm64.tar.gz`,
-		`grype-contract "file:$artifact" --fail-on high`,
+		"render-goreleaser",
+		`--dist "`+output+`/goreleaser-dist"`,
+		"grype-contract db update",
+		`GRYPE="grype-contract" go run github.com/goreleaser/goreleaser/v2@v2.17.0 release --snapshot --clean --skip=publish`,
 	)
-	if strings.Contains(release, "grype-contract dir:.") || strings.Contains(release, "file:dist/") {
+	if strings.Contains(release, "grype-contract dir:.") || strings.Contains(release, "file:dist/") || strings.Contains(release, "scan-release-artifacts") {
 		t.Fatalf("release vulnerability gate scans ambient repository artifacts:\n%s", release)
 	}
 }
 
-func TestMakeReleaseArtifactScanRequiresTheExactArchiveSet(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("release Makefile uses a POSIX shell")
-	}
-	makePath, err := exec.LookPath("make")
-	if err != nil {
-		t.Skip("make is unavailable")
-	}
+// The release vulnerability gate is a GoReleaser build hook, so every binary
+// GoReleaser builds is scanned before it is archived or published, and the
+// scanned bytes are the published ones. No glob over a dist directory decides
+// what is scanned, so a missing, stale, or extra archive cannot escape it.
+func TestGoReleaserScansEveryBuiltBinaryBeforePublishing(t *testing.T) {
 	repositoryRoot, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	dist := t.TempDir()
-	names := []string{
-		"gograph_Darwin_arm64.tar.gz",
-		"gograph_Darwin_x86_64.tar.gz",
-		"gograph_Linux_arm64.tar.gz",
-		"gograph_Linux_x86_64.tar.gz",
-	}
-	for _, name := range names {
-		if err := os.WriteFile(filepath.Join(dist, name), []byte("fixture"), 0o644); err != nil {
+	read := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(repositoryRoot, path))
+		if err != nil {
 			t.Fatal(err)
 		}
+		return string(data)
+	}
+	config := read(".goreleaser.yaml")
+	// One build entry: a second entry would not carry the hook.
+	if got := strings.Count(config, "\n    main: "); got != 1 {
+		t.Fatalf(".goreleaser.yaml has %d build entries, want 1", got)
+	}
+	builds := strings.Index(config, "\nbuilds:\n")
+	archives := strings.Index(config, "\narchives:\n")
+	if builds < 0 || archives < builds {
+		t.Fatal(".goreleaser.yaml must declare builds before archives")
+	}
+	build := config[builds : archives+1]
+	for _, required := range []string{
+		"\n    hooks:\n      post:\n",
+		`        - cmd: '{{ envOrDefault "GRYPE" "grype" }} file:{{ .Path }} --fail-on high'` + "\n",
+		// The hooks run in parallel; they only read a database refreshed once beforehand.
+		"            - GRYPE_DB_AUTO_UPDATE=false\n",
+	} {
+		if !strings.Contains(build, required) {
+			t.Errorf(".goreleaser.yaml build is missing %q", required)
+		}
+	}
+	if got := strings.Count(build, "- cmd:"); got != 1 {
+		t.Errorf(".goreleaser.yaml build has %d hooks, want only the scan", got)
 	}
 
-	args := []string{"--no-print-directory", "scan-release-artifacts", "RELEASE_DIST=" + dist, "GRYPE=true"}
-	if output, err := runMake(makePath, repositoryRoot, args...); err != nil {
-		t.Fatalf("exact release artifact scan failed: %v\n%s", err, output)
+	workflow := read(".github/workflows/release.yml")
+	// Every GoReleaser run in the release job builds, so each one gets Grype,
+	// and the database is refreshed once before the first one.
+	runs := strings.Count(workflow, "uses: goreleaser/goreleaser-action@")
+	if runs == 0 || strings.Count(workflow, "          GRYPE: ${{ steps.grype.outputs.cmd }}\n") != runs+1 {
+		t.Errorf("release.yml must pass Grype to the database update and to each of its %d GoReleaser runs", runs)
 	}
-	failingArgs := []string{"--no-print-directory", "scan-release-artifacts", "RELEASE_DIST=" + dist, "GRYPE=false"}
-	if output, err := runMake(makePath, repositoryRoot, failingArgs...); err == nil {
-		t.Fatalf("release artifact scanner ignored Grype failure:\n%s", output)
-	}
-
-	missing := filepath.Join(dist, names[0])
-	if err := os.Remove(missing); err != nil {
-		t.Fatal(err)
-	}
-	extra := filepath.Join(dist, "gograph_Windows_arm64.zip")
-	if err := os.WriteFile(extra, []byte("fixture"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	output, err := runMake(makePath, repositoryRoot, args...)
-	if err == nil || !strings.Contains(string(output), "Missing expected release archive") {
-		t.Fatalf("replacement archive was accepted: %v\n%s", err, output)
-	}
-
-	if err := os.WriteFile(missing, []byte("fixture"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	output, err = runMake(makePath, repositoryRoot, args...)
-	if err == nil || !strings.Contains(string(output), "Expected 4 freshly generated release archives, found 5") {
-		t.Fatalf("extra release archive was accepted: %v\n%s", err, output)
-	}
+	assertOrderedText(t, workflow,
+		"uses: anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2",
+		"grype-version: v0.116.1",
+		`run: '"$GRYPE" db update'`,
+		"uses: goreleaser/goreleaser-action@",
+		"args: release --clean\n",
+	)
 }
 
 // Every verification gate is defined once, in checks.yml. CI and Release call
@@ -116,8 +119,12 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 	const (
 		toolchain  = "uses: ozgurcd/lictor/.github/actions/go-toolchain@fda0c2afaa765f190b7e331113a71570db802199"
 		callChecks = "uses: ./.github/workflows/checks.yml"
+		// Gates that a full CI run on the identical tree already passed.
+		reusable = "if: ${{ !inputs.vulnerability-only && steps.head.outputs.commit != inputs.tested-commit }}"
 	)
-	gateCommands := []string{"go test", "go vet", "staticcheck", "golangci-lint", "govulncheck", "grype", "--snapshot", "hugo "}
+	gateCommands := []string{"go test", "go vet", "go build", "staticcheck", "golangci-lint", "govulncheck", "grype", "--snapshot", "hugo "}
+	// The release job installs Grype only for the GoReleaser build hook.
+	releaseForbidden := []string{"go test", "go vet", "go build", "staticcheck", "golangci-lint", "govulncheck", "grype file:", "grype dir:", "--snapshot", "hugo "}
 	tests := []struct {
 		path       string
 		toolchains int
@@ -133,7 +140,6 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				"go mod verify",
 				"go mod tidy -diff",
 				"gofmt -l .",
-				"go build -v ./...",
 				"go test -count=1 -race ./...",
 				"go vet ./...",
 				"staticcheck ./...",
@@ -144,13 +150,23 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				"make vulnerability-check",
 				"cmp server.json \"$server\"",
 				"hugo --source docs-site --renderToMemory --minify",
-				"args: release --snapshot --clean --skip=publish",
-				"make scan-release-artifacts RELEASE_DIST=dist",
 				// test-proof.yml finds the suite by these names.
 				"\n  verify:\n",
 				"      - name: Run Race Tests\n",
+				"      - name: Verify dependencies and formatting\n        " + reusable + "\n",
+				"      - name: Run Race Tests\n        " + reusable + "\n",
+				"      - name: Vet\n        " + reusable + "\n",
+				"      - name: Run static analysis\n        " + reusable + "\n",
+				"      - name: Build, validate, and smoke-test MCP bundles\n        " + reusable + "\n",
+				"      - name: Build documentation\n        " + reusable + "\n",
 			},
-			forbidden: []string{"go test -count=1 -v ./...", "grype dir:.", "go install honnef.co/go/tools/cmd/staticcheck", "go install github.com/golangci/golangci-lint", "go install golang.org/x/vuln/cmd/govulncheck"},
+			forbidden: []string{
+				"go test -count=1 -v ./...", "grype dir:.", "go install honnef.co/go/tools/cmd/staticcheck", "go install github.com/golangci/golangci-lint", "go install golang.org/x/vuln/cmd/govulncheck",
+				// Race tests, vet, `make vulnerability-check`, and the MCPB steps already compile and link every package.
+				"go build",
+				// The release job scans the build it publishes; a snapshot here would be a second, different build.
+				"--snapshot", "scan-release-artifacts", "goreleaser/goreleaser-action@", "goreleaser/v2@",
+			},
 		},
 		{
 			path:       ".github/workflows/ci.yml",
@@ -163,7 +179,13 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				"\n  build-and-test:\n",
 				"if: ${{ always() }}",
 				"name: tested-commit-${{ github.sha }}",
-				"vulnerability-only: ${{ github.event_name == 'schedule' || needs.test-proof.outputs.verified == 'true' }}",
+				// A main push whose identical tree a CI run already verified runs no checks;
+				// the nightly run refreshes the vulnerability scans.
+				"if: ${{ !cancelled() && needs.release-tag.outputs.tagged != 'true' && needs.test-proof.outputs.verified != 'true' }}",
+				"vulnerability-only: ${{ github.event_name == 'schedule' }}",
+				"needs: [release-tag, test-proof, checks]\n    if: ${{ always() }}",
+				"VERIFIED: ${{ needs.test-proof.outputs.verified }}",
+				`if [[ "$RESULT" == skipped && "$VERIFIED" == true ]]; then`,
 			},
 			forbidden: append([]string{"actions/checkout@"}, gateCommands...),
 		},
@@ -175,7 +197,7 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				"uses: ozgurcd/gograph/.github/workflows/test-proof.yml@main",
 				"release-tag: ${{ inputs.tag || github.ref_name }}",
 			},
-			forbidden: gateCommands,
+			forbidden: releaseForbidden,
 		},
 	}
 	for _, test := range tests {
@@ -235,14 +257,19 @@ func TestWorkflowVerifierPinsMatchTheMakefile(t *testing.T) {
 	}
 	makefile := read("Makefile")
 	checks := read(".github/workflows/checks.yml")
-	for _, name := range []string{"GORELEASER_VERSION", "GOLANGCI_LINT_VERSION", "GOVULNCHECK_VERSION"} {
+	for _, name := range []string{"GOLANGCI_LINT_VERSION", "GOVULNCHECK_VERSION"} {
 		want := pin("Makefile", makefile, "override "+name+" :=")
 		if got := pin("checks.yml", checks, name+":"); got != want {
 			t.Errorf("checks.yml pins %s %s, Makefile pins %s", name, got, want)
 		}
 	}
-	if got, want := pin("release.yml", read(".github/workflows/release.yml"), "GORELEASER_VERSION:"), pin("checks.yml", checks, "GORELEASER_VERSION:"); got != want {
-		t.Errorf("release.yml pins GoReleaser %s, checks.yml pins %s", got, want)
+	// GoReleaser runs only in the release job and the local snapshot.
+	release := read(".github/workflows/release.yml")
+	if got, want := pin("release.yml", release, "GORELEASER_VERSION:"), pin("Makefile", makefile, "override GORELEASER_VERSION :="); got != want {
+		t.Errorf("release.yml pins GoReleaser %s, Makefile pins %s", got, want)
+	}
+	if got, want := pin("release.yml", release, "grype-version:"), pin("checks.yml", checks, "grype-version:"); got != want {
+		t.Errorf("release.yml pins Grype %s, checks.yml pins %s", got, want)
 	}
 	if got, want := pin("hugo.yml", read(".github/workflows/hugo.yml"), "HUGO_VERSION:"), pin("checks.yml", checks, "HUGO_VERSION:"); got != want {
 		t.Errorf("hugo.yml pins Hugo %s, checks.yml pins %s", got, want)
@@ -373,12 +400,6 @@ func dryRunMake(t *testing.T, makePath, repositoryRoot string, args ...string) s
 		t.Fatalf("make %s failed: %v\n%s", strings.Join(commandArgs, " "), err, output)
 	}
 	return string(output)
-}
-
-func runMake(makePath, repositoryRoot string, args ...string) ([]byte, error) {
-	command := exec.Command(makePath, args...)
-	command.Dir = repositoryRoot
-	return command.CombinedOutput()
 }
 
 func assertOrderedText(t *testing.T, output string, fragments ...string) {

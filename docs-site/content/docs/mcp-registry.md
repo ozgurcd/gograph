@@ -152,8 +152,9 @@ token is stored.
 The pre-publication gate disables the Go test cache and builds CLI test
 executables from the current checkout in ephemeral directories. Vulnerability
 evidence is limited to explicit fresh inputs: `go.mod`, the just-built native
-binary, and each of the exact six newly generated ordinary GoReleaser
-`.tar.gz`/`.zip` archives. Missing or extra archives fail closed; stale ignored
+binary, and every binary GoReleaser builds. A GoReleaser build hook scans
+each binary before it is archived, and the release job runs that hook on the
+build it publishes, so the scanned bytes are the published ones. Stale ignored
 working-tree outputs are not scanned as release candidates. MCPBs separately
 undergo schema, layout, hash, build-metadata, and native initialization checks.
 
