@@ -60,21 +60,22 @@ jobs:
   checks:
     needs: [release-tag, test-proof]
     # PR and nightly checks do not depend on a source-controlled lookup output.
-    if: ${{ !cancelled() && needs.release-tag.outputs.tagged != 'true' }}
+    # A main push whose identical tree already passed every gate runs nothing:
+    # the nightly run refreshes the time-dependent vulnerability scans.
+    if: ${{ !cancelled() && needs.release-tag.outputs.tagged != 'true' && needs.test-proof.outputs.verified != 'true' }}
     uses: ./.github/workflows/checks.yml
     permissions:
       contents: read
     with:
       ref: ${{ github.sha }}
-      # Nightly, and a main push whose identical tree already passed every
-      # gate, only refresh the time-dependent vulnerability scans.
-      vulnerability-only: ${{ github.event_name == 'schedule' || needs.test-proof.outputs.verified == 'true' }}
+      # Nightly only refreshes the time-dependent vulnerability scans.
+      vulnerability-only: ${{ github.event_name == 'schedule' }}
 
   build-and-test:
     # The required status check on main. It reports the outcome of the shared
     # checks under one stable name. always(): a skipped job would count as a
     # passed required check.
-    needs: [release-tag, checks]
+    needs: [release-tag, test-proof, checks]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -83,6 +84,7 @@ jobs:
       - env:
           RESULT: ${{ needs.checks.result }}
           TAGGED: ${{ needs.release-tag.outputs.tagged }}
+          VERIFIED: ${{ needs.test-proof.outputs.verified }}
         shell: bash
         run: |
           if [[ "$RESULT" == success ]]; then
@@ -90,6 +92,10 @@ jobs:
           fi
           if [[ "$RESULT" == skipped && "$TAGGED" == true ]]; then
             echo "The Release workflow verifies this tagged commit."
+            exit 0
+          fi
+          if [[ "$RESULT" == skipped && "$VERIFIED" == true ]]; then
+            echo "A CI run already passed every gate on this identical tree."
             exit 0
           fi
           echo "checks finished with: $RESULT" >&2

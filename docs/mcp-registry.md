@@ -212,9 +212,10 @@ It then:
    archives with a pinned, non-publishing GoReleaser snapshot whose MCPB and
    output paths remain inside the temporary release transaction. Grype scans
    the declared module graph in `go.mod`, the freshly rebuilt native binary,
-   and each of the exact four fresh `.tar.gz`/`.zip` GoReleaser archives; a
-   missing or extra archive fails closed. MCPBs retain their separate
-   schema/layout/hash/build-metadata and native smoke verification.
+   and, through a GoReleaser build hook, every binary GoReleaser builds before
+   it is archived. The hosted release job runs the same hook on the build it
+   publishes, so the scanned bytes are the published ones. MCPBs retain their
+   separate schema/layout/hash/build-metadata and native smoke verification.
 4. Commits only the generated version/release metadata and creates an
    annotated `v<version>` tag at that exact verified commit.
 5. Atomically pushes the exact verified commit to the official remote's `main`

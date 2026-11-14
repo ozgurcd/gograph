@@ -16,6 +16,16 @@ builds:
     mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.releaseVersionMarker=gograph-release-version=/{{.Version}}/
+    # The release vulnerability gate: Grype scans each binary right after it
+    # is built, before archiving, so a high finding fails the run before
+    # anything is published, and the scanned bytes are the published ones.
+    # The hooks run in parallel and must not race on the Grype database:
+    # callers run `grype db update` once first, and the hooks only read it.
+    hooks:
+      post:
+        - cmd: '{{ envOrDefault "GRYPE" "grype" }} file:{{ .Path }} --fail-on high'
+          env:
+            - GRYPE_DB_AUTO_UPDATE=false
 archives:
   - formats:
       - tar.gz

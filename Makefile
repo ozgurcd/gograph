@@ -15,7 +15,7 @@ override STATICCHECK_VERSION := v0.8.2
 override GOLANGCI_LINT_VERSION := v2.14.0
 override GOVULNCHECK_VERSION := v1.3.0
 
-.PHONY: build test verify benchmark format-check lint staticcheck govulncheck vulnerability-check scan-release-artifacts release-artifact-vulnerability-check run-build clean bump-patch bump-minor bump-major install release release-dry-run release-verify release-go-check release-goreleaser-check mcpb-build mcpb-verify mcpb-smoke mcpb-check docs-check
+.PHONY: build test verify benchmark format-check lint staticcheck govulncheck vulnerability-check release-artifact-vulnerability-check run-build clean bump-patch bump-minor bump-major install release release-dry-run release-verify release-go-check release-goreleaser-check mcpb-build mcpb-verify mcpb-smoke mcpb-check docs-check
 
 build:
 	$(eval VERSION := $(shell grep '^current_version' .bumpversion.cfg | awk '{print $$3}'))
@@ -43,36 +43,16 @@ release-go-check:
 	go mod tidy -diff
 	go vet ./...
 
+# The GoReleaser build hook in .goreleaser.yaml Grype-scans every binary it
+# builds, so the snapshot is also the release artifact vulnerability gate. The
+# hook runs once per target in parallel and never updates the database, so the
+# database is refreshed once here first.
 release-goreleaser-check: mcpb-check
 	go run ./cmd/mcpb-release render-goreleaser --repository-root . --input .goreleaser.yaml --output "$(MCPB_OUTPUT)/.goreleaser.snapshot.yaml" --mcpb-output "$(MCPB_OUTPUT)" --dist "$(RELEASE_DIST)"
-	go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) release --snapshot --clean --skip=publish --config "$(MCPB_OUTPUT)/.goreleaser.snapshot.yaml"
+	$(GRYPE) db update
+	GRYPE="$(GRYPE)" go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) release --snapshot --clean --skip=publish --config "$(MCPB_OUTPUT)/.goreleaser.snapshot.yaml"
 
 release-artifact-vulnerability-check: release-goreleaser-check
-	$(MAKE) scan-release-artifacts RELEASE_DIST="$(RELEASE_DIST)" GRYPE="$(GRYPE)"
-
-scan-release-artifacts:
-	@set -eu; \
-		count=0; \
-		for artifact in "$(RELEASE_DIST)"/gograph_*.tar.gz "$(RELEASE_DIST)"/gograph_*.zip; do \
-			[ -f "$$artifact" ] || continue; \
-			count=$$((count + 1)); \
-		done; \
-		if [ "$$count" -ne 4 ]; then \
-			echo "Expected 4 freshly generated release archives, found $$count."; \
-			exit 1; \
-		fi; \
-		for artifact in \
-			"$(RELEASE_DIST)/gograph_Darwin_arm64.tar.gz" \
-			"$(RELEASE_DIST)/gograph_Darwin_x86_64.tar.gz" \
-			"$(RELEASE_DIST)/gograph_Linux_arm64.tar.gz" \
-			"$(RELEASE_DIST)/gograph_Linux_x86_64.tar.gz"; do \
-			if [ ! -f "$$artifact" ]; then \
-				echo "Missing expected release archive $$artifact."; \
-				exit 1; \
-			fi; \
-			echo "Scanning freshly generated release archive $$artifact..."; \
-			$(GRYPE) "file:$$artifact" --fail-on high; \
-		done
 
 # install only copies whatever is already in bin/ — no implicit build.
 install:
