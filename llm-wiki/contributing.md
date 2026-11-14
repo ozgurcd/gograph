@@ -2,7 +2,7 @@
 title: Contributing Guidelines
 type: workflow
 status: current
-updated: 2026-11-05
+updated: 2026-11-14
 sources:
   - SRC-20260614-gograph-legacy-contributing
 ---
@@ -40,7 +40,7 @@ Query, analysis, and workflow features belong on both CLI and MCP, including wor
 
 ## Build and verification
 
-Use `make build` so version metadata is injected; do not substitute a raw repository binary build. `make test` is the canonical local suite: normal and race tests run with `-count=1`, and CLI subprocess tests compile the current checkout once into a cleaned OS temp directory with isolated fixtures. They never reuse `bin/gograph`, `bin/gograph-test`, or ambient `.gograph` state. `govulncheck` evaluates source reachability; Grype scans only explicit current inputs (`go.mod` and the freshly rebuilt native binary), so stale ignored output trees cannot contaminate the result. `make release-verify` additionally requires and scans the exact four fresh GoReleaser archives. Before finishing a change, run the repository-required formatting, unit, race, vet, staticcheck, golangci-lint, module verify/tidy, coverage, fuzz, vulnerability, documentation, and cross-platform build checks. Rebuild the repository graph precisely when compilable, inspect `stats`, and run a post-edit `review --uncommitted`. Static graph evidence does not replace compiler and test results.
+Use `make build` so version metadata is injected; do not substitute a raw repository binary build. `make test` is the canonical local suite: normal and race tests run with `-count=1`, and CLI subprocess tests compile the current checkout once into a cleaned OS temp directory with isolated fixtures. They never reuse `bin/gograph`, `bin/gograph-test`, or ambient `.gograph` state. `govulncheck` evaluates source reachability; Grype scans only explicit current inputs (`go.mod` and the freshly rebuilt native binary), so stale ignored output trees cannot contaminate the result. `make release-verify` additionally scans every binary its GoReleaser snapshot builds, through the same build hook that gates the published release. Before finishing a change, run the repository-required formatting, unit, race, vet, staticcheck, golangci-lint, module verify/tidy, coverage, fuzz, vulnerability, documentation, and cross-platform build checks. Rebuild the repository graph precisely when compilable, inspect `stats`, and run a post-edit `review --uncommitted`. Static graph evidence does not replace compiler and test results.
 
 ## Scrinium governance
 
@@ -54,15 +54,16 @@ TOOLCHAIN-1 (f68c017 and 6b711c7) uses ozgurcd/lictor/.github/actions/go-toolcha
 
 ## CI test reuse (GOGRAPH-CI-DEDUP-1105)
 
+GOGRAPH-CI-DEDUP-1114 below supersedes the statements here about the nightly run, main reuse, and release checks.
+
 CI runs the full suite once with `go test -count=1 -race ./...`.
 PR events always run this command.
-The daily schedule at 02:37 UTC also runs it without reuse.
+The daily schedule at 02:37 UTC runs only the vulnerability scans (corrected 2026-11-14).
 The local `make test` command remains unchanged.
 
 Main can reuse a successful CI run for an identical tree.
 The run is an earlier main push, or a same-repo pull_request run of a PR that GitHub associates with the target commit.
-Every other CI step still runs in its original order.
-Release retains builds, vet, vulnerability scans, bundle checks, documentation, and archive checks.
+A main push with that proof runs no checks; see GOGRAPH-CI-DEDUP-1114.
 Release runs the full race suite when proof is missing.
 Publication still requires successful release verification.
 
@@ -98,3 +99,30 @@ Validation and timing estimates belong to the workspace report `GOGRAPH-CI-DEDUP
 Local validation uses offline API fixtures and a focused workflow contract test.
 It does not replace the future GitHub run.
 GitHub documents PR merge commits in its [event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows).
+
+## CI runs each check once (GOGRAPH-CI-DEDUP-1114)
+
+Decided 2026-11-14. Source: owner instruction, "CI runs each check once per change".
+It supersedes the GOGRAPH-CI-DEDUP-1105 statements about the nightly run, main reuse, and release checks.
+
+`checks.yml` defines every gate once; CI and Release call it.
+PR runs execute every gate once.
+The nightly run executes only the vulnerability scans, because the vulnerability databases change without a code change.
+A main push whose tree a PR or earlier main run already verified runs no checks.
+`build-and-test` stays the required check and passes when test-proof verified the tree or a release tag covers the commit.
+A main push without that proof runs every gate.
+
+Checks have no separate `go build ./...` step.
+Race tests, vet, `make vulnerability-check` and the MCPB steps already compile and link every package.
+
+Release verification on a commit that test-proof verified runs only the time-dependent vulnerability scans and the release-candidate gates.
+The release-candidate gates are the tag/version/ancestry check, the Registry preflight, and the release job's MCPB rebuild and `server.json` comparison.
+Formatting, race, vet, static analysis, MCPB smoke, and documentation are not repeated.
+Without proof, release verification runs every gate.
+
+The release vulnerability gate is a GoReleaser build hook in `.goreleaser.yaml`.
+It runs Grype with `--fail-on high` on every binary GoReleaser builds, before archiving, so a finding stops the run before anything is published.
+The release job runs it on the build it publishes, so the scanned bytes are the published ones.
+The earlier release-only snapshot and archive scan in `checks.yml` built different bytes on another runner and is removed.
+The local `make release-verify` snapshot runs the same hook instead of the archive-set scan.
+The hooks run in parallel and only read the Grype database; callers refresh it once first.
