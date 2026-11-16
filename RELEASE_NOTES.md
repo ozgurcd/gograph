@@ -1,6 +1,8 @@
 # Release Notes
 
-## Unreleased — smaller MCP tool list and answers
+## v1.7.20 — 2026-11-16
+
+Smaller MCP tool list and answers, and a test suite that runs in half the time.
 
 - MCP answers are sent once. Each result is compact JSON text with no
   `structuredContent` copy, so clients that read both no longer receive the
@@ -20,6 +22,14 @@
   purpose (in `tools/list`): 39 KB to 25 KB.
 - Measured on 30 representative calls against a real repository, total MCP
   response bytes fell from 399 KB to 145 KB. CLI output is unchanged.
+- An in-process `cli.Run` no longer leaves `--json`, `--files-only` or
+  `--mermaid` set after it returns. The CLI binary was unaffected; tests that
+  ran commands in one process depended on their order because of it.
+- The race test step takes about half as long (5 min 40 s to about 2.5 min on
+  4 cores): read-only precise fixtures are built once per test process, the
+  MCPB packaging packages run without `-race`, and `internal/cli` tests run in
+  2 parallel processes. CI also caches the Grype database and runs on
+  `ubuntu-26.04`.
 
 ## v1.7.18 — 2026-11-04
 

@@ -71,6 +71,10 @@ func Run(args []string) int {
 			_ = session.LogCallerCommandAt("", callerSessionID, commandFromArgs(originalArgs), nil, "", 0, "invocation_error")
 		}
 	}()
+	// The output modes belong to this invocation. Clear them on return so a
+	// later in-process caller of a run* function (tests run many commands in
+	// one process) never inherits an earlier --json, --files-only or --mermaid.
+	defer resetOutputModes()
 	resetOutputGraph()
 	if len(args) == 0 {
 		printHelp()

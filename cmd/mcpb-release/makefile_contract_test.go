@@ -142,11 +142,15 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				"gofmt -l .",
 				// Every package is tested; all but the MCPB packaging packages,
 				// which have no concurrent production code, under -race.
+				// internal/cli's listed tests are dealt round-robin into shards.
 				"plain_packages=(./internal/mcpbundle ./cmd/mcpb-release)",
-				"mapfile -t race_packages < <(go list ./... | grep -vxF -e github.com/ozgurcd/gograph/internal/mcpbundle -e github.com/ozgurcd/gograph/cmd/mcpb-release)",
+				`mapfile -t race_packages < <(go list ./... | grep -vxF -e "$module/internal/mcpbundle" -e "$module/cmd/mcpb-release" -e "$module/internal/cli")`,
+				`mapfile -t cli_tests < <(go test -race -list '.*' ./internal/cli | grep -E '^(Test|Example|Fuzz)')`,
+				`for ((i = shard; i < ${#cli_tests[@]}; i += CLI_TEST_SHARDS)); do`,
+				`go test -count=1 -race -run "^($(IFS='|'; echo "${names[*]}"))\$" ./internal/cli &`,
 				`go test -count=1 "${plain_packages[@]}" &`,
 				`go test -count=1 -race "${race_packages[@]}"`,
-				`wait "$plain"`,
+				`wait "$pid"`,
 				"go vet ./...",
 				"staticcheck ./...",
 				"go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION} run ./...",

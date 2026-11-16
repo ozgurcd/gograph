@@ -40,6 +40,16 @@ must use `make build` rather than a raw `go build` command.
    compile the current checkout into an ephemeral directory and use isolated
    fixtures; they never reuse `bin/gograph`, `bin/gograph-test`, or a
    repository-resident graph. Install the tools used by the Makefile first.
+
+   CI runs every package's tests, under `-race` except for the MCPB packaging
+   packages (`internal/mcpbundle`, `cmd/mcpb-release`), which have no
+   concurrent production code. It splits `internal/cli` tests round-robin
+   across separate processes, so a test must not depend on the tests before
+   it or on package state they left behind; `go test -shuffle=on
+   ./internal/cli` should pass. Precise-graph fixtures that tests only read
+   are built once per process with `sharedAnswersFixture`; a test that writes
+   into its fixture or changes the build environment uses
+   `freshAnswersFixture`.
 4. **Commit:** Write clear, concise commit messages.
 5. **Push:** Push to your fork and submit a Pull Request against the `main` branch.
 6. **Review:** Maintainers will review your PR, suggest changes if needed, and merge it.

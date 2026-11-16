@@ -51,3 +51,20 @@ func TestValidateOutputModes(t *testing.T) {
 		})
 	}
 }
+
+// Run's output modes must not outlive the invocation: tests call run*
+// functions directly after other commands, and an inherited --json once sent
+// a refusal to stdout instead of stderr depending on test order.
+func TestRunClearsOutputModesOnReturn(t *testing.T) {
+	root := t.TempDir()
+	for _, args := range [][]string{
+		{"version", "--json"},
+		{"query", "x", "--files-only"},
+		{"callers", "x", "--mermaid"},
+	} {
+		runCLIParityInDir(t, root, func() int { return Run(args) })
+		if jsonMode || filesOnlyMode || mermaidMode {
+			t.Errorf("after %v: json=%t files-only=%t mermaid=%t", args, jsonMode, filesOnlyMode, mermaidMode)
+		}
+	}
+}
