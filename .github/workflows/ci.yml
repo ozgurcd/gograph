@@ -21,7 +21,7 @@ jobs:
     # A main commit that carries a release tag is verified by the Release
     # workflow, which runs every gate in checks.yml plus the release gates.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 3
     permissions: {}
     outputs:
@@ -77,7 +77,7 @@ jobs:
     # passed required check.
     needs: [release-tag, test-proof, checks]
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 3
     permissions: {}
     steps:
@@ -106,7 +106,7 @@ jobs:
     name: tested-commit-${{ github.sha }}
     needs: [release-tag, test-proof, checks]
     if: ${{ !cancelled() && needs.checks.result == 'success' && github.event_name != 'schedule' && needs.test-proof.outputs.verified != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions: {}
     steps:
       - run: ':'

@@ -190,6 +190,16 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 			forbidden: append([]string{"actions/checkout@"}, gateCommands...),
 		},
 		{
+			// Compiles to warm main's caches; it must never run a gate.
+			path:       ".github/workflows/warm-caches.yml",
+			toolchains: 1,
+			required: []string{
+				`go test -race -c -o "$RUNNER_TEMP/test-binaries/" ./...`,
+				"      - go.mod\n      - go.sum\n",
+			},
+			forbidden: []string{"go test -count", "go vet", "staticcheck ./...", "golangci-lint", "govulncheck", "grype", "make vulnerability-check", "--snapshot", "hugo ", "uses: ./.github/workflows/checks.yml"},
+		},
+		{
 			path:       ".github/workflows/release.yml",
 			toolchains: 3,
 			required: []string{

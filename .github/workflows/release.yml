@@ -49,7 +49,7 @@ jobs:
   release:
     name: Publish GitHub release and Homebrew formula
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:
@@ -216,7 +216,7 @@ jobs:
   registry-preflight:
     name: Verify Registry publication inputs
     needs: [verify, release]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     outputs:
@@ -250,7 +250,7 @@ jobs:
   registry-publish:
     name: Publish official MCP Registry metadata
     needs: [verify, release, registry-preflight]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       id-token: write
@@ -284,7 +284,7 @@ jobs:
   registry-verify:
     name: Verify active Registry publication
     needs: [verify, release, registry-publish]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
