@@ -120,18 +120,39 @@ jobs:
       # sync.Once), and under -race their zip and hash work ran 6-20x slower
       # (about 3.5 CPU-minutes). They run every test without the race
       # detector, alongside the race run of every other package.
+      #
+      # internal/cli runs its tests one after another and is the longest
+      # package, so its tests are dealt round-robin into separate processes.
+      # On 4 cores, 2 shards cut the step from 172 s to 147 s; 3 or 4 were
+      # slower because the cores are already saturated.
       - name: Run Race Tests
         if: ${{ !inputs.vulnerability-only && steps.head.outputs.commit != inputs.tested-commit }}
         shell: bash
+        env:
+          CLI_TEST_SHARDS: '2'
         run: |
           set -euo pipefail
+          module=github.com/ozgurcd/gograph
           plain_packages=(./internal/mcpbundle ./cmd/mcpb-release)
-          mapfile -t race_packages < <(go list ./... | grep -vxF -e github.com/ozgurcd/gograph/internal/mcpbundle -e github.com/ozgurcd/gograph/cmd/mcpb-release)
+          mapfile -t race_packages < <(go list ./... | grep -vxF -e "$module/internal/mcpbundle" -e "$module/cmd/mcpb-release" -e "$module/internal/cli")
+          mapfile -t cli_tests < <(go test -race -list '.*' ./internal/cli | grep -E '^(Test|Example|Fuzz)')
           test "${#race_packages[@]}" -gt 0
+          test "${#cli_tests[@]}" -gt 0
+          pids=()
           go test -count=1 "${plain_packages[@]}" &
-          plain=$!
+          pids+=("$!")
+          for ((shard = 0; shard < CLI_TEST_SHARDS; shard++)); do
+            names=()
+            for ((i = shard; i < ${#cli_tests[@]}; i += CLI_TEST_SHARDS)); do
+              names+=("${cli_tests[i]}")
+            done
+            go test -count=1 -race -run "^($(IFS='|'; echo "${names[*]}"))\$" ./internal/cli &
+            pids+=("$!")
+          done
           go test -count=1 -race "${race_packages[@]}"
-          wait "$plain"
+          for pid in "${pids[@]}"; do
+            wait "$pid"
+          done
 
       - name: Vet
         if: ${{ !inputs.vulnerability-only && steps.head.outputs.commit != inputs.tested-commit }}

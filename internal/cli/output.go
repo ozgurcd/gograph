@@ -19,6 +19,13 @@ var jsonMode bool
 var filesOnlyMode bool
 var mermaidMode bool
 
+// resetOutputModes restores the default text output.
+func resetOutputModes() {
+	jsonMode = false
+	filesOnlyMode = false
+	mermaidMode = false
+}
+
 var outputGraph struct {
 	sync.RWMutex
 	graph *graph.Graph
