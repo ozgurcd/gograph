@@ -37,5 +37,8 @@ jobs:
 
       - uses: ozgurcd/lictor/.github/actions/go-toolchain@fda0c2afaa765f190b7e331113a71570db802199
 
-      - name: Compile race test binaries without running them
-        run: go test -race -c -o "$RUNNER_TEMP/test-binaries/" ./...
+      # Mirrors the race and plain test builds of checks.yml's Run Race Tests.
+      - name: Compile test binaries without running them
+        run: |
+          go test -race -c -o "$RUNNER_TEMP/race-test-binaries/" ./...
+          go test -c -o "$RUNNER_TEMP/plain-test-binaries/" ./internal/mcpbundle ./cmd/mcpb-release

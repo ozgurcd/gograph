@@ -116,9 +116,22 @@ jobs:
             exit 1
           fi
 
+      # The MCPB packaging packages have no concurrent production code (only
+      # sync.Once), and under -race their zip and hash work ran 6-20x slower
+      # (about 3.5 CPU-minutes). They run every test without the race
+      # detector, alongside the race run of every other package.
       - name: Run Race Tests
         if: ${{ !inputs.vulnerability-only && steps.head.outputs.commit != inputs.tested-commit }}
-        run: go test -count=1 -race ./...
+        shell: bash
+        run: |
+          set -euo pipefail
+          plain_packages=(./internal/mcpbundle ./cmd/mcpb-release)
+          mapfile -t race_packages < <(go list ./... | grep -vxF -e github.com/ozgurcd/gograph/internal/mcpbundle -e github.com/ozgurcd/gograph/cmd/mcpb-release)
+          test "${#race_packages[@]}" -gt 0
+          go test -count=1 "${plain_packages[@]}" &
+          plain=$!
+          go test -count=1 -race "${race_packages[@]}"
+          wait "$plain"
 
       - name: Vet
         if: ${{ !inputs.vulnerability-only && steps.head.outputs.commit != inputs.tested-commit }}
