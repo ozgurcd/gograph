@@ -166,9 +166,8 @@ persisted artifacts per call, then reparse changed packages after edits.
 `gograph_changes`, and `gograph_stats` use a trusted persisted graph when one
 exists and otherwise inspect the startup in-memory fallback. Precise and
 precise-fallback sessions still re-run repository-wide CHA/SSA. Every
-refresh-backed tool preserves its compatibility text and adds
-`gograph.mcp-result.v1` (source/context instead use `gograph.read.v1` with the answer or refusal) structured content plus
-`_meta.gograph_graph_state`. The shared `gograph.graph-state.v1` value reports
+refresh-backed tool returns its answer once, as compact JSON text without
+`structuredContent`, and attaches `_meta.gograph_graph_state`. The shared `gograph.graph-state.v1` value reports
 persisted/in-memory source, current/stale freshness, complete/partial parsing,
 AST/precise/fallback analysis, refresh outcome, and persistence outcome. A
 failed precise refresh can serve a marked current in-memory fallback, and an

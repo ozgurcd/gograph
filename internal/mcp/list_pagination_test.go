@@ -71,12 +71,11 @@ func TestMCPQueryPagesNativeRowsBelowCompleteResponseCap(t *testing.T) {
 		if len(encoded) > 64*1024 {
 			t.Fatalf("complete MCP response exceeds cap: %d", len(encoded))
 		}
-		data, err := json.Marshal(result.StructuredContent)
-		if err != nil {
-			t.Fatal(err)
+		if result.StructuredContent != nil {
+			t.Fatal("page repeated as structuredContent")
 		}
 		var page search.ResultPage
-		if err := json.Unmarshal(data, &page); err != nil {
+		if err := json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &page); err != nil {
 			t.Fatal(err)
 		}
 		if page.Offset != seen || page.Total != 2782 || page.Returned < 1 {

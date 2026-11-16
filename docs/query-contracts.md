@@ -77,10 +77,8 @@ gograph query Handler --cursor '<next_cursor>' --json
 ```
 
 The MCP equivalents use `limit` and `cursor`. Default limit is 100; valid
-limits are 1–200. The native page budget is 16 KiB, allowing room for both MCP
-JSON text and structured content, including additional JSON escaping and
-provenance, within a 64 KiB response. The byte budget may return fewer rows
-than the requested limit.
+limits are 1–200. The native page budget is 16 KiB. The byte budget may return
+fewer rows than the requested limit.
 
 Every page has `command`, `status`, `limit`, `offset`, `count`, `total`,
 `returned`, `truncated`, `next_cursor`, and `results`. `count` equals
@@ -88,7 +86,7 @@ Every page has `command`, `status`, `limit`, `offset`, `count`, `total`,
 pagination fields. The last page has `truncated=false` and an empty cursor.
 Never interpret a single page as a complete census without checking these fields.
 
-MCP uses native `gograph.results.v1` JSON text and structured content. CLI
+MCP sends the native `gograph.results.v1` page once, as compact JSON text. CLI
 `--json` retains its standard envelope and result array, exposing the same
 pagination fields directly. Equivalent CLI and MCP queries can exchange cursors.
 CLI text prints the page and a continuation instruction. `--files-only` remains
@@ -222,17 +220,12 @@ cannot authorize a stale, substituted, or unsafe member.
 ## Source and context reads
 
 CLI `source SYMBOL --json` and `context SYMBOL --json` retain their existing
-version-1 CLI envelopes. MCP `gograph_source` and `gograph_context` now supply
-`gograph.read.v1` structured content in place of the provenance-only legacy
-companion. This is a new read schema, not a silent change to
-`gograph.mcp-result.v1`. Existing MCP text answers are preserved.
-
-The read schema carries `command`, `status` (`ok`, `refused`, or `partial`),
-`graph_state`, and the answer: `source` for source; the existing context fields
-(`node`, `nodes`, `source`, `role`, callers, callees, tests) for context.
-A refused read has `reason` and MCP `isError: true`. A missing context is now a
+version-1 CLI envelopes. MCP `gograph_source` returns the source text and
+`gograph_context` returns its context JSON (`node`, `nodes`, `source`, `role`,
+callers, callees, tests), each once and without `structuredContent`. A refused
+read has MCP `isError: true` and the reason as its text. A missing context is a
 named refusal on both transports, not a successful empty object. A partial
-context retains its node evidence and carries `source_error` plus `reason`.
+context retains its node evidence and carries `source_error`.
 
 Source selection refuses ambiguity and lists candidate identities and locations;
 select a fully qualified identity to disambiguate. Source reads retain the
@@ -249,5 +242,5 @@ freshness. It is scoped to that request, not a claim that every indexed source
 file was audited. Non-read tools retain their existing schemas and behavior.
 
 After upgrading, restart MCP servers and check `gograph_capabilities.version`.
-Consumers that prefer structured content must accept `gograph.read.v1`; legacy
-text consumers retain the existing source/context success content.
+Consumers that read `structuredContent` must parse the JSON text instead; the
+refusal reason is also in `_meta.gograph_graph_state.read_diagnostic`.

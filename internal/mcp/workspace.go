@@ -134,7 +134,7 @@ func loadWorkspaceMCPRequest(ctx context.Context, root string, buildTags []strin
 }
 
 func workspaceJSONResult(value any) (*protocol.CallToolResult, error) {
-	data, err := json.MarshalIndent(value, "", "  ")
+	data, err := json.Marshal(value)
 	if err != nil {
 		return protocol.NewToolResultError(err.Error()), nil
 	}

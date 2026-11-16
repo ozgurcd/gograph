@@ -62,7 +62,10 @@ func TestChangesCLIAndMCPShareRecordedTaggedSelection(t *testing.T) {
 		if err != nil || result.IsError {
 			t.Fatalf("MCP changes: %+v, %v", result, err)
 		}
-		for name, value := range map[string]any{"text": json.RawMessage(mcpResultText(t, result)), "structured": result.StructuredContent} {
+		if result.StructuredContent != nil {
+			t.Fatalf("MCP changes repeated as structuredContent: %#v", result.StructuredContent)
+		}
+		for name, value := range map[string]any{"text": json.RawMessage(mcpResultText(t, result))} {
 			data, err := json.Marshal(value)
 			if err != nil {
 				t.Fatal(err)

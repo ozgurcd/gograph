@@ -1,5 +1,26 @@
 # Release Notes
 
+## Unreleased — smaller MCP tool list and answers
+
+- MCP answers are sent once. Each result is compact JSON text with no
+  `structuredContent` copy, so clients that read both no longer receive the
+  payload twice. Graph state stays in `_meta.gograph_graph_state`, and a stale
+  or degraded graph is still named in the text. Clients that read
+  `structuredContent` must parse the text instead.
+- MCP JSON is no longer indented.
+- `tools/list` fell from 143 KB to 103 KB on a real repository. Facts that 34
+  to 54 tool descriptions repeated (read-only, freshness refresh, the change
+  selection contract) are stated once in the new server instructions, and the
+  shared `root`, `session_id`, `intention`, `limit` and `cursor` parameter
+  descriptions are shorter.
+- `gograph_complexity` gains `top` and `gograph_untested` now defaults to 20
+  rows; `top: 0` returns all. On a 130-file repository they returned 88 KB and
+  51 KB before.
+- `gograph_capabilities` lists tool names without repeating each tool's
+  purpose (in `tools/list`): 39 KB to 25 KB.
+- Measured on 30 representative calls against a real repository, total MCP
+  response bytes fell from 399 KB to 145 KB. CLI output is unchanged.
+
 ## v1.7.18 — 2026-11-04
 
 - `session audit` credits plan and review calls made without a session

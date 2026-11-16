@@ -118,7 +118,7 @@ func TestMCPExploreCompactAndDeepModes(t *testing.T) {
 	handler := setupHandlers(t, g)["gograph_explore"]
 
 	compactText := callTool(t, handler, map[string]any{"query": "Target", "compact": true})
-	wantCompact, err := json.MarshalIndent(search.Explore(g, root, "Target", search.ExploreOptions{Mode: search.ExploreModeCompact}), "", "  ")
+	wantCompact, err := json.Marshal(search.Explore(g, root, "Target", search.ExploreOptions{Mode: search.ExploreModeCompact}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestMCPExploreCompactAndDeepModes(t *testing.T) {
 	}
 
 	deepText := callTool(t, handler, map[string]any{"query": "Target", "deep": true})
-	wantDeep, err := json.MarshalIndent(search.Explore(g, root, "Target", search.ExploreOptions{Mode: search.ExploreModeDeep}), "", "  ")
+	wantDeep, err := json.Marshal(search.Explore(g, root, "Target", search.ExploreOptions{Mode: search.ExploreModeDeep}))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/ozgurcd/gograph/internal/graph"
+	mcppkg "github.com/ozgurcd/gograph/internal/mcp"
 )
 
 func TestGographCapabilities(t *testing.T) {
@@ -43,11 +44,10 @@ func TestGographCapabilities(t *testing.T) {
 	}
 	var capabilityNames []string
 	for _, raw := range tools {
-		entry, ok := raw.(map[string]any)
+		name, ok := raw.(string)
 		if !ok {
-			t.Fatalf("invalid capability entry: %#v", raw)
+			t.Fatalf("capability tools must list names only: %#v", raw)
 		}
-		name, _ := entry["name"].(string)
 		capabilityNames = append(capabilityNames, name)
 	}
 	var registeredNames []string
@@ -70,7 +70,7 @@ func TestGographCapabilities(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected graph_state object, got %T", out["graph_state"])
 	}
-	if graphState["schema"] != "gograph.graph-state.v1" || graphState["mcp_result_schema"] != "gograph.mcp-result.v1" {
+	if graphState["schema"] != "gograph.graph-state.v1" || graphState["mcp_result_schema"] != nil {
 		t.Fatalf("graph_state schemas = %#v", graphState)
 	}
 	for _, want := range []string{"gograph_workspace_status", "gograph_workspace_query", "gograph_workspace_path", "gograph_workspace_impact"} {
@@ -85,6 +85,11 @@ func TestGographCapabilities(t *testing.T) {
 	}
 
 	toolsStr := string(text)
+	// Per-tool facts live in tools/list descriptions; capabilities lists names.
+	discoverable := toolsStr
+	for _, tool := range mcppkg.NewServer(&graph.Graph{}, mockRebuild(&graph.Graph{}), mockBuildGraph(), mockBuildBaseline(), "dev").ListTools() {
+		discoverable += "\n" + tool.Tool.Description
+	}
 	expectedTools := []string{
 		"gograph_capabilities", "gograph_explore", "gograph_context", "gograph_plan", "gograph_review",
 		"gograph_errorflow", "gograph_api", "gograph_boundaries",
@@ -158,7 +163,7 @@ func TestGographCapabilities(t *testing.T) {
 		"gograph.graph-state.v1",
 		"persisted|in_memory|unknown",
 		"mismatched Go build context still fails closed",
-		"production-only default",
+		"Production routes are returned by default",
 		"next_cursor",
 		"version_source",
 		"sql_static_classification",
@@ -167,18 +172,17 @@ func TestGographCapabilities(t *testing.T) {
 		"tests remain included unless no_tests=true",
 		"CLI sql and MCP gograph_sql execute QuerySQL",
 		"statically resolvable local or same-file package const/var declarations",
-		"Receiver.Method and stable-ID selectors",
+		"accepts Receiver.Method (including pointer receivers) or a full stable symbol ID",
 		"AST-discovered test-file fakes",
 		"composite-literal construction",
-		"not a route-row dump",
-		"default .gograph/boundaries.json",
+		"defaults to .gograph/boundaries.json",
 		"http_resolution",
 		"net_http_v2",
 		"http_clients",
 		"http_unresolved_by_scope",
 	} {
-		if !strings.Contains(toolsStr, want) {
-			t.Errorf("capabilities prerequisite omits %q", want)
+		if !strings.Contains(discoverable, want) {
+			t.Errorf("capabilities and tool descriptions omit %q", want)
 		}
 	}
 }

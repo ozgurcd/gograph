@@ -40,8 +40,8 @@ conflicting output flags fail instead of being silently ignored.
 `boundaries` accept `--limit N` and `--cursor TOKEN`. Their corresponding MCP
 tools accept `limit` and `cursor` with the same semantics.
 
-Default is 100 rows, maximum 200, with a 16 KiB native-page budget so the full
-MCP response fits even after duplicated text/structured content and escaping.
+Default is 100 rows, maximum 200, with a 16 KiB native-page budget. MCP sends
+the page once, as compact JSON text.
 CLI JSON exposes `total`, `returned`, `truncated`, `next_cursor`, `limit`, and
 `offset`; MCP uses `gograph.results.v1`. Follow cursors until `truncated=false`.
 Graph content or result-selection changes invalidate the cursor, but page size
@@ -1180,7 +1180,7 @@ AI clients (e.g., Claude Code, Cursor).
   variables, and a listed worktree must share the configured repository's git
   common directory. A checkout with a running
   request is never dropped; when all slots are busy a new checkout is refused.
-- **Freshness**: If `graph.json` is missing, unreadable, linked through a descendant path, or has a missing/unsupported source-policy marker, startup builds a safe in-memory AST graph. Source-analysis tools compare selected source digests plus the build/module fingerprint and newer persisted artifacts per call, then reparse changed packages while reusing unchanged package AST records. Refresh-backed results attach per-request `_meta.gograph_graph_state` and `structuredContent.graph_state`. Bounded row lists use native `gograph.results.v1` JSON text and structured content; explain/changes retain their own native schemas, and other legacy results use a `gograph.mcp-result.v1` (source/context instead use `gograph.read.v1` with the answer or refusal) graph-state companion. The nested `gograph.graph-state.v1` independently reports persisted/in-memory source, current/stale freshness, complete/partial parsing, AST/precise/fallback analysis, refresh outcome, and persistence outcome; each operation owns its bounded diagnostic. Failed precise enrichment can serve a marked current in-memory fallback; an ordinary refresh failure can serve the last trusted stale graph. Degraded states are not silently published. MCP `stale`, default `changes`, and `stats` inspect the trusted persisted snapshot, or the startup in-memory fallback when no usable artifact exists, and attach the exact state they inspect.
+- **Freshness**: If `graph.json` is missing, unreadable, linked through a descendant path, or has a missing/unsupported source-policy marker, startup builds a safe in-memory AST graph. Source-analysis tools compare selected source digests plus the build/module fingerprint and newer persisted artifacts per call, then reparse changed packages while reusing unchanged package AST records. Refresh-backed results attach per-request `_meta.gograph_graph_state`. Each answer is sent once, as compact JSON text without `structuredContent`: bounded row lists use native `gograph.results.v1`, and explain/changes retain their own native schemas. The nested `gograph.graph-state.v1` independently reports persisted/in-memory source, current/stale freshness, complete/partial parsing, AST/precise/fallback analysis, refresh outcome, and persistence outcome; each operation owns its bounded diagnostic. Failed precise enrichment can serve a marked current in-memory fallback; an ordinary refresh failure can serve the last trusted stale graph. Degraded states are not silently published. MCP `stale`, default `changes`, and `stats` inspect the trusted persisted snapshot, or the startup in-memory fallback when no usable artifact exists, and attach the exact state they inspect.
 - **Build tags**: `--tags` uses the same validated selection and precedence as
   CLI `build`. Startup analysis, incremental AST rebuilds, precise refreshes,
   temporary Git baselines, and optional artifact publication all retain that
