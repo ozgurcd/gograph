@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -9,39 +8,20 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/ozgurcd/gograph/internal/graph"
-	mcppkg "github.com/ozgurcd/gograph/internal/mcp"
 	"github.com/ozgurcd/gograph/internal/session"
 )
 
-func answers1710Fixture(t *testing.T) (string, map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+// answers1710Fixture is private to tests that write into it (Git history,
+// session journals) or set GOGRAPH_SESSION first.
+func answers1710Fixture(t *testing.T) (string, fixtureHandlers) {
 	t.Helper()
-	root := t.TempDir()
-	if err := os.CopyFS(root, os.DirFS("../../testdata/answers1710")); err != nil {
-		t.Fatal(err)
-	}
-	g, err := buildPreciseGraph(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := json.Marshal(g)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, ".gograph"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".gograph", "graph.json"), data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	previous := mcppkg.ExposeToolsForTesting
-	handlers := make(map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error))
-	mcppkg.ExposeToolsForTesting = handlers
-	t.Cleanup(func() { mcppkg.ExposeToolsForTesting = previous })
-	mcppkg.NewServer(g, func() (*graph.Graph, error) { return g, nil }, BuildGraph,
-		func(context.Context, string) (*graph.Graph, error) { return g, nil }, "1.7.9")
-	return root, handlers
+	return freshAnswersFixture(t, "answers1710", "1.7.9")
+}
+
+// answers1710ReadOnlyFixture is shared by tests that only read it.
+func answers1710ReadOnlyFixture(t *testing.T) (string, fixtureHandlers) {
+	t.Helper()
+	return sharedAnswersFixture(t, "answers1710", "1.7.9")
 }
 
 func answers1710Git(t *testing.T, root string, args ...string) {
@@ -129,7 +109,7 @@ func TestAnswers1710AuditInvocationErrors(t *testing.T) {
 }
 
 func TestAnswers1710Selectors(t *testing.T) {
-	root, handlers := answers1710Fixture(t)
+	root, handlers := answers1710ReadOnlyFixture(t)
 	for _, selector := range []string{"a/current.go:Current", "example.test/answers1710/a.Current"} {
 		out, stderr, code := runCLIParityInDir(t, root, func() int { return Run([]string{"source", selector}) })
 		if code != 0 || !strings.Contains(out, "return 1") || strings.Contains(out, "return 2") {
@@ -147,7 +127,7 @@ func TestAnswers1710Selectors(t *testing.T) {
 }
 
 func TestAnswers1710ReviewTestsAndConstUses(t *testing.T) {
-	root, handlers := answers1710Fixture(t)
+	root, handlers := answers1710ReadOnlyFixture(t)
 	for _, command := range []string{"context", "review", "usages"} {
 		selector, expected, arg := "auth.RepositoryVerifier.IntrospectToken", "auth/auth_test.go", "symbol"
 		if command == "usages" {
@@ -201,7 +181,7 @@ func TestAnswers1710InvocationTelemetry(t *testing.T) {
 }
 
 func TestAnswers1710QualifiedSymbolTools(t *testing.T) {
-	root, handlers := answers1710Fixture(t)
+	root, handlers := answers1710ReadOnlyFixture(t)
 	for _, command := range []string{"context", "review", "plan", "tests", "usages"} {
 		selector, arg, expected := "auth/auth.go:RepositoryVerifier.IntrospectToken", "symbol", "auth/auth_test.go"
 		if command == "usages" {

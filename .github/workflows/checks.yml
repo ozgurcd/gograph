@@ -45,7 +45,7 @@ env:
 jobs:
   # test-proof.yml identifies this job by name and its race step by name.
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       version: ${{ steps.metadata.outputs.version }}
     steps:
@@ -116,9 +116,22 @@ jobs:
             exit 1
           fi
 
+      # The MCPB packaging packages have no concurrent production code (only
+      # sync.Once), and under -race their zip and hash work ran 6-20x slower
+      # (about 3.5 CPU-minutes). They run every test without the race
+      # detector, alongside the race run of every other package.
       - name: Run Race Tests
         if: ${{ !inputs.vulnerability-only && steps.head.outputs.commit != inputs.tested-commit }}
-        run: go test -count=1 -race ./...
+        shell: bash
+        run: |
+          set -euo pipefail
+          plain_packages=(./internal/mcpbundle ./cmd/mcpb-release)
+          mapfile -t race_packages < <(go list ./... | grep -vxF -e github.com/ozgurcd/gograph/internal/mcpbundle -e github.com/ozgurcd/gograph/cmd/mcpb-release)
+          test "${#race_packages[@]}" -gt 0
+          go test -count=1 "${plain_packages[@]}" &
+          plain=$!
+          go test -count=1 -race "${race_packages[@]}"
+          wait "$plain"
 
       - name: Vet
         if: ${{ !inputs.vulnerability-only && steps.head.outputs.commit != inputs.tested-commit }}
@@ -136,9 +149,34 @@ jobs:
           staticcheck ./...
           go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION} run ./...
 
+      # The first scan used to spend about 90 s downloading the vulnerability
+      # database. Restore today's copy (or the newest older one); Grype still
+      # checks for a newer database before scanning, so results are never
+      # older than without the cache. The nightly run saves it on main.
+      - name: Select the Grype database cache key
+        id: grype-db
+        env:
+          GRYPE: ${{ steps.grype.outputs.cmd }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$("$GRYPE" version | awk '$1 == "Version:" { print $2 }')"
+          test -n "$version"
+          prefix="grype-db-${RUNNER_OS}-${version}-"
+          echo "prefix=$prefix" >> "$GITHUB_OUTPUT"
+          echo "key=${prefix}$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Grype vulnerability database
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/grype-db
+          key: ${{ steps.grype-db.outputs.key }}
+          restore-keys: ${{ steps.grype-db.outputs.prefix }}
+
       - name: Run vulnerability scans
         env:
           GRYPE: ${{ steps.grype.outputs.cmd }}
+          GRYPE_DB_CACHE_DIR: ${{ runner.temp }}/grype-db
         run: |
           go run golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION} ./...
           make vulnerability-check

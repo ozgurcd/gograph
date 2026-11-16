@@ -3,44 +3,17 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/ozgurcd/gograph/internal/graph"
-	mcppkg "github.com/ozgurcd/gograph/internal/mcp"
 )
 
-func answers1711Fixture(t *testing.T) (string, map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+// answers1711Fixture is shared: its tests only read it.
+func answers1711Fixture(t *testing.T) (string, fixtureHandlers) {
 	t.Helper()
-	root := t.TempDir()
-	if err := os.CopyFS(root, os.DirFS("../../testdata/answers1711")); err != nil {
-		t.Fatal(err)
-	}
-	g, err := buildPreciseGraph(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := json.Marshal(g)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, ".gograph"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".gograph", "graph.json"), data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	previous := mcppkg.ExposeToolsForTesting
-	handlers := make(map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error))
-	mcppkg.ExposeToolsForTesting = handlers
-	t.Cleanup(func() { mcppkg.ExposeToolsForTesting = previous })
-	mcppkg.NewServer(g, func() (*graph.Graph, error) { return g, nil }, BuildGraph,
-		func(context.Context, string) (*graph.Graph, error) { return g, nil }, "1.7.10")
-	return root, handlers
+	return sharedAnswersFixture(t, "answers1711", "1.7.10")
 }
 
 func TestAnswers1711Routes(t *testing.T) {
@@ -248,7 +221,8 @@ func TestAnswers1711TestFiles(t *testing.T) {
 
 func TestAnswers1711FreshnessContext(t *testing.T) {
 	t.Setenv("GOFLAGS", "-tags=census")
-	root, handlers := answers1711Fixture(t)
+	// Built under its own GOFLAGS, so it cannot use the shared fixture.
+	root, handlers := freshAnswersFixture(t, "answers1711", "1.7.10")
 	t.Setenv("GOFLAGS", "")
 	out, stderr, code := runCLIParityInDir(t, root, func() int { return Run([]string{"query", "Tagged", "--json"}) })
 	if code != 0 {

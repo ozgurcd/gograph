@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ozgurcd/gograph/internal/cli"
 )
 
 var (
@@ -31,6 +33,12 @@ func TestMain(m *testing.M) {
 	testRepositoryRoot = root
 
 	code := m.Run()
+	if err := cli.RemoveSharedTestFixtures(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		if code == 0 {
+			code = 1
+		}
+	}
 	if testBinaryDir != "" {
 		if err := os.RemoveAll(testBinaryDir); err != nil {
 			fmt.Fprintf(os.Stderr, "clean CLI test binary directory: %v\n", err)

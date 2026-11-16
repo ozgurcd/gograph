@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ozgurcd/gograph/internal/graph"
@@ -29,6 +30,27 @@ func emptyGraph() *graph.Graph {
 	return &graph.Graph{
 		Version: graph.Version,
 	}
+}
+
+var standardEnrichment struct {
+	once  sync.Once
+	graph *graph.Graph
+	err   error
+}
+
+// standardFixtureEnrichment returns Enrich's result for the fixture project,
+// computed once per test process. An enrichment takes seconds, and tens of
+// seconds under -race, so tests that only inspect it share one; callers must
+// not modify the returned graph.
+func standardFixtureEnrichment(t *testing.T) (*graph.Graph, error) {
+	t.Helper()
+	dir := fixtureDir(t)
+	standardEnrichment.once.Do(func() {
+		g := emptyGraph()
+		standardEnrichment.err = Enrich(dir, g)
+		standardEnrichment.graph = g
+	})
+	return standardEnrichment.graph, standardEnrichment.err
 }
 
 func requirePreciseEnrich(t *testing.T, err error) {
@@ -80,9 +102,7 @@ func sourceCallLocation(t *testing.T, source, callee string, occurrence int) (li
 // TestEnrich_DoesNotError verifies that Enrich completes without error on a
 // compilable fixture project.
 func TestEnrich_DoesNotError(t *testing.T) {
-	dir := fixtureDir(t)
-	g := emptyGraph()
-	if err := Enrich(dir, g); err != nil {
+	if _, err := standardFixtureEnrichment(t); err != nil {
 		t.Fatalf("Enrich returned unexpected error: %v", err)
 	}
 }
@@ -249,9 +269,8 @@ func TestEnrichKeepsProductionPrecisionWhenTestPackageDoesNotCompile(t *testing.
 // TestEnrich_PopulatesImplements verifies that Enrich discovers at least one
 // interface-satisfaction edge in the fixture project.
 func TestEnrich_PopulatesImplements(t *testing.T) {
-	dir := fixtureDir(t)
-	g := emptyGraph()
-	if err := Enrich(dir, g); err != nil {
+	g, err := standardFixtureEnrichment(t)
+	if err != nil {
 		t.Fatalf("Enrich: %v", err)
 	}
 	if len(g.Implements) == 0 {
@@ -269,9 +288,8 @@ func TestEnrich_PopulatesImplements(t *testing.T) {
 // Enrich is permitted to leave g.Calls empty if CHA finds nothing, but on a
 // non-trivial fixture it should always add at least one edge.
 func TestEnrich_PopulatesCalls(t *testing.T) {
-	dir := fixtureDir(t)
-	g := emptyGraph()
-	if err := Enrich(dir, g); err != nil {
+	g, err := standardFixtureEnrichment(t)
+	if err != nil {
 		t.Fatalf("Enrich: %v", err)
 	}
 	if len(g.Calls) == 0 {
@@ -285,12 +303,13 @@ func TestEnrich_PopulatesCalls(t *testing.T) {
 }
 
 // TestEnrich_IsDeterministic runs Enrich twice and checks that the number of
-// Implements and Call edges is stable across invocations.
+// Implements and Call edges is stable across invocations. The shared
+// enrichment is the first run.
 func TestEnrich_IsDeterministic(t *testing.T) {
 	dir := fixtureDir(t)
 
-	g1 := emptyGraph()
-	if err := Enrich(dir, g1); err != nil {
+	g1, err := standardFixtureEnrichment(t)
+	if err != nil {
 		t.Fatalf("first Enrich: %v", err)
 	}
 

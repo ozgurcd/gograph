@@ -109,19 +109,15 @@ func TestRefreshBackedResultReportsGraphStateWithoutChangingTextPayload(t *testi
 	if _, ok := metadata["gograph_graph_state"]; !ok {
 		t.Fatalf("missing gograph_graph_state metadata: %s", encodedMeta)
 	}
-	encoded, err := json.Marshal(result.StructuredContent)
-	if err != nil {
-		t.Fatal(err)
+	if result.StructuredContent != nil {
+		t.Fatalf("result repeats its payload as structuredContent: %#v", result.StructuredContent)
 	}
-	var structured struct {
-		SchemaVersion string           `json:"schema_version"`
-		GraphState    graphstate.State `json:"graph_state"`
+	var reported graphstate.State
+	if err := json.Unmarshal(metadata["gograph_graph_state"], &reported); err != nil {
+		t.Fatalf("decode graph state: %v", err)
 	}
-	if err := json.Unmarshal(encoded, &structured); err != nil {
-		t.Fatalf("decode structured result: %v", err)
-	}
-	if structured.SchemaVersion != "gograph.results.v1" || structured.GraphState != state {
-		t.Fatalf("structured result = %+v", structured)
+	if reported != state || !strings.Contains(content.Text, `"schema_version":"gograph.results.v1"`) {
+		t.Fatalf("graph state = %+v, text = %s", reported, content.Text)
 	}
 }
 
@@ -149,18 +145,19 @@ func TestSnapshotResultsReportTheGraphTheyInspect(t *testing.T) {
 			if err != nil || result == nil || result.IsError {
 				t.Fatalf("result = %+v, err = %v", result, err)
 			}
-			encoded, err := json.Marshal(result.StructuredContent)
+			if result.StructuredContent != nil || result.Meta == nil {
+				t.Fatalf("want _meta graph state only: structured=%#v meta=%#v", result.StructuredContent, result.Meta)
+			}
+			encoded, err := json.Marshal(result.Meta.AdditionalFields["gograph_graph_state"])
 			if err != nil {
 				t.Fatal(err)
 			}
-			var structured struct {
-				GraphState graphstate.State `json:"graph_state"`
-			}
-			if err := json.Unmarshal(encoded, &structured); err != nil {
+			var state graphstate.State
+			if err := json.Unmarshal(encoded, &state); err != nil {
 				t.Fatal(err)
 			}
-			if structured.GraphState.Source != graphstate.SourceInMemory || structured.GraphState.Refresh.Policy != "manual" {
-				t.Fatalf("state = %+v, want startup fallback inspected without refresh", structured.GraphState)
+			if state.Source != graphstate.SourceInMemory || state.Refresh.Policy != "manual" {
+				t.Fatalf("state = %+v, want startup fallback inspected without refresh", state)
 			}
 		})
 	}
@@ -529,10 +526,10 @@ func TestMCPStaleInspectsPersistedIndexWithoutRefresh(t *testing.T) {
 	}, mockBuildGraph(), mockBuildBaseline(), "dev")
 
 	text := callTool(t, handlers["gograph_stale"], nil)
-	if !strings.Contains(text, `"is_stale": true`) {
+	if !strings.Contains(text, `"is_stale":true`) {
 		t.Fatalf("expected stale persisted index, got %s", text)
 	}
-	if !strings.Contains(text, `"changed_files": [`) || !strings.Contains(text, `"build_context_changed": false`) {
+	if !strings.Contains(text, `"changed_files":[`) || !strings.Contains(text, `"build_context_changed":false`) {
 		t.Fatalf("stale MCP contract omitted stable collection/context fields: %s", text)
 	}
 	if got := rebuilds.Load(); got != 0 {
@@ -569,7 +566,7 @@ func TestMCPBoundaryCreateAndSessionsUseGraphRoot(t *testing.T) {
 	handlers := setupHandlers(t, g)
 
 	created := callTool(t, handlers["gograph_boundaries_create"], nil)
-	if !strings.Contains(created, `"created": true`) {
+	if !strings.Contains(created, `"created":true`) {
 		t.Fatalf("unexpected boundaries_create response: %s", created)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".gograph", "boundaries.json")); err != nil {
@@ -1289,7 +1286,7 @@ func TestGographBoundariesAcceptsLocalFilenameContainingDotDot(t *testing.T) {
 	}
 	handlers := setupHandlers(t, &graph.Graph{Root: root})
 	result := callTool(t, handlers["gograph_boundaries"], map[string]any{"config": name})
-	if !strings.Contains(result, `"pass": true`) {
+	if !strings.Contains(result, `"pass":true`) {
 		t.Fatalf("gograph_boundaries rejected harmless local filename: %s", result)
 	}
 }

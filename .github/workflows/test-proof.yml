@@ -20,7 +20,7 @@ jobs:
   lookup:
     # Release calls this file @main; CI calls it only on main pushes. Never execute checked-out code in this job.
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 3
     outputs:
       verified: ${{ steps.proof.outputs.verified }}

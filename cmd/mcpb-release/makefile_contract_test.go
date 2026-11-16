@@ -140,7 +140,13 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				"go mod verify",
 				"go mod tidy -diff",
 				"gofmt -l .",
-				"go test -count=1 -race ./...",
+				// Every package is tested; all but the MCPB packaging packages,
+				// which have no concurrent production code, under -race.
+				"plain_packages=(./internal/mcpbundle ./cmd/mcpb-release)",
+				"mapfile -t race_packages < <(go list ./... | grep -vxF -e github.com/ozgurcd/gograph/internal/mcpbundle -e github.com/ozgurcd/gograph/cmd/mcpb-release)",
+				`go test -count=1 "${plain_packages[@]}" &`,
+				`go test -count=1 -race "${race_packages[@]}"`,
+				`wait "$plain"`,
 				"go vet ./...",
 				"staticcheck ./...",
 				"go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION} run ./...",
@@ -188,6 +194,17 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				`if [[ "$RESULT" == skipped && "$VERIFIED" == true ]]; then`,
 			},
 			forbidden: append([]string{"actions/checkout@"}, gateCommands...),
+		},
+		{
+			// Compiles to warm main's caches; it must never run a gate.
+			path:       ".github/workflows/warm-caches.yml",
+			toolchains: 1,
+			required: []string{
+				`go test -race -c -o "$RUNNER_TEMP/race-test-binaries/" ./...`,
+				`go test -c -o "$RUNNER_TEMP/plain-test-binaries/" ./internal/mcpbundle ./cmd/mcpb-release`,
+				"      - go.mod\n      - go.sum\n",
+			},
+			forbidden: []string{"go test -count", "go vet", "staticcheck ./...", "golangci-lint", "govulncheck", "grype", "make vulnerability-check", "--snapshot", "hugo ", "uses: ./.github/workflows/checks.yml"},
 		},
 		{
 			path:       ".github/workflows/release.yml",

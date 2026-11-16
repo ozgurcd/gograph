@@ -10,37 +10,12 @@ import (
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/ozgurcd/gograph/internal/graph"
-	mcppkg "github.com/ozgurcd/gograph/internal/mcp"
 )
 
-func answers177Fixture(t *testing.T) (string, map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+// answers177Fixture is shared: its tests only read it.
+func answers177Fixture(t *testing.T) (string, fixtureHandlers) {
 	t.Helper()
-	root := t.TempDir()
-	if err := os.CopyFS(root, os.DirFS("../../testdata/answers177")); err != nil {
-		t.Fatal(err)
-	}
-	g, err := buildPreciseGraph(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := json.Marshal(g)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, ".gograph"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".gograph", "graph.json"), data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	previous := mcppkg.ExposeToolsForTesting
-	handlers := make(map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error))
-	mcppkg.ExposeToolsForTesting = handlers
-	t.Cleanup(func() { mcppkg.ExposeToolsForTesting = previous })
-	mcppkg.NewServer(g, func() (*graph.Graph, error) { return g, nil }, BuildGraph,
-		func(context.Context, string) (*graph.Graph, error) { return g, nil }, "1.7.6")
-	return root, handlers
+	return sharedAnswersFixture(t, "answers177", "1.7.6")
 }
 
 func TestAnswers177VersionDrift(t *testing.T) {

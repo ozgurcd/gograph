@@ -23,7 +23,10 @@ func TestMCPExplainAmbiguityIsNativeAndMatchesSearch(t *testing.T) {
 		t.Fatalf("explain: %+v %v", result, err)
 	}
 	want := search.Explain(g, "Save")
-	for name, value := range map[string]any{"structured": result.StructuredContent, "text": json.RawMessage(result.Content[0].(mcp.TextContent).Text)} {
+	if result.StructuredContent != nil {
+		t.Fatalf("explain repeats its payload as structuredContent: %#v", result.StructuredContent)
+	}
+	for name, value := range map[string]any{"text": json.RawMessage(result.Content[0].(mcp.TextContent).Text)} {
 		data, err := json.Marshal(value)
 		if err != nil {
 			t.Fatal(err)

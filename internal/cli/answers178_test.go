@@ -86,12 +86,8 @@ func TestAnswers178ASTEmptyWarning(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			data, err := json.Marshal(result.StructuredContent)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(string(data), "may be incomplete") || !strings.Contains(string(data), "gograph build . --precise") {
-				t.Errorf("MCP structured warning missing: %s", data)
+			if result.StructuredContent != nil {
+				t.Errorf("MCP repeated the answer as structuredContent: %#v", result.StructuredContent)
 			}
 		})
 	}

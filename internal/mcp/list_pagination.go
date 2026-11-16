@@ -23,9 +23,7 @@ func finishListResult(command string, request mcp.CallToolRequest, pending pendi
 	}
 	if !search.SupportsListPagination(command) {
 		if warning != "" {
-			result := mcp.NewToolResultText("No results found.\n" + warning)
-			result.StructuredContent = map[string]any{"schema_version": "gograph.mcp-result.v1", "count": 0, "results": []search.Result{}, "warning": warning}
-			return result
+			return mcp.NewToolResultText("No results found.\n" + warning)
 		}
 		return formatUnpagedResults(pending.Rows)
 	}

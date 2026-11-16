@@ -7,9 +7,9 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// attachReadResult preserves the compatibility text while making a read's
-// answer (or refusal) independently usable by structured-content clients.
-// It must run before graph provenance is attached.
+// attachReadResult classifies a read's answer (or refusal) so the refusal
+// reason reaches _meta.gograph_graph_state.read_diagnostic. It must run
+// before graph provenance is attached; the structured value is not sent.
 func attachReadResult(command string, result *mcp.CallToolResult) {
 	if result == nil || (command != "gograph_source" && command != "gograph_context") {
 		return

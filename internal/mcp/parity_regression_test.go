@@ -553,6 +553,11 @@ func TestMCPCapabilityPrerequisiteReflectsPersistenceMode(t *testing.T) {
 
 	defaultText := capabilityText()
 	persistText := capabilityText(mcppkg.ServerOptions{PersistRefresh: true})
+	// Per-tool facts live in tools/list descriptions; capabilities lists names.
+	discoverable := defaultText
+	for _, tool := range mcppkg.NewServer(g, mockRebuild(g), mockBuildGraph(), mockBuildBaseline(), "dev").ListTools() {
+		discoverable += "\n" + tool.Tool.Description
+	}
 
 	if !strings.Contains(defaultText, "auto-builds an in-memory graph when it is missing") {
 		t.Fatalf("default capability prerequisite does not describe in-memory startup: %s", defaultText)
@@ -567,7 +572,7 @@ func TestMCPCapabilityPrerequisiteReflectsPersistenceMode(t *testing.T) {
 		"set mermaid=true to return Markdown-fenced Mermaid",
 		"gograph_callers",
 		"gograph_coupling",
-		"one-element JSON array with query and raw-text output",
+		"one-element JSON array containing {query, output}",
 		"regular, repository-confined .gograph/graph.json",
 		"older binaries do not enforce this contract",
 		"function, method, struct, interface, type, variable, or constant",
@@ -581,8 +586,8 @@ func TestMCPCapabilityPrerequisiteReflectsPersistenceMode(t *testing.T) {
 		"Typed-only test targets are recomputed",
 		"does not build dependency SSA bodies",
 	} {
-		if !strings.Contains(defaultText, phrase) {
-			t.Fatalf("capabilities omitted %q: %s", phrase, defaultText)
+		if !strings.Contains(discoverable, phrase) {
+			t.Fatalf("capabilities and tool descriptions omit %q", phrase)
 		}
 	}
 }

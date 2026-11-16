@@ -1,0 +1,44 @@
+name: Warm caches
+
+# Fills main's Go module and build cache, and the Staticcheck build, that pull
+# request checks restore. It compiles packages and race test binaries without
+# running them, so it is not a verification gate: every gate stays in
+# checks.yml.
+#
+# setup-go saves a cache only under a key that does not exist yet, and its key
+# changes only with go.mod (Go version) or go.sum. Run then, right after the
+# merge, so the first copy saved for a new key already holds the race builds
+# instead of whatever a later vulnerability-only nightly run compiled.
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - go.mod
+      - go.sum
+      - .github/workflows/warm-caches.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warm-caches
+  cancel-in-progress: true
+
+jobs:
+  warm:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - uses: ozgurcd/lictor/.github/actions/go-toolchain@fda0c2afaa765f190b7e331113a71570db802199
+
+      # Mirrors the race and plain test builds of checks.yml's Run Race Tests.
+      - name: Compile test binaries without running them
+        run: |
+          go test -race -c -o "$RUNNER_TEMP/race-test-binaries/" ./...
+          go test -c -o "$RUNNER_TEMP/plain-test-binaries/" ./internal/mcpbundle ./cmd/mcpb-release

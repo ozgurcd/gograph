@@ -90,11 +90,11 @@ Packaged and generated registrations keep refresh persistence off by default.
    `gograph build . --precise` first. Run the repository's required tests and
    checks separately.
 
-MCP responses carry graph provenance in `_meta` and native structured content
-where supported. Common bounded row lists use `gograph.results.v1`; native
-explain/changes retain their schemas. Other legacy results retain a
-`gograph.mcp-result.v1` (source/context instead use `gograph.read.v1` with the answer or refusal) structured companion. Inspect the accompanying
-`graph_state` before using an absence or broad impact result: `source`,
+MCP responses are compact JSON text, sent once; graph provenance is in
+`_meta.gograph_graph_state`, and a stale or degraded graph is also named in the
+text. Common bounded row lists use `gograph.results.v1`; native
+explain/changes retain their schemas. Inspect the graph state before using an
+absence or broad impact result: `source`,
 `freshness`, `completeness`, and `precision` are independent. A current
 in-memory fallback and a trusted stale persisted result are intentionally
 usable but degraded; disclose them and cross-check important negatives. A

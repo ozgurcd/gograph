@@ -222,8 +222,8 @@ uncertain evidence. Explain returns ambiguity candidates instead of choosing
 a same-named symbol. Changes reports declaration-level new/modified/deleted/
 excluded/unknown status and complete/partial/cannot_evaluate evaluation, reusing
 recorded build selection and detecting current module ownership and source races.
-Native result schemas retain provenance in `_meta` and structured content;
-legacy results use a `gograph.mcp-result.v1` (source/context instead use `gograph.read.v1` with the answer or refusal) companion. See the
+MCP results are compact JSON text sent once, without `structuredContent`;
+provenance is in `_meta.gograph_graph_state`. See the
 [shared query contracts](query-contracts.md) before writing a machine gate.
 
 Workspace HTTP base mappings are explicit `http_clients` configuration, not

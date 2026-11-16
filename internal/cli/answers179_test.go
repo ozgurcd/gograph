@@ -78,7 +78,7 @@ func TestAnswers179EndpointUnique(t *testing.T) {
 	}
 	text := answers177MCP(t, handlers["gograph_endpoint"], map[string]any{"query": "DeleteFactory"})
 	for _, symbol := range []string{"deleteRecord", "auditRecord"} {
-		needle := `"symbol": "` + symbol + `"`
+		needle := `"symbol":"` + symbol + `"`
 		if count := strings.Count(text, needle); count != 1 {
 			t.Errorf("MCP %s appears %d times, want 1: %s", symbol, count, text)
 		}
