@@ -3520,7 +3520,14 @@ MACHINE VALIDATION
                              one gograph.validation.v1 document and exits 0=pass,
                              1=evaluated fail, or 2=cannot_evaluate/invalid request.
                              V1 predicates: symbol_exists, package_imports,
-                             call_edge_exists, and type_implements.
+                             call_edge_exists, type_implements, and the policy
+                             predicates imports_only_from (package subject + allow),
+                             callers_only_from (symbol subject + allow; precise) and
+                             call_arg_constant (symbol subject + argument N, optional
+                             forbidden_values; precise). allow lists package import
+                             paths (prefix/... patterns) or repository files; tests are
+                             skipped unless include_tests. Fails list every violating
+                             file:line in evidence.matched_relations.
 
 INSTALL DIAGNOSTICS
   doctor [--json]            Report installations plus the current repository graph's

@@ -62,8 +62,32 @@ func validateBinding(binding Binding) error {
 		if binding.Subject.Kind != ReferenceSymbol || binding.Object == nil || binding.Object.Kind != ReferenceSymbol {
 			return fmt.Errorf("type_implements requires symbol subject and object")
 		}
+	case PredicateImportsOnlyFrom:
+		if binding.Subject.Kind != ReferencePackage || binding.Object != nil || len(binding.Allow) == 0 {
+			return fmt.Errorf("imports_only_from requires a package subject, a non-empty allow list and no object")
+		}
+	case PredicateCallersOnlyFrom:
+		if binding.Subject.Kind != ReferenceSymbol || binding.Object != nil || len(binding.Allow) == 0 {
+			return fmt.Errorf("callers_only_from requires a symbol subject, a non-empty allow list and no object")
+		}
+	case PredicateCallArgConstant:
+		if binding.Subject.Kind != ReferenceSymbol || binding.Object != nil || binding.Argument == nil || *binding.Argument < 0 {
+			return fmt.Errorf("call_arg_constant requires a symbol subject, a non-negative argument and no object")
+		}
 	default:
 		return fmt.Errorf("unsupported predicate %q", binding.Predicate)
+	}
+	allowsLists := binding.Predicate == PredicateImportsOnlyFrom || binding.Predicate == PredicateCallersOnlyFrom || binding.Predicate == PredicateCallArgConstant
+	if !allowsLists && (len(binding.Allow) > 0 || binding.IncludeTests) {
+		return fmt.Errorf("%s does not accept allow or include_tests", binding.Predicate)
+	}
+	if binding.Predicate != PredicateCallArgConstant && (binding.Argument != nil || len(binding.ForbiddenValues) > 0) {
+		return fmt.Errorf("%s does not accept argument or forbidden_values", binding.Predicate)
+	}
+	for index, allowed := range binding.Allow {
+		if err := validateAllowReference(allowed); err != nil {
+			return fmt.Errorf("invalid allow[%d]: %w", index, err)
+		}
 	}
 	if err := validateReference(binding.Subject); err != nil {
 		return fmt.Errorf("invalid subject: %w", err)
@@ -131,4 +155,24 @@ func validImportPath(importPath string) bool {
 		return false
 	}
 	return true
+}
+
+func validateAllowReference(reference Reference) error {
+	if reference.Language != "go" {
+		return fmt.Errorf("unsupported language %q", reference.Language)
+	}
+	switch reference.Kind {
+	case ReferencePackage:
+		importPath := strings.TrimSuffix(reference.ID, "/...")
+		if !validImportPath(importPath) {
+			return fmt.Errorf("malformed package import path or pattern %q", reference.ID)
+		}
+	case ReferenceFile:
+		if !validImportPath(reference.ID) || !strings.HasSuffix(reference.ID, ".go") {
+			return fmt.Errorf("file must be a clean repository-relative .go path, got %q", reference.ID)
+		}
+	default:
+		return fmt.Errorf("allow entries must be package or file references, got %q", reference.Kind)
+	}
+	return nil
 }

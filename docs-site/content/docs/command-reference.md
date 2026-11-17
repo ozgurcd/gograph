@@ -205,7 +205,12 @@ Evaluates one strict `gograph.binding.v1` structural predicate against the
 existing trusted repository graph and emits exactly one
 `gograph.validation.v1` document. It never builds or refreshes an artifact.
 Supported predicates are `symbol_exists`, `package_imports`,
-`call_edge_exists`, and `type_implements`. Exit status is `0` for pass, `1`
+`call_edge_exists`, `type_implements`, and the policy predicates
+`imports_only_from` (only allowlisted packages or files import a package),
+`callers_only_from` (only allowlisted packages or files call a function, such
+as `os/exec::Command`) and `call_arg_constant` (argument N is always a
+compile-time constant, or never one of `forbidden_values`). Policy failures
+list every violating file and line. Exit status is `0` for pass, `1`
 for an evaluated fail, and `2` when the request cannot be evaluated or is
 invalid. This process-status machine-validation adapter is CLI-only; MCP
 callers use the corresponding query/evidence tools rather than a validation

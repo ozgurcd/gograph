@@ -188,8 +188,10 @@ gograph validate --repo /work/project --binding-json '{"schema_version":"gograph
 ```
 
 The version and result schemas are `gograph.version.v1` and
-`gograph.validation.v1`; bindings use `gograph.binding.v1`. V1 supports only
-`symbol_exists`, `package_imports`, `call_edge_exists`, and `type_implements`.
+`gograph.validation.v1`; bindings use `gograph.binding.v1`. V1 supports
+`symbol_exists`, `package_imports`, `call_edge_exists`, `type_implements`, and
+the policy predicates `imports_only_from`, `callers_only_from` and
+`call_arg_constant`, which report every violating file:line.
 Validation is read-only and never builds or refreshes the graph. Exit `0` means
 `pass`, exit `1` means a conclusively evaluated `fail`, and exit `2` means
 `cannot_evaluate` or an invalid request.
