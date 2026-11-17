@@ -13,7 +13,7 @@ user-invocable: true
 
 # gograph: Go Repository Intelligence
 
-`gograph` is a local, AST-aware Go code intelligence engine that exposes 65 query, analysis, and workflow capabilities over the Model Context Protocol (69 endpoints including session lifecycle). It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) a structural view backed by a persisted or in-memory graph. `gograph_explore` offers compact, standard, and deep bounded discovery over one shared native result: compact preserves identity/role and complete counts, standard includes source/direct evidence and exact impact, and deep adds depth-3 exact evidence, package context, and explanation. `gograph_context` remains the focused known-symbol bundle. Actual savings depend on the task.
+`gograph` is a local, AST-aware Go code intelligence engine that exposes 66 query, analysis, and workflow capabilities over the Model Context Protocol (70 endpoints including session lifecycle). It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) a structural view backed by a persisted or in-memory graph. `gograph_explore` offers compact, standard, and deep bounded discovery over one shared native result: compact preserves identity/role and complete counts, standard includes source/direct evidence and exact impact, and deep adds depth-3 exact evidence, package context, and explanation. `gograph_context` remains the focused known-symbol bundle. Actual savings depend on the task.
 
 `gopls` provides live compiler-backed navigation, diagnostics, implementations,
 refactoring, and experimental MCP support. `gograph` complements it with a

@@ -221,7 +221,7 @@ exact before possible, then shorter paths, production before tests, typed
 resolution before heuristics, and a canonical tie-breaker. Workspace path uses
 the same ordering and finally prefers fewer cross-repository transitions.
 
-The server exposes 69 endpoints: 65 tools corresponding to CLI query,
+The server exposes 70 endpoints: 66 tools corresponding to CLI query,
 analysis, and workflow commands plus four session lifecycle tools. Tool
 arguments and transport-level status presentation can differ from CLI flags
 and process exit codes. `gograph_flow` matches the CLI `flow` filters (`term`,
@@ -408,4 +408,5 @@ When `add-claude-plugin` runs, it adds these explicit directives to `CLAUDE.md` 
 - Run `gograph_plan` before editing a symbol to inspect indexed downstream risks.
 - For security reviews, use `gograph_flow` before broad source searches; inspect every reported path because it is static, path-insensitive evidence rather than proof.
 - After editing, run CLI `gograph build . --precise`, `gograph_review` with `uncommitted=true`, and the repository's required tests and checks.
+- To choose which tests to run for a change, call `gograph_tests` with `uncommitted=true` (CLI `gograph tests --uncommitted --format go-test`) and run only the returned `go test` commands; add `max_depth=3` to keep nearby tests.
 ```

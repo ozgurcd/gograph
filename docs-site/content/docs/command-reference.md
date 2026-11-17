@@ -260,6 +260,9 @@ bounded impact section. Use focused `impact` for broader fallback traversal.
   `gograph_explore` returns that same native value as JSON text, with required
   `query`; optional `limit` and `exact`; and mutually exclusive typed `compact`
   and `deep` booleans.
+- **Next commands**: when one symbol is selected unambiguously, text output ends
+  with `next:` lines naming the test-selection, transitive-tests and impact
+  commands for it.
 
 ### query
 ```bash
@@ -700,17 +703,44 @@ Finds potential paths from untrusted inputs to security-sensitive operations. Te
 ### tests
 ```bash
 gograph tests [symbol] [--json]
-gograph tests <symbol> --transitive [--exact-only] [--package name] [--json]
+gograph tests <symbol> --transitive [--exact-only] [--package name] [--max-depth N] [--limit N] [--cursor T] [--json]
+gograph tests --uncommitted|--since <ref> [--format run|go-test] [--exact-only] [--max-depth N] [--json]
+gograph tests <symbol> --format run|go-test [--package name] [--exact-only] [--max-depth N] [--json]
 ```
+**Which tests to run for a change.** `--uncommitted` (working tree against
+`HEAD`), `--since <ref>`, or `--format` with one symbol select every test that
+reaches the changed (or named) functions and print, per import path, an anchored
+and regex-escaped `-run` pattern of top-level test names (benchmarks get a
+`-bench` pattern). `--format go-test` prints only runnable commands, one per
+package, with the graph's `-tags`:
+
+```text
+go test -tags=integration example.com/app/calc -run '^(TestMul|TestTotal)$'
+go test example.com/app/api
+```
+
+A package whose every test is selected runs without `-run`, and long patterns
+are split at 16 KiB. Changed tests select themselves; tests deleted by the
+change are never listed; a deleted function still in the pre-change graph
+selects the tests that reached it; changed types, variables and constants, and
+new functions missing from a stale graph, are reported under `unselected`
+(status `partial`). `--max-depth N` keeps tests whose shortest call path is at
+most N, `--exact-only` drops paths through dynamic dispatch. `--json` returns
+`gograph.test_selection.v1`.
+
 Default mode lists direct attributed test edges for compatibility and accepts
 `Receiver.Method` (including pointer-receiver stable targets) or a full stable
 symbol ID without conflating another receiver's same-named method. Transitive
-mode requires one product symbol and returns `gograph.tests.v1`: every test with
-a representative stable-ID path to that symbol, path depth, and `exact` or
-`possible` resolution. `--exact-only` removes paths containing parser/CHA
+mode requires one product symbol and returns `gograph.tests.v1`: a `summary` of
+every reaching test by depth and resolution (and `next_command`), then one page
+of tests sorted nearest first (depth, then `exact` before `possible`), each with
+a representative stable-ID path. Pages hold 50 tests by default (`--limit N`,
+`--limit 0` for all) with `total`, `returned`, `truncated` and `next_cursor`;
+pass `--cursor` to continue. `--exact-only` removes paths containing parser/CHA
 uncertainty, and `--package` disambiguates a same-named product symbol. The MCP
-equivalent uses `transitive`, `exact_only`, and `package`. Static attribution is
-not runtime or branch coverage proof.
+equivalent uses `transitive`, `exact_only`, `package`, `max_depth`, `limit`,
+`cursor`, plus `uncommitted`, `since` and `select` for selections. Static
+attribution is not runtime or branch coverage proof.
 
 ### coverage
 ```bash
@@ -825,6 +855,7 @@ Generates a comprehensive change-impact plan prior to editing.
 - **Flags**:
   - `--with-context`: Inlines the complete `context` for every symbol listed in the plan, avoiding sequential lookup calls.
   - `--uncommitted`: Generates a joint change plan for all currently modified uncommitted symbols.
+- **Next commands**: the plan ends with the exact follow-ups to run (`next: gograph tests <symbol> --format go-test --max-depth 3`, `--transitive`, and `impact`); JSON carries them as `next_commands` and MCP `gograph_plan` as `next` tool calls.
 
 ### review
 ```bash
@@ -1156,7 +1187,7 @@ transport has an undocumented analytical feature.
 | Documentation/toolchain | `wiki` ↔ `gograph_wiki`; `doc` ↔ `gograph_doc` |
 | Session lifecycle | `session create` ↔ `gograph_session_create`; `session end` ↔ `gograph_session_end`; `session audit` ↔ `gograph_session_audit`; `session cleanup` ↔ `gograph_session_cleanup` |
 
-That is 65 CLI-equivalent project capabilities plus four session tools: 69
+That is 66 CLI-equivalent project capabilities plus four session tools: 70
 tools on `gograph mcp`. The separate `gograph workspace mcp` server adds these
 four exact pairs:
 
@@ -1200,7 +1231,9 @@ it diagnoses the host process and installation selected before MCP startup.
 gograph capabilities
 ```
 Prints the token-optimized AI agent cheat sheet detailing common workflows and
-commands. The MCP counterpart, `gograph_capabilities`, also includes a top-level
+commands. It starts with a task index that maps jobs (such as "choose which
+tests to run for a change") to commands; `gograph help` starts with the same
+index. The MCP counterpart returns it as structured `task_index` rows. The MCP counterpart, `gograph_capabilities`, also includes a top-level
 `version` identifying the running server binary, so MCP-only clients can record
 the analysis instrument. Useful for bootstrapping context in an LLM system prompt.
 
@@ -1269,8 +1302,8 @@ AI clients (e.g., Claude Code, Cursor).
   `gograph_impact`, `gograph_endpoint`, `gograph_dependents`, `gograph_deps`,
   `gograph_path`, or `gograph_coupling`. The tool returns Mermaid flowchart
   text instead of its normal response.
-- **Parity**: 65 query, analysis, and workflow commands have corresponding MCP
-  endpoints; four additional endpoints manage sessions (69 endpoints total).
+- **Parity**: 66 query, analysis, and workflow commands have corresponding MCP
+  endpoints; four additional endpoints manage sessions (70 endpoints total).
   MCP uses typed tool arguments rather than CLI global flags, and some
   not-found and status results have different transport-level presentation.
   `gograph_explore` and CLI `explore --json` share the native
@@ -1379,7 +1412,9 @@ Called by the Claude Code `PreToolUse` hook. Intercepts incoming tool-call JSON 
 gograph version
 gograph help
 ```
-Print the build version or the complete CLI help contract.
+Print the build version or the complete CLI help contract. Help starts with the
+task index. Builds from `go install ...@vX.Y.Z` report `X.Y.Z`; local checkout
+builds report `dev+<revision>` (`.dirty` when modified).
 
 ## Output Modes
 

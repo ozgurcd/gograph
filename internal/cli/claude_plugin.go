@@ -22,6 +22,7 @@ Rules (applied when gograph MCP server is connected):
 3. After editing Go code, run gograph_review with uncommitted=true to inspect test mappings and the indexed blast radius; it is not proof that runtime behavior is unchanged.
 4. To understand a symbol, use gograph_context — it returns node, source, callers, callees, tests, and an architectural role classification in one call. Use uncommitted=true to get context for all uncommitted symbols at once.
 5. Run gograph_capabilities at the start of any Go coding session.
+6. To choose which tests to run for a change, run gograph_tests with uncommitted=true (CLI: gograph tests --uncommitted --format go-test) and run only the go test commands it returns; add max_depth=3 to keep nearby tests.
 <!-- gograph-end: do not remove -->
 `
 

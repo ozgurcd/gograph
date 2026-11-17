@@ -86,6 +86,7 @@ This project is indexed using `gograph`. **DO NOT use `grep` or `cat` for struct
 3. For compilable, build-selected packages, `gograph build . --precise` adds type-checked CHA/SSA enrichment. Add `--tags=integration` when tagged files/tests belong to the graph, and use the same option on `gograph mcp` startup so refreshes retain the selection. CHA is conservative, and a failed retry retains an already-fresh successful precise artifact for the same sources instead of replacing it with a fallback.
 4. To extract a function body or mock stub without reading the whole file, use the source tool.
 5. Use targeted text search for string literals, ordinary non-sensitive configuration, generated or non-indexed files, and documentation. Do not inspect `.env`, key, certificate, kubeconfig, tfstate, or credential files unless the user explicitly places them in scope.
+6. Before running tests for a change: `gograph tests --uncommitted --format go-test` (MCP `gograph_tests` with `uncommitted=true`) and run only the tests it names; add `--max-depth 3` for nearby tests, or use `gograph tests <changed symbol> --transitive` to list indirect callers.
 ```
 
 ## 4. Example Workflows
@@ -114,7 +115,8 @@ Here is how Claude Code behaves before and after `gograph`:
 3. Claude: `gograph source "ValidateToken"`
 4. Claude: *Reads the function, plans the edit, and safely applies it.*
 5. Claude: `gograph check --uncommitted`
-6. Claude reviews static policy findings, then runs the repository's compiler, tests, and required checks for behavioral verification.
+6. Claude: `gograph tests --uncommitted --format go-test --max-depth 3`, then runs the printed `go test` commands.
+7. Claude reviews static policy findings and test results, then runs the repository's compiler and required checks for behavioral verification.
 
 ### Scenario: Reviewing untrusted-data paths
 

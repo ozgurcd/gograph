@@ -374,6 +374,7 @@ func writeUsageInstructions(sb *strings.Builder) {
 	sb.WriteString("> Before answering architecture, dependency, or 'where is X?' questions about this\n")
 	sb.WriteString("> repository, read `.gograph/GRAPH_REPORT.md` first. Use it as the repo map before\n")
 	sb.WriteString("> searching raw files. Use `gograph query` and `gograph callers` for symbol lookup.\n")
+	sb.WriteString("> To choose which tests to run for a change, use `gograph tests --uncommitted --format go-test`.\n")
 }
 
 func symbolCounts(g *graph.Graph) (funcs, methods, structs, ifaces int) {
