@@ -945,9 +945,9 @@ evaluation after its normal source refresh.
 
 ### complexity
 ```bash
-gograph complexity [symbol]
+gograph complexity [symbol] [--no-tests] [--top N] [--path DIR] [--json]
 ```
-Displays McCabe cyclomatic complexity for all functions, sorted highest first. Optional substring filter by symbol name.
+Displays McCabe cyclomatic complexity for all functions, sorted highest first. Optional substring filter by symbol name. `--no-tests` drops functions declared in `_test.go` files, `--path DIR` keeps one repository-relative directory subtree, and `--top N` keeps the N highest after filtering. MCP `gograph_complexity` takes `symbol`, `top`, `no_tests` and `path`.
 - **Labels**: `LOW` (1-5), `MEDIUM` (6-10), `HIGH` (11-20), `VERY HIGH` (21+), or `UNKNOWN` with score `-1` when repository source cannot be read or parsed safely.
 
 ### coupling

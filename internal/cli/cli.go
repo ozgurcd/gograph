@@ -3782,7 +3782,10 @@ CODE QUALITY
                              --max-work N overrides the size-derived work budget. An exhausted
                              budget prints INCOMPLETE with the functions that used the most
                              work, adds JSON completeness.top_functions, and exits 2.
-  complexity [symbol]        Cyclomatic complexity per function, highest first.
+  complexity [symbol] [--no-tests] [--top N] [--path DIR]
+                             Cyclomatic complexity per function, highest first.
+                             --no-tests drops _test.go functions, --path keeps one
+                             directory subtree, --top keeps the N highest.
                              Filter by symbol name substring. Labels: LOW / MEDIUM /
                              HIGH / VERY HIGH (McCabe thresholds: 5 / 10 / 20), or
                              UNKNOWN with score -1 when source cannot be read or parsed safely.
@@ -4489,18 +4492,44 @@ func runArity(args []string) int {
 
 // runComplexity estimates cyclomatic complexity for matching functions.
 func runComplexity(args []string) int {
-	if !hasOptionalTarget(args) {
-		return failCommand("complexity", "usage: gograph complexity [symbol]")
+	usage := "usage: gograph complexity [symbol] [--no-tests] [--top N] [--path DIR]"
+	filter := search.ComplexityFilter{}
+	var targets []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--no-tests":
+			filter.NoTests = true
+		case "--top":
+			value, err := parseIntegerFlag(args, &i)
+			if err != nil || value < 0 {
+				return failCommand("complexity", "--top requires a non-negative integer\n"+usage)
+			}
+			filter.Top = value
+		case "--path":
+			if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+				return failCommand("complexity", "--path requires a repository-relative directory\n"+usage)
+			}
+			i++
+			filter.Path = args[i]
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				return failCommandf("complexity", "unknown flag: %s\n%s", args[i], usage)
+			}
+			targets = append(targets, args[i])
+		}
+	}
+	if len(targets) > 1 {
+		return failCommand("complexity", usage)
 	}
 	term := ""
-	if len(args) > 0 {
-		term = args[0]
+	if len(targets) > 0 {
+		term = targets[0]
 	}
 	g, err := loadGraph(".")
 	if err != nil {
 		return failCommand("complexity", err.Error())
 	}
-	results := search.Complexity(g, term)
+	results := search.FilterComplexity(search.Complexity(g, term), filter)
 	if jsonMode {
 		return PrintJSON(okEnvelope("complexity", term, results, len(results)))
 	}

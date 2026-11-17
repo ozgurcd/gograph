@@ -2516,15 +2516,20 @@ func initNewTools(
 		mcp.WithDescription("Report estimated cyclomatic complexity for Go functions, sorted highest-to-lowest with severity labels (LOW/MEDIUM/HIGH/VERY HIGH). A function whose repository source cannot be read or parsed safely is retained as UNKNOWN with score -1. Optional `symbol` substring filters to a specific function or set of functions; `top` limits the report (default: 20; 0 = all). WHEN TO USE: During code quality audits, identifying functions that need decomposition, or setting complexity budgets in CI. NOT TO USE: For import dependency metrics (use gograph_coupling or gograph_deps); for God Object detection (use gograph_godobj). RETURNS: Structured list of functions with complexity score and severity label; empty when no functions match the filter."),
 		mcp.WithString("symbol", mcp.Description("Optional Go function or method symbol name substring to filter the complexity report (e.g., 'Build')")),
 		mcp.WithInteger("top", mcp.Description("Number of results to return, highest first (default: 20, 0 = all)")),
+		mcp.WithBoolean("no_tests", mcp.Description("Drop functions declared in _test.go files")),
+		mcp.WithString("path", mcp.Description("Keep functions in this repository-relative directory subtree")),
 	)
 	addTool(complexityTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
 		term := ""
 		top := defaultReportTop
+		filter := search.ComplexityFilter{}
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if s, ok := args["symbol"].(string); ok {
 				term = s
 			}
+			filter.NoTests = boolArg(args, "no_tests")
+			filter.Path, _ = args["path"].(string)
 			var err error
 			if top, err = integerArg(args, "top", top); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -2533,10 +2538,8 @@ func initNewTools(
 		if top < 0 {
 			return mcp.NewToolResultError("top must be 0 (all) or positive"), nil
 		}
-		results := search.Complexity(g, term)
-		if top > 0 && len(results) > top {
-			results = results[:top]
-		}
+		filter.Top = top
+		results := search.FilterComplexity(search.Complexity(g, term), filter)
 		data, err := json.Marshal(results)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil

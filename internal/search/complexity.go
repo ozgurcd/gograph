@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
@@ -187,4 +188,38 @@ func Complexity(g *graph.Graph, term string) []ComplexityResult {
 		}
 	}
 	return results
+}
+
+// ComplexityFilter narrows a complexity report.
+type ComplexityFilter struct {
+	// NoTests drops functions declared in _test.go files.
+	NoTests bool
+	// Path keeps functions in this repository-relative directory or file
+	// and below.
+	Path string
+	// Top keeps the N highest after filtering; 0 keeps all.
+	Top int
+}
+
+// FilterComplexity applies filter to results, which stay sorted.
+func FilterComplexity(results []ComplexityResult, filter ComplexityFilter) []ComplexityResult {
+	prefix := strings.Trim(path.Clean(strings.ReplaceAll(filter.Path, "\\", "/")), "/")
+	if filter.Path == "" || prefix == "." {
+		prefix = ""
+	}
+	kept := make([]ComplexityResult, 0, len(results))
+	for _, result := range results {
+		file := path.Clean(strings.ReplaceAll(result.File, "\\", "/"))
+		if filter.NoTests && isTestFile(file) {
+			continue
+		}
+		if prefix != "" && file != prefix && !strings.HasPrefix(file, prefix+"/") {
+			continue
+		}
+		kept = append(kept, result)
+		if filter.Top > 0 && len(kept) == filter.Top {
+			break
+		}
+	}
+	return kept
 }
