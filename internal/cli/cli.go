@@ -1708,6 +1708,12 @@ func printResults(cmd, query string, results []search.Result, emptyMsg string) i
 	}
 	if len(results) == 0 {
 		fmt.Println(emptyMsg)
+		outputGraph.RLock()
+		loaded := outputGraph.graph
+		outputGraph.RUnlock()
+		if hint := search.FileSelectorHint(loaded, query); hint != "" {
+			fmt.Println("hint: " + hint)
+		}
 		if cmd == "tests" || cmd == "envs" || cmd == "usages" {
 			if state := currentOutputGraphState(); state != nil {
 				if warning := search.EmptyAnswerWarning(cmd, string(state.Precision), 0); warning != "" {

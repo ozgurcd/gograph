@@ -3,6 +3,7 @@ package search
 import (
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
@@ -65,11 +66,14 @@ func qualifiedSymbolMatch(s graph.SymbolNode, query string) (bool, bool) {
 		file += ".go"
 		pkg, _, _ := strings.Cut(s.ID, "::")
 		location := file == s.File || file == pkg+"/"+path.Base(s.File)
-		member := s.Name
-		if s.Receiver != "" {
-			member = strings.TrimPrefix(s.Receiver, "*") + "." + s.Name
+		// file.go:Name selects a function, type, variable or constant;
+		// file.go:Receiver.Method selects a method. A bare name never matches
+		// a method, so the selector fileSelector prints for a function stays
+		// unique when the same file declares a method of the same name.
+		if s.Receiver == "" {
+			return location && name == s.Name, true
 		}
-		return location && (name == s.Name || name == member), true
+		return location && name == strings.Trim(s.Receiver, "(*)")+"."+s.Name, true
 	}
 	if strings.Contains(query, "/") && !strings.Contains(query, "::") {
 		pkg, member, ok := strings.Cut(s.ID, "::")
@@ -77,4 +81,28 @@ func qualifiedSymbolMatch(s graph.SymbolNode, query string) (bool, bool) {
 		return ok && normalize(query) == normalize(pkg+"."+member), true
 	}
 	return false, false
+}
+
+// FileSelectorHint explains a file selector that names a method without its
+// receiver, listing the receiver-qualified selectors that would match.
+func FileSelectorHint(g *graph.Graph, query string) string {
+	file, name, ok := strings.Cut(strings.TrimSpace(query), ".go:")
+	if !ok || g == nil || strings.Contains(name, ".") {
+		return ""
+	}
+	var selectors []string
+	for _, symbol := range g.Symbols {
+		if symbol.Receiver == "" || symbol.Name != name {
+			continue
+		}
+		pkg, _, _ := strings.Cut(symbol.ID, "::")
+		if file+".go" == symbol.File || file+".go" == pkg+"/"+path.Base(symbol.File) {
+			selectors = append(selectors, fileSelector(symbol))
+		}
+	}
+	if len(selectors) == 0 {
+		return ""
+	}
+	sort.Strings(selectors)
+	return "methods need their receiver: " + strings.Join(selectors, ", ")
 }

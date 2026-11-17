@@ -1129,8 +1129,25 @@ func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
 	if len(exact) > 0 {
 		targets = exact
 	}
+	// Go identifiers are case-sensitive: SymbolIdentity and symbolIdentity are
+	// different declarations. Prefer case-sensitive name or ID matches.
+	if len(targets) > 1 {
+		var sameCase []graph.SymbolNode
+		trimmed := strings.TrimSpace(symbolName)
+		for _, candidate := range targets {
+			if candidate.Name == trimmed || candidate.ID == trimmed {
+				sameCase = append(sameCase, candidate)
+			}
+		}
+		if len(sameCase) > 0 {
+			targets = sameCase
+		}
+	}
 
 	if len(targets) == 0 {
+		if hint := FileSelectorHint(g, symbolName); hint != "" {
+			return "", fmt.Errorf("symbol '%s' not found; %s", symbolName, hint)
+		}
 		return "", fmt.Errorf("symbol '%s' not found", symbolName)
 	}
 	if len(targets) > 1 {
