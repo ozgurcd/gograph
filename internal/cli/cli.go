@@ -307,6 +307,8 @@ func dispatch(args []string) int {
 		return runTests(args[1:])
 	case "coverage":
 		return runCoverage(args[1:])
+	case "uncovered":
+		return runUncovered(args[1:])
 	case "identity":
 		return runIdentity(args[1:])
 	case "routes":
@@ -567,8 +569,8 @@ Every repository query, analysis, and workflow capability has a project MCP
 equivalent. The normal mapping is CLI '<command>' → MCP 'gograph_<command>'.
 Special mappings are 'contract' → gograph_api, 'boundaries --create' →
 gograph_boundaries_create, and the four 'session' actions →
-gograph_session_create/end/audit/cleanup. That project server exposes 68 tools:
-64 CLI-equivalent capabilities plus four session lifecycle tools.
+gograph_session_create/end/audit/cleanup. That project server exposes 70 tools:
+66 CLI-equivalent capabilities plus four session lifecycle tools.
 
 Workspace status, query, path, and impact use the separate four-tool workspace
 MCP server described above. CLI-only process, host, CI, and artifact operations
@@ -3607,7 +3609,7 @@ CLI / MCP TRANSPORT COVERAGE
                              maps to gograph_<command>; contract maps to gograph_api,
                              boundaries --create to gograph_boundaries_create, and
                              session actions to gograph_session_create/end/audit/cleanup.
-                             Total: 64 CLI-equivalent capabilities + 4 session tools.
+                             Total: 66 CLI-equivalent capabilities + 4 session tools.
   Workspace server           status, query, path, and impact map exactly to the four
                              gograph_workspace_* tools listed under WORKSPACES.
   CLI-only operations        build, validate, doctor, gate, snapshot,
@@ -3816,10 +3818,14 @@ CODE QUALITY
                              Print/re-resolve canonical module/package/receiver/name identity.
                              Stable across line shifts and file moves inside one package;
                              renames, receiver changes, and package/module moves change it.
-  untested [--pkg name] [--top N] [--exclude glob]... [--wide]
-                             Called production functions with no exact transitive test path.
+  untested [--pkg name] [--top N] [--exclude glob]... [--wide] [--exclude-interface-methods] [--coverprofile file]
+                             Called production functions with no exact transitive test path,
+                             ranked none before possible, then by callers.
                              Excludes match repository-relative paths; prefix/** matches descendants.
                              --wide prints complete canonical stable IDs instead of truncating names.
+                             --exclude-interface-methods skips Error/String/MarshalJSON-style
+                             interface methods and reports the count. --coverprofile lists
+                             functions a go test -coverprofile run never executed instead.
   endpoint <route>           Full vertical slice for one HTTP endpoint (depth 1-20; supports --mermaid).
                              Composes: route resolution + handler symbol +
                              full callee chain (BFS, default depth 5) + SQL
@@ -3941,6 +3947,10 @@ EXTRACTION
                              as well as a full stable symbol ID.
   coverage <test> [--exact-only] [--package name]
                              Reverse test attribution with exact/possible transitive paths.
+  uncovered --uncommitted|--since <ref> --coverprofile <file>
+                             Changed lines of non-test Go files that a go test
+                             -coverprofile run (merged profiles allowed) never
+                             executed, as exact line ranges (gograph.uncovered.v1).
   identity <symbol-or-stable-id> [--package name]
                              Resolve canonical stable symbol identity and current location.
 
@@ -6103,9 +6113,19 @@ func runUntested(args []string) int {
 	pkg := ""
 	top := 0
 	wide := false
+	coverProfile := ""
+	options := search.UntestedOptions{}
 	var excludes []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--exclude-interface-methods":
+			options.ExcludeInterfaceMethods = true
+		case "--coverprofile":
+			if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+				return failCommand("untested", "--coverprofile requires a go test -coverprofile file")
+			}
+			coverProfile = args[i+1]
+			i++
 		case "--pkg":
 			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
 				return failCommand("untested", "--pkg requires a value")
@@ -6136,7 +6156,14 @@ func runUntested(args []string) int {
 		return failCommand("untested", err.Error())
 	}
 
-	results := search.Untested(g)
+	if coverProfile != "" {
+		profile, err := readCoverProfile(coverProfile, g)
+		if err != nil {
+			return failCommand("untested", err.Error())
+		}
+		options.Coverage = profile
+	}
+	results, summary := search.NewSnapshot(g).UntestedWith(options)
 	results, err = search.FilterUntested(results, excludes)
 	if err != nil {
 		return failCommandf("untested", "invalid --exclude glob: %v", err)
@@ -6161,11 +6188,23 @@ func runUntested(args []string) int {
 	}
 
 	if jsonMode {
-		return PrintJSON(okEnvelope("untested", "", results, len(results)))
+		envelope := okEnvelope("untested", "", results, len(results))
+		if options.ExcludeInterfaceMethods || options.Coverage != nil {
+			envelope.Summary = summary
+		}
+		return PrintJSON(envelope)
 	}
 
+	notes := untestedSummaryNotes(summary, options)
 	if len(results) == 0 {
-		fmt.Println("No untested candidates found — every called symbol has an exact/static or parser-attributed test edge.")
+		if options.Coverage != nil {
+			fmt.Println("No unexecuted production functions found in the coverage profile.")
+		} else {
+			fmt.Println("No untested candidates found — every called symbol has an exact/static or parser-attributed test edge.")
+		}
+		for _, note := range notes {
+			fmt.Println(note)
+		}
 		return 0
 	}
 
@@ -6173,7 +6212,16 @@ func runUntested(args []string) int {
 	if top > 0 {
 		label = fmt.Sprintf("top %d", top)
 	}
-	fmt.Printf("Untested Candidates (%s, sorted by caller count):\n\n", label)
+	order := "no static test path first, then possible-only, by caller count"
+	if options.Coverage != nil {
+		order = "not executed in the coverage profile; static evidence: none, possible, exact"
+	}
+	fmt.Printf("Untested Candidates (%s, %s):\n\n", label, order)
+	defer func() {
+		for _, note := range notes {
+			fmt.Println(note)
+		}
+	}()
 	nameHeader := "FUNCTION"
 	nameWidth := 38
 	if wide {
@@ -6281,4 +6329,98 @@ func shellQuoteArg(value string) string {
 		return value
 	}
 	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
+// maxCoverProfileBytes bounds a coverage profile read.
+const maxCoverProfileBytes = 512 << 20
+
+func readCoverProfile(name string, g *graph.Graph) (*search.CoverageProfile, error) {
+	info, err := os.Stat(name)
+	if err != nil {
+		return nil, fmt.Errorf("read coverage profile: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxCoverProfileBytes {
+		return nil, fmt.Errorf("coverage profile %s must be a regular file of at most 512 MiB", name)
+	}
+	data, err := os.ReadFile(name)
+	if err != nil {
+		return nil, fmt.Errorf("read coverage profile: %w", err)
+	}
+	return search.ParseCoverProfile(data, g)
+}
+
+func untestedSummaryNotes(summary search.UntestedSummary, options search.UntestedOptions) []string {
+	var notes []string
+	if options.ExcludeInterfaceMethods {
+		notes = append(notes, fmt.Sprintf("\nSkipped %d interface methods (--exclude-interface-methods).", summary.SkippedInterfaceMethods))
+	}
+	if options.Coverage != nil {
+		notes = append(notes, fmt.Sprintf("Coverage profile: %d functions executed (not listed); %d files without profile data; %d profile files outside this graph.",
+			summary.ExecutedFunctions, summary.FilesWithoutProfileData, summary.UnmappedProfileFiles))
+	}
+	return notes
+}
+
+func runUncovered(args []string) int {
+	usage := "usage: gograph uncovered --uncommitted|--since <ref> --coverprofile <file>"
+	uncommitted, sinceRef, coverProfile := false, "", ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--uncommitted":
+			uncommitted = true
+		case "--since", "--coverprofile":
+			if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+				return failCommandf("uncovered", "%s requires a value\n%s", args[i], usage)
+			}
+			if args[i] == "--since" {
+				sinceRef = args[i+1]
+			} else {
+				coverProfile = args[i+1]
+			}
+			i++
+		default:
+			return failCommandf("uncovered", "unknown argument: %s\n%s", args[i], usage)
+		}
+	}
+	if uncommitted == (sinceRef != "") || coverProfile == "" {
+		return failCommand("uncovered", usage)
+	}
+	g, err := loadGraph(".")
+	if err != nil {
+		return failCommand("uncovered", err.Error())
+	}
+	profile, err := readCoverProfile(coverProfile, g)
+	if err != nil {
+		return failCommand("uncovered", err.Error())
+	}
+	selector := "--since " + sinceRef
+	if uncommitted {
+		selector = "--uncommitted"
+	}
+	changed, err := search.ChangedGoLines(context.Background(), graphRoot(g), sinceRef)
+	if err != nil {
+		return failCommand("uncovered", err.Error())
+	}
+	report := search.Uncovered(selector, graphRoot(g), changed, profile)
+	if jsonMode {
+		return PrintJSON(okEnvelope("uncovered", selector, report, report.UncoveredLines))
+	}
+	fmt.Printf("Changed lines not executed by the coverage profile (%s): %d of %d changed lines in %d files.\n",
+		selector, report.UncoveredLines, report.ChangedLines, report.ChangedFiles)
+	for _, file := range report.Files {
+		var ranges []string
+		for _, r := range file.Ranges {
+			if r.Start == r.End {
+				ranges = append(ranges, strconv.Itoa(r.Start))
+			} else {
+				ranges = append(ranges, fmt.Sprintf("%d-%d", r.Start, r.End))
+			}
+		}
+		fmt.Printf("  %s: %s\n", file.File, strings.Join(ranges, ", "))
+	}
+	if len(report.FilesWithoutProfileData) > 0 {
+		fmt.Printf("No profile data for %d changed files (untested package or outside the build; use -coverpkg): %s\n",
+			len(report.FilesWithoutProfileData), strings.Join(report.FilesWithoutProfileData, ", "))
+	}
+	return 0
 }

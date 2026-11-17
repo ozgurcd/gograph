@@ -1883,6 +1883,9 @@ type UntestedResult struct {
 	PackageName       string `json:"package"`
 	TestResolution    string `json:"test_resolution"`
 	PossibleTestCount int    `json:"possible_test_count,omitempty"`
+	// Statements and ExecutedStatements are set with a coverage profile.
+	Statements         int  `json:"statements,omitempty"`
+	ExecutedStatements *int `json:"executed_statements,omitempty"`
 }
 
 // Untested returns functions and methods that have at least one non-test caller
@@ -1896,10 +1899,98 @@ func Untested(g *graph.Graph) []UntestedResult {
 }
 
 func (snapshot *Snapshot) Untested() []UntestedResult {
+	results, _ := snapshot.UntestedWith(UntestedOptions{})
+	return results
+}
+
+// UntestedOptions refines Untested.
+type UntestedOptions struct {
+	// ExcludeInterfaceMethods skips methods that implement an interface
+	// method (Error, String, MarshalJSON, ... or a repository interface the
+	// receiver implements); such methods are usually reached only through
+	// dynamic dispatch, which static attribution reports as possible.
+	ExcludeInterfaceMethods bool
+	// Coverage switches to runtime evidence: every production function with
+	// statements, none of them executed, is reported, whether or not it has
+	// static callers; functions executed at runtime are never reported.
+	Coverage *CoverageProfile
+}
+
+// UntestedSummary counts what UntestedWith left out.
+type UntestedSummary struct {
+	SkippedInterfaceMethods int `json:"skipped_interface_methods"`
+	ExecutedFunctions       int `json:"executed_functions,omitempty"`
+	FilesWithoutProfileData int `json:"files_without_profile_data,omitempty"`
+	UnmappedProfileFiles    int `json:"unmapped_profile_files,omitempty"`
+}
+
+// commonInterfaceMethods are standard-library interface methods that are
+// mostly called through the interface (error, fmt.Stringer, json.Marshaler,
+// sort.Interface, io.*, http.Handler, ...).
+var commonInterfaceMethods = map[string]bool{
+	"Error": true, "Unwrap": true, "Is": true, "As": true, "String": true, "GoString": true, "Format": true,
+	"MarshalJSON": true, "UnmarshalJSON": true, "MarshalText": true, "UnmarshalText": true,
+	"MarshalBinary": true, "UnmarshalBinary": true, "MarshalYAML": true, "UnmarshalYAML": true,
+	"Len": true, "Less": true, "Swap": true, "Read": true, "Write": true, "Close": true,
+	"ServeHTTP": true, "Scan": true, "Value": true, "LogValue": true,
+}
+
+// interfaceMethodIDs returns method symbols that implement a method of an
+// interface their receiver implements, plus methods with a common
+// standard-library interface method name.
+func interfaceMethodIDs(g *graph.Graph) map[string]bool {
+	interfaceMethods := make(map[string]map[string]bool)
+	for _, symbol := range g.Symbols {
+		if symbol.Kind == graph.KindInterface {
+			names := make(map[string]bool, len(symbol.InterfaceMethods))
+			for name := range symbol.InterfaceMethods {
+				names[name] = true
+			}
+			interfaceMethods[symbol.ID] = names
+		}
+	}
+	implemented := make(map[string]map[string]bool) // concrete type ID -> method names
+	for _, edge := range g.Implements {
+		for name := range interfaceMethods[edge.InterfaceID] {
+			if implemented[edge.ConcreteID] == nil {
+				implemented[edge.ConcreteID] = make(map[string]bool)
+			}
+			implemented[edge.ConcreteID][name] = true
+		}
+	}
+	ids := make(map[string]bool)
+	for _, symbol := range g.Symbols {
+		if symbol.Kind != graph.KindMethod || symbol.Receiver == "" {
+			continue
+		}
+		pkg, _, _ := strings.Cut(symbol.ID, "::")
+		receiver := strings.Trim(symbol.Receiver, "(*)")
+		if index := strings.Index(receiver, "["); index >= 0 {
+			receiver = receiver[:index]
+		}
+		if commonInterfaceMethods[symbol.Name] || implemented[pkg+"::"+receiver][symbol.Name] {
+			ids[symbol.ID] = true
+		}
+	}
+	return ids
+}
+
+// UntestedWith returns untested functions ranked by evidence strength: no
+// static test path at all before possible-only paths, then by caller count.
+func (snapshot *Snapshot) UntestedWith(options UntestedOptions) ([]UntestedResult, UntestedSummary) {
+	summary := UntestedSummary{}
 	g := snapshot.g
 	if g == nil {
-		return []UntestedResult{}
+		return []UntestedResult{}, summary
 	}
+	if options.Coverage != nil {
+		summary.UnmappedProfileFiles = options.Coverage.UnmappedFiles
+	}
+	var skipInterface map[string]bool
+	if options.ExcludeInterfaceMethods {
+		skipInterface = interfaceMethodIDs(g)
+	}
+	filesWithoutData := make(map[string]bool)
 	// Build exact and bounded-possible typed target sets. Parser-only edges
 	// retain the historical name attribution fallback only when the name has one
 	// production owner. Once a typed ID exists, never also apply its raw selector
@@ -1962,17 +2053,37 @@ func (snapshot *Snapshot) Untested() []UntestedResult {
 			continue
 		}
 
-		// Must have at least one non-test caller.
 		count := callerCountByID[s.ID]
 		if count == 0 {
 			count = callerCountByRaw[s.Name]
 		}
-		if count == 0 {
+		staticallyTested := testedIDs[s.ID] || testedNames[s.Name] || transitiveTests[s.ID].exactCount > 0
+		var statements, executed int
+		if options.Coverage != nil {
+			// Runtime evidence decides; static data is supporting evidence.
+			endLine := s.EndLine
+			if endLine < s.Line {
+				endLine = s.Line
+			}
+			var known bool
+			statements, executed, known = options.Coverage.statementsIn(s.File, s.Line, endLine)
+			if !known {
+				filesWithoutData[s.File] = true
+				continue
+			}
+			if statements == 0 {
+				continue
+			}
+			if executed > 0 {
+				summary.ExecutedFunctions++
+				continue
+			}
+		} else if count == 0 || staticallyTested {
+			// Static mode: called production code without an exact test path.
 			continue
 		}
-
-		// Must NOT appear in test edges.
-		if testedIDs[s.ID] || testedNames[s.Name] || transitiveTests[s.ID].exactCount > 0 {
+		if skipInterface[s.ID] {
+			summary.SkippedInterfaceMethods++
 			continue
 		}
 
@@ -1986,8 +2097,11 @@ func (snapshot *Snapshot) Untested() []UntestedResult {
 			resolution = "possible"
 			possibleCount = tests
 		}
+		if staticallyTested {
+			resolution = "exact"
+		}
 
-		results = append(results, UntestedResult{
+		result := UntestedResult{
 			StableID:          s.ID,
 			Name:              s.Name,
 			Kind:              string(s.Kind),
@@ -1997,25 +2111,36 @@ func (snapshot *Snapshot) Untested() []UntestedResult {
 			PackageName:       s.PackageName,
 			TestResolution:    resolution,
 			PossibleTestCount: possibleCount,
-		})
-	}
-
-	// Sort: highest caller count first (most-used untested functions are
-	// the highest risk), then alphabetically within the same count.
-	for i := 1; i < len(results); i++ {
-		for j := i; j > 0; j-- {
-			a, b := results[j-1], results[j]
-			if a.CallerCount < b.CallerCount || (a.CallerCount == b.CallerCount && a.Name > b.Name) {
-				results[j-1], results[j] = results[j], results[j-1]
-			} else {
-				break
-			}
 		}
+		if options.Coverage != nil {
+			result.Statements = statements
+			result.ExecutedStatements = &executed
+		}
+		results = append(results, result)
 	}
+	summary.FilesWithoutProfileData = len(filesWithoutData)
+
+	// Strongest evidence first: no static test path, then possible-only
+	// paths (often dynamic dispatch), then exact; within each, the most
+	// called functions first, then by name.
+	rank := map[string]int{"none": 0, "possible": 1, "exact": 2}
+	sort.SliceStable(results, func(i, j int) bool {
+		a, b := results[i], results[j]
+		if rank[a.TestResolution] != rank[b.TestResolution] {
+			return rank[a.TestResolution] < rank[b.TestResolution]
+		}
+		if a.CallerCount != b.CallerCount {
+			return a.CallerCount > b.CallerCount
+		}
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		return a.StableID < b.StableID
+	})
 	if results == nil {
 		results = []UntestedResult{}
 	}
-	return results
+	return results, summary
 }
 
 // indexedFileDigest returns the content digest recorded for an indexed file,

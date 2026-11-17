@@ -712,6 +712,20 @@ their results. When an in-package test and external `foo_test` package share the
 same graph ID, `--package` (MCP `package`) selects the exact Go package name.
 This is static attribution, not runtime or branch coverage.
 
+### uncovered
+```bash
+gograph uncovered --uncommitted|--since <ref> --coverprofile <file> [--json]
+```
+Lists the changed lines of non-test Go files that a `go test -coverprofile`
+run never executed, as exact line ranges per file (`gograph.uncovered.v1`).
+`--uncommitted` compares the working tree with `HEAD` and includes untracked
+files; `--since` compares it with a ref. Merged profiles are accepted; a block
+executed in any run counts as executed. Only lines inside coverage blocks count:
+declarations, comments and blank lines are never reported, and changed files
+without profile data (an untested package without `-coverpkg`, or a file outside
+the build) are listed separately. The MCP equivalent is `gograph_uncovered`,
+whose `coverprofile` must be a repository-relative file.
+
 ### identity
 ```bash
 gograph identity <symbol-or-stable-id> [--package name] [--json]
@@ -812,7 +826,7 @@ Returns top hotspots, worst package instability, highest complexity, reachabilit
 
 ### untested
 ```bash
-gograph untested [--pkg name] [--top N] [--exclude glob]... [--wide] [--json]
+gograph untested [--pkg name] [--top N] [--exclude glob]... [--wide] [--exclude-interface-methods] [--coverprofile file] [--json]
 ```
 Ranks called production functions and methods without an exact transitive path
 from any test. Direct selectors, local method values, and proof-backed concrete
@@ -825,6 +839,17 @@ bound. This is static attribution, not runtime coverage.
 Each `--exclude` is matched lexically against the repository-relative source
 path; use `prefix/**` for all descendants. The MCP equivalent is the `exclude`
 string array on `gograph_untested`.
+Rows rank `none` before `possible` (possible-only paths are often dynamic
+dispatch such as `error.Error`), then by caller count.
+`--exclude-interface-methods` skips methods that implement an interface method
+(common standard-library ones such as `Error`, `String` and `MarshalJSON`, or a
+repository interface the receiver implements) and reports how many it skipped.
+`--coverprofile <file>` switches to runtime evidence: it lists every production
+function with statements of which none executed in the `go test -coverprofile`
+output (merged profiles accepted), whether or not it has static callers, with
+the static resolution as supporting evidence; a function executed at runtime is
+never listed. MCP: `exclude_interface_methods` and a repository-relative
+`coverprofile`, which return `{summary, results}`.
 
 ---
 
@@ -1102,7 +1127,7 @@ transport has an undocumented analytical feature.
 | Calls/reachability | `callers` ↔ `gograph_callers`; `callees` ↔ `gograph_callees`; `impact` ↔ `gograph_impact`; `path` ↔ `gograph_path`; `orphans` ↔ `gograph_orphans` |
 | Types/tests | `implementers` ↔ `gograph_implementers`; `interfaces` ↔ `gograph_interfaces`; `fields` ↔ `gograph_fields`; `embeds` ↔ `gograph_embeds`; `constructors` ↔ `gograph_constructors`; `literals` ↔ `gograph_literals`; `usages` ↔ `gograph_usages`; `returnusage` ↔ `gograph_returnusage`; `schema` ↔ `gograph_schema`; `globals` ↔ `gograph_globals`; `mocks` ↔ `gograph_mocks`; `fixtures` ↔ `gograph_fixtures`; `identity` ↔ `gograph_identity` |
 | Packages/changes | `imports` ↔ `gograph_imports`; `deps` ↔ `gograph_deps`; `dependents` ↔ `gograph_dependents`; `changes` ↔ `gograph_changes` |
-| Extraction | `routes` ↔ `gograph_routes`; `sql` ↔ `gograph_sql`; `errors` ↔ `gograph_errors`; `envs` ↔ `gograph_envs`; `concurrency` ↔ `gograph_concurrency`; `httpcalls` ↔ `gograph_httpcalls`; `flow` ↔ `gograph_flow`; `tests` ↔ `gograph_tests`; `coverage` ↔ `gograph_coverage` |
+| Extraction | `routes` ↔ `gograph_routes`; `sql` ↔ `gograph_sql`; `errors` ↔ `gograph_errors`; `envs` ↔ `gograph_envs`; `concurrency` ↔ `gograph_concurrency`; `httpcalls` ↔ `gograph_httpcalls`; `flow` ↔ `gograph_flow`; `tests` ↔ `gograph_tests`; `coverage` ↔ `gograph_coverage`; `uncovered` ↔ `gograph_uncovered` |
 | Composed workflows | `explore` ↔ `gograph_explore`; `context` ↔ `gograph_context`; `plan` ↔ `gograph_plan`; `review` ↔ `gograph_review`; `risk` ↔ `gograph_risk`; `errorflow` ↔ `gograph_errorflow`; `trace` ↔ `gograph_trace`; `endpoint` ↔ `gograph_endpoint`; `explain` ↔ `gograph_explain`; `summary` ↔ `gograph_summary`; `untested` ↔ `gograph_untested` |
 | Quality/policy | `api`/`contract` ↔ `gograph_api`; `boundaries` ↔ `gograph_boundaries`; `boundaries --create` ↔ `gograph_boundaries_create`; `check` ↔ `gograph_check`; `complexity` ↔ `gograph_complexity`; `coupling` ↔ `gograph_coupling`; `diagram` ↔ `gograph_diagram`; `hotspot` ↔ `gograph_hotspot`; `godobj` ↔ `gograph_godobj`; `skeleton` ↔ `gograph_skeleton`; `mutate` ↔ `gograph_mutate`; `arity` ↔ `gograph_arity` |
 | Documentation/toolchain | `wiki` ↔ `gograph_wiki`; `doc` ↔ `gograph_doc` |

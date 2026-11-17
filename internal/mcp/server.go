@@ -575,8 +575,8 @@ func NewServer(
 			"installation":         installation.Inspect(version),
 			"prerequisite":         "The MCP server loads only a regular, repository-confined .gograph/graph.json with the current source-policy marker and " + startupGraph + ". Whole graph, saved-baseline, validation, MCP-reload, and workspace-overlay JSON reads reject artifacts larger than 512 MiB before allocation; startup recovery rebuilds an oversized graph from source. Its serialized root is ignored. Source-analysis tools compare selected-file content digests and the build/module fingerprint per call, then incrementally rebuild changed package ASTs after edits using the latest requested analysis mode and build tags selected at MCP startup; precise CHA/SSA enrichment remains repository-wide for selected project packages but does not build dependency SSA bodies, and separately attempts typed test-call attribution without making test compilation a prerequisite for production precision. Typed-only test targets are recomputed rather than restored as parser facts. Every refresh-backed result attaches gograph.graph-state.v1 provenance in _meta.gograph_graph_state. Each result is sent once, as compact JSON text without structuredContent: bounded row lists use gograph.results.v1, and native explain/changes retain their own schemas. A failed precise enrichment can therefore serve an explicitly marked in-memory fallback, and an operational refresh failure can serve the last trusted stale graph. Neither degraded state is silently published. A persisted graph from a different effective GOWORK or build selection is never served after a failed refresh. gograph_stale, gograph_changes without git_ref, and gograph_stats inspect that trusted persisted index, or the startup auto-build fallback when no usable artifact exists. Linked directories and linked or special files recognized as Go build inputs are excluded, while unrelated regular-file or dangling links with non-Go extensions do not block precision. Linked/non-regular Go tool metadata (go.mod, go.sum, go.work, go.work.sum, and vendor/modules.txt) is rejected before toolchain use. Applicable go.work members may be sibling modules beneath the nearest real Git checkout; without that boundary they remain confined beneath the workspace directory. Each member directory, go.mod, and optional go.sum is validated before cmd/go. Use the current binary for untrusted repositories because older binaries do not enforce this contract. Run `gograph build . --precise --tags=integration` for type-checked CHA/SSA enrichment of an explicitly tagged selection; MCP accepts the same --tags selector, adopts a newer precise graph, and re-runs precision after source changes without silently changing that context. `gograph doctor --json` reports persisted-artifact diagnostics. On constrained hosts, project MCP startup accepts `--memory-mode=low --max-memory=1GiB`; analysis_memory reports the requested/effective soft Go runtime memory target, which is not a hard RSS cap. Session lifecycle tools write local telemetry, gograph_session_cleanup deletes stale logs, gograph_boundaries_create writes configuration, and gograph_wiki writes documentation; wiki regeneration prunes only obsolete generator-owned package pages and preserves custom pages plus packages/README.md. Their repository-controlled paths use rooted regular-file operations that reject descendant links. Only calls explicitly selecting session_id append owner telemetry. Selected analytical calls require intention; unselected readers never require intentions or change another audit. Other callers' mutations/end/cleanup refuse naming the active session, while independent callers may create concurrently. MCP never inherits GOGRAPH_SESSION. Saved graph baselines must be regular files inside the project root, have no linked path component, and carry the exact current source-policy marker; their serialized root is ignored. gograph_doc rejects filesystem-shaped queries and source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees; .git and .gograph are excluded from that preflight. It invokes the local Go toolchain after repository source/metadata validation and is annotated open-world because dependency resolution follows the user's Go environment.",
 			"transport_contract": map[string]any{
-				"project_server_tools": 69,
-				"cli_equivalent_tools": 65,
+				"project_server_tools": 70,
+				"cli_equivalent_tools": 66,
 				"session_tools":        []string{"gograph_session_create", "gograph_session_end", "gograph_session_audit", "gograph_session_cleanup"},
 				"standard_mapping":     "CLI <command> maps to MCP gograph_<command>",
 				"special_mappings": map[string]string{
@@ -736,6 +736,7 @@ func NewServer(
 				"gograph_envs",
 				"gograph_tests",
 				"gograph_coverage",
+				"gograph_uncovered",
 				"gograph_identity",
 				"gograph_hotspot",
 				"gograph_httpcalls",
@@ -3076,9 +3077,22 @@ func initNewTools(
 		mcp.WithString("pkg", mcp.Description("Optional package name substring to filter results (e.g. 'cli', 'search')")),
 		mcp.WithInteger("top", mcp.Description("Limit results to top N by caller count (default: 20, 0 = all)")),
 		mcp.WithArray("exclude", mcp.WithStringItems(), mcp.Description("Repository-relative path globs to exclude; use prefix/** for all descendants")),
+		mcp.WithBoolean("exclude_interface_methods", mcp.Description("Skip methods implementing an interface method (Error, String, MarshalJSON, or a repository interface); the response then is {summary, results} with the skipped count")),
+		mcp.WithString("coverprofile", mcp.Description("Repository-relative go test -coverprofile file (merged profiles allowed): report production functions with no executed statement instead; the response then is {summary, results}")),
 	)
 	addTool(untestedTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		results := queriesForRequest(ctx).Untested()
+		options := search.UntestedOptions{}
+		if args, ok := request.Params.Arguments.(map[string]any); ok {
+			options.ExcludeInterfaceMethods = boolArg(args, "exclude_interface_methods")
+			if name, _ := args["coverprofile"].(string); name != "" {
+				profile, err := repositoryCoverProfile(graphForRequest(ctx), name)
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				options.Coverage = profile
+			}
+		}
+		results, summary := queriesForRequest(ctx).UntestedWith(options)
 
 		// Parse optional filters from MCP arguments.
 		pkg := ""
@@ -3116,12 +3130,52 @@ func initNewTools(
 		if top > 0 && len(results) > top {
 			results = results[:top]
 		}
+		if options.ExcludeInterfaceMethods || options.Coverage != nil {
+			if results == nil {
+				results = []search.UntestedResult{}
+			}
+			return jsonToolResult(struct {
+				Summary search.UntestedSummary  `json:"summary"`
+				Results []search.UntestedResult `json:"results"`
+			}{summary, results})
+		}
 
 		data, err := json.Marshal(results)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		return mcp.NewToolResultText(string(data)), nil
+	})
+
+	// Tool: gograph_uncovered
+	uncoveredTool := mcp.NewTool("gograph_uncovered",
+		mcp.WithDescription("Changed lines of non-test Go files that a go test -coverprofile run never executed, as exact line ranges per file (gograph.uncovered.v1). Lines outside coverage blocks are never reported; changed files without profile data are listed separately. WHEN TO USE: After running tests with -coverprofile, to see which lines of your change no test executed. RETURNS: files with uncovered ranges, changed and uncovered line counts."),
+		mcp.WithBoolean("uncommitted", mcp.Description("Compare the working tree with HEAD, including untracked files")),
+		mcp.WithString("since", mcp.Description("Git ref: compare the working tree with this ref")),
+		mcp.WithString("coverprofile", mcp.Required(), mcp.Description("Repository-relative go test -coverprofile file")),
+	)
+	addTool(uncoveredTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args, _ := request.Params.Arguments.(map[string]any)
+		uncommitted := boolArg(args, "uncommitted")
+		sinceRef, _ := args["since"].(string)
+		name, _ := args["coverprofile"].(string)
+		if uncommitted == (sinceRef != "") || name == "" {
+			return mcp.NewToolResultError("provide coverprofile and exactly one of uncommitted=true or since"), nil
+		}
+		g := graphForRequest(ctx)
+		profile, err := repositoryCoverProfile(g, name)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		selector := "--since " + sinceRef
+		if uncommitted {
+			selector = "--uncommitted"
+		}
+		changed, err := search.ChangedGoLines(ctx, g.Root, sinceRef)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return jsonToolResult(search.Uncovered(selector, g.Root, changed, profile))
 	})
 
 	// Tool: gograph_doc
@@ -3187,4 +3241,21 @@ func jsonToolResult(value any) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	return mcp.NewToolResultText(string(data)), nil
+}
+
+// repositoryCoverProfile reads a coverage profile confined to the repository.
+func repositoryCoverProfile(g *graph.Graph, name string) (*search.CoverageProfile, error) {
+	if g == nil || g.Root == "" {
+		return nil, fmt.Errorf("graph root is unavailable")
+	}
+	reader, err := sourcefs.Open(g.Root)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	data, err := reader.ReadRegularFileLimit(name, 512<<20)
+	if err != nil {
+		return nil, fmt.Errorf("read coverage profile %q (repository-relative regular file): %w", name, err)
+	}
+	return search.ParseCoverProfile(data, g)
 }
