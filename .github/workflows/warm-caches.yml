@@ -7,8 +7,8 @@ name: Warm caches
 #
 # setup-go saves a cache only under a key that does not exist yet, and its key
 # changes only with go.mod (Go version) or go.sum. Run then, right after the
-# merge, so the first copy saved for a new key already holds the race builds
-# instead of whatever a later vulnerability-only nightly run compiled.
+# merge, so the first copy saved for a new key already holds both the race and
+# the plain test builds that pull requests and the nightly run compile.
 on:
   push:
     branches: [ "main" ]
@@ -37,8 +37,9 @@ jobs:
 
       - uses: ozgurcd/lictor/.github/actions/go-toolchain@fda0c2afaa765f190b7e331113a71570db802199
 
-      # Mirrors the race and plain test builds of checks.yml's Run Race Tests.
+      # Mirrors checks.yml: the nightly and release runs race every package;
+      # pull requests race the concurrent packages and run the rest plain.
       - name: Compile test binaries without running them
         run: |
           go test -race -c -o "$RUNNER_TEMP/race-test-binaries/" ./...
-          go test -c -o "$RUNNER_TEMP/plain-test-binaries/" ./internal/mcpbundle ./cmd/mcpb-release
+          go test -c -o "$RUNNER_TEMP/plain-test-binaries/" ./...
