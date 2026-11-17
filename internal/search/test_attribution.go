@@ -368,38 +368,7 @@ func (snapshot *Snapshot) TransitiveTests(query, packageName string, exactOnly b
 	report.Status = "exact"
 	target := report.MatchedSymbols[0]
 
-	attribution, reverse := snapshot.attributionIndex()
-
-	best := map[string]reverseAttributionState{
-		target.StableID: {id: target.StableID, resolution: "exact"},
-	}
-	queue := []reverseAttributionState{best[target.StableID]}
-	enqueue := func(state reverseAttributionState) {
-		previous, exists := best[state.id]
-		if exists && !betterAttributionPath(state.resolution, state.depth, previous.resolution, previous.depth) {
-			return
-		}
-		best[state.id] = state
-		queue = append(queue, state)
-	}
-
-	for head := 0; head < len(queue); head++ {
-		state := queue[head]
-		current := best[state.id]
-		if current.resolution != state.resolution || current.depth != state.depth || current.next != state.next {
-			continue
-		}
-		if _, isTest := attribution.tests[state.id]; state.id != target.StableID && isTest {
-			continue
-		}
-		for _, link := range reverse[state.id] {
-			resolution := state.resolution
-			if link.resolution == "possible" {
-				resolution = "possible"
-			}
-			enqueue(reverseAttributionState{id: link.from, resolution: resolution, depth: state.depth + 1, next: state.id})
-		}
-	}
+	attribution, best := snapshot.reverseTestReach(target.StableID)
 
 	for id, state := range best {
 		symbol, ok := attribution.tests[id]
@@ -427,6 +396,45 @@ func (snapshot *Snapshot) TransitiveTests(query, packageName string, exactOnly b
 		return report.Tests[i].File < report.Tests[j].File
 	})
 	return report
+}
+
+// reverseTestReach walks attribution links backwards from targetID and returns
+// the best (exact before possible, then shallowest) path state for every node
+// that reaches it. Traversal stops at test entry points other than targetID.
+func (snapshot *Snapshot) reverseTestReach(targetID string) (attributionGraphData, map[string]reverseAttributionState) {
+	attribution, reverse := snapshot.attributionIndex()
+
+	best := map[string]reverseAttributionState{
+		targetID: {id: targetID, resolution: "exact"},
+	}
+	queue := []reverseAttributionState{best[targetID]}
+	enqueue := func(state reverseAttributionState) {
+		previous, exists := best[state.id]
+		if exists && !betterAttributionPath(state.resolution, state.depth, previous.resolution, previous.depth) {
+			return
+		}
+		best[state.id] = state
+		queue = append(queue, state)
+	}
+
+	for head := 0; head < len(queue); head++ {
+		state := queue[head]
+		current := best[state.id]
+		if current.resolution != state.resolution || current.depth != state.depth || current.next != state.next {
+			continue
+		}
+		if _, isTest := attribution.tests[state.id]; state.id != targetID && isTest {
+			continue
+		}
+		for _, link := range reverse[state.id] {
+			resolution := state.resolution
+			if link.resolution == "possible" {
+				resolution = "possible"
+			}
+			enqueue(reverseAttributionState{id: link.from, resolution: resolution, depth: state.depth + 1, next: state.id})
+		}
+	}
+	return attribution, best
 }
 
 func betterAttributionPath(resolution string, depth int, previousResolution string, previousDepth int) bool {

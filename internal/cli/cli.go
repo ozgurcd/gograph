@@ -2019,9 +2019,16 @@ func runConcurrency(args []string) int {
 	return printResults("concurrency", term, results, "No concurrency primitives found.")
 }
 
+const testsUsage = "usage: gograph tests [symbol] [--transitive [--package name] [--exact-only]]\n" +
+	"       gograph tests <symbol> --format run|go-test [--package name] [--exact-only]\n" +
+	"       gograph tests --uncommitted|--since <ref> [--format run|go-test] [--exact-only]"
+
 func runTests(args []string) int {
 	transitive := false
 	exactOnly := false
+	uncommitted := false
+	sinceRef := ""
+	format := ""
 	packageName := ""
 	var targets []string
 	for index := 0; index < len(args); index++ {
@@ -2030,6 +2037,20 @@ func runTests(args []string) int {
 			transitive = true
 		case "--exact-only":
 			exactOnly = true
+		case "--uncommitted":
+			uncommitted = true
+		case "--since":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "-") {
+				return failCommand("tests", "--since requires a git ref")
+			}
+			sinceRef = args[index+1]
+			index++
+		case "--format":
+			if index+1 >= len(args) || (args[index+1] != "run" && args[index+1] != "go-test") {
+				return failCommand("tests", "--format requires run or go-test")
+			}
+			format = args[index+1]
+			index++
 		case "--package":
 			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "-") {
 				return failCommand("tests", "--package requires an exact Go package name")
@@ -2043,19 +2064,34 @@ func runTests(args []string) int {
 			targets = append(targets, argument)
 		}
 	}
-	if len(targets) > 1 || transitive && len(targets) != 1 {
-		return failCommand("tests", "usage: gograph tests [symbol] [--transitive [--package name] [--exact-only]]")
-	}
-	if !transitive && (exactOnly || packageName != "") {
-		return failCommand("tests", "--package and --exact-only require --transitive")
+	changeMode := uncommitted || sinceRef != ""
+	switch {
+	case uncommitted && sinceRef != "":
+		return failCommand("tests", "use either --uncommitted or --since <ref>, not both")
+	case changeMode && (len(targets) > 0 || packageName != ""):
+		return failCommand("tests", "--uncommitted and --since select symbols from the diff; do not pass a symbol or --package\n"+testsUsage)
+	case len(targets) > 1:
+		return failCommand("tests", testsUsage)
+	case format != "" && !changeMode && len(targets) != 1:
+		return failCommand("tests", "--format requires a symbol, --uncommitted, or --since <ref>\n"+testsUsage)
+	case transitive && !changeMode && len(targets) != 1:
+		return failCommand("tests", testsUsage)
+	case !transitive && !changeMode && format == "" && (exactOnly || packageName != ""):
+		return failCommand("tests", "--package and --exact-only require --transitive, --format, --uncommitted, or --since")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
 		return failCommandf("tests", "failed to load graph: %v", err)
 	}
+	if changeMode {
+		return runTestSelectionForChanges(g, uncommitted, sinceRef, format, exactOnly)
+	}
 	term := ""
 	if len(targets) > 0 {
 		term = targets[0]
+	}
+	if format != "" {
+		return runTestSelectionForSymbol(g, term, packageName, format, exactOnly)
 	}
 	if transitive {
 		report := search.TransitiveTestsInPackage(g, term, packageName, exactOnly)
@@ -2108,6 +2144,104 @@ func runTests(args []string) int {
 		emptyMsg = fmt.Sprintf("No test functions found exercising '%s'.", term)
 	}
 	return printResults("tests", term, results, emptyMsg)
+}
+
+func runTestSelectionForSymbol(g *graph.Graph, term, packageName, format string, exactOnly bool) int {
+	snapshot := search.NewSnapshot(g)
+	report := snapshot.TransitiveTests(term, packageName, false)
+	switch report.Status {
+	case "not_found":
+		return failCommandf("tests", "product symbol %q was not found; use gograph identity <name> to resolve its stable ID", term)
+	case "ambiguous":
+		var candidates []string
+		for _, match := range report.MatchedSymbols {
+			candidates = append(candidates, fmt.Sprintf("%s [package=%s] %s:%d", match.StableID, match.Package, match.File, match.Line))
+		}
+		return failCommandf("tests", "product symbol %q is ambiguous; retry with a stable ID and, when IDs collide, --package: %s", term, strings.Join(candidates, "; "))
+	}
+	match := report.MatchedSymbols[0]
+	selection := snapshot.SelectTests(term, []search.SelectionInput{{StableID: match.StableID, Name: match.Name, File: match.File}}, exactOnly)
+	return printTestSelection(selection, format)
+}
+
+func runTestSelectionForChanges(g *graph.Graph, uncommitted bool, sinceRef, format string, exactOnly bool) int {
+	ref, selector := sinceRef, "--since "+sinceRef
+	if uncommitted {
+		ref, selector = "HEAD", "--uncommitted"
+	}
+	changes, err := search.ChangesByGitRef(g, graphRoot(g), ref)
+	if err != nil {
+		return failCommand("tests", err.Error())
+	}
+	if changes.Evaluation != "complete" {
+		return failCommand("tests", "cannot select tests from incomplete changes: "+strings.Join(changes.Diagnostics, "; "))
+	}
+	selection := search.NewSnapshot(g).SelectTests(selector, search.SelectionInputsFromChanges(changes), exactOnly)
+	return printTestSelection(selection, format)
+}
+
+// printTestSelection prints a runnable selection. "go-test" prints only
+// commands so the output can be executed line by line.
+func printTestSelection(selection search.TestSelection, format string) int {
+	if filesOnlyMode {
+		seen := make(map[string]bool)
+		var files []string
+		for _, pkg := range selection.Packages {
+			for _, test := range pkg.Tests {
+				if !seen[test.File] {
+					seen[test.File] = true
+					files = append(files, test.File)
+				}
+			}
+		}
+		sort.Strings(files)
+		for _, file := range files {
+			fmt.Println(file)
+		}
+		return 0
+	}
+	if jsonMode {
+		return PrintJSON(okEnvelope("tests", selection.Selector, selection, selection.TestCount))
+	}
+	if format == "go-test" {
+		for _, pkg := range selection.Packages {
+			for _, command := range pkg.Commands {
+				fmt.Println(command)
+			}
+		}
+		for _, unselected := range selection.Unselected {
+			fmt.Fprintf(os.Stderr, "unselected: %s (%s): %s\n", firstNonEmpty(unselected.StableID, unselected.Name), unselected.Change, unselected.Reason)
+		}
+		return 0
+	}
+	if len(selection.Roots) == 0 && len(selection.Unselected) == 0 {
+		fmt.Printf("No changed Go declarations for %s.\n", selection.Selector)
+		return 0
+	}
+	fmt.Printf("Tests for %s: %d tests in %d packages (exact %d, possible %d) from %d symbols.\n",
+		selection.Selector, selection.TestCount, len(selection.Packages), selection.ExactCount, selection.PossibleCount, len(selection.Roots))
+	for _, pkg := range selection.Packages {
+		fmt.Printf("\n%s\n", pkg.ImportPath)
+		if pkg.RunAll {
+			fmt.Println("  every test in the package is selected (no -run filter)")
+		}
+		for _, pattern := range pkg.RunPatterns {
+			fmt.Printf("  -run '%s'\n", pattern)
+		}
+		if pkg.BenchPattern != "" {
+			fmt.Printf("  -bench '%s'\n", pkg.BenchPattern)
+		}
+	}
+	if len(selection.Unselected) > 0 {
+		fmt.Printf("\nUnselected (%d):\n", len(selection.Unselected))
+		for _, unselected := range selection.Unselected {
+			fmt.Printf("  %s (%s): %s\n", firstNonEmpty(unselected.StableID, unselected.Name), unselected.Change, unselected.Reason)
+		}
+	}
+	if len(selection.Packages) > 0 {
+		fmt.Println("\nnext: add --format go-test to print runnable go test commands")
+	}
+	return 0
 }
 
 func runCoverage(args []string) int {
@@ -3711,10 +3845,16 @@ EXTRACTION
   envs [term]                Every os.Getenv / os.LookupEnv / supported Viper Get* read.
   concurrency [term]         Goroutine spawns, channel sends, and typed Mutex/RWMutex/
                              WaitGroup/Once calls (not receives or select statements).
-  tests [symbol] [--transitive] [--exact-only] [--package name]
-                             Direct attributed test calls by default. --transitive requires
-                             one product symbol and returns gograph.tests.v1 with every
-                             reaching test, exact/possible propagation, depth, and stable-ID path.
+  tests [symbol] [--transitive] [--exact-only] [--package name] [--uncommitted|--since <ref>] [--format run|go-test]
+                             Which tests to run for a symbol or a change. Direct attributed
+                             test calls by default. --transitive requires one product symbol
+                             and returns gograph.tests.v1 with every reaching test,
+                             exact/possible propagation, depth, and stable-ID path.
+                             --uncommitted, --since <ref>, or --format select every test that
+                             reaches the changed (or named) symbols and print, per package,
+                             an anchored -run pattern (gograph.test_selection.v1 with --json);
+                             --format go-test prints one runnable go test line per package,
+                             with the graph's -tags. --exact-only drops possible paths.
                              Direct lookup accepts Receiver.Method, including pointer receivers,
                              as well as a full stable symbol ID.
   coverage <test> [--exact-only] [--package name]
@@ -6040,4 +6180,13 @@ examples:
 	}
 	fmt.Println(text)
 	return 0
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

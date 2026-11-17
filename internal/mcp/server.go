@@ -2215,17 +2215,23 @@ func initNewTools(
 
 	// Tool: gograph_tests
 	testsTool := mcp.NewTool("gograph_tests",
-		mcp.WithDescription("Find test functions in *_test.go files that statically exercise a named symbol, or list all attributed test edges when no symbol is given. Direct mode accepts Receiver.Method (including pointer receivers) or a full stable symbol ID. By default this preserves the direct-edge result contract. Set transitive=true with a required symbol to return gograph.tests.v1 reverse attribution, including exact/possible resolution, depth, and a representative stable-ID path from every reaching test; exact_only omits uncertain paths and package disambiguates the selected product symbol. WHEN TO USE: Before editing a function — use transitive=true for router/callback-mediated coverage and direct mode for concrete test call sites. NOT TO USE: For test helper infrastructure (use gograph_fixtures); for running tests or proving runtime coverage. RETURNS: Direct result rows by default, or a versioned reverse-transitive report when requested."),
+		mcp.WithDescription("Find test functions in *_test.go files that statically exercise a named symbol, or list all attributed test edges when no symbol is given. Direct mode accepts Receiver.Method (including pointer receivers) or a full stable symbol ID. By default this preserves the direct-edge result contract. Set transitive=true with a required symbol to return gograph.tests.v1 reverse attribution, including exact/possible resolution, depth, and a representative stable-ID path from every reaching test; exact_only omits uncertain paths and package disambiguates the selected product symbol. WHEN TO USE: To choose which tests to run after an edit (uncommitted=true); before editing a function — use transitive=true for router/callback-mediated coverage and direct mode for concrete test call sites. NOT TO USE: For test helper infrastructure (use gograph_fixtures); for running tests or proving runtime coverage. Set uncommitted=true, since=<ref>, or select=true with a symbol to get gograph.test_selection.v1: the tests to run for a change, grouped per package, each with an anchored go test -run pattern and ready go test commands (with the graph's build tags). RETURNS: Direct result rows by default, or a versioned reverse-transitive report or test selection when requested."),
 		mcp.WithString("symbol", mcp.Description("The symbol name to find tests for (optional)")),
 		mcp.WithBoolean("transitive", mcp.Description("Return reverse-transitive test attribution; requires symbol")),
 		mcp.WithBoolean("exact_only", mcp.Description("With transitive=true, omit paths containing possible edges")),
-		mcp.WithString("package", mcp.Description("With transitive=true, optional exact Go package name used to disambiguate the selected symbol")),
+		mcp.WithString("package", mcp.Description("With transitive=true or select=true, optional exact Go package name used to disambiguate the selected symbol")),
+		mcp.WithBoolean("select", mcp.Description("With symbol: return gograph.test_selection.v1, the tests to run grouped per package with an anchored go test -run pattern and ready commands")),
+		mcp.WithBoolean("uncommitted", mcp.Description("Select the tests to run for all uncommitted changes (gograph.test_selection.v1)")),
+		mcp.WithString("since", mcp.Description("Git ref (e.g. 'main', 'HEAD~1'): select the tests to run for all changes since this ref (gograph.test_selection.v1)")),
 	)
 	addTool(testsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
 		term := ""
 		transitive := false
 		exactOnly := false
+		selectTests := false
+		uncommitted := false
+		sinceRef := ""
 		packageName := ""
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if s, ok := args["symbol"].(string); ok {
@@ -2233,7 +2239,38 @@ func initNewTools(
 			}
 			transitive = boolArg(args, "transitive")
 			exactOnly = boolArg(args, "exact_only")
+			selectTests = boolArg(args, "select")
+			uncommitted = boolArg(args, "uncommitted")
+			sinceRef, _ = args["since"].(string)
 			packageName, _ = args["package"].(string)
+		}
+		if uncommitted || sinceRef != "" {
+			if uncommitted && sinceRef != "" || strings.TrimSpace(term) != "" || packageName != "" {
+				return mcp.NewToolResultError("provide exactly one of symbol, uncommitted=true, or since; package applies only to symbol"), nil
+			}
+			ref, selector := sinceRef, "--since "+sinceRef
+			if uncommitted {
+				ref, selector = "HEAD", "--uncommitted"
+			}
+			changes, err := search.ChangesByGitRefContext(ctx, g, g.Root, ref)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			if changes.Evaluation != "complete" {
+				return mcp.NewToolResultError("cannot select tests from incomplete changes: " + strings.Join(changes.Diagnostics, "; ")), nil
+			}
+			return jsonToolResult(queriesForRequest(ctx).SelectTests(selector, search.SelectionInputsFromChanges(changes), exactOnly))
+		}
+		if selectTests {
+			if strings.TrimSpace(term) == "" {
+				return mcp.NewToolResultError("symbol must be a non-empty string when select=true"), nil
+			}
+			report := queriesForRequest(ctx).TransitiveTests(term, packageName, false)
+			if report.Status != "exact" {
+				return jsonToolResult(report)
+			}
+			match := report.MatchedSymbols[0]
+			return jsonToolResult(queriesForRequest(ctx).SelectTests(term, []search.SelectionInput{{StableID: match.StableID, Name: match.Name, File: match.File}}, exactOnly))
 		}
 		if transitive {
 			if strings.TrimSpace(term) == "" {
@@ -2247,7 +2284,7 @@ func initNewTools(
 			return mcp.NewToolResultText(string(data)), nil
 		}
 		if exactOnly || packageName != "" {
-			return mcp.NewToolResultError("exact_only and package require transitive=true"), nil
+			return mcp.NewToolResultError("exact_only and package require transitive=true, select=true, uncommitted=true, or since"), nil
 		}
 		results := search.Tests(g, term)
 		return formatResults(g, results), nil
@@ -3125,4 +3162,13 @@ func sanitizeGitRef(ref string) error {
 		return fmt.Errorf("invalid git reference: contains unsafe characters or is empty")
 	}
 	return nil
+}
+
+// jsonToolResult marshals a versioned report as compact JSON text.
+func jsonToolResult(value any) (*mcp.CallToolResult, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(string(data)), nil
 }
