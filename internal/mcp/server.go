@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -1214,13 +1215,13 @@ func NewServer(
 
 	// Tool: gograph_boundaries
 	boundariesTool := mcp.NewTool("gograph_boundaries",
-		mcp.WithDescription("Refresh source analysis and check package imports against a boundaries.json configuration. The required config defaults to .gograph/boundaries.json; explicit paths must remain inside the analyzed project, and every path component plus the final regular file is read through the rooted repository boundary. Create it with gograph_boundaries_create. WHEN TO USE: In CI gates or post-edit reviews to enforce layer separation. NOT TO USE: For unconstrained dependency exploration (use gograph_deps or gograph_coupling). RETURNS: Structured pass state and boundary violations."),
-		mcp.WithString("config", mcp.Description("Optional in-project path to a regular, non-linked boundary config (default .gograph/boundaries.json)")),
+		mcp.WithDescription("Refresh source analysis and check package imports against a boundaries.json configuration. The required config defaults to the committable gograph/boundaries.json, then .gograph/boundaries.json; explicit paths must remain inside the analyzed project, and every path component plus the final regular file is read through the rooted repository boundary. Create it with gograph_boundaries_create. WHEN TO USE: In CI gates or post-edit reviews to enforce layer separation. NOT TO USE: For unconstrained dependency exploration (use gograph_deps or gograph_coupling). RETURNS: Structured pass state and boundary violations."),
+		mcp.WithString("config", mcp.Description("Optional in-project path to a regular, non-linked boundary config (default gograph/boundaries.json, then .gograph/boundaries.json)")),
 	)
 	addTool(boundariesTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
 
-		configPath := ".gograph/boundaries.json"
+		configPath, _ := projectfile.PolicyPath(graphRoot(g), "boundaries.json")
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if cp, ok := args["config"].(string); ok && cp != "" {
 				configPath = cp
@@ -1240,8 +1241,9 @@ func NewServer(
 		}
 
 		resp := map[string]any{
-			"summary":  summary,
-			"findings": results,
+			"summary":     summary,
+			"policy_path": configPath,
+			"findings":    results,
 			"risk": map[string]any{
 				"pass":            pass,
 				"violation_count": len(results),
@@ -1254,12 +1256,12 @@ func NewServer(
 
 	// Tool: gograph_boundaries_create
 	boundariesCreateTool := mcp.NewTool("gograph_boundaries_create",
-		mcp.WithDescription("Create a baseline architecture boundary configuration from the repository's current package imports. Defaults to .gograph/boundaries.json under the graph root, uses repository-rooted regular-file creation, and refuses linked paths or overwrite. Mutating and non-idempotent; no network access. WHEN TO USE: Once when adopting boundary checks in an existing repository, then review and tighten the generated rules. NOT TO USE: To verify an existing configuration (use gograph_boundaries). RETURNS: The written config path or an error when the path is unsafe or already exists."),
-		mcp.WithString("config", mcp.Description("Optional in-project output path, absolute or repository-relative; linked components and existing entries are refused (default .gograph/boundaries.json)")),
+		mcp.WithDescription("Create a baseline architecture boundary configuration from the repository's current package imports. Defaults to the committable gograph/boundaries.json under the graph root, uses repository-rooted regular-file creation, and refuses linked paths or overwrite. Mutating and non-idempotent; no network access. WHEN TO USE: Once when adopting boundary checks in an existing repository, then review and tighten the generated rules. NOT TO USE: To verify an existing configuration (use gograph_boundaries). RETURNS: The written config path or an error when the path is unsafe or already exists."),
+		mcp.WithString("config", mcp.Description("Optional in-project output path, absolute or repository-relative; linked components and existing entries are refused (default gograph/boundaries.json)")),
 	)
 	addTool(boundariesCreateTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
-		configPath := ".gograph/boundaries.json"
+		configPath := path.Join(projectfile.CommittedPolicyDir, "boundaries.json")
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if value, ok := args["config"].(string); ok && value != "" {
 				configPath = value
@@ -1672,7 +1674,7 @@ func NewServer(
 		mcp.WithString("term", mcp.Description("Optional substring filter matched against functions, files, endpoints, and path steps")),
 		mcp.WithString("source", mcp.Description("Optional source kind: http_request, decoded_json, or environment")),
 		mcp.WithString("sink", mcp.Description("Optional sink kind: sql_query, process_execution, filesystem, or outbound_http")),
-		mcp.WithString("config", mcp.Description("Sanitizer policy path inside the graph root (default .gograph/flow.json when present)")),
+		mcp.WithString("config", mcp.Description("Policy path inside the graph root (default gograph/flow.json, else .gograph/flow.json, when present)")),
 		mcp.WithBoolean("no_tests", mcp.Description("Exclude functions in *_test.go files")),
 		mcp.WithNumber("max_work", mcp.Description("Optional propagation work budget; defaults to a value derived from the number of flow facts. An exhausted budget returns completeness.complete=false with partial findings.")),
 		mcp.WithNumber("context_depth", mcp.Description("Optional call-site frames kept per value (default 3, max 16). Deeper settings are more precise and need more work.")),
@@ -1752,10 +1754,11 @@ func NewServer(
 			Count        int                     `json:"count"`
 			Findings     []search.FlowResult     `json:"findings"`
 			Completeness search.FlowCompleteness `json:"completeness"`
+			PolicyPath   string                  `json:"policy_path,omitempty"`
 			Limitations  []string                `json:"limitations"`
 		}{
 			Query: term, Count: len(results), Findings: results, Completeness: report.Completeness,
-			Limitations: limitations,
+			PolicyPath: report.PolicyPath, Limitations: limitations,
 		}
 		data, err := json.Marshal(response)
 		if err != nil {
@@ -2865,15 +2868,17 @@ func initNewTools(
 		if root == "" {
 			root = "."
 		}
+		boundariesPolicy, _ := projectfile.PolicyPath(root, "boundaries.json")
 		cfg := &search.CheckConfig{
 			Checks: map[string]any{
 				"boundaries":     "warn",
 				"max_arity":      map[string]any{"level": "warn", "value": 6.0},
 				"max_complexity": map[string]any{"level": "warn", "value": 20.0},
 			},
-			BoundariesConfig: filepath.Join(root, ".gograph", "boundaries.json"),
+			BoundariesConfig: filepath.Join(root, filepath.FromSlash(boundariesPolicy)),
 		}
-		data, _, foundConfig, err := projectfile.ReadConfig(root, configPath, ".gograph/checks.json")
+		defaultChecks, _ := projectfile.PolicyPath(root, "checks.json")
+		data, _, foundConfig, err := projectfile.ReadConfig(root, configPath, defaultChecks)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to read config: %v", err)), nil
 		}

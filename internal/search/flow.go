@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
+	"github.com/ozgurcd/gograph/internal/projectfile"
 	"github.com/ozgurcd/gograph/internal/sourcefs"
 )
 
@@ -97,6 +99,8 @@ type FlowConfig struct {
 	Sanitizers []FlowSanitizer    `json:"sanitizers"`
 	Sources    []FlowCustomSource `json:"sources,omitempty"`
 	Sinks      []FlowCustomSink   `json:"sinks,omitempty"`
+	// loadedFrom is the policy file path that was read, if any.
+	loadedFrom string
 }
 
 func (config FlowConfig) sourceKinds() map[string]bool {
@@ -206,6 +210,8 @@ type FlowWorkShare struct {
 type FlowReport struct {
 	Results      []FlowResult     `json:"findings"`
 	Completeness FlowCompleteness `json:"completeness"`
+	// PolicyPath is the policy file used, empty when none was read.
+	PolicyPath string `json:"policy_path,omitempty"`
 }
 
 // DefaultFlowWork is the work budget used when FlowOptions.MaxWork is zero.
@@ -276,13 +282,17 @@ func FlowWithReport(g *graph.Graph, options FlowOptions) (FlowReport, error) {
 		completeness.TopFunctions = analyzer.topWork(10)
 		completeness.Reason = fmt.Sprintf("flow analysis incomplete: work budget of %d propagation steps exhausted before a fixed point at context depth %d; findings are a partial subset. Rerun with a larger --max-work (MCP max_work), a smaller --context-depth, or narrow with --package/--source/--sink/--no-tests; top_functions lists where the work went", analyzer.maxWork, analyzer.contextDepth)
 	}
-	return FlowReport{Results: analyzer.findings(), Completeness: completeness}, nil
+	return FlowReport{Results: analyzer.findings(), Completeness: completeness, PolicyPath: config.loadedFrom}, nil
 }
 
 func loadFlowConfig(g *graph.Graph, requestedPath string) (FlowConfig, error) {
 	optional := requestedPath == ""
 	if requestedPath == "" {
-		requestedPath = ".gograph/flow.json"
+		// Committed gograph/flow.json first, then legacy .gograph/flow.json.
+		requestedPath = path.Join(projectfile.LegacyPolicyDir, "flow.json")
+		if g != nil && g.Root != "" {
+			requestedPath, _ = projectfile.PolicyPath(g.Root, "flow.json")
+		}
 	}
 	resolvedPath, err := boundaryConfigPath(g, requestedPath)
 	if err != nil {
@@ -358,6 +368,7 @@ func loadFlowConfig(g *graph.Graph, requestedPath string) (FlowConfig, error) {
 			}
 		}
 	}
+	config.loadedFrom = filepath.ToSlash(requestedPath)
 	return config, nil
 }
 

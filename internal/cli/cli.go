@@ -2,10 +2,13 @@
 package cli
 
 import (
+	"path"
+
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ozgurcd/gograph/internal/projectfile"
 	"go/build"
 	"go/token"
 	"os"
@@ -667,7 +670,7 @@ SECURITY FLOW — potential untrusted data paths:
   --no-tests          production-only scan (tests are included by default)
   --package <path>    analyze only these import paths (prefix/... for descendants; repeatable)
   --config <path>     policy: return or argument sanitizers, custom sources and sinks;
-                      defaults to .gograph/flow.json when present
+                      defaults to gograph/flow.json, else .gograph/flow.json
 
 ━━━ OUTPUT FORMAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Query and composed-analysis commands document JSON individually. Files-only is
@@ -786,7 +789,7 @@ validate --repo PATH --binding-json JSON --json
                        current persisted graph; never builds or refreshes
 
 QUERY COMMANDS:
-boundaries [--config PATH] : verify the persisted graph against .gograph/boundaries.json by default;
+boundaries [--config PATH] : verify the persisted graph against gograph/boundaries.json (committable), else .gograph/boundaries.json by default;
                        run stale/build first, or select another confined policy with --config PATH
 boundaries --create [--config PATH] : auto-generate a baseline boundaries config from the current graph
 callees <fn> [--no-tests] [--depth N]: what fn calls (depth=1 direct; --depth 2+ expands N hops, max 10)
@@ -3733,7 +3736,8 @@ INTERFACES & TYPES
   fixtures <pkg>             Find test helper structs and functions in test files.
 
 CODE QUALITY
-  check [--config]           Run static policy checks using .gograph/checks.json.
+  check [--config]           Run static policy checks using gograph/checks.json (committable),
+                             else .gograph/checks.json; prints the policy files used.
   check --uncommitted        Run checks, including uncommitted code.
   check --since <ref|graph.json>
                              Run checks against a Git ref or saved graph baseline.
@@ -3752,12 +3756,13 @@ CODE QUALITY
                              Subcommands: save <name>, diff <name>, list, drop <name>.
                              Snapshot files/directories must be real repository entries.
   boundaries [--config PATH]  Verify package architecture constraints. The default policy file is
+                             the committable gograph/boundaries.json, else the git-ignored
                              .gograph/boundaries.json; use --config PATH for another
-                             repository-confined policy file.
+                             repository-confined policy file. Prints the policy file used.
                              Reads the persisted graph; run stale/build before enforcement.
   boundaries --create [--config PATH]
-                             Auto-generate a baseline boundaries.json from the current repo;
-                             refuses linked output paths and overwrite.
+                             Auto-generate a baseline gograph/boundaries.json from the current
+                             repo; refuses linked output paths and overwrite.
   flow [term] [--source kind] [--sink kind] [--config path] [--no-tests] [--package path]... [--max-work N] [--context-depth N]
                              Find potential untrusted-data paths to SQL query text,
                              process execution, filesystem access, or outbound HTTP.
@@ -3767,7 +3772,7 @@ CODE QUALITY
                              findings parameter_only, at most medium severity.
                              Tests are included by default; --no-tests excludes them.
                              --package limits analysis to import paths (prefix/... too).
-                             Optional policy: .gograph/flow.json; changes apply without
+                             Optional policy: gograph/flow.json, else .gograph/flow.json; changes apply without
                              rebuilding graph.json. Schema: {"sanitizers":[{"function":
                                "pkg.Clean","for":["filesystem"]},{"function":"pkg.Check",
                                "argument":0}],"sources":[{"function":"pkg.Read","kind":
@@ -4176,6 +4181,7 @@ func runFlow(args []string) int {
 	if jsonMode {
 		envelope := okEnvelope("flow", options.Term, results, len(results))
 		envelope.Completeness = report.Completeness
+		envelope.Summary = map[string]string{"policy_path": report.PolicyPath}
 		code := PrintJSON(envelope)
 		if code == 0 && incomplete {
 			return exitStale
@@ -4213,6 +4219,9 @@ func runFlow(args []string) int {
 			}
 		}
 		return exit()
+	}
+	if report.PolicyPath != "" {
+		fmt.Printf("policy: %s\n", report.PolicyPath)
 	}
 	if len(results) == 0 {
 		fmt.Println("No potential untrusted-data flows found.")
@@ -5608,7 +5617,7 @@ func runFixtures(args []string) int {
 }
 
 func runBoundaries(args []string) int {
-	configPath := ".gograph/boundaries.json"
+	configPath := ""
 	createMode := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -5628,6 +5637,14 @@ func runBoundaries(args []string) int {
 	if err != nil {
 		return failCommandf("boundaries", "Error loading graph: %v", err)
 	}
+	if configPath == "" {
+		// Committed gograph/boundaries.json first, then legacy .gograph/;
+		// --create writes the committed location.
+		configPath, _ = projectfile.PolicyPath(graphRoot(g), "boundaries.json")
+		if createMode {
+			configPath = path.Join(projectfile.CommittedPolicyDir, "boundaries.json")
+		}
+	}
 
 	if createMode {
 		if err := search.CreateBoundaries(g, configPath); err != nil {
@@ -5639,7 +5656,10 @@ func runBoundaries(args []string) int {
 
 	results, err := search.Boundaries(g, configPath)
 	if err != nil {
-		return failCommandf("boundaries", "Boundaries error for %q: %v (default: .gograph/boundaries.json; override with --config PATH)", configPath, err)
+		return failCommandf("boundaries", "Boundaries error for %q: %v (default: gograph/boundaries.json, then .gograph/boundaries.json; create one with --create or override with --config PATH)", configPath, err)
+	}
+	if !jsonMode && !filesOnlyMode {
+		fmt.Printf("policy: %s\n", configPath)
 	}
 	code := printResults("boundaries", configPath, results, "No boundary violations found. Architecture is clean!")
 	if len(results) > 0 {

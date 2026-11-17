@@ -367,7 +367,7 @@ deduplicated **file** census, not every row.
 <details>
 <summary><strong>Architecture Boundary Enforcement</strong></summary>
 
-Define boundaries in `.gograph/boundaries.json`:
+Define boundaries in the committable `gograph/boundaries.json` (`.gograph/boundaries.json`, which gograph git-ignores, is still read when no committed file exists):
 ```json
 {
   "layers": [
@@ -378,7 +378,7 @@ Define boundaries in `.gograph/boundaries.json`:
 ```
 Run `gograph stale` (and rebuild when stale) before `gograph boundaries`; the
 CLI evaluates the persisted graph and exits with code 1 on violation. The
-default policy is `.gograph/boundaries.json`; use `--config PATH` for another
+default policy is `gograph/boundaries.json`, else `.gograph/boundaries.json`; use `--config PATH` for another
 regular, repository-confined policy. MCP uses the same evaluation after its
 normal source refresh. Works in CI/CD.
 </details>
@@ -386,7 +386,7 @@ normal source refresh. Works in CI/CD.
 <details>
 <summary><strong>Security flow sanitizer policy</strong></summary>
 
-`gograph flow` includes test files by default; add `--no-tests` for production-only results. It automatically reads `.gograph/flow.json` when present, or accepts `--config <path>` for another JSON file inside the graph root. Sanitizers apply to a function's return value and can be scoped to selected sink kinds:
+`gograph flow` includes test files by default; add `--no-tests` for production-only results. It automatically reads `gograph/flow.json` (else `.gograph/flow.json`) when present, or accepts `--config <path>` for another JSON file inside the graph root. Sanitizers apply to a function's return value and can be scoped to selected sink kinds:
 
 ```json
 {

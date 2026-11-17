@@ -234,7 +234,7 @@ selected project, with no linked path component and the exact current
 source-policy marker. Their serialized `root` is ignored in favor of the
 selected project root.)*
 
-### Config Example for .gograph/checks.json:
+### Config Example for gograph/checks.json:
 ```json
 {
   "checks": {
@@ -633,7 +633,7 @@ gograph flow "CreateUser" --json
 
 Test files are included by default; use `--no-tests` for a production-only review. Text output shows severity, confidence, and path steps. `--json` returns structured findings, and `--files-only` returns the deduplicated source and sink files.
 
-Sanitizer policy is read from `.gograph/flow.json` at query time, so policy edits do not require `gograph build`:
+Policy is read from `gograph/flow.json` (else `.gograph/flow.json`) at query time, so policy edits do not require `gograph build`:
 
 ```json
 {
@@ -863,7 +863,7 @@ Affected symbols: 2 modified, 1 new, 0 deleted, 0 excluded, 0 unknown
 ```
 
 ### 20. Architecture Boundary Enforcement
-You can configure `gograph` to actively enforce clean architecture by defining boundaries in `.gograph/boundaries.json`:
+You can configure `gograph` to actively enforce clean architecture by defining boundaries in the committable `gograph/boundaries.json` (legacy `.gograph/boundaries.json` is read when no committed file exists):
 ```json
 {
   "layers": [
@@ -886,7 +886,7 @@ gograph stale                    # rebuild first when this exits 2
 gograph boundaries
 ```
 The CLI reads the persisted graph and defaults to
-`.gograph/boundaries.json`; use `--config PATH` for another confined policy.
+`gograph/boundaries.json`, else `.gograph/boundaries.json`; use `--config PATH` for another confined policy.
 If a violation is found (e.g., `handler` imports `internal/repository`
 directly), it exits with code 1 and prints the exact file that violated the
 rule. MCP refreshes before applying the same evaluation.
@@ -1006,7 +1006,7 @@ The current suite registers 69 MCP endpoints: 65 query, analysis, and workflow t
 - **`gograph_source`**: Repository-confined source for a named function, method, struct, interface, type, variable, or constant. It refuses absent or ambiguous symbols (with candidates), unsafe/unreadable source, invalid ranges, and source over 65536 bytes (with its size).
 - **`gograph_orphans`**
 - **`gograph_impact`**: Identity-safe blast radius with exact/possible path labels. Choose exactly one mode: `symbol`, `uncommitted=true`, or `since=<ref>`. Optional `exact_only=true` excludes any path depending on possible evidence. Default conservative results use the shared bounded-page contract. `mermaid=true` applies to all three modes and renders possible paths as dotted edges; do not combine Mermaid with limit/cursor.
-- **`gograph_boundaries`**: Verifies package architecture constraints from a regular, non-linked file inside the selected project (default `.gograph/boundaries.json`, override with `config`). MCP refreshes source analysis before evaluation; CLI reads the persisted graph and should be preceded by `stale`/`build`. Returns structured output.
+- **`gograph_boundaries`**: Verifies package architecture constraints from a regular, non-linked file inside the selected project (default `gograph/boundaries.json`, else `.gograph/boundaries.json`; override with `config`). MCP refreshes source analysis before evaluation; CLI reads the persisted graph and should be preceded by `stale`/`build`. Returns structured output.
 - **`gograph_boundaries_create`**: Creates a regular repository-rooted baseline boundary config, rejecting linked ancestors/finals and overwrite; equivalent to CLI `boundaries --create`.
 - **`gograph_api`**: Compares public-facing contract and integration surface
   drift against a Git reference or a saved graph path ending in `.json`. Saved

@@ -569,7 +569,7 @@ func TestMCPBoundaryCreateAndSessionsUseGraphRoot(t *testing.T) {
 	if !strings.Contains(created, `"created":true`) {
 		t.Fatalf("unexpected boundaries_create response: %s", created)
 	}
-	if _, err := os.Stat(filepath.Join(root, ".gograph", "boundaries.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "gograph", "boundaries.json")); err != nil {
 		t.Fatalf("boundary config was not written under graph root: %v", err)
 	}
 

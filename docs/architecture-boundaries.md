@@ -4,7 +4,8 @@
 current graph. It acts as an automated guardrail against new indexed imports
 that violate the repository's configured layers.
 
-The default policy path is `.gograph/boundaries.json`; pass `--config PATH` to
+The default policy path is the committable `gograph/boundaries.json`, then the
+git-ignored `.gograph/boundaries.json`; the command prints which file it used. Pass `--config PATH` to
 select another regular, repository-confined policy. The CLI deliberately reads
 the trusted persisted graph, so run `gograph stale` and rebuild before
 enforcement. MCP `gograph_boundaries` performs the same evaluation after its
@@ -39,7 +40,7 @@ This will automatically:
 2. Record selected non-standard-library imports between those layers. External
    imports are deduplicated to host/owner patterns such as
    `github.com/gin-gonic/**`.
-3. Generate `.gograph/boundaries.json`. The output must stay inside the graph
+3. Generate `gograph/boundaries.json` (commit it so every clone enforces the same policy). The output must stay inside the graph
    root; only real parent directories are created, and creation rejects linked
    or special entries and refuses to overwrite an existing file.
 
@@ -51,7 +52,7 @@ yield **0 violations**.
 ## 2. Enforcing Tech Debt Reduction
 
 Once you have your baseline `boundaries.json`, you can systematically eliminate tech debt:
-1. Open `.gograph/boundaries.json`.
+1. Open `gograph/boundaries.json`.
 2. Locate the `may_import` array for the `internal/handler` layer.
 3. Find an illegal import (e.g., `"internal/repository/**"`) and **delete it**.
 4. Run `gograph boundaries`.

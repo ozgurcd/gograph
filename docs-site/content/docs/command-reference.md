@@ -670,7 +670,7 @@ Finds potential paths from untrusted inputs to security-sensitive operations. Te
   - `filesystem`: path arguments to common `os` file operations.
   - `outbound_http`: URL/request arguments passed to package-level `net/http` calls, request constructors, and `Do` methods.
 - **Output**: Severity, confidence, source and sink locations, and source-to-sink path steps. `--json` returns structured `FlowResult` objects; `--files-only` returns deduplicated source and sink files.
-- **Sanitizers**: The command automatically reads `.gograph/flow.json` when present. `--config` selects another JSON file inside the graph root. Policies apply to return values and may be sink-scoped:
+- **Sanitizers**: The command automatically reads `gograph/flow.json` (committable), else `.gograph/flow.json`, when present, and prints the policy file it used. `--config` selects another JSON file inside the graph root. Policies apply to return values and may be sink-scoped:
 
   ```json
   {
@@ -933,7 +933,7 @@ Enforces package modularity boundaries.
 - **Options**:
   - `--config path`: Evaluates package import relationships against an
     in-project, regular, non-linked `boundaries.json` (default:
-    `.gograph/boundaries.json`). Absolute and repository-relative in-project
+    `gograph/boundaries.json`, else `.gograph/boundaries.json`; `--create` writes `gograph/boundaries.json`). Absolute and repository-relative in-project
     paths are accepted.
   - `--create`: Exclusively creates a starting boundary map at that path from
     current package imports. Only real parent directories are created; links,
