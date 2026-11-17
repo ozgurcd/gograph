@@ -1,7 +1,7 @@
 ---
 name: gograph
 version: "0.1.0"
-description: "Go repository intelligence for Claude Code. Use when reading, navigating, editing, reviewing, or refactoring a Go codebase. Exposes 65 query, analysis, and workflow capabilities through the local gograph MCP server, including bounded first-call exploration, AST-aware call graphs, blast-radius analysis, impact, and security-flow candidates."
+description: "Go repository intelligence for Claude Code. Use when reading, navigating, editing, reviewing, or refactoring a Go codebase, and to choose which tests to run for a change. Exposes 66 query, analysis, and workflow capabilities through the local gograph MCP server, including bounded first-call exploration, AST-aware call graphs, blast-radius analysis, runnable test selection (go test -run per package), impact, and security-flow candidates."
 argument-hint: "gograph stats | gograph plan UserService.Login | gograph review --uncommitted"
 allowed-tools: Bash, Read
 homepage: https://gograph.identuum.ai
@@ -13,7 +13,7 @@ user-invocable: true
 
 # gograph: Go Repository Intelligence
 
-`gograph` is a local, AST-aware Go code intelligence engine that exposes 65 query, analysis, and workflow capabilities over the Model Context Protocol (69 endpoints including session lifecycle). It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) a structural view backed by a persisted or in-memory graph. `gograph_explore` offers compact, standard, and deep bounded discovery over one shared native result: compact preserves identity/role and complete counts, standard includes source/direct evidence and exact impact, and deep adds depth-3 exact evidence, package context, and explanation. `gograph_context` remains the focused known-symbol bundle. Actual savings depend on the task.
+`gograph` is a local, AST-aware Go code intelligence engine that exposes 66 query, analysis, and workflow capabilities over the Model Context Protocol (70 endpoints including session lifecycle). It gives terminal LLMs (Claude Code, Cursor agents, OpenClaw) a structural view backed by a persisted or in-memory graph. `gograph_explore` offers compact, standard, and deep bounded discovery over one shared native result: compact preserves identity/role and complete counts, standard includes source/direct evidence and exact impact, and deep adds depth-3 exact evidence, package context, and explanation. `gograph_context` remains the focused known-symbol bundle. Actual savings depend on the task.
 
 `gopls` provides live compiler-backed navigation, diagnostics, implementations,
 refactoring, and experimental MCP support. `gograph` complements it with a
@@ -87,8 +87,15 @@ Packaged and generated registrations keep refresh persistence off by default.
 6. **After editing Go code**, invoke `gograph_review` with `uncommitted=true`;
    MCP refreshes source analysis before the review. If the task requires a
    durable precise artifact for later CLI or server processes, run CLI
-   `gograph build . --precise` first. Run the repository's required tests and
-   checks separately.
+   `gograph build . --precise` first.
+7. **To choose which tests to run for the change**, invoke `gograph_tests`
+   with `uncommitted=true` (CLI `gograph tests --uncommitted --format go-test`)
+   and run only the per-package `go test -run` commands it returns; add
+   `max_depth=3` (`--max-depth 3`) to keep nearby tests when the selection is
+   broad, and `exact_only=true` to drop dynamic-dispatch paths. For one symbol
+   use `symbol=<symbol>` with `select=true`, or `transitive=true` to list
+   reaching tests in bounded pages. Still run the repository's required
+   checks before finishing.
 
 MCP responses are compact JSON text, sent once; graph provenance is in
 `_meta.gograph_graph_state`, and a stale or degraded graph is also named in the
@@ -132,12 +139,13 @@ new declarations. CLI uses the same rules.
 | `gograph_errorflow` with `query=<term>` | Error propagation paths |
 | `gograph_flow` | Potential HTTP/JSON/env paths to SQL, process, filesystem, and outbound HTTP sinks |
 | `gograph_changes` | Declaration add/modify/delete/excluded/unknown census against persisted graph or `git_ref`; require `evaluation=complete` before treating the result as exhaustive |
-| `gograph_tests` with `symbol=<symbol>, transitive=true` | Every test statically reaching a symbol, with exact/possible path and depth; omit `transitive` for direct edges, where `Receiver.Method` and stable IDs are accepted |
+| `gograph_tests` with `uncommitted=true` (or `since=<ref>`, or `symbol=<symbol>, select=true`) | Which tests to run for a change: per-package anchored `go test -run` patterns and ready commands; `max_depth=3` keeps nearby tests |
+| `gograph_tests` with `symbol=<symbol>, transitive=true` | Tests statically reaching a symbol: summary by depth first, then 50 per page, nearest first (`limit`, `cursor`, `max_depth`); omit `transitive` for direct edges, where `Receiver.Method` and stable IDs are accepted |
 | `gograph_coverage` with `test=<TestFunc>` | Transitive product symbols one unambiguous test statically reaches; exact/possible paths; optional `package` disambiguation |
 | `gograph_identity` with `symbol=<symbol-or-stable-id>` | Print or re-resolve canonical symbol identity without silently choosing ambiguity; optional `package` disambiguation |
 | `gograph_check` | Policy checks, including changed-route tests, coverage, orphans, API drift, arity, and complexity |
 
-The live surface is 69 MCP endpoints; `gograph_capabilities` is the tested source of truth. `gograph_flow` is path-insensitive with bounded call-site matching; use it for security review leads, not exploitability proof.
+The live surface is 70 MCP endpoints; `gograph_capabilities` is the tested source of truth. `gograph_flow` is path-insensitive with bounded call-site matching; use it for security review leads, not exploitability proof.
 Common list tools (including query, callers/callees, impact, types/usages,
 errors/envs, and httpcalls) default to 100 rows, maximum 200, within a 16 KiB
 native-page budget. Inspect `total`, `returned`, `truncated`, and `next_cursor`;

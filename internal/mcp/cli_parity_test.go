@@ -66,7 +66,7 @@ func TestCLIAndMCPQueryAnalysisParity(t *testing.T) {
 		"workspace":         true, // namespace with its own four-tool workspace MCP server
 		"add-claude-plugin": true, "hook-guard": true,
 		"help": true, "--help": true, "-h": true,
-		"version": true, "--version": true, "-v": true,
+		"version": true, "--version": true, "-v": true, "whatsnew": true,
 	}
 	aliases := map[string]string{"contract": "api", "--session": "session"}
 	for command := range cliCommands {

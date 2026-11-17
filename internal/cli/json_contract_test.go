@@ -287,7 +287,7 @@ func TestRunCheckJSONSuccessAndPolicyFailureUseEnvelope(t *testing.T) {
 		if report.Status != string(search.CheckPassed) || len(report.Findings) != 0 {
 			t.Fatalf("report = %+v", report)
 		}
-		requireJSONContractFields(t, fields, "schema_version", "command", "status", "count", "results", "graph_state")
+		requireJSONContractFields(t, fields, "schema_version", "command", "status", "count", "results", "summary", "graph_state")
 	})
 
 	t.Run("failed policy preserves exit one", func(t *testing.T) {
@@ -314,7 +314,7 @@ func TestRunCheckJSONSuccessAndPolicyFailureUseEnvelope(t *testing.T) {
 		if report.Status != string(search.CheckFailed) || len(report.Findings) != 1 {
 			t.Fatalf("report = %+v", report)
 		}
-		requireJSONContractFields(t, fields, "schema_version", "command", "status", "count", "results", "graph_state")
+		requireJSONContractFields(t, fields, "schema_version", "command", "status", "count", "results", "summary", "graph_state")
 	})
 }
 

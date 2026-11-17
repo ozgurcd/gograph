@@ -316,7 +316,7 @@ func matchesSymbol(funcName string, sym *graph.SymbolNode) bool {
 	}
 	// These spellings come from source facts, not a case-insensitive user query.
 	// Preserve Go identifier case while accepting pointer/receiver notation.
-	normalize := strings.NewReplacer("(", "", ")", "", "*", "", " ", "")
+	normalize := selectorNormalizer
 	name := normalize.Replace(funcName)
 	if name == sym.PackageName+"."+sym.Name {
 		return true

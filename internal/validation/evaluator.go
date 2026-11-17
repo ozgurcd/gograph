@@ -150,6 +150,16 @@ func evaluatePredicate(binding Binding, snapshot Snapshot) (Evaluation, Evidence
 			return cannotEvaluate(ReasonPrecisionInsufficient, "implementation_analysis_not_precise", "implementation absence requires precise-complete analysis"), evidence
 		}
 		return evaluateTypeImplements(binding, snapshot)
+	case PredicateImportsOnlyFrom:
+		return evaluateImportsOnlyFrom(binding, snapshot)
+	case PredicateCallersOnlyFrom, PredicateCallArgConstant:
+		if actualPrecision != PrecisionPrecise {
+			return cannotEvaluate(ReasonPrecisionInsufficient, "call_resolution_not_precise", "call-site policies require precise-complete call resolution"), evidence
+		}
+		if binding.Predicate == PredicateCallersOnlyFrom {
+			return evaluateCallersOnlyFrom(binding, snapshot)
+		}
+		return evaluateCallArgConstant(binding, snapshot)
 	default:
 		return cannotEvaluate(ReasonUnsupportedPredicate, "unsupported_predicate", "predicate is not supported by validation schema v1"), evidence
 	}

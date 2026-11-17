@@ -93,7 +93,10 @@ func TestCLIAndMCPUntestedResolutionParity(t *testing.T) {
 
 func TestCLIAndMCPTransitiveTestsParity(t *testing.T) {
 	g := attributionParityGraph()
-	want := search.TransitiveTests(g, "example.com/parity::HandleRevoke", false)
+	want, err := search.NewSnapshot(g).TransitiveTestsPage("example.com/parity::HandleRevoke", "", false, search.TestsPageOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	text := callTool(t, setupHandlers(t, g)["gograph_tests"], map[string]any{
 		"symbol":     "example.com/parity::HandleRevoke",
 		"transitive": true,

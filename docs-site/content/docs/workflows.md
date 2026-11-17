@@ -48,7 +48,7 @@ package context, and explanation. Then use the disclosed selected symbol or a
 more specific focused query. `explore` does not replace the required plan step.
 
 ```
-[ plan <sym> ] ──► [ context <sym> ] ──► [ Edit Code ] ──► [ build . --precise ] ──► [ review --uncommitted ]
+[ plan <sym> ] ──► [ context <sym> ] ──► [ Edit Code ] ──► [ build . --precise ] ──► [ review --uncommitted ] ──► [ tests --uncommitted ]
 ```
 
 1. **Plan first**:
@@ -82,6 +82,20 @@ more specific focused query. `explore` does not replace the required plan step.
    gograph review --uncommitted
    ```
    Validates complexity drift, test coverage, and security risk introductions before making a commit.
+6. **Run only the tests that reach the change**:
+   ```bash
+   gograph tests --uncommitted --format go-test --max-depth 3
+   ```
+   Prints one `go test <package> -run '^(TestA|TestB)$'` line per package
+   (with the graph's `-tags`); run them. Drop `--max-depth` for every reaching
+   test, add `--exact-only` to skip dynamic-dispatch paths. Changed types or
+   constants and functions missing from a stale graph are listed as
+   unselected instead of silently skipped.
+7. **Optional: find changed lines no test executed**:
+   ```bash
+   go test -coverprofile=cover.out ./...
+   gograph uncovered --uncommitted --coverprofile cover.out
+   ```
 
 ---
 

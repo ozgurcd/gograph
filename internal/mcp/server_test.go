@@ -569,7 +569,7 @@ func TestMCPBoundaryCreateAndSessionsUseGraphRoot(t *testing.T) {
 	if !strings.Contains(created, `"created":true`) {
 		t.Fatalf("unexpected boundaries_create response: %s", created)
 	}
-	if _, err := os.Stat(filepath.Join(root, ".gograph", "boundaries.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "gograph", "boundaries.json")); err != nil {
 		t.Fatalf("boundary config was not written under graph root: %v", err)
 	}
 
@@ -743,8 +743,8 @@ func TestPersistRefreshUpdatesOnlyRefreshingToolContracts(t *testing.T) {
 			}
 		}
 	}
-	if len(persistTools) != 69 || len(nonRefreshing) != 8 || refreshingCount != 61 {
-		t.Fatalf("tool classification: total=%d non-refreshing=%d refreshing=%d, want 69/8/61", len(persistTools), len(nonRefreshing), refreshingCount)
+	if len(persistTools) != 70 || len(nonRefreshing) != 8 || refreshingCount != 62 {
+		t.Fatalf("tool classification: total=%d non-refreshing=%d refreshing=%d, want 70/8/62", len(persistTools), len(nonRefreshing), refreshingCount)
 	}
 	boundariesCreate := persistTools["gograph_boundaries_create"].Tool.Annotations.IdempotentHint
 	if boundariesCreate == nil || *boundariesCreate {

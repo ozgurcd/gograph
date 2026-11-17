@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -571,12 +572,13 @@ func NewServer(
 			"file_selector_limits": search.FileSelectorLimitDescription,
 			"mutation_resolution":  search.MutationResolutionDescription,
 			"summary":              "gograph MCP capabilities",
+			"task_index":           search.TaskIndex,
 			"version":              version,
 			"installation":         installation.Inspect(version),
 			"prerequisite":         "The MCP server loads only a regular, repository-confined .gograph/graph.json with the current source-policy marker and " + startupGraph + ". Whole graph, saved-baseline, validation, MCP-reload, and workspace-overlay JSON reads reject artifacts larger than 512 MiB before allocation; startup recovery rebuilds an oversized graph from source. Its serialized root is ignored. Source-analysis tools compare selected-file content digests and the build/module fingerprint per call, then incrementally rebuild changed package ASTs after edits using the latest requested analysis mode and build tags selected at MCP startup; precise CHA/SSA enrichment remains repository-wide for selected project packages but does not build dependency SSA bodies, and separately attempts typed test-call attribution without making test compilation a prerequisite for production precision. Typed-only test targets are recomputed rather than restored as parser facts. Every refresh-backed result attaches gograph.graph-state.v1 provenance in _meta.gograph_graph_state. Each result is sent once, as compact JSON text without structuredContent: bounded row lists use gograph.results.v1, and native explain/changes retain their own schemas. A failed precise enrichment can therefore serve an explicitly marked in-memory fallback, and an operational refresh failure can serve the last trusted stale graph. Neither degraded state is silently published. A persisted graph from a different effective GOWORK or build selection is never served after a failed refresh. gograph_stale, gograph_changes without git_ref, and gograph_stats inspect that trusted persisted index, or the startup auto-build fallback when no usable artifact exists. Linked directories and linked or special files recognized as Go build inputs are excluded, while unrelated regular-file or dangling links with non-Go extensions do not block precision. Linked/non-regular Go tool metadata (go.mod, go.sum, go.work, go.work.sum, and vendor/modules.txt) is rejected before toolchain use. Applicable go.work members may be sibling modules beneath the nearest real Git checkout; without that boundary they remain confined beneath the workspace directory. Each member directory, go.mod, and optional go.sum is validated before cmd/go. Use the current binary for untrusted repositories because older binaries do not enforce this contract. Run `gograph build . --precise --tags=integration` for type-checked CHA/SSA enrichment of an explicitly tagged selection; MCP accepts the same --tags selector, adopts a newer precise graph, and re-runs precision after source changes without silently changing that context. `gograph doctor --json` reports persisted-artifact diagnostics. On constrained hosts, project MCP startup accepts `--memory-mode=low --max-memory=1GiB`; analysis_memory reports the requested/effective soft Go runtime memory target, which is not a hard RSS cap. Session lifecycle tools write local telemetry, gograph_session_cleanup deletes stale logs, gograph_boundaries_create writes configuration, and gograph_wiki writes documentation; wiki regeneration prunes only obsolete generator-owned package pages and preserves custom pages plus packages/README.md. Their repository-controlled paths use rooted regular-file operations that reject descendant links. Only calls explicitly selecting session_id append owner telemetry. Selected analytical calls require intention; unselected readers never require intentions or change another audit. Other callers' mutations/end/cleanup refuse naming the active session, while independent callers may create concurrently. MCP never inherits GOGRAPH_SESSION. Saved graph baselines must be regular files inside the project root, have no linked path component, and carry the exact current source-policy marker; their serialized root is ignored. gograph_doc rejects filesystem-shaped queries and source-tree links the Go toolchain may inspect across the selected root plus its effective module root, or the workspace root and member trees; .git and .gograph are excluded from that preflight. It invokes the local Go toolchain after repository source/metadata validation and is annotated open-world because dependency resolution follows the user's Go environment.",
 			"transport_contract": map[string]any{
-				"project_server_tools": 69,
-				"cli_equivalent_tools": 65,
+				"project_server_tools": 70,
+				"cli_equivalent_tools": 66,
 				"session_tools":        []string{"gograph_session_create", "gograph_session_end", "gograph_session_audit", "gograph_session_cleanup"},
 				"standard_mapping":     "CLI <command> maps to MCP gograph_<command>",
 				"special_mappings": map[string]string{
@@ -589,7 +591,7 @@ func NewServer(
 				},
 				"workspace_server_tools": []string{"gograph_workspace_status", "gograph_workspace_query", "gograph_workspace_path", "gograph_workspace_impact"},
 				"workspace_server_note":  "The four workspace tools are exposed by `gograph workspace mcp`, not this project-scoped server; they share native result implementations with CLI workspace status/query/path/impact.",
-				"cli_only_operations":    []string{"build", "validate", "doctor", "gate", "snapshot", "add-claude-plugin", "hook-guard", "mcp startup", "workspace build/member refresh", "workspace mcp startup", "help"},
+				"cli_only_operations":    []string{"build", "validate", "doctor", "gate", "snapshot", "add-claude-plugin", "hook-guard", "mcp startup", "workspace build/member refresh", "workspace mcp startup", "whatsnew", "help"},
 				"version_source":         "The top-level version field records the running MCP server binary; the standalone CLI version command has no separate MCP tool.",
 				"presentation":           "CLI flags/envelopes and typed MCP arguments/content may differ; paired operations share functional semantics.",
 			},
@@ -736,6 +738,7 @@ func NewServer(
 				"gograph_envs",
 				"gograph_tests",
 				"gograph_coverage",
+				"gograph_uncovered",
 				"gograph_identity",
 				"gograph_hotspot",
 				"gograph_httpcalls",
@@ -1213,13 +1216,13 @@ func NewServer(
 
 	// Tool: gograph_boundaries
 	boundariesTool := mcp.NewTool("gograph_boundaries",
-		mcp.WithDescription("Refresh source analysis and check package imports against a boundaries.json configuration. The required config defaults to .gograph/boundaries.json; explicit paths must remain inside the analyzed project, and every path component plus the final regular file is read through the rooted repository boundary. Create it with gograph_boundaries_create. WHEN TO USE: In CI gates or post-edit reviews to enforce layer separation. NOT TO USE: For unconstrained dependency exploration (use gograph_deps or gograph_coupling). RETURNS: Structured pass state and boundary violations."),
-		mcp.WithString("config", mcp.Description("Optional in-project path to a regular, non-linked boundary config (default .gograph/boundaries.json)")),
+		mcp.WithDescription("Refresh source analysis and check package imports against a boundaries.json configuration. The required config defaults to the committable gograph/boundaries.json, then .gograph/boundaries.json; explicit paths must remain inside the analyzed project, and every path component plus the final regular file is read through the rooted repository boundary. Create it with gograph_boundaries_create. WHEN TO USE: In CI gates or post-edit reviews to enforce layer separation. NOT TO USE: For unconstrained dependency exploration (use gograph_deps or gograph_coupling). RETURNS: Structured pass state and boundary violations."),
+		mcp.WithString("config", mcp.Description("Optional in-project path to a regular, non-linked boundary config (default gograph/boundaries.json, then .gograph/boundaries.json)")),
 	)
 	addTool(boundariesTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
 
-		configPath := ".gograph/boundaries.json"
+		configPath, _ := projectfile.PolicyPath(graphRoot(g), "boundaries.json")
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if cp, ok := args["config"].(string); ok && cp != "" {
 				configPath = cp
@@ -1239,8 +1242,9 @@ func NewServer(
 		}
 
 		resp := map[string]any{
-			"summary":  summary,
-			"findings": results,
+			"summary":     summary,
+			"policy_path": configPath,
+			"findings":    results,
 			"risk": map[string]any{
 				"pass":            pass,
 				"violation_count": len(results),
@@ -1253,12 +1257,12 @@ func NewServer(
 
 	// Tool: gograph_boundaries_create
 	boundariesCreateTool := mcp.NewTool("gograph_boundaries_create",
-		mcp.WithDescription("Create a baseline architecture boundary configuration from the repository's current package imports. Defaults to .gograph/boundaries.json under the graph root, uses repository-rooted regular-file creation, and refuses linked paths or overwrite. Mutating and non-idempotent; no network access. WHEN TO USE: Once when adopting boundary checks in an existing repository, then review and tighten the generated rules. NOT TO USE: To verify an existing configuration (use gograph_boundaries). RETURNS: The written config path or an error when the path is unsafe or already exists."),
-		mcp.WithString("config", mcp.Description("Optional in-project output path, absolute or repository-relative; linked components and existing entries are refused (default .gograph/boundaries.json)")),
+		mcp.WithDescription("Create a baseline architecture boundary configuration from the repository's current package imports. Defaults to the committable gograph/boundaries.json under the graph root, uses repository-rooted regular-file creation, and refuses linked paths or overwrite. Mutating and non-idempotent; no network access. WHEN TO USE: Once when adopting boundary checks in an existing repository, then review and tighten the generated rules. NOT TO USE: To verify an existing configuration (use gograph_boundaries). RETURNS: The written config path or an error when the path is unsafe or already exists."),
+		mcp.WithString("config", mcp.Description("Optional in-project output path, absolute or repository-relative; linked components and existing entries are refused (default gograph/boundaries.json)")),
 	)
 	addTool(boundariesCreateTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
-		configPath := ".gograph/boundaries.json"
+		configPath := path.Join(projectfile.CommittedPolicyDir, "boundaries.json")
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if value, ok := args["config"].(string); ok && value != "" {
 				configPath = value
@@ -1530,8 +1534,17 @@ func NewServer(
 		planRes := queriesForRequest(ctx).Plan(symbolNames, title)
 		withContext, _ := args["with_context"].(bool)
 
+		next := []string{"gograph_tests uncommitted=true max_depth=3", "gograph_impact uncommitted=true"}
+		if title != "Uncommitted Changes" {
+			next = []string{
+				fmt.Sprintf("gograph_tests symbol=%q select=true max_depth=3", title),
+				fmt.Sprintf("gograph_tests symbol=%q transitive=true", title),
+				fmt.Sprintf("gograph_impact symbol=%q", title),
+			}
+		}
 		resp := map[string]any{
 			"summary":       "Change plan for " + planRes.Title,
+			"next":          next,
 			"inspect_first": planRes.ReadFirst,
 			"tests":         planRes.Tests,
 			"routes":        planRes.Routes,
@@ -1667,14 +1680,15 @@ func NewServer(
 
 	// Tool: gograph_errorflow
 	flowTool := mcp.NewTool("gograph_flow",
-		mcp.WithDescription("Find potential untrusted-data paths from HTTP request objects, decoded JSON values, or environment variables to SQL query text, process execution arguments, filesystem paths, or outbound HTTP targets. Run `gograph build . --precise` first for stronger method/interface targets. WHEN TO USE: During a security review or before changing request parsing, command execution, file access, SQL construction, or URL handling. NOT TO USE: As proof of exploitability; the analysis is path-insensitive and call/return context for the 3 most recent call sites by default (context depth up to 16; deeper returns that lose their call site are kept at low confidence), bounded by a size-derived work budget that reports incomplete runs explicitly. RETURNS: Structured findings with source, sink, severity, confidence, and path steps. Configure trusted return-value sanitizers in .gograph/flow.json or with config."),
+		mcp.WithDescription("Find potential untrusted-data paths from HTTP request objects, decoded JSON values, or environment variables to SQL query text, process execution arguments, filesystem paths, or outbound HTTP targets. Run `gograph build . --precise` first for stronger method/interface targets. WHEN TO USE: During a security review or before changing request parsing, command execution, file access, SQL construction, or URL handling. NOT TO USE: As proof of exploitability; the analysis is path-insensitive and call/return context for the 3 most recent call sites by default (context depth up to 16; deeper returns that lose their call site are kept at low confidence), bounded by a size-derived work budget that reports incomplete runs explicitly. RETURNS: Structured findings with source, sink, severity, confidence, parameter_only (constant non-shell program), and path steps; an exhausted budget lists top_functions by work. The policy (.gograph/flow.json or config) adds return-value or argument sanitizers and custom sources and sinks by function."),
 		mcp.WithString("term", mcp.Description("Optional substring filter matched against functions, files, endpoints, and path steps")),
 		mcp.WithString("source", mcp.Description("Optional source kind: http_request, decoded_json, or environment")),
 		mcp.WithString("sink", mcp.Description("Optional sink kind: sql_query, process_execution, filesystem, or outbound_http")),
-		mcp.WithString("config", mcp.Description("Sanitizer policy path inside the graph root (default .gograph/flow.json when present)")),
+		mcp.WithString("config", mcp.Description("Policy path inside the graph root (default gograph/flow.json, else .gograph/flow.json, when present)")),
 		mcp.WithBoolean("no_tests", mcp.Description("Exclude functions in *_test.go files")),
 		mcp.WithNumber("max_work", mcp.Description("Optional propagation work budget; defaults to a value derived from the number of flow facts. An exhausted budget returns completeness.complete=false with partial findings.")),
 		mcp.WithNumber("context_depth", mcp.Description("Optional call-site frames kept per value (default 3, max 16). Deeper settings are more precise and need more work.")),
+		mcp.WithArray("packages", mcp.WithStringItems(), mcp.Description("Limit analysis to these import paths; prefix/... includes descendants")),
 	)
 	addTool(flowTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
@@ -1728,9 +1742,14 @@ func NewServer(
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		packages, err := stringSliceArg(args, "packages")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		report, err := search.FlowWithReport(g, search.FlowOptions{
 			Term: term, Source: source, Sink: sink, ConfigPath: config,
 			IncludeTests: !boolArg(args, "no_tests"), MaxWork: maxWork, ContextDepth: contextDepth,
+			Packages: packages,
 		})
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -1745,10 +1764,11 @@ func NewServer(
 			Count        int                     `json:"count"`
 			Findings     []search.FlowResult     `json:"findings"`
 			Completeness search.FlowCompleteness `json:"completeness"`
+			PolicyPath   string                  `json:"policy_path,omitempty"`
 			Limitations  []string                `json:"limitations"`
 		}{
 			Query: term, Count: len(results), Findings: results, Completeness: report.Completeness,
-			Limitations: limitations,
+			PolicyPath: report.PolicyPath, Limitations: limitations,
 		}
 		data, err := json.Marshal(response)
 		if err != nil {
@@ -2215,39 +2235,92 @@ func initNewTools(
 
 	// Tool: gograph_tests
 	testsTool := mcp.NewTool("gograph_tests",
-		mcp.WithDescription("Find test functions in *_test.go files that statically exercise a named symbol, or list all attributed test edges when no symbol is given. Direct mode accepts Receiver.Method (including pointer receivers) or a full stable symbol ID. By default this preserves the direct-edge result contract. Set transitive=true with a required symbol to return gograph.tests.v1 reverse attribution, including exact/possible resolution, depth, and a representative stable-ID path from every reaching test; exact_only omits uncertain paths and package disambiguates the selected product symbol. WHEN TO USE: Before editing a function — use transitive=true for router/callback-mediated coverage and direct mode for concrete test call sites. NOT TO USE: For test helper infrastructure (use gograph_fixtures); for running tests or proving runtime coverage. RETURNS: Direct result rows by default, or a versioned reverse-transitive report when requested."),
+		mcp.WithDescription("Find test functions in *_test.go files that statically exercise a named symbol, or list all attributed test edges when no symbol is given. Direct mode accepts Receiver.Method (including pointer receivers) or a full stable symbol ID. By default this preserves the direct-edge result contract. Set transitive=true with a required symbol to return gograph.tests.v1 reverse attribution: a summary of every reaching test by depth and resolution, then one page (default 50, nearest first, with total, truncated and next_cursor) of tests with exact/possible resolution, depth, and a representative stable-ID path; max_depth keeps only nearby tests; exact_only omits uncertain paths and package disambiguates the selected product symbol. WHEN TO USE: To choose which tests to run after an edit (uncommitted=true); before editing a function — use transitive=true for router/callback-mediated coverage and direct mode for concrete test call sites. NOT TO USE: For test helper infrastructure (use gograph_fixtures); for running tests or proving runtime coverage. Set uncommitted=true, since=<ref>, or select=true with a symbol to get gograph.test_selection.v1: the tests to run for a change, grouped per package, each with an anchored go test -run pattern and ready go test commands (with the graph's build tags). RETURNS: Direct result rows by default, or a versioned reverse-transitive report or test selection when requested."),
 		mcp.WithString("symbol", mcp.Description("The symbol name to find tests for (optional)")),
 		mcp.WithBoolean("transitive", mcp.Description("Return reverse-transitive test attribution; requires symbol")),
 		mcp.WithBoolean("exact_only", mcp.Description("With transitive=true, omit paths containing possible edges")),
-		mcp.WithString("package", mcp.Description("With transitive=true, optional exact Go package name used to disambiguate the selected symbol")),
+		mcp.WithString("package", mcp.Description("With transitive=true or select=true, optional exact Go package name used to disambiguate the selected symbol")),
+		mcp.WithBoolean("select", mcp.Description("With symbol: return gograph.test_selection.v1, the tests to run grouped per package with an anchored go test -run pattern and ready commands")),
+		mcp.WithBoolean("uncommitted", mcp.Description("Select the tests to run for all uncommitted changes (gograph.test_selection.v1)")),
+		mcp.WithString("since", mcp.Description("Git ref (e.g. 'main', 'HEAD~1'): select the tests to run for all changes since this ref (gograph.test_selection.v1)")),
+		mcp.WithInteger("max_depth", mcp.Description("With transitive, select, uncommitted or since: keep tests whose shortest call path is at most this long; 0 or omitted is unlimited")),
+		mcp.WithInteger("limit", mcp.Description("With transitive=true: tests per page, nearest first (default 50; 0 returns all)")),
+		mcp.WithString("cursor", mcp.Description("With transitive=true: next_cursor from the previous page")),
 	)
 	addTool(testsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
 		term := ""
 		transitive := false
 		exactOnly := false
+		selectTests := false
+		uncommitted := false
+		sinceRef := ""
 		packageName := ""
+		pageOptions := search.TestsPageOptions{}
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
+			maxDepth, err := integerArg(args, "max_depth", 0)
+			if err != nil || maxDepth < 0 {
+				return mcp.NewToolResultError("max_depth must be a non-negative integer"), nil
+			}
+			limit, err := integerArg(args, "limit", search.DefaultTestsLimit)
+			if err != nil || limit < 0 {
+				return mcp.NewToolResultError("limit must be a non-negative integer"), nil
+			}
+			if limit == 0 {
+				limit = -1 // limit 0 returns every test
+			}
+			cursor, _ := args["cursor"].(string)
+			pageOptions = search.TestsPageOptions{MaxDepth: maxDepth, Limit: limit, Cursor: cursor}
 			if s, ok := args["symbol"].(string); ok {
 				term = s
 			}
 			transitive = boolArg(args, "transitive")
 			exactOnly = boolArg(args, "exact_only")
+			selectTests = boolArg(args, "select")
+			uncommitted = boolArg(args, "uncommitted")
+			sinceRef, _ = args["since"].(string)
 			packageName, _ = args["package"].(string)
+		}
+		if uncommitted || sinceRef != "" {
+			if uncommitted && sinceRef != "" || strings.TrimSpace(term) != "" || packageName != "" {
+				return mcp.NewToolResultError("provide exactly one of symbol, uncommitted=true, or since; package applies only to symbol"), nil
+			}
+			ref, selector := sinceRef, "--since "+sinceRef
+			if uncommitted {
+				ref, selector = "HEAD", "--uncommitted"
+			}
+			changes, err := search.ChangesByGitRefContext(ctx, g, g.Root, ref)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			if changes.Evaluation != "complete" {
+				return mcp.NewToolResultError("cannot select tests from incomplete changes: " + strings.Join(changes.Diagnostics, "; ")), nil
+			}
+			return jsonToolResult(queriesForRequest(ctx).SelectTestsWithin(selector, search.SelectionInputsFromChanges(changes), exactOnly, pageOptions.MaxDepth))
+		}
+		if selectTests {
+			if strings.TrimSpace(term) == "" {
+				return mcp.NewToolResultError("symbol must be a non-empty string when select=true"), nil
+			}
+			report := queriesForRequest(ctx).TransitiveTests(term, packageName, false)
+			if report.Status != "exact" {
+				return jsonToolResult(report)
+			}
+			match := report.MatchedSymbols[0]
+			return jsonToolResult(queriesForRequest(ctx).SelectTestsWithin(term, []search.SelectionInput{{StableID: match.StableID, Name: match.Name, File: match.File}}, exactOnly, pageOptions.MaxDepth))
 		}
 		if transitive {
 			if strings.TrimSpace(term) == "" {
 				return mcp.NewToolResultError("symbol must be a non-empty string when transitive=true"), nil
 			}
-			report := queriesForRequest(ctx).TransitiveTests(term, packageName, exactOnly)
-			data, err := json.Marshal(report)
+			report, err := queriesForRequest(ctx).TransitiveTestsPage(term, packageName, exactOnly, pageOptions)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return mcp.NewToolResultText(string(data)), nil
+			return jsonToolResult(report)
 		}
 		if exactOnly || packageName != "" {
-			return mcp.NewToolResultError("exact_only and package require transitive=true"), nil
+			return mcp.NewToolResultError("exact_only and package require transitive=true, select=true, uncommitted=true, or since"), nil
 		}
 		results := search.Tests(g, term)
 		return formatResults(g, results), nil
@@ -2453,15 +2526,20 @@ func initNewTools(
 		mcp.WithDescription("Report estimated cyclomatic complexity for Go functions, sorted highest-to-lowest with severity labels (LOW/MEDIUM/HIGH/VERY HIGH). A function whose repository source cannot be read or parsed safely is retained as UNKNOWN with score -1. Optional `symbol` substring filters to a specific function or set of functions; `top` limits the report (default: 20; 0 = all). WHEN TO USE: During code quality audits, identifying functions that need decomposition, or setting complexity budgets in CI. NOT TO USE: For import dependency metrics (use gograph_coupling or gograph_deps); for God Object detection (use gograph_godobj). RETURNS: Structured list of functions with complexity score and severity label; empty when no functions match the filter."),
 		mcp.WithString("symbol", mcp.Description("Optional Go function or method symbol name substring to filter the complexity report (e.g., 'Build')")),
 		mcp.WithInteger("top", mcp.Description("Number of results to return, highest first (default: 20, 0 = all)")),
+		mcp.WithBoolean("no_tests", mcp.Description("Drop functions declared in _test.go files")),
+		mcp.WithString("path", mcp.Description("Keep functions in this repository-relative directory subtree")),
 	)
 	addTool(complexityTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
 		term := ""
 		top := defaultReportTop
+		filter := search.ComplexityFilter{}
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if s, ok := args["symbol"].(string); ok {
 				term = s
 			}
+			filter.NoTests = boolArg(args, "no_tests")
+			filter.Path, _ = args["path"].(string)
 			var err error
 			if top, err = integerArg(args, "top", top); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -2470,10 +2548,8 @@ func initNewTools(
 		if top < 0 {
 			return mcp.NewToolResultError("top must be 0 (all) or positive"), nil
 		}
-		results := search.Complexity(g, term)
-		if top > 0 && len(results) > top {
-			results = results[:top]
-		}
+		filter.Top = top
+		results := search.FilterComplexity(search.Complexity(g, term), filter)
 		data, err := json.Marshal(results)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -2805,15 +2881,17 @@ func initNewTools(
 		if root == "" {
 			root = "."
 		}
+		boundariesPolicy, _ := projectfile.PolicyPath(root, "boundaries.json")
 		cfg := &search.CheckConfig{
 			Checks: map[string]any{
 				"boundaries":     "warn",
 				"max_arity":      map[string]any{"level": "warn", "value": 6.0},
 				"max_complexity": map[string]any{"level": "warn", "value": 20.0},
 			},
-			BoundariesConfig: filepath.Join(root, ".gograph", "boundaries.json"),
+			BoundariesConfig: filepath.Join(root, filepath.FromSlash(boundariesPolicy)),
 		}
-		data, _, foundConfig, err := projectfile.ReadConfig(root, configPath, ".gograph/checks.json")
+		defaultChecks, _ := projectfile.PolicyPath(root, "checks.json")
+		data, _, foundConfig, err := projectfile.ReadConfig(root, configPath, defaultChecks)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to read config: %v", err)), nil
 		}
@@ -3023,9 +3101,22 @@ func initNewTools(
 		mcp.WithString("pkg", mcp.Description("Optional package name substring to filter results (e.g. 'cli', 'search')")),
 		mcp.WithInteger("top", mcp.Description("Limit results to top N by caller count (default: 20, 0 = all)")),
 		mcp.WithArray("exclude", mcp.WithStringItems(), mcp.Description("Repository-relative path globs to exclude; use prefix/** for all descendants")),
+		mcp.WithBoolean("exclude_interface_methods", mcp.Description("Skip methods implementing an interface method (Error, String, MarshalJSON, or a repository interface); the response then is {summary, results} with the skipped count")),
+		mcp.WithString("coverprofile", mcp.Description("Repository-relative go test -coverprofile file (merged profiles allowed): report production functions with no executed statement instead; the response then is {summary, results}")),
 	)
 	addTool(untestedTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		results := queriesForRequest(ctx).Untested()
+		options := search.UntestedOptions{}
+		if args, ok := request.Params.Arguments.(map[string]any); ok {
+			options.ExcludeInterfaceMethods = boolArg(args, "exclude_interface_methods")
+			if name, _ := args["coverprofile"].(string); name != "" {
+				profile, err := repositoryCoverProfile(graphForRequest(ctx), name)
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				options.Coverage = profile
+			}
+		}
+		results, summary := queriesForRequest(ctx).UntestedWith(options)
 
 		// Parse optional filters from MCP arguments.
 		pkg := ""
@@ -3063,12 +3154,52 @@ func initNewTools(
 		if top > 0 && len(results) > top {
 			results = results[:top]
 		}
+		if options.ExcludeInterfaceMethods || options.Coverage != nil {
+			if results == nil {
+				results = []search.UntestedResult{}
+			}
+			return jsonToolResult(struct {
+				Summary search.UntestedSummary  `json:"summary"`
+				Results []search.UntestedResult `json:"results"`
+			}{summary, results})
+		}
 
 		data, err := json.Marshal(results)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		return mcp.NewToolResultText(string(data)), nil
+	})
+
+	// Tool: gograph_uncovered
+	uncoveredTool := mcp.NewTool("gograph_uncovered",
+		mcp.WithDescription("Changed lines of non-test Go files that a go test -coverprofile run never executed, as exact line ranges per file (gograph.uncovered.v1). Lines outside coverage blocks are never reported; changed files without profile data are listed separately. WHEN TO USE: After running tests with -coverprofile, to see which lines of your change no test executed. RETURNS: files with uncovered ranges, changed and uncovered line counts."),
+		mcp.WithBoolean("uncommitted", mcp.Description("Compare the working tree with HEAD, including untracked files")),
+		mcp.WithString("since", mcp.Description("Git ref: compare the working tree with this ref")),
+		mcp.WithString("coverprofile", mcp.Required(), mcp.Description("Repository-relative go test -coverprofile file")),
+	)
+	addTool(uncoveredTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args, _ := request.Params.Arguments.(map[string]any)
+		uncommitted := boolArg(args, "uncommitted")
+		sinceRef, _ := args["since"].(string)
+		name, _ := args["coverprofile"].(string)
+		if uncommitted == (sinceRef != "") || name == "" {
+			return mcp.NewToolResultError("provide coverprofile and exactly one of uncommitted=true or since"), nil
+		}
+		g := graphForRequest(ctx)
+		profile, err := repositoryCoverProfile(g, name)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		selector := "--since " + sinceRef
+		if uncommitted {
+			selector = "--uncommitted"
+		}
+		changed, err := search.ChangedGoLines(ctx, g.Root, sinceRef)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return jsonToolResult(search.Uncovered(selector, g.Root, changed, profile))
 	})
 
 	// Tool: gograph_doc
@@ -3125,4 +3256,30 @@ func sanitizeGitRef(ref string) error {
 		return fmt.Errorf("invalid git reference: contains unsafe characters or is empty")
 	}
 	return nil
+}
+
+// jsonToolResult marshals a versioned report as compact JSON text.
+func jsonToolResult(value any) (*mcp.CallToolResult, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(string(data)), nil
+}
+
+// repositoryCoverProfile reads a coverage profile confined to the repository.
+func repositoryCoverProfile(g *graph.Graph, name string) (*search.CoverageProfile, error) {
+	if g == nil || g.Root == "" {
+		return nil, fmt.Errorf("graph root is unavailable")
+	}
+	reader, err := sourcefs.Open(g.Root)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = reader.Close() }()
+	data, err := reader.ReadRegularFileLimit(name, 512<<20)
+	if err != nil {
+		return nil, fmt.Errorf("read coverage profile %q (repository-relative regular file): %w", name, err)
+	}
+	return search.ParseCoverProfile(data, g)
 }

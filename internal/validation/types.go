@@ -17,6 +17,16 @@ const (
 	PredicatePackageImports Predicate = "package_imports"
 	PredicateCallEdgeExists Predicate = "call_edge_exists"
 	PredicateTypeImplements Predicate = "type_implements"
+	// PredicateImportsOnlyFrom: package subject is imported only by the
+	// allowlisted packages or files.
+	PredicateImportsOnlyFrom Predicate = "imports_only_from"
+	// PredicateCallersOnlyFrom: function or method subject is called only
+	// from the allowlisted packages or files.
+	PredicateCallersOnlyFrom Predicate = "callers_only_from"
+	// PredicateCallArgConstant: argument N of the subject is a compile-time
+	// constant at every call site, or, with forbidden_values, never one of
+	// the listed string constants.
+	PredicateCallArgConstant Predicate = "call_arg_constant"
 )
 
 type Precision string
@@ -31,6 +41,9 @@ type ReferenceKind string
 const (
 	ReferenceSymbol  ReferenceKind = "symbol"
 	ReferencePackage ReferenceKind = "package"
+	// ReferenceFile is a repository-relative Go file path; it is valid only
+	// in an allow list.
+	ReferenceFile ReferenceKind = "file"
 )
 
 type Reference struct {
@@ -45,6 +58,18 @@ type Binding struct {
 	Subject           Reference  `json:"subject"`
 	Object            *Reference `json:"object,omitempty"`
 	RequiredPrecision Precision  `json:"required_precision"`
+	// Allow lists the packages (exact import path, or a prefix ending in
+	// "/...") and files permitted to import or call the subject. Required by
+	// imports_only_from and callers_only_from; optional exemptions for
+	// call_arg_constant.
+	Allow []Reference `json:"allow,omitempty"`
+	// Argument is the zero-based argument index for call_arg_constant.
+	Argument *int `json:"argument,omitempty"`
+	// ForbiddenValues switches call_arg_constant from "always constant" to
+	// "never one of these string constants".
+	ForbiddenValues []string `json:"forbidden_values,omitempty"`
+	// IncludeTests also checks _test.go files; they are skipped by default.
+	IncludeTests bool `json:"include_tests,omitempty"`
 }
 
 type Outcome string

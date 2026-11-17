@@ -60,6 +60,9 @@ type Envelope struct {
 	// Completeness is additive evidence that a bounded analysis stopped
 	// before a fixed point. Only commands with such a bound set it.
 	Completeness interface{} `json:"completeness,omitempty"`
+	// Summary is additive per-command accounting, such as what untested
+	// skipped; commands without one leave it nil.
+	Summary interface{} `json:"summary,omitempty"`
 	// GraphState is additive request provenance for repository graph-backed
 	// JSON commands. It is omitted for host, lifecycle, and hard-error results.
 	GraphState *graphstate.State `json:"graph_state,omitempty"`

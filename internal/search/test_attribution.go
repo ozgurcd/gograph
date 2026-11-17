@@ -143,15 +143,43 @@ type AttributingTest struct {
 // product symbol. It complements the legacy direct Tests query without
 // changing that command's result contract.
 type TestsReport struct {
-	SchemaVersion      string                       `json:"schema_version"`
-	Query              string                       `json:"query"`
-	Package            string                       `json:"package,omitempty"`
-	Status             string                       `json:"status"`
+	SchemaVersion string `json:"schema_version"`
+	Query         string `json:"query"`
+	Package       string `json:"package,omitempty"`
+	Status        string `json:"status"`
+	// Summary counts every reaching test (within max_depth) by depth and
+	// resolution before paging. Set by TransitiveTestsPage.
+	Summary            *TestsSummary                `json:"summary,omitempty"`
 	AnalysisPrecision  graph.PrecisionMode          `json:"analysis_precision"`
 	TestCallResolution graph.TestCallResolutionMode `json:"test_call_resolution"`
 	MatchedSymbols     []SymbolIdentity             `json:"matched_symbols"`
 	Tests              []AttributingTest            `json:"tests"`
-	Limitations        []string                     `json:"limitations"`
+	// Paging fields are set by TransitiveTestsPage.
+	MaxDepth    int      `json:"max_depth,omitempty"`
+	Total       *int     `json:"total,omitempty"`
+	Returned    *int     `json:"returned,omitempty"`
+	Offset      *int     `json:"offset,omitempty"`
+	Limit       int      `json:"limit,omitempty"`
+	Truncated   *bool    `json:"truncated,omitempty"`
+	NextCursor  *string  `json:"next_cursor,omitempty"`
+	Limitations []string `json:"limitations"`
+}
+
+// TestsSummary counts reaching tests before paging.
+type TestsSummary struct {
+	Total       int              `json:"total"`
+	Exact       int              `json:"exact"`
+	Possible    int              `json:"possible"`
+	ByDepth     []TestDepthCount `json:"by_depth"`
+	BeyondDepth int              `json:"beyond_max_depth,omitempty"`
+	NextCommand string           `json:"next_command,omitempty"`
+}
+
+// TestDepthCount counts the tests at one call depth.
+type TestDepthCount struct {
+	Depth    int `json:"depth"`
+	Exact    int `json:"exact"`
+	Possible int `json:"possible"`
 }
 
 type coverageState struct {
@@ -265,7 +293,7 @@ func (snapshot *Snapshot) Coverage(query, packageName string, exactOnly bool) Co
 			enqueue(coverageState{id: edge.TargetSymbolID, resolution: resolution, depth: 1, parent: test.StableID})
 			continue
 		}
-		for _, id := range unresolvedTargetIDs(g, edge.Target, test.Package) {
+		for _, id := range snapshot.unresolvedTargets().targetIDs(edge.Target, test.Package) {
 			enqueue(coverageState{id: id, resolution: "possible", depth: 1, parent: test.StableID})
 		}
 	}
@@ -286,7 +314,7 @@ func (snapshot *Snapshot) Coverage(query, packageName string, exactOnly bool) Co
 				enqueue(coverageState{id: edge.CalleeSymbolID, resolution: resolution, depth: state.depth + 1, parent: state.id})
 				continue
 			}
-			for _, id := range unresolvedTargetIDs(g, edge.CalleeRaw, symbols[state.id].PackageName) {
+			for _, id := range snapshot.unresolvedTargets().targetIDs(edge.CalleeRaw, symbols[state.id].PackageName) {
 				enqueue(coverageState{id: id, resolution: "possible", depth: state.depth + 1, parent: state.id})
 			}
 		}
@@ -368,12 +396,47 @@ func (snapshot *Snapshot) TransitiveTests(query, packageName string, exactOnly b
 	report.Status = "exact"
 	target := report.MatchedSymbols[0]
 
+	attribution, best := snapshot.reverseTestReach(target.StableID)
+
+	for id, state := range best {
+		symbol, ok := attribution.tests[id]
+		if !ok || exactOnly && state.resolution != "exact" {
+			continue
+		}
+		report.Tests = append(report.Tests, AttributingTest{
+			StableID: symbol.ID, Name: symbol.Name, Package: symbol.PackageName, File: symbol.File, Line: symbol.Line,
+			Resolution: state.resolution, Depth: state.depth, Path: reverseAttributionPath(best, attribution.tests, target.StableID, state),
+		})
+	}
+	// Nearest tests first: depth, then exact before possible.
+	sort.Slice(report.Tests, func(i, j int) bool {
+		if report.Tests[i].Depth != report.Tests[j].Depth {
+			return report.Tests[i].Depth < report.Tests[j].Depth
+		}
+		if report.Tests[i].Resolution != report.Tests[j].Resolution {
+			return report.Tests[i].Resolution == "exact"
+		}
+		if report.Tests[i].StableID != report.Tests[j].StableID {
+			return report.Tests[i].StableID < report.Tests[j].StableID
+		}
+		if report.Tests[i].Package != report.Tests[j].Package {
+			return report.Tests[i].Package < report.Tests[j].Package
+		}
+		return report.Tests[i].File < report.Tests[j].File
+	})
+	return report
+}
+
+// reverseTestReach walks attribution links backwards from targetID and returns
+// the best (exact before possible, then shallowest) path state for every node
+// that reaches it. Traversal stops at test entry points other than targetID.
+func (snapshot *Snapshot) reverseTestReach(targetID string) (attributionGraphData, map[string]reverseAttributionState) {
 	attribution, reverse := snapshot.attributionIndex()
 
 	best := map[string]reverseAttributionState{
-		target.StableID: {id: target.StableID, resolution: "exact"},
+		targetID: {id: targetID, resolution: "exact"},
 	}
-	queue := []reverseAttributionState{best[target.StableID]}
+	queue := []reverseAttributionState{best[targetID]}
 	enqueue := func(state reverseAttributionState) {
 		previous, exists := best[state.id]
 		if exists && !betterAttributionPath(state.resolution, state.depth, previous.resolution, previous.depth) {
@@ -389,7 +452,7 @@ func (snapshot *Snapshot) TransitiveTests(query, packageName string, exactOnly b
 		if current.resolution != state.resolution || current.depth != state.depth || current.next != state.next {
 			continue
 		}
-		if _, isTest := attribution.tests[state.id]; state.id != target.StableID && isTest {
+		if _, isTest := attribution.tests[state.id]; state.id != targetID && isTest {
 			continue
 		}
 		for _, link := range reverse[state.id] {
@@ -400,33 +463,7 @@ func (snapshot *Snapshot) TransitiveTests(query, packageName string, exactOnly b
 			enqueue(reverseAttributionState{id: link.from, resolution: resolution, depth: state.depth + 1, next: state.id})
 		}
 	}
-
-	for id, state := range best {
-		symbol, ok := attribution.tests[id]
-		if !ok || exactOnly && state.resolution != "exact" {
-			continue
-		}
-		report.Tests = append(report.Tests, AttributingTest{
-			StableID: symbol.ID, Name: symbol.Name, Package: symbol.PackageName, File: symbol.File, Line: symbol.Line,
-			Resolution: state.resolution, Depth: state.depth, Path: reverseAttributionPath(best, attribution.tests, target.StableID, state),
-		})
-	}
-	sort.Slice(report.Tests, func(i, j int) bool {
-		if report.Tests[i].Resolution != report.Tests[j].Resolution {
-			return report.Tests[i].Resolution == "exact"
-		}
-		if report.Tests[i].Depth != report.Tests[j].Depth {
-			return report.Tests[i].Depth < report.Tests[j].Depth
-		}
-		if report.Tests[i].StableID != report.Tests[j].StableID {
-			return report.Tests[i].StableID < report.Tests[j].StableID
-		}
-		if report.Tests[i].Package != report.Tests[j].Package {
-			return report.Tests[i].Package < report.Tests[j].Package
-		}
-		return report.Tests[i].File < report.Tests[j].File
-	})
-	return report
+	return attribution, best
 }
 
 func betterAttributionPath(resolution string, depth int, previousResolution string, previousDepth int) bool {
@@ -505,13 +542,14 @@ func buildAttributionGraph(g *graph.Graph) attributionGraphData {
 	}
 
 	seen := make(map[string]struct{})
+	targetIndex := newUnresolvedTargetIndex(g)
 	resolvedTargets := make(map[string][]string)
 	resolveTargets := func(raw, callerPackage string) []string {
 		key := raw + "\x00" + callerPackage
 		if ids, ok := resolvedTargets[key]; ok {
 			return ids
 		}
-		ids := unresolvedTargetIDs(g, raw, callerPackage)
+		ids := targetIndex.targetIDs(raw, callerPackage)
 		resolvedTargets[key] = ids
 		return ids
 	}
@@ -703,24 +741,80 @@ func callResolution(resolution graph.CallResolution) string {
 	return "possible"
 }
 
-func unresolvedTargetIDs(g *graph.Graph, raw, callerPackage string) []string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
+// unresolvedTargetIndex groups callable symbols by lower-cased name so a raw
+// parser target is compared only with symbols whose name can occur in it,
+// instead of with every symbol in the graph. The index is immutable after
+// construction and safe for concurrent use.
+type unresolvedTargetIndex struct {
+	g      *graph.Graph
+	byName map[string][]int
+}
+
+func newUnresolvedTargetIndex(g *graph.Graph) *unresolvedTargetIndex {
+	index := &unresolvedTargetIndex{g: g, byName: make(map[string][]int)}
+	if g == nil {
+		return index
 	}
-	name := raw
-	if index := strings.LastIndex(name, "."); index >= 0 {
-		name = name[index+1:]
-	}
-	if index := strings.Index(name, "["); index >= 0 {
-		name = name[:index]
-	}
-	seen := make(map[string]bool)
-	var ids []string
-	for _, symbol := range g.Symbols {
+	for position, symbol := range g.Symbols {
 		if symbol.Kind != graph.KindFunction && symbol.Kind != graph.KindMethod {
 			continue
 		}
+		key := strings.ToLower(symbol.Name)
+		index.byName[key] = append(index.byName[key], position)
+	}
+	return index
+}
+
+// unresolvedTargetSeparators covers every character that can sit between a
+// symbol name and the rest of a selector, stable ID, or file selector.
+const unresolvedTargetSeparators = ".:()*/[], \t"
+
+// unresolvedCandidateNames returns every lower-cased token of raw that could equal a
+// matching symbol's name. It is a superset of the names matchSymbolExact and
+// the short-name fallback can accept, so filtering by it never drops a match.
+func unresolvedCandidateNames(raw, name string) []string {
+	names := map[string]struct{}{strings.ToLower(raw): {}, strings.ToLower(name): {}}
+	addTokens := func(value, separators string) {
+		for _, token := range strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+			return strings.ContainsRune(separators, r)
+		}) {
+			names[token] = struct{}{}
+		}
+	}
+	addTokens(raw, unresolvedTargetSeparators)
+	// Keep generic instantiation brackets for names that contain them.
+	addTokens(raw, ".:()*/, \t")
+	// matchSymbolExact compares after removing "(", ")", "*", and spaces,
+	// which can join adjacent fragments.
+	addTokens(selectorNormalizer.Replace(raw), ".:/[]")
+	out := make([]string, 0, len(names))
+	for token := range names {
+		out = append(out, token)
+	}
+	return out
+}
+
+func (index *unresolvedTargetIndex) targetIDs(raw, callerPackage string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || index.g == nil {
+		return nil
+	}
+	name := raw
+	if position := strings.LastIndex(name, "."); position >= 0 {
+		name = name[position+1:]
+	}
+	if position := strings.Index(name, "["); position >= 0 {
+		name = name[:position]
+	}
+	var positions []int
+	for _, token := range unresolvedCandidateNames(raw, name) {
+		positions = append(positions, index.byName[token]...)
+	}
+	sort.Ints(positions)
+	seen := make(map[string]bool)
+	var ids []string
+	for _, position := range positions {
+		symbol := index.g.Symbols[position]
 		matched := matchSymbolExact(symbol, raw)
 		if !matched && symbol.Name == name {
 			matched = strings.Contains(raw, ".") || symbol.PackageName == callerPackage

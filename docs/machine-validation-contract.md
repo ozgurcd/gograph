@@ -27,6 +27,8 @@ The v1 predicate set is deliberately narrow:
 - `package_imports`
 - `call_edge_exists`
 - `type_implements`
+- `imports_only_from`, `callers_only_from`, `call_arg_constant` (policy
+  predicates with an allow list or argument constraint)
 
 Reachability and a generic `edge_exists` predicate are deferred. A generic
 relation enum would expose graph records whose completeness and assurance
@@ -231,11 +233,24 @@ The canonical binding schema is `gograph.binding.v1`:
 Fields and closed enums:
 
 - `schema_version`: exactly `gograph.binding.v1`.
-- `predicate`: `symbol_exists`, `package_imports`, `call_edge_exists`, or
-  `type_implements`.
+- `predicate`: `symbol_exists`, `package_imports`, `call_edge_exists`,
+  `type_implements`, `imports_only_from`, `callers_only_from`, or
+  `call_arg_constant`.
 - `subject`: required typed reference.
-- `object`: forbidden for `symbol_exists`; required for the other predicates.
+- `object`: required for `package_imports`, `call_edge_exists` and
+  `type_implements`; forbidden for the other predicates.
 - `required_precision`: `ast` or `precise`.
+- `allow`: policy predicates only. A list of `package` references (an exact
+  import path, or a prefix ending in `/...` that also matches descendants) and
+  `file` references (a clean repository-relative `.go` path). Required and
+  non-empty for `imports_only_from` and `callers_only_from`; optional
+  exemptions for `call_arg_constant`.
+- `argument`: `call_arg_constant` only; required zero-based argument index.
+- `forbidden_values`: `call_arg_constant` only; when present the predicate
+  checks that the argument is never one of these string constants instead of
+  checking that it is always constant.
+- `include_tests`: policy predicates only; `_test.go` files are skipped
+  unless it is `true`.
 
 A reference contains exactly:
 
@@ -251,6 +266,23 @@ Predicate constraints:
 | `package_imports` | package | package | `ast` |
 | `call_edge_exists` | function/method symbol | function/method symbol | `precise` |
 | `type_implements` | named concrete type symbol | named interface symbol | `precise` |
+| `imports_only_from` | package (any import path, including the standard library) | absent; `allow` required | `ast` |
+| `callers_only_from` | function/method symbol, in the repository or a dependency (for example `os/exec::Command`) | absent; `allow` required | `precise` |
+| `call_arg_constant` | function/method symbol, in the repository or a dependency | absent; `argument` required | `precise` |
+
+Policy predicates pass when no checked site violates the policy and fail with
+one `matched_relations` entry per violating site (classification
+`import_outside_allow_list`, `call_outside_allow_list`,
+`argument_not_constant`, `argument_spread_not_constant`, or
+`forbidden_constant:<value>`), each with its file and line. Call sites are
+the precise graph's resolved edges to the subject; for a dependency function
+also parser edges spelled through the file's import name. A constant is a
+literal, an operator expression of constants, a conversion of a constant to a
+basic type, or a package-level or local `const` of a repository package;
+constants of packages outside the repository are treated as non-constant,
+which can only make the check stricter. An argument index past a call's
+arguments has no value and is not checked. A call site the graph records but
+the source no longer contains yields `cannot_evaluate`.
 
 The predicate itself names the relation; a separate `relation` field is
 deliberately omitted because it would be redundant and could become

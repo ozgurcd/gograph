@@ -7,6 +7,11 @@ declarations, as do the import-qualified forms printed by an ambiguous `source`
 answer. CLI and MCP support them in query, node, source, context, callers,
 callees, impact, explain, explore, plan, review, risk, identity, fields,
 interfaces, implementers, mocks, tests (direct and transitive), and coverage.
+`file.go:Name` selects only a function, type, variable or constant, never a
+method, so the selector printed for a function stays unique when the same file
+declares a method with that name; a bare name that matches only methods returns
+a hint naming the `file.go:Receiver.Method` selectors. `source` prefers a
+case-sensitive name match (`SymbolIdentity` versus `symbolIdentity`).
 
 Named limits: embeds, constructors, literals, returnusage, mutate, path and
 endpoint reject file-qualified selectors. Their relationship records use
@@ -41,8 +46,10 @@ Runtime path expressions remain unresolved; analysis executes no target code.
 
 `tests SYMBOL --transitive --files-only` prints each returned file once, sorted,
 without test names or call paths. MCP's transitive report retains the same file
-set in its test rows. Missing or ambiguous selectors are refused in files-only
-mode, so an empty list does not hide a selector error.
+set across its pages. Missing or ambiguous selectors are refused in files-only
+mode, so an empty list does not hide a selector error. Without `--files-only`,
+transitive results are paged (50 tests by default, nearest first) with a summary
+of every reaching test; `--files-only` is not paged.
 
 ## Freshness check context
 

@@ -28,7 +28,7 @@ const CurrentSourcePolicyVersion = 2
 // CurrentAnalysisCacheVersion identifies graphs whose file-level records can
 // be decomposed back into parser output and safely reused by an incremental
 // build. Bump this whenever parser/precise provenance changes.
-const CurrentAnalysisCacheVersion = 10
+const CurrentAnalysisCacheVersion = 12
 
 // MaxArtifactBytes bounds whole-artifact JSON decoding. Repository graphs are
 // intentionally in-memory query artifacts; accepting an unbounded serialized
@@ -320,9 +320,12 @@ type FlowFact struct {
 	Callee     string     `json:"callee,omitempty"`
 	SourceKind string     `json:"source_kind,omitempty"`
 	SinkKind   string     `json:"sink_kind,omitempty"`
-	Detail     string     `json:"detail,omitempty"`
-	Line       int        `json:"line"`
-	Column     int        `json:"column,omitempty"`
+	// ParameterOnly marks a process sink whose program is a constant
+	// non-shell literal, so only its arguments can carry a value.
+	ParameterOnly bool   `json:"parameter_only,omitempty"`
+	Detail        string `json:"detail,omitempty"`
+	Line          int    `json:"line"`
+	Column        int    `json:"column,omitempty"`
 }
 
 // ImplementsEdge records absolute proof that a concrete type implements an interface.

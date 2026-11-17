@@ -54,16 +54,19 @@ func runCheck(args []string) int {
 	}
 
 	root := rootfind.FindRepositoryRoot()
+	boundariesPolicy, _ := projectfile.PolicyPath(root, "boundaries.json")
 	config := &search.CheckConfig{
 		Checks: map[string]any{
 			"boundaries":     "warn",
 			"max_arity":      map[string]any{"level": "warn", "value": 6.0},
 			"max_complexity": map[string]any{"level": "warn", "value": 20.0},
 		},
-		BoundariesConfig: filepath.Join(root, ".gograph", "boundaries.json"),
+		BoundariesConfig: filepath.Join(root, filepath.FromSlash(boundariesPolicy)),
 	}
 
-	data, _, foundConfig, err := projectfile.ReadConfig(root, configPath, ".gograph/checks.json")
+	// Committed gograph/checks.json first, then legacy .gograph/checks.json.
+	defaultChecks, _ := projectfile.PolicyPath(root, "checks.json")
+	data, resolvedConfig, foundConfig, err := projectfile.ReadConfig(root, configPath, defaultChecks)
 	if err != nil {
 		return checkError(fmt.Sprintf("failed to read config: %v", err))
 	}
@@ -108,8 +111,20 @@ func runCheck(args []string) int {
 		return checkError(fmt.Sprintf("check failed: %v", err))
 	}
 
+	policy := map[string]any{"checks_policy": "", "boundaries_policy": config.BoundariesConfig}
+	if foundConfig {
+		policy["checks_policy"] = resolvedConfig
+	}
+	if rel, err := filepath.Rel(root, config.BoundariesConfig); err == nil && filepath.IsLocal(rel) {
+		policy["boundaries_policy"] = filepath.ToSlash(rel)
+	}
+	if rel, err := filepath.Rel(root, resolvedConfig); foundConfig && err == nil && filepath.IsLocal(rel) {
+		policy["checks_policy"] = filepath.ToSlash(rel)
+	}
 	if jsonMode {
-		code := PrintJSON(okEnvelope("check", "", report, len(report.Findings)))
+		envelope := okEnvelope("check", "", report, len(report.Findings))
+		envelope.Summary = policy
+		code := PrintJSON(envelope)
 		if code != 0 {
 			return code
 		}
@@ -118,6 +133,11 @@ func runCheck(args []string) int {
 		}
 		return 0
 	} else {
+		checksPolicy := policy["checks_policy"]
+		if checksPolicy == "" {
+			checksPolicy = "none (built-in defaults)"
+		}
+		fmt.Printf("policy: checks %v; boundaries %v\n", checksPolicy, policy["boundaries_policy"])
 		fmt.Println("Status:", report.Status)
 		if len(report.Findings) > 0 {
 			var errs []search.CheckFinding

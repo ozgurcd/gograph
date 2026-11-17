@@ -19,6 +19,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/ozgurcd/gograph"
 	"github.com/ozgurcd/gograph/internal/baseline"
 	"github.com/ozgurcd/gograph/internal/buildctx"
 	"github.com/ozgurcd/gograph/internal/gitenv"
@@ -29,6 +30,8 @@ import (
 	"github.com/ozgurcd/gograph/internal/moduleinventory"
 	"github.com/ozgurcd/gograph/internal/parser"
 	"github.com/ozgurcd/gograph/internal/precise"
+	"github.com/ozgurcd/gograph/internal/projectfile"
+	"github.com/ozgurcd/gograph/internal/releasenotes"
 	"github.com/ozgurcd/gograph/internal/repositoryfingerprint"
 	"github.com/ozgurcd/gograph/internal/rootfind"
 	"github.com/ozgurcd/gograph/internal/scanner"
@@ -307,6 +310,8 @@ func dispatch(args []string) int {
 		return runTests(args[1:])
 	case "coverage":
 		return runCoverage(args[1:])
+	case "uncovered":
+		return runUncovered(args[1:])
 	case "identity":
 		return runIdentity(args[1:])
 	case "routes":
@@ -416,6 +421,8 @@ func dispatch(args []string) int {
 		return 0
 	case "version", "--version", "-v":
 		return runVersion()
+	case "whatsnew":
+		return runWhatsnew(args[1:])
 	default:
 		if jsonMode {
 			return failCommandf(args[0], "unknown command: %s", args[0])
@@ -427,6 +434,7 @@ func dispatch(args []string) int {
 }
 
 func runCapabilities() int {
+	fmt.Print(search.TaskIndexText())
 	fmt.Println("freshness_context: " + graphstate.FreshnessContextDescription)
 	fmt.Println("file_selector_limits: " + search.FileSelectorLimitDescription)
 	fmt.Println("mutation_resolution: " + search.MutationResolutionDescription)
@@ -567,15 +575,15 @@ Every repository query, analysis, and workflow capability has a project MCP
 equivalent. The normal mapping is CLI '<command>' → MCP 'gograph_<command>'.
 Special mappings are 'contract' → gograph_api, 'boundaries --create' →
 gograph_boundaries_create, and the four 'session' actions →
-gograph_session_create/end/audit/cleanup. That project server exposes 68 tools:
-64 CLI-equivalent capabilities plus four session lifecycle tools.
+gograph_session_create/end/audit/cleanup. That project server exposes 70 tools:
+66 CLI-equivalent capabilities plus four session lifecycle tools.
 
 Workspace status, query, path, and impact use the separate four-tool workspace
 MCP server described above. CLI-only process, host, CI, and artifact operations
 are build, validate, doctor, gate, snapshot, add-claude-plugin, hook-guard,
 project/workspace MCP startup, workspace build/member refresh, and help. The
-standalone version command remains CLI-only, while gograph_capabilities exposes
-the running MCP server version directly.
+standalone version and whatsnew commands remain CLI-only, while gograph_capabilities
+exposes the running MCP server version directly.
 These boundaries describe callable functionality; output presentation remains
 transport-specific (CLI flags/envelopes versus typed MCP arguments/content).
 
@@ -661,9 +669,11 @@ ERRORS — two different questions:
 SECURITY FLOW — potential untrusted data paths:
   flow [term]         HTTP request / decoded JSON / environment → SQL query text,
                       process execution, filesystem path, or outbound HTTP target
-  --source / --sink   restrict to one documented source or sink kind
+  --source / --sink   restrict to one documented or policy-defined source or sink kind
   --no-tests          production-only scan (tests are included by default)
-  --config <path>     sanitizer-return policy; defaults to .gograph/flow.json when present
+  --package <path>    analyze only these import paths (prefix/... for descendants; repeatable)
+  --config <path>     policy: return or argument sanitizers, custom sources and sinks;
+                      defaults to gograph/flow.json, else .gograph/flow.json
 
 ━━━ OUTPUT FORMAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Query and composed-analysis commands document JSON individually. Files-only is
@@ -782,7 +792,7 @@ validate --repo PATH --binding-json JSON --json
                        current persisted graph; never builds or refreshes
 
 QUERY COMMANDS:
-boundaries [--config PATH] : verify the persisted graph against .gograph/boundaries.json by default;
+boundaries [--config PATH] : verify the persisted graph against gograph/boundaries.json (committable), else .gograph/boundaries.json by default;
                        run stale/build first, or select another confined policy with --config PATH
 boundaries --create [--config PATH] : auto-generate a baseline boundaries config from the current graph
 callees <fn> [--no-tests] [--depth N]: what fn calls (depth=1 direct; --depth 2+ expands N hops, max 10)
@@ -1708,6 +1718,12 @@ func printResults(cmd, query string, results []search.Result, emptyMsg string) i
 	}
 	if len(results) == 0 {
 		fmt.Println(emptyMsg)
+		outputGraph.RLock()
+		loaded := outputGraph.graph
+		outputGraph.RUnlock()
+		if hint := search.FileSelectorHint(loaded, query); hint != "" {
+			fmt.Println("hint: " + hint)
+		}
 		if cmd == "tests" || cmd == "envs" || cmd == "usages" {
 			if state := currentOutputGraphState(); state != nil {
 				if warning := search.EmptyAnswerWarning(cmd, string(state.Precision), 0); warning != "" {
@@ -2019,17 +2035,64 @@ func runConcurrency(args []string) int {
 	return printResults("concurrency", term, results, "No concurrency primitives found.")
 }
 
+const testsUsage = "usage: gograph tests [symbol] [--transitive [--package name] [--exact-only]]\n" +
+	"       gograph tests <symbol> --format run|go-test [--package name] [--exact-only]\n" +
+	"       gograph tests --uncommitted|--since <ref> [--format run|go-test] [--exact-only]"
+
 func runTests(args []string) int {
 	transitive := false
 	exactOnly := false
+	uncommitted := false
+	sinceRef := ""
+	format := ""
 	packageName := ""
+	pageOptions := search.TestsPageOptions{}
+	pageFlags := false
 	var targets []string
 	for index := 0; index < len(args); index++ {
 		switch argument := args[index]; argument {
+		case "--max-depth", "--limit":
+			value, err := parseIntegerFlag(args, &index)
+			if err != nil {
+				return failCommand("tests", err.Error())
+			}
+			if value < 0 {
+				return failCommandf("tests", "%s must not be negative", argument)
+			}
+			if argument == "--max-depth" {
+				pageOptions.MaxDepth = value
+			} else {
+				pageOptions.Limit = value
+				if value == 0 {
+					pageOptions.Limit = -1 // --limit 0 returns every test
+				}
+				pageFlags = true
+			}
+		case "--cursor":
+			if index+1 >= len(args) || args[index+1] == "" || strings.HasPrefix(args[index+1], "-") {
+				return failCommand("tests", "--cursor requires the opaque next_cursor from a previous tests result")
+			}
+			pageOptions.Cursor = args[index+1]
+			pageFlags = true
+			index++
 		case "--transitive":
 			transitive = true
 		case "--exact-only":
 			exactOnly = true
+		case "--uncommitted":
+			uncommitted = true
+		case "--since":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "-") {
+				return failCommand("tests", "--since requires a git ref")
+			}
+			sinceRef = args[index+1]
+			index++
+		case "--format":
+			if index+1 >= len(args) || (args[index+1] != "run" && args[index+1] != "go-test") {
+				return failCommand("tests", "--format requires run or go-test")
+			}
+			format = args[index+1]
+			index++
 		case "--package":
 			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "-") {
 				return failCommand("tests", "--package requires an exact Go package name")
@@ -2043,22 +2106,60 @@ func runTests(args []string) int {
 			targets = append(targets, argument)
 		}
 	}
-	if len(targets) > 1 || transitive && len(targets) != 1 {
-		return failCommand("tests", "usage: gograph tests [symbol] [--transitive [--package name] [--exact-only]]")
-	}
-	if !transitive && (exactOnly || packageName != "") {
-		return failCommand("tests", "--package and --exact-only require --transitive")
+	changeMode := uncommitted || sinceRef != ""
+	switch {
+	case uncommitted && sinceRef != "":
+		return failCommand("tests", "use either --uncommitted or --since <ref>, not both")
+	case changeMode && (len(targets) > 0 || packageName != ""):
+		return failCommand("tests", "--uncommitted and --since select symbols from the diff; do not pass a symbol or --package\n"+testsUsage)
+	case len(targets) > 1:
+		return failCommand("tests", testsUsage)
+	case format != "" && !changeMode && len(targets) != 1:
+		return failCommand("tests", "--format requires a symbol, --uncommitted, or --since <ref>\n"+testsUsage)
+	case transitive && !changeMode && len(targets) != 1:
+		return failCommand("tests", testsUsage)
+	case !transitive && !changeMode && format == "" && (exactOnly || packageName != "" || pageOptions.MaxDepth > 0):
+		return failCommand("tests", "--package, --exact-only and --max-depth require --transitive, --format, --uncommitted, or --since")
+	case pageFlags && (!transitive || format != "" || changeMode):
+		return failCommand("tests", "--limit and --cursor page --transitive results")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
 		return failCommandf("tests", "failed to load graph: %v", err)
 	}
+	if changeMode {
+		return runTestSelectionForChanges(g, uncommitted, sinceRef, format, exactOnly, pageOptions.MaxDepth)
+	}
 	term := ""
 	if len(targets) > 0 {
 		term = targets[0]
 	}
+	if format != "" {
+		return runTestSelectionForSymbol(g, term, packageName, format, exactOnly, pageOptions.MaxDepth)
+	}
 	if transitive {
 		report := search.TransitiveTestsInPackage(g, term, packageName, exactOnly)
+		if !filesOnlyMode {
+			command := "gograph tests " + shellQuoteArg(term) + " --transitive"
+			if packageName != "" {
+				command += " --package " + shellQuoteArg(packageName)
+			}
+			if exactOnly {
+				command += " --exact-only"
+			}
+			if pageOptions.MaxDepth > 0 {
+				command += fmt.Sprintf(" --max-depth %d", pageOptions.MaxDepth)
+			}
+			if pageOptions.Limit > 0 {
+				command += fmt.Sprintf(" --limit %d", pageOptions.Limit)
+			}
+			pageOptions.Command = command
+			paged, err := search.NewSnapshot(g).TransitiveTestsPage(term, packageName, exactOnly, pageOptions)
+			if err != nil {
+				return failCommand("tests", err.Error())
+			}
+			report = paged
+		}
 		if filesOnlyMode {
 			if report.Status == "not_found" || report.Status == "ambiguous" {
 				return failCommandf("tests", "product selector %q: %s", term, report.Status)
@@ -2095,10 +2196,27 @@ func runTests(args []string) int {
 			fmt.Printf("No test function statically reaches %q.\n", term)
 			return 0
 		}
-		fmt.Printf("Tests statically reaching %s:\n", report.MatchedSymbols[0].StableID)
+		summary := report.Summary
+		fmt.Printf("Tests statically reaching %s: %d (exact %d, possible %d)\n", report.MatchedSymbols[0].StableID, summary.Total, summary.Exact, summary.Possible)
+		for _, depth := range summary.ByDepth {
+			fmt.Printf("  depth %d: %d exact, %d possible\n", depth.Depth, depth.Exact, depth.Possible)
+		}
+		if summary.BeyondDepth > 0 {
+			fmt.Printf("  beyond --max-depth %d: %d (not listed)\n", report.MaxDepth, summary.BeyondDepth)
+		}
+		if len(report.Tests) == 0 {
+			if summary.Total == 0 {
+				fmt.Printf("No test function within --max-depth %d reaches %q.\n", report.MaxDepth, term)
+			}
+			return 0
+		}
+		fmt.Printf("\nShowing %d-%d of %d, nearest first:\n", *report.Offset+1, *report.Offset+*report.Returned, *report.Total)
 		for _, test := range report.Tests {
 			fmt.Printf("  [%s d%d] %s  (%s:%d)\n", test.Resolution, test.Depth, test.StableID, test.File, test.Line)
 			fmt.Printf("    path: %s\n", strings.Join(test.Path, " -> "))
+		}
+		if summary.NextCommand != "" {
+			fmt.Printf("\nnext: %s\n", summary.NextCommand)
 		}
 		return 0
 	}
@@ -2108,6 +2226,104 @@ func runTests(args []string) int {
 		emptyMsg = fmt.Sprintf("No test functions found exercising '%s'.", term)
 	}
 	return printResults("tests", term, results, emptyMsg)
+}
+
+func runTestSelectionForSymbol(g *graph.Graph, term, packageName, format string, exactOnly bool, maxDepth int) int {
+	snapshot := search.NewSnapshot(g)
+	report := snapshot.TransitiveTests(term, packageName, false)
+	switch report.Status {
+	case "not_found":
+		return failCommandf("tests", "product symbol %q was not found; use gograph identity <name> to resolve its stable ID", term)
+	case "ambiguous":
+		var candidates []string
+		for _, match := range report.MatchedSymbols {
+			candidates = append(candidates, fmt.Sprintf("%s [package=%s] %s:%d", match.StableID, match.Package, match.File, match.Line))
+		}
+		return failCommandf("tests", "product symbol %q is ambiguous; retry with a stable ID and, when IDs collide, --package: %s", term, strings.Join(candidates, "; "))
+	}
+	match := report.MatchedSymbols[0]
+	selection := snapshot.SelectTestsWithin(term, []search.SelectionInput{{StableID: match.StableID, Name: match.Name, File: match.File}}, exactOnly, maxDepth)
+	return printTestSelection(selection, format)
+}
+
+func runTestSelectionForChanges(g *graph.Graph, uncommitted bool, sinceRef, format string, exactOnly bool, maxDepth int) int {
+	ref, selector := sinceRef, "--since "+sinceRef
+	if uncommitted {
+		ref, selector = "HEAD", "--uncommitted"
+	}
+	changes, err := search.ChangesByGitRef(g, graphRoot(g), ref)
+	if err != nil {
+		return failCommand("tests", err.Error())
+	}
+	if changes.Evaluation != "complete" {
+		return failCommand("tests", "cannot select tests from incomplete changes: "+strings.Join(changes.Diagnostics, "; "))
+	}
+	selection := search.NewSnapshot(g).SelectTestsWithin(selector, search.SelectionInputsFromChanges(changes), exactOnly, maxDepth)
+	return printTestSelection(selection, format)
+}
+
+// printTestSelection prints a runnable selection. "go-test" prints only
+// commands so the output can be executed line by line.
+func printTestSelection(selection search.TestSelection, format string) int {
+	if filesOnlyMode {
+		seen := make(map[string]bool)
+		var files []string
+		for _, pkg := range selection.Packages {
+			for _, test := range pkg.Tests {
+				if !seen[test.File] {
+					seen[test.File] = true
+					files = append(files, test.File)
+				}
+			}
+		}
+		sort.Strings(files)
+		for _, file := range files {
+			fmt.Println(file)
+		}
+		return 0
+	}
+	if jsonMode {
+		return PrintJSON(okEnvelope("tests", selection.Selector, selection, selection.TestCount))
+	}
+	if format == "go-test" {
+		for _, pkg := range selection.Packages {
+			for _, command := range pkg.Commands {
+				fmt.Println(command)
+			}
+		}
+		for _, unselected := range selection.Unselected {
+			fmt.Fprintf(os.Stderr, "unselected: %s (%s): %s\n", firstNonEmpty(unselected.StableID, unselected.Name), unselected.Change, unselected.Reason)
+		}
+		return 0
+	}
+	if len(selection.Roots) == 0 && len(selection.Unselected) == 0 {
+		fmt.Printf("No changed Go declarations for %s.\n", selection.Selector)
+		return 0
+	}
+	fmt.Printf("Tests for %s: %d tests in %d packages (exact %d, possible %d) from %d symbols.\n",
+		selection.Selector, selection.TestCount, len(selection.Packages), selection.ExactCount, selection.PossibleCount, len(selection.Roots))
+	for _, pkg := range selection.Packages {
+		fmt.Printf("\n%s\n", pkg.ImportPath)
+		if pkg.RunAll {
+			fmt.Println("  every test in the package is selected (no -run filter)")
+		}
+		for _, pattern := range pkg.RunPatterns {
+			fmt.Printf("  -run '%s'\n", pattern)
+		}
+		if pkg.BenchPattern != "" {
+			fmt.Printf("  -bench '%s'\n", pkg.BenchPattern)
+		}
+	}
+	if len(selection.Unselected) > 0 {
+		fmt.Printf("\nUnselected (%d):\n", len(selection.Unselected))
+		for _, unselected := range selection.Unselected {
+			fmt.Printf("  %s (%s): %s\n", firstNonEmpty(unselected.StableID, unselected.Name), unselected.Change, unselected.Reason)
+		}
+	}
+	if len(selection.Packages) > 0 {
+		fmt.Println("\nnext: add --format go-test to print runnable go test commands")
+	}
+	return 0
 }
 
 func runCoverage(args []string) int {
@@ -3380,7 +3596,14 @@ MACHINE VALIDATION
                              one gograph.validation.v1 document and exits 0=pass,
                              1=evaluated fail, or 2=cannot_evaluate/invalid request.
                              V1 predicates: symbol_exists, package_imports,
-                             call_edge_exists, and type_implements.
+                             call_edge_exists, type_implements, and the policy
+                             predicates imports_only_from (package subject + allow),
+                             callers_only_from (symbol subject + allow; precise) and
+                             call_arg_constant (symbol subject + argument N, optional
+                             forbidden_values; precise). allow lists package import
+                             paths (prefix/... patterns) or repository files; tests are
+                             skipped unless include_tests. Fails list every violating
+                             file:line in evidence.matched_relations.
 
 INSTALL DIAGNOSTICS
   doctor [--json]            Report installations plus the current repository graph's
@@ -3394,13 +3617,13 @@ CLI / MCP TRANSPORT COVERAGE
                              maps to gograph_<command>; contract maps to gograph_api,
                              boundaries --create to gograph_boundaries_create, and
                              session actions to gograph_session_create/end/audit/cleanup.
-                             Total: 64 CLI-equivalent capabilities + 4 session tools.
+                             Total: 66 CLI-equivalent capabilities + 4 session tools.
   Workspace server           status, query, path, and impact map exactly to the four
                              gograph_workspace_* tools listed under WORKSPACES.
   CLI-only operations        build, validate, doctor, gate, snapshot,
                              add-claude-plugin, hook-guard, project/workspace MCP
                              startup, workspace build/member refresh, and help.
-                             The standalone version command has no MCP tool;
+                             The standalone version and whatsnew commands have no MCP tool;
                              gograph_capabilities reports the running server version.
                              CLI envelopes/flags and MCP typed content may differ, but
                              paired operations share their functional implementation.
@@ -3516,7 +3739,8 @@ INTERFACES & TYPES
   fixtures <pkg>             Find test helper structs and functions in test files.
 
 CODE QUALITY
-  check [--config]           Run static policy checks using .gograph/checks.json.
+  check [--config]           Run static policy checks using gograph/checks.json (committable),
+                             else .gograph/checks.json; prints the policy files used.
   check --uncommitted        Run checks, including uncommitted code.
   check --since <ref|graph.json>
                              Run checks against a Git ref or saved graph baseline.
@@ -3535,26 +3759,36 @@ CODE QUALITY
                              Subcommands: save <name>, diff <name>, list, drop <name>.
                              Snapshot files/directories must be real repository entries.
   boundaries [--config PATH]  Verify package architecture constraints. The default policy file is
+                             the committable gograph/boundaries.json, else the git-ignored
                              .gograph/boundaries.json; use --config PATH for another
-                             repository-confined policy file.
+                             repository-confined policy file. Prints the policy file used.
                              Reads the persisted graph; run stale/build before enforcement.
   boundaries --create [--config PATH]
-                             Auto-generate a baseline boundaries.json from the current repo;
-                             refuses linked output paths and overwrite.
-  flow [term] [--source kind] [--sink kind] [--config path] [--no-tests] [--max-work N] [--context-depth N]
+                             Auto-generate a baseline gograph/boundaries.json from the current
+                             repo; refuses linked output paths and overwrite.
+  flow [term] [--source kind] [--sink kind] [--config path] [--no-tests] [--package path]... [--max-work N] [--context-depth N]
                              Find potential untrusted-data paths to SQL query text,
                              process execution, filesystem access, or outbound HTTP.
                              Sources: http_request, decoded_json, environment.
                              Sinks: sql_query, process_execution, filesystem, outbound_http.
+                             A constant non-shell program (git, not sh) marks process
+                             findings parameter_only, at most medium severity.
                              Tests are included by default; --no-tests excludes them.
-                             Optional return-value sanitizer policy: .gograph/flow.json.
-                             Policy changes apply without rebuilding graph.json.
-                             Schema: {"sanitizers":[{"function":"pkg.Clean",
-                               "for":["filesystem"]}]}; omit "for" for all sinks.
+                             --package limits analysis to import paths (prefix/... too).
+                             Optional policy: gograph/flow.json, else .gograph/flow.json; changes apply without
+                             rebuilding graph.json. Schema: {"sanitizers":[{"function":
+                               "pkg.Clean","for":["filesystem"]},{"function":"pkg.Check",
+                               "argument":0}],"sources":[{"function":"pkg.Read","kind":
+                               "agent_output"}],"sinks":[{"function":"pkg.Write","kind":
+                               "mcp_response","argument":1}]}; omit "for" for all sinks.
                              --context-depth N (default 3, max 16) call-site frames per value;
                              --max-work N overrides the size-derived work budget. An exhausted
-                             budget prints INCOMPLETE, adds JSON completeness, and exits 2.
-  complexity [symbol]        Cyclomatic complexity per function, highest first.
+                             budget prints INCOMPLETE with the functions that used the most
+                             work, adds JSON completeness.top_functions, and exits 2.
+  complexity [symbol] [--no-tests] [--top N] [--path DIR]
+                             Cyclomatic complexity per function, highest first.
+                             --no-tests drops _test.go functions, --path keeps one
+                             directory subtree, --top keeps the N highest.
                              Filter by symbol name substring. Labels: LOW / MEDIUM /
                              HIGH / VERY HIGH (McCabe thresholds: 5 / 10 / 20), or
                              UNKNOWN with score -1 when source cannot be read or parsed safely.
@@ -3603,10 +3837,14 @@ CODE QUALITY
                              Print/re-resolve canonical module/package/receiver/name identity.
                              Stable across line shifts and file moves inside one package;
                              renames, receiver changes, and package/module moves change it.
-  untested [--pkg name] [--top N] [--exclude glob]... [--wide]
-                             Called production functions with no exact transitive test path.
+  untested [--pkg name] [--top N] [--exclude glob]... [--wide] [--exclude-interface-methods] [--coverprofile file]
+                             Called production functions with no exact transitive test path,
+                             ranked none before possible, then by callers.
                              Excludes match repository-relative paths; prefix/** matches descendants.
                              --wide prints complete canonical stable IDs instead of truncating names.
+                             --exclude-interface-methods skips Error/String/MarshalJSON-style
+                             interface methods and reports the count. --coverprofile lists
+                             functions a go test -coverprofile run never executed instead.
   endpoint <route>           Full vertical slice for one HTTP endpoint (depth 1-20; supports --mermaid).
                              Composes: route resolution + handler symbol +
                              full callee chain (BFS, default depth 5) + SQL
@@ -3711,14 +3949,27 @@ EXTRACTION
   envs [term]                Every os.Getenv / os.LookupEnv / supported Viper Get* read.
   concurrency [term]         Goroutine spawns, channel sends, and typed Mutex/RWMutex/
                              WaitGroup/Once calls (not receives or select statements).
-  tests [symbol] [--transitive] [--exact-only] [--package name]
-                             Direct attributed test calls by default. --transitive requires
-                             one product symbol and returns gograph.tests.v1 with every
-                             reaching test, exact/possible propagation, depth, and stable-ID path.
+  tests [symbol] [--transitive] [--exact-only] [--package name] [--max-depth N] [--limit N] [--cursor T] [--uncommitted|--since <ref>] [--format run|go-test]
+                             Which tests to run for a symbol or a change. Direct attributed
+                             test calls by default. --transitive requires one product symbol
+                             and returns gograph.tests.v1: a summary of every reaching test
+                             by depth and exact/possible resolution, then one page (default
+                             50, --limit 0 for all, --cursor for the next) sorted nearest
+                             first, with depth and stable-ID path. --max-depth N keeps tests
+                             whose shortest path is at most N calls (also for selections).
+                             --uncommitted, --since <ref>, or --format select every test that
+                             reaches the changed (or named) symbols and print, per package,
+                             an anchored -run pattern (gograph.test_selection.v1 with --json);
+                             --format go-test prints one runnable go test line per package,
+                             with the graph's -tags. --exact-only drops possible paths.
                              Direct lookup accepts Receiver.Method, including pointer receivers,
                              as well as a full stable symbol ID.
   coverage <test> [--exact-only] [--package name]
                              Reverse test attribution with exact/possible transitive paths.
+  uncovered --uncommitted|--since <ref> --coverprofile <file>
+                             Changed lines of non-test Go files that a go test
+                             -coverprofile run (merged profiles allowed) never
+                             executed, as exact line ranges (gograph.uncovered.v1).
   identity <symbol-or-stable-id> [--package name]
                              Resolve canonical stable symbol identity and current location.
 
@@ -3796,6 +4047,10 @@ AGENT INTEGRATION
 OTHER
   doctor [--json]            Diagnose duplicate or shadowed gograph installations.
   version, -v                Print version; add --json for gograph.version.v1.
+  whatsnew [--since vX.Y.Z]  Release notes shipped with this binary: the running release,
+                             or for a development build the unreleased changes and the
+                             latest release; --since lists every newer release
+                             (gograph.whatsnew.v1 with --json).
   help, -h                   Show this help.
 
 OUTPUTS (after 'build')
@@ -3809,7 +4064,10 @@ OUTPUTS (after 'build')
 `
 
 func printHelp() {
-	fmt.Print(helpText)
+	// The task index comes right after the title so readers that stop after
+	// the first screen still see which command answers which job.
+	title, rest, _ := strings.Cut(helpText, "\n\n")
+	fmt.Print(title + "\n\n" + search.TaskIndexText() + rest)
 	printExcludeDirsHelp("")
 	printListPaginationHelp("")
 	fmt.Println("\nCHANGE SELECTION\n  " + search.CurrentChangeSelectionContract)
@@ -3875,7 +4133,7 @@ func setFlowOption(options *search.FlowOptions, name, value string) error {
 
 func runFlow(args []string) int {
 	options := search.FlowOptions{IncludeTests: true}
-	usage := "usage: gograph flow [term] [--source http_request|decoded_json|environment] [--sink sql_query|process_execution|filesystem|outbound_http] [--config path] [--no-tests] [--max-work N] [--context-depth N]"
+	usage := "usage: gograph flow [term] [--source http_request|decoded_json|environment|<custom>] [--sink sql_query|process_execution|filesystem|outbound_http|<custom>] [--config path] [--no-tests] [--package path[/...]]... [--max-work N] [--context-depth N]"
 	fail := func(message string) int {
 		return failCommand("flow", message)
 	}
@@ -3885,6 +4143,12 @@ func runFlow(args []string) int {
 		switch argument {
 		case "--no-tests":
 			options.IncludeTests = false
+		case "--package":
+			if index+1 >= len(args) || args[index+1] == "" || strings.HasPrefix(args[index+1], "-") {
+				return fail("--package requires an import path or prefix/...\n" + usage)
+			}
+			index++
+			options.Packages = append(options.Packages, args[index])
 		case "--source", "--sink", "--config", "--max-work", "--context-depth":
 			if index+1 >= len(args) {
 				return fail(fmt.Sprintf("%s requires a value\n%s", argument, usage))
@@ -3930,6 +4194,7 @@ func runFlow(args []string) int {
 	if jsonMode {
 		envelope := okEnvelope("flow", options.Term, results, len(results))
 		envelope.Completeness = report.Completeness
+		envelope.Summary = map[string]string{"policy_path": report.PolicyPath}
 		code := PrintJSON(envelope)
 		if code == 0 && incomplete {
 			return exitStale
@@ -3939,7 +4204,15 @@ func runFlow(args []string) int {
 	if incomplete {
 		fmt.Fprintln(os.Stderr, "WARNING: "+report.Completeness.Reason)
 		if !filesOnlyMode {
-			defer fmt.Println("INCOMPLETE: " + report.Completeness.Reason)
+			defer func() {
+				fmt.Println("INCOMPLETE: " + report.Completeness.Reason)
+				if len(report.Completeness.TopFunctions) > 0 {
+					fmt.Println("Most propagation work:")
+					for _, share := range report.Completeness.TopFunctions {
+						fmt.Printf("  %10d  %s  (%s)\n", share.Work, share.Function, share.File)
+					}
+				}
+			}()
 		}
 	}
 	exit := func() int {
@@ -3959,6 +4232,9 @@ func runFlow(args []string) int {
 			}
 		}
 		return exit()
+	}
+	if report.PolicyPath != "" {
+		fmt.Printf("policy: %s\n", report.PolicyPath)
 	}
 	if len(results) == 0 {
 		fmt.Println("No potential untrusted-data flows found.")
@@ -4226,18 +4502,44 @@ func runArity(args []string) int {
 
 // runComplexity estimates cyclomatic complexity for matching functions.
 func runComplexity(args []string) int {
-	if !hasOptionalTarget(args) {
-		return failCommand("complexity", "usage: gograph complexity [symbol]")
+	usage := "usage: gograph complexity [symbol] [--no-tests] [--top N] [--path DIR]"
+	filter := search.ComplexityFilter{}
+	var targets []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--no-tests":
+			filter.NoTests = true
+		case "--top":
+			value, err := parseIntegerFlag(args, &i)
+			if err != nil || value < 0 {
+				return failCommand("complexity", "--top requires a non-negative integer\n"+usage)
+			}
+			filter.Top = value
+		case "--path":
+			if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+				return failCommand("complexity", "--path requires a repository-relative directory\n"+usage)
+			}
+			i++
+			filter.Path = args[i]
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				return failCommandf("complexity", "unknown flag: %s\n%s", args[i], usage)
+			}
+			targets = append(targets, args[i])
+		}
+	}
+	if len(targets) > 1 {
+		return failCommand("complexity", usage)
 	}
 	term := ""
-	if len(args) > 0 {
-		term = args[0]
+	if len(targets) > 0 {
+		term = targets[0]
 	}
 	g, err := loadGraph(".")
 	if err != nil {
 		return failCommand("complexity", err.Error())
 	}
-	results := search.Complexity(g, term)
+	results := search.FilterComplexity(search.Complexity(g, term), filter)
 	if jsonMode {
 		return PrintJSON(okEnvelope("complexity", term, results, len(results)))
 	}
@@ -5354,7 +5656,7 @@ func runFixtures(args []string) int {
 }
 
 func runBoundaries(args []string) int {
-	configPath := ".gograph/boundaries.json"
+	configPath := ""
 	createMode := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -5374,6 +5676,14 @@ func runBoundaries(args []string) int {
 	if err != nil {
 		return failCommandf("boundaries", "Error loading graph: %v", err)
 	}
+	if configPath == "" {
+		// Committed gograph/boundaries.json first, then legacy .gograph/;
+		// --create writes the committed location.
+		configPath, _ = projectfile.PolicyPath(graphRoot(g), "boundaries.json")
+		if createMode {
+			configPath = pathpkg.Join(projectfile.CommittedPolicyDir, "boundaries.json")
+		}
+	}
 
 	if createMode {
 		if err := search.CreateBoundaries(g, configPath); err != nil {
@@ -5385,7 +5695,10 @@ func runBoundaries(args []string) int {
 
 	results, err := search.Boundaries(g, configPath)
 	if err != nil {
-		return failCommandf("boundaries", "Boundaries error for %q: %v (default: .gograph/boundaries.json; override with --config PATH)", configPath, err)
+		return failCommandf("boundaries", "Boundaries error for %q: %v (default: gograph/boundaries.json, then .gograph/boundaries.json; create one with --create or override with --config PATH)", configPath, err)
+	}
+	if !jsonMode && !filesOnlyMode {
+		fmt.Printf("policy: %s\n", configPath)
 	}
 	code := printResults("boundaries", configPath, results, "No boundary violations found. Architecture is clean!")
 	if len(results) > 0 {
@@ -5594,6 +5907,11 @@ func runPlan(args []string) int {
 	}
 
 	plan := search.Plan(g, symbolNames, title)
+	if args[0] == "--uncommitted" {
+		plan.NextCommands = search.PlanNextCommands("")
+	} else {
+		plan.NextCommands = search.PlanNextCommands(args[0])
+	}
 	root := ""
 	var rawContexts []*search.ContextResult
 	var contexts []planContextJSON
@@ -5881,9 +6199,19 @@ func runUntested(args []string) int {
 	pkg := ""
 	top := 0
 	wide := false
+	coverProfile := ""
+	options := search.UntestedOptions{}
 	var excludes []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--exclude-interface-methods":
+			options.ExcludeInterfaceMethods = true
+		case "--coverprofile":
+			if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+				return failCommand("untested", "--coverprofile requires a go test -coverprofile file")
+			}
+			coverProfile = args[i+1]
+			i++
 		case "--pkg":
 			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
 				return failCommand("untested", "--pkg requires a value")
@@ -5914,7 +6242,14 @@ func runUntested(args []string) int {
 		return failCommand("untested", err.Error())
 	}
 
-	results := search.Untested(g)
+	if coverProfile != "" {
+		profile, err := readCoverProfile(coverProfile, g)
+		if err != nil {
+			return failCommand("untested", err.Error())
+		}
+		options.Coverage = profile
+	}
+	results, summary := search.NewSnapshot(g).UntestedWith(options)
 	results, err = search.FilterUntested(results, excludes)
 	if err != nil {
 		return failCommandf("untested", "invalid --exclude glob: %v", err)
@@ -5939,11 +6274,23 @@ func runUntested(args []string) int {
 	}
 
 	if jsonMode {
-		return PrintJSON(okEnvelope("untested", "", results, len(results)))
+		envelope := okEnvelope("untested", "", results, len(results))
+		if options.ExcludeInterfaceMethods || options.Coverage != nil {
+			envelope.Summary = summary
+		}
+		return PrintJSON(envelope)
 	}
 
+	notes := untestedSummaryNotes(summary, options)
 	if len(results) == 0 {
-		fmt.Println("No untested candidates found — every called symbol has an exact/static or parser-attributed test edge.")
+		if options.Coverage != nil {
+			fmt.Println("No unexecuted production functions found in the coverage profile.")
+		} else {
+			fmt.Println("No untested candidates found — every called symbol has an exact/static or parser-attributed test edge.")
+		}
+		for _, note := range notes {
+			fmt.Println(note)
+		}
 		return 0
 	}
 
@@ -5951,7 +6298,16 @@ func runUntested(args []string) int {
 	if top > 0 {
 		label = fmt.Sprintf("top %d", top)
 	}
-	fmt.Printf("Untested Candidates (%s, sorted by caller count):\n\n", label)
+	order := "no static test path first, then possible-only, by caller count"
+	if options.Coverage != nil {
+		order = "not executed in the coverage profile; static evidence: none, possible, exact"
+	}
+	fmt.Printf("Untested Candidates (%s, %s):\n\n", label, order)
+	defer func() {
+		for _, note := range notes {
+			fmt.Println(note)
+		}
+	}()
 	nameHeader := "FUNCTION"
 	nameWidth := 38
 	if wide {
@@ -6039,5 +6395,153 @@ examples:
 		return PrintJSON(okEnvelope("doc", "", []docResult{{Query: query, Output: text}}, 1))
 	}
 	fmt.Println(text)
+	return 0
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// shellQuoteArg quotes a value for a copy-pasteable command line.
+func shellQuoteArg(value string) string {
+	if value != "" && strings.IndexFunc(value, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && !strings.ContainsRune("._/:-", r)
+	}) < 0 {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
+// maxCoverProfileBytes bounds a coverage profile read.
+const maxCoverProfileBytes = 512 << 20
+
+func readCoverProfile(name string, g *graph.Graph) (*search.CoverageProfile, error) {
+	info, err := os.Stat(name)
+	if err != nil {
+		return nil, fmt.Errorf("read coverage profile: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxCoverProfileBytes {
+		return nil, fmt.Errorf("coverage profile %s must be a regular file of at most 512 MiB", name)
+	}
+	data, err := os.ReadFile(name)
+	if err != nil {
+		return nil, fmt.Errorf("read coverage profile: %w", err)
+	}
+	return search.ParseCoverProfile(data, g)
+}
+
+func untestedSummaryNotes(summary search.UntestedSummary, options search.UntestedOptions) []string {
+	var notes []string
+	if options.ExcludeInterfaceMethods {
+		notes = append(notes, fmt.Sprintf("\nSkipped %d interface methods (--exclude-interface-methods).", summary.SkippedInterfaceMethods))
+	}
+	if options.Coverage != nil {
+		notes = append(notes, fmt.Sprintf("Coverage profile: %d functions executed (not listed); %d files without profile data; %d profile files outside this graph.",
+			summary.ExecutedFunctions, summary.FilesWithoutProfileData, summary.UnmappedProfileFiles))
+	}
+	return notes
+}
+
+func runUncovered(args []string) int {
+	usage := "usage: gograph uncovered --uncommitted|--since <ref> --coverprofile <file>"
+	uncommitted, sinceRef, coverProfile := false, "", ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--uncommitted":
+			uncommitted = true
+		case "--since", "--coverprofile":
+			if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+				return failCommandf("uncovered", "%s requires a value\n%s", args[i], usage)
+			}
+			if args[i] == "--since" {
+				sinceRef = args[i+1]
+			} else {
+				coverProfile = args[i+1]
+			}
+			i++
+		default:
+			return failCommandf("uncovered", "unknown argument: %s\n%s", args[i], usage)
+		}
+	}
+	if uncommitted == (sinceRef != "") || coverProfile == "" {
+		return failCommand("uncovered", usage)
+	}
+	g, err := loadGraph(".")
+	if err != nil {
+		return failCommand("uncovered", err.Error())
+	}
+	profile, err := readCoverProfile(coverProfile, g)
+	if err != nil {
+		return failCommand("uncovered", err.Error())
+	}
+	selector := "--since " + sinceRef
+	if uncommitted {
+		selector = "--uncommitted"
+	}
+	changed, err := search.ChangedGoLines(context.Background(), graphRoot(g), sinceRef)
+	if err != nil {
+		return failCommand("uncovered", err.Error())
+	}
+	report := search.Uncovered(selector, graphRoot(g), changed, profile)
+	if jsonMode {
+		return PrintJSON(okEnvelope("uncovered", selector, report, report.UncoveredLines))
+	}
+	fmt.Printf("Changed lines not executed by the coverage profile (%s): %d of %d changed lines in %d files.\n",
+		selector, report.UncoveredLines, report.ChangedLines, report.ChangedFiles)
+	for _, file := range report.Files {
+		var ranges []string
+		for _, r := range file.Ranges {
+			if r.Start == r.End {
+				ranges = append(ranges, strconv.Itoa(r.Start))
+			} else {
+				ranges = append(ranges, fmt.Sprintf("%d-%d", r.Start, r.End))
+			}
+		}
+		fmt.Printf("  %s: %s\n", file.File, strings.Join(ranges, ", "))
+	}
+	if len(report.FilesWithoutProfileData) > 0 {
+		fmt.Printf("No profile data for %d changed files (untested package or outside the build; use -coverpkg): %s\n",
+			len(report.FilesWithoutProfileData), strings.Join(report.FilesWithoutProfileData, ", "))
+	}
+	return 0
+}
+
+func runWhatsnew(args []string) int {
+	since := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--since":
+			if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+				return failCommand("whatsnew", "--since requires a version such as v1.7.18")
+			}
+			i++
+			since = args[i]
+		default:
+			return failCommandf("whatsnew", "unknown argument: %s\nusage: gograph whatsnew [--since vX.Y.Z]", args[i])
+		}
+	}
+	report := releasenotes.Select(releasenotes.Parse(gograph.ReleaseNotes), Version, since)
+	if jsonMode {
+		return PrintJSON(okEnvelope("whatsnew", since, report, len(report.Sections)))
+	}
+	fmt.Printf("gograph %s — %s\n", strings.TrimPrefix(report.RunningVersion, "v"), report.Selection)
+	if report.Note != "" {
+		fmt.Println(report.Note)
+	}
+	for _, section := range report.Sections {
+		header := section.Version
+		if section.Date != "" {
+			header += " — " + section.Date
+		}
+		fmt.Printf("\n## %s\n\n%s\n", header, section.Body)
+	}
+	if len(report.Sections) == 0 && report.Note == "" {
+		fmt.Println("No release notes in this range.")
+	}
 	return 0
 }

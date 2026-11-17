@@ -246,3 +246,113 @@ func use(input string) {
 		t.Fatalf("missing indexed return facts: return=%v value=%v error=%v", returnIndexFound, valueIndexFound, errorIndexFound)
 	}
 }
+
+func TestParseFileChoosesSQLTextArgument(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "sql.go")
+	source := `package sample
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+)
+
+type pool interface {
+	Query(ctx context.Context, sql string, args ...any) error
+	Exec(ctx context.Context, sql string, args ...any) error
+}
+
+type std interface {
+	Query(query string, args ...any) error
+	Exec(query string, args ...any) error
+}
+
+func pgxParam(ctx context.Context, p pool, v string) { _ = p.Query(ctx, "SELECT * FROM t WHERE id = $1", v) }
+func pgxRequestContext(r *http.Request, p pool, v string) { _ = p.Query(r.Context(), "SELECT 1 WHERE $1", v) }
+func pgxConcat(p pool, v string) { _ = p.Query(context.Background(), "SELECT * FROM t WHERE id = "+v) }
+func pgxLocal(r *http.Request, p pool, q string) { ctx := r.Context(); _ = p.Exec(ctx, q) }
+func pgxDerived(r *http.Request, p pool, v string) {
+	c, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	_ = p.Exec(c, fmt.Sprintf("DELETE FROM t WHERE id = %s", v))
+}
+func pgxUnknownContextName(p pool, c context.Context, v string) { _ = p.Query(c, "SELECT * FROM t WHERE id = $1", v) }
+func pgxKeyword(p pool, c any, v string) { _ = p.Query(c, "select * from t where id = $1", v) }
+func stdParam(db std, v string) { _ = db.Query("SELECT * FROM t WHERE id = ?", v) }
+func stdVariableText(db std, q string) { _ = db.Exec(q, "value") }
+`
+	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := parser.ParseFile(token.NewFileSet(), path, "sql.go", "example.com/sample")
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	got := make(map[string]string)
+	for _, function := range result.FlowFunctions {
+		for _, fact := range function.Facts {
+			if fact.Kind == "sink" && fact.SinkKind == "sql_query" {
+				got[function.Name] = strings.Join(fact.Inputs, ",")
+			}
+		}
+	}
+	want := map[string]string{
+		"pgxParam":              "",
+		"pgxRequestContext":     "",
+		"pgxConcat":             "v",
+		"pgxLocal":              "q",
+		"pgxDerived":            got["pgxDerived"],
+		"pgxUnknownContextName": "",
+		"pgxKeyword":            "",
+		"stdParam":              "",
+		"stdVariableText":       "q",
+	}
+	if !strings.HasPrefix(got["pgxDerived"], "$call:") {
+		t.Errorf("pgxDerived sink inputs = %q, want the fmt.Sprintf call result", got["pgxDerived"])
+	}
+	for name, inputs := range want {
+		if got[name] != inputs {
+			t.Errorf("%s sql_query sink inputs = %q, want %q", name, got[name], inputs)
+		}
+	}
+}
+
+func TestParseFileMarksConstantNonShellProgramsParameterOnly(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "run.go")
+	source := `package sample
+
+import (
+	"context"
+	"os/exec"
+)
+
+func git(v string)   { _ = exec.Command("git", "log", v).Run() }
+func shell(v string) { _ = exec.Command("sh", "-c", v).Run() }
+func abs(v string)   { _ = exec.Command("/bin/bash", "-c", v).Run() }
+func dyn(p, v string) { _ = exec.Command(p, v).Run() }
+func ctxGit(ctx context.Context, v string) { _ = exec.CommandContext(ctx, "/usr/bin/git", v).Run() }
+`
+	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := parser.ParseFile(token.NewFileSet(), path, "run.go", "example.com/sample")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, function := range result.FlowFunctions {
+		for _, fact := range function.Facts {
+			if fact.Kind == "sink" && fact.SinkKind == "process_execution" {
+				got[function.Name] = fact.ParameterOnly
+			}
+		}
+	}
+	want := map[string]bool{"git": true, "shell": false, "abs": false, "dyn": false, "ctxGit": true}
+	for name, value := range want {
+		if got[name] != value {
+			t.Errorf("%s parameter_only = %v, want %v", name, got[name], value)
+		}
+	}
+}

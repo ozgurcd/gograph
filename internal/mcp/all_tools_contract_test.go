@@ -3,6 +3,7 @@ package mcp_test
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,6 +31,15 @@ func main() { _ = Work() }
 	}
 	if err := os.WriteFile(filepath.Join(root, ".gograph", "boundaries.json"), []byte(`{"layers":[]}`), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "cover.out"), []byte("mode: set\nexample.com/audit/main.go:4.20,4.37 1 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, gitArgs := range [][]string{{"init", "-q"}, {"add", "main.go", "go.mod"}, {"commit", "-qm", "audit"}} {
+		cmd := exec.Command("git", append([]string{"-C", root, "-c", "core.hooksPath=/dev/null", "-c", "user.name=Gograph Test", "-c", "user.email=gograph-test@example.invalid"}, gitArgs...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", gitArgs, err, out)
+		}
 	}
 
 	generated := time.Now().Add(time.Hour)
@@ -119,6 +129,7 @@ func main() { _ = Work() }
 		"gograph_interfaces":        {"struct": "Service"},
 		"gograph_tests":             {"symbol": "Work"},
 		"gograph_coverage":          {"test": "TestWork", "exact_only": false},
+		"gograph_uncovered":         {"uncommitted": true, "coverprofile": "cover.out"},
 		"gograph_identity":          {"symbol": "Work"},
 		"gograph_hotspot":           {"top": float64(5), "include_tests": false},
 		"gograph_deps":              {"package": "sample", "transitive": true},
@@ -149,7 +160,7 @@ func main() { _ = Work() }
 		called++
 		callTool(t, handler, args[name])
 	}
-	if called != 65 {
-		t.Fatalf("executed %d non-session MCP tools, want 65", called)
+	if called != 66 {
+		t.Fatalf("executed %d non-session MCP tools, want 66", called)
 	}
 }

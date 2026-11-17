@@ -205,7 +205,12 @@ Evaluates one strict `gograph.binding.v1` structural predicate against the
 existing trusted repository graph and emits exactly one
 `gograph.validation.v1` document. It never builds or refreshes an artifact.
 Supported predicates are `symbol_exists`, `package_imports`,
-`call_edge_exists`, and `type_implements`. Exit status is `0` for pass, `1`
+`call_edge_exists`, `type_implements`, and the policy predicates
+`imports_only_from` (only allowlisted packages or files import a package),
+`callers_only_from` (only allowlisted packages or files call a function, such
+as `os/exec::Command`) and `call_arg_constant` (argument N is always a
+compile-time constant, or never one of `forbidden_values`). Policy failures
+list every violating file and line. Exit status is `0` for pass, `1`
 for an evaluated fail, and `2` when the request cannot be evaluated or is
 invalid. This process-status machine-validation adapter is CLI-only; MCP
 callers use the corresponding query/evidence tools rather than a validation
@@ -255,6 +260,9 @@ bounded impact section. Use focused `impact` for broader fallback traversal.
   `gograph_explore` returns that same native value as JSON text, with required
   `query`; optional `limit` and `exact`; and mutually exclusive typed `compact`
   and `deep` booleans.
+- **Next commands**: when one symbol is selected unambiguously, text output ends
+  with `next:` lines naming the test-selection, transitive-tests and impact
+  commands for it.
 
 ### query
 ```bash
@@ -651,7 +659,7 @@ No runtime environment values are read.
 
 ### flow
 ```bash
-gograph flow [term] [--source http_request|decoded_json|environment] [--sink sql_query|process_execution|filesystem|outbound_http] [--config path] [--no-tests]
+gograph flow [term] [--source http_request|decoded_json|environment|<custom>] [--sink sql_query|process_execution|filesystem|outbound_http|<custom>] [--config path] [--no-tests] [--package path[/...]]... [--max-work N] [--context-depth N]
 ```
 Finds potential paths from untrusted inputs to security-sensitive operations. Test files are included by default; `--no-tests` limits analysis to production files.
 
@@ -660,12 +668,12 @@ Finds potential paths from untrusted inputs to security-sensitive operations. Te
   - `decoded_json`: `encoding/json.Unmarshal`, `encoding/json.NewDecoder(...).Decode`, Go 1.27's `encoding/json/v2` decode functions (`Unmarshal`, `UnmarshalRead`, and `UnmarshalDecode`), and recognized framework binding methods.
   - `environment`: `os.Getenv`, `os.LookupEnv`, and supported Viper package reads.
 - **Sinks**:
-  - `sql_query`: the query-text argument to `Query`, `QueryRow`, `Exec`, `Prepare`, and `Raw` variants. Parameter values are not treated as query text.
-  - `process_execution`: command and argument values passed to `os/exec.Command` or `CommandContext`.
+  - `sql_query`: the query-text argument to `Query`, `QueryRow`, `Exec`, `Prepare`, and `Raw` variants. Parameter values are not treated as query text, and a leading context argument (pgx-style `Query(ctx, sql, args...)`) moves the text to the second argument.
+  - `process_execution`: command and argument values passed to `os/exec.Command` or `CommandContext`. When the program is a constant literal that is not a shell or interpreter (`git`, not `sh`), findings are marked `parameter_only` and rated at most medium: only argument injection is possible.
   - `filesystem`: path arguments to common `os` file operations.
   - `outbound_http`: URL/request arguments passed to package-level `net/http` calls, request constructors, and `Do` methods.
 - **Output**: Severity, confidence, source and sink locations, and source-to-sink path steps. `--json` returns structured `FlowResult` objects; `--files-only` returns deduplicated source and sink files.
-- **Sanitizers**: The command automatically reads `.gograph/flow.json` when present. `--config` selects another JSON file inside the graph root. Policies apply to return values and may be sink-scoped:
+- **Sanitizers**: The command automatically reads `gograph/flow.json` (committable), else `.gograph/flow.json`, when present, and prints the policy file it used. `--config` selects another JSON file inside the graph root. Policies apply to return values and may be sink-scoped:
 
   ```json
   {
@@ -676,23 +684,63 @@ Finds potential paths from untrusted inputs to security-sensitive operations. Te
   }
   ```
 
-  Omit `for` to apply a sanitizer to every sink kind. `function` accepts the call spelling or a fully-qualified symbol ID; use the fully-qualified form for duplicate names. Validators that only return `bool` or `error` do not sanitize the original value.
+  Omit `for` to apply a sanitizer to every sink kind. `function` accepts the call spelling or a fully-qualified symbol ID (also of dependencies, such as `os/exec::Command`, on precise graphs); use the fully-qualified form for duplicate names. A sanitizer with `"argument": N` is a validator: within the calling function, the value passed as argument N (and its fields) is trusted for the listed sinks.
+
+  Repository-specific sources and sinks extend the built-in kinds:
+
+  ```json
+  {
+    "sources": [{ "function": "agent.ReadAgentOutput", "kind": "agent_output", "return": 0 }],
+    "sinks": [{ "function": "mcpio.WriteMCPResponse", "kind": "mcp_response", "argument": 1, "severity": "high" }],
+    "sanitizers": [{ "function": "mcpio.Validate", "for": ["mcp_response"], "argument": 0 }]
+  }
+  ```
+
+  A source taints the call's return values (all, or only `return`); a sink checks its arguments (all, or only `argument`); `kind` is lower-case letters, digits and underscores and works with `--source` and `--sink`; `severity` defaults to `high`. Without a policy the built-in behavior is unchanged.
+- **Budget**: when the work budget runs out, `completeness.top_functions` (and the text output) lists the functions that consumed the most propagation work; `--package` (MCP `packages`) limits analysis to chosen import paths.
 - **Limitations**: Interprocedural and path-insensitive, with call/return context for the 3 most recent call sites by default (context depth up to 16; deeper returns that lose their call site are kept at low confidence), bounded by a size-derived work budget that reports incomplete runs explicitly. Default graphs resolve direct local/imported functions; run `build . --precise` for stronger method/interface targets. Reflection, globals, arbitrary heap aliases, and unresolved dynamic calls may be missed or over-approximated. Unresolved external transformations lower confidence. Findings require source review and do not prove exploitability.
 
 ### tests
 ```bash
 gograph tests [symbol] [--json]
-gograph tests <symbol> --transitive [--exact-only] [--package name] [--json]
+gograph tests <symbol> --transitive [--exact-only] [--package name] [--max-depth N] [--limit N] [--cursor T] [--json]
+gograph tests --uncommitted|--since <ref> [--format run|go-test] [--exact-only] [--max-depth N] [--json]
+gograph tests <symbol> --format run|go-test [--package name] [--exact-only] [--max-depth N] [--json]
 ```
+**Which tests to run for a change.** `--uncommitted` (working tree against
+`HEAD`), `--since <ref>`, or `--format` with one symbol select every test that
+reaches the changed (or named) functions and print, per import path, an anchored
+and regex-escaped `-run` pattern of top-level test names (benchmarks get a
+`-bench` pattern). `--format go-test` prints only runnable commands, one per
+package, with the graph's `-tags`:
+
+```text
+go test -tags=integration example.com/app/calc -run '^(TestMul|TestTotal)$'
+go test example.com/app/api
+```
+
+A package whose every test is selected runs without `-run`, and long patterns
+are split at 16 KiB. Changed tests select themselves; tests deleted by the
+change are never listed; a deleted function still in the pre-change graph
+selects the tests that reached it; changed types, variables and constants, and
+new functions missing from a stale graph, are reported under `unselected`
+(status `partial`). `--max-depth N` keeps tests whose shortest call path is at
+most N, `--exact-only` drops paths through dynamic dispatch. `--json` returns
+`gograph.test_selection.v1`.
+
 Default mode lists direct attributed test edges for compatibility and accepts
 `Receiver.Method` (including pointer-receiver stable targets) or a full stable
 symbol ID without conflating another receiver's same-named method. Transitive
-mode requires one product symbol and returns `gograph.tests.v1`: every test with
-a representative stable-ID path to that symbol, path depth, and `exact` or
-`possible` resolution. `--exact-only` removes paths containing parser/CHA
+mode requires one product symbol and returns `gograph.tests.v1`: a `summary` of
+every reaching test by depth and resolution (and `next_command`), then one page
+of tests sorted nearest first (depth, then `exact` before `possible`), each with
+a representative stable-ID path. Pages hold 50 tests by default (`--limit N`,
+`--limit 0` for all) with `total`, `returned`, `truncated` and `next_cursor`;
+pass `--cursor` to continue. `--exact-only` removes paths containing parser/CHA
 uncertainty, and `--package` disambiguates a same-named product symbol. The MCP
-equivalent uses `transitive`, `exact_only`, and `package`. Static attribution is
-not runtime or branch coverage proof.
+equivalent uses `transitive`, `exact_only`, `package`, `max_depth`, `limit`,
+`cursor`, plus `uncommitted`, `since` and `select` for selections. Static
+attribution is not runtime or branch coverage proof.
 
 ### coverage
 ```bash
@@ -706,6 +754,30 @@ Same-named tests in multiple packages return an ambiguity instead of merging
 their results. When an in-package test and external `foo_test` package share the
 same graph ID, `--package` (MCP `package`) selects the exact Go package name.
 This is static attribution, not runtime or branch coverage.
+
+### whatsnew
+```bash
+gograph whatsnew [--since vX.Y.Z] [--json]
+```
+Prints the release notes shipped with the running binary: the section for its
+release, or, for a development or branch build, the unreleased changes plus the
+latest release. `--since` lists every release newer than the given version up
+to the running one. `--json` returns `gograph.whatsnew.v1`. This command is
+CLI-only; MCP clients read the server version from `gograph_capabilities`.
+
+### uncovered
+```bash
+gograph uncovered --uncommitted|--since <ref> --coverprofile <file> [--json]
+```
+Lists the changed lines of non-test Go files that a `go test -coverprofile`
+run never executed, as exact line ranges per file (`gograph.uncovered.v1`).
+`--uncommitted` compares the working tree with `HEAD` and includes untracked
+files; `--since` compares it with a ref. Merged profiles are accepted; a block
+executed in any run counts as executed. Only lines inside coverage blocks count:
+declarations, comments and blank lines are never reported, and changed files
+without profile data (an untested package without `-coverpkg`, or a file outside
+the build) are listed separately. The MCP equivalent is `gograph_uncovered`,
+whose `coverprofile` must be a repository-relative file.
 
 ### identity
 ```bash
@@ -783,6 +855,7 @@ Generates a comprehensive change-impact plan prior to editing.
 - **Flags**:
   - `--with-context`: Inlines the complete `context` for every symbol listed in the plan, avoiding sequential lookup calls.
   - `--uncommitted`: Generates a joint change plan for all currently modified uncommitted symbols.
+- **Next commands**: the plan ends with the exact follow-ups to run (`next: gograph tests <symbol> --format go-test --max-depth 3`, `--transitive`, and `impact`); JSON carries them as `next_commands` and MCP `gograph_plan` as `next` tool calls.
 
 ### review
 ```bash
@@ -807,7 +880,7 @@ Returns top hotspots, worst package instability, highest complexity, reachabilit
 
 ### untested
 ```bash
-gograph untested [--pkg name] [--top N] [--exclude glob]... [--wide] [--json]
+gograph untested [--pkg name] [--top N] [--exclude glob]... [--wide] [--exclude-interface-methods] [--coverprofile file] [--json]
 ```
 Ranks called production functions and methods without an exact transitive path
 from any test. Direct selectors, local method values, and proof-backed concrete
@@ -820,6 +893,17 @@ bound. This is static attribution, not runtime coverage.
 Each `--exclude` is matched lexically against the repository-relative source
 path; use `prefix/**` for all descendants. The MCP equivalent is the `exclude`
 string array on `gograph_untested`.
+Rows rank `none` before `possible` (possible-only paths are often dynamic
+dispatch such as `error.Error`), then by caller count.
+`--exclude-interface-methods` skips methods that implement an interface method
+(common standard-library ones such as `Error`, `String` and `MarshalJSON`, or a
+repository interface the receiver implements) and reports how many it skipped.
+`--coverprofile <file>` switches to runtime evidence: it lists every production
+function with statements of which none executed in the `go test -coverprofile`
+output (merged profiles accepted), whether or not it has static callers, with
+the static resolution as supporting evidence; a function executed at runtime is
+never listed. MCP: `exclude_interface_methods` and a repository-relative
+`coverprofile`, which return `{summary, results}`.
 
 ---
 
@@ -890,7 +974,7 @@ Enforces package modularity boundaries.
 - **Options**:
   - `--config path`: Evaluates package import relationships against an
     in-project, regular, non-linked `boundaries.json` (default:
-    `.gograph/boundaries.json`). Absolute and repository-relative in-project
+    `gograph/boundaries.json`, else `.gograph/boundaries.json`; `--create` writes `gograph/boundaries.json`). Absolute and repository-relative in-project
     paths are accepted.
   - `--create`: Exclusively creates a starting boundary map at that path from
     current package imports. Only real parent directories are created; links,
@@ -902,9 +986,9 @@ evaluation after its normal source refresh.
 
 ### complexity
 ```bash
-gograph complexity [symbol]
+gograph complexity [symbol] [--no-tests] [--top N] [--path DIR] [--json]
 ```
-Displays McCabe cyclomatic complexity for all functions, sorted highest first. Optional substring filter by symbol name.
+Displays McCabe cyclomatic complexity for all functions, sorted highest first. Optional substring filter by symbol name. `--no-tests` drops functions declared in `_test.go` files, `--path DIR` keeps one repository-relative directory subtree, and `--top N` keeps the N highest after filtering. MCP `gograph_complexity` takes `symbol`, `top`, `no_tests` and `path`.
 - **Labels**: `LOW` (1-5), `MEDIUM` (6-10), `HIGH` (11-20), `VERY HIGH` (21+), or `UNKNOWN` with score `-1` when repository source cannot be read or parsed safely.
 
 ### coupling
@@ -1097,13 +1181,13 @@ transport has an undocumented analytical feature.
 | Calls/reachability | `callers` ↔ `gograph_callers`; `callees` ↔ `gograph_callees`; `impact` ↔ `gograph_impact`; `path` ↔ `gograph_path`; `orphans` ↔ `gograph_orphans` |
 | Types/tests | `implementers` ↔ `gograph_implementers`; `interfaces` ↔ `gograph_interfaces`; `fields` ↔ `gograph_fields`; `embeds` ↔ `gograph_embeds`; `constructors` ↔ `gograph_constructors`; `literals` ↔ `gograph_literals`; `usages` ↔ `gograph_usages`; `returnusage` ↔ `gograph_returnusage`; `schema` ↔ `gograph_schema`; `globals` ↔ `gograph_globals`; `mocks` ↔ `gograph_mocks`; `fixtures` ↔ `gograph_fixtures`; `identity` ↔ `gograph_identity` |
 | Packages/changes | `imports` ↔ `gograph_imports`; `deps` ↔ `gograph_deps`; `dependents` ↔ `gograph_dependents`; `changes` ↔ `gograph_changes` |
-| Extraction | `routes` ↔ `gograph_routes`; `sql` ↔ `gograph_sql`; `errors` ↔ `gograph_errors`; `envs` ↔ `gograph_envs`; `concurrency` ↔ `gograph_concurrency`; `httpcalls` ↔ `gograph_httpcalls`; `flow` ↔ `gograph_flow`; `tests` ↔ `gograph_tests`; `coverage` ↔ `gograph_coverage` |
+| Extraction | `routes` ↔ `gograph_routes`; `sql` ↔ `gograph_sql`; `errors` ↔ `gograph_errors`; `envs` ↔ `gograph_envs`; `concurrency` ↔ `gograph_concurrency`; `httpcalls` ↔ `gograph_httpcalls`; `flow` ↔ `gograph_flow`; `tests` ↔ `gograph_tests`; `coverage` ↔ `gograph_coverage`; `uncovered` ↔ `gograph_uncovered` |
 | Composed workflows | `explore` ↔ `gograph_explore`; `context` ↔ `gograph_context`; `plan` ↔ `gograph_plan`; `review` ↔ `gograph_review`; `risk` ↔ `gograph_risk`; `errorflow` ↔ `gograph_errorflow`; `trace` ↔ `gograph_trace`; `endpoint` ↔ `gograph_endpoint`; `explain` ↔ `gograph_explain`; `summary` ↔ `gograph_summary`; `untested` ↔ `gograph_untested` |
 | Quality/policy | `api`/`contract` ↔ `gograph_api`; `boundaries` ↔ `gograph_boundaries`; `boundaries --create` ↔ `gograph_boundaries_create`; `check` ↔ `gograph_check`; `complexity` ↔ `gograph_complexity`; `coupling` ↔ `gograph_coupling`; `diagram` ↔ `gograph_diagram`; `hotspot` ↔ `gograph_hotspot`; `godobj` ↔ `gograph_godobj`; `skeleton` ↔ `gograph_skeleton`; `mutate` ↔ `gograph_mutate`; `arity` ↔ `gograph_arity` |
 | Documentation/toolchain | `wiki` ↔ `gograph_wiki`; `doc` ↔ `gograph_doc` |
 | Session lifecycle | `session create` ↔ `gograph_session_create`; `session end` ↔ `gograph_session_end`; `session audit` ↔ `gograph_session_audit`; `session cleanup` ↔ `gograph_session_cleanup` |
 
-That is 65 CLI-equivalent project capabilities plus four session tools: 69
+That is 66 CLI-equivalent project capabilities plus four session tools: 70
 tools on `gograph mcp`. The separate `gograph workspace mcp` server adds these
 four exact pairs:
 
@@ -1147,7 +1231,9 @@ it diagnoses the host process and installation selected before MCP startup.
 gograph capabilities
 ```
 Prints the token-optimized AI agent cheat sheet detailing common workflows and
-commands. The MCP counterpart, `gograph_capabilities`, also includes a top-level
+commands. It starts with a task index that maps jobs (such as "choose which
+tests to run for a change") to commands; `gograph help` starts with the same
+index. The MCP counterpart returns it as structured `task_index` rows. The MCP counterpart, `gograph_capabilities`, also includes a top-level
 `version` identifying the running server binary, so MCP-only clients can record
 the analysis instrument. Useful for bootstrapping context in an LLM system prompt.
 
@@ -1216,8 +1302,8 @@ AI clients (e.g., Claude Code, Cursor).
   `gograph_impact`, `gograph_endpoint`, `gograph_dependents`, `gograph_deps`,
   `gograph_path`, or `gograph_coupling`. The tool returns Mermaid flowchart
   text instead of its normal response.
-- **Parity**: 65 query, analysis, and workflow commands have corresponding MCP
-  endpoints; four additional endpoints manage sessions (69 endpoints total).
+- **Parity**: 66 query, analysis, and workflow commands have corresponding MCP
+  endpoints; four additional endpoints manage sessions (70 endpoints total).
   MCP uses typed tool arguments rather than CLI global flags, and some
   not-found and status results have different transport-level presentation.
   `gograph_explore` and CLI `explore --json` share the native
@@ -1326,7 +1412,9 @@ Called by the Claude Code `PreToolUse` hook. Intercepts incoming tool-call JSON 
 gograph version
 gograph help
 ```
-Print the build version or the complete CLI help contract.
+Print the build version or the complete CLI help contract. Help starts with the
+task index. Builds from `go install ...@vX.Y.Z` report `X.Y.Z`; local checkout
+builds report `dev+<revision>` (`.dirty` when modified).
 
 ## Output Modes
 

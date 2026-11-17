@@ -175,7 +175,7 @@ func TestGographCapabilities(t *testing.T) {
 		"accepts Receiver.Method (including pointer receivers) or a full stable symbol ID",
 		"AST-discovered test-file fakes",
 		"composite-literal construction",
-		"defaults to .gograph/boundaries.json",
+		"defaults to the committable gograph/boundaries.json",
 		"http_resolution",
 		"net_http_v2",
 		"http_clients",

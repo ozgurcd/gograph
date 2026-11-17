@@ -5,10 +5,12 @@ import (
 	"os"
 
 	"github.com/ozgurcd/gograph/internal/cli"
+	"github.com/ozgurcd/gograph/internal/installation"
 )
 
 // version is set at compile time via -ldflags "-X main.version=x.y.z".
-// Falls back to "dev" when built without ldflags.
+// Without ldflags, the version comes from Go build info: the module version
+// for `go install ...@vX.Y.Z`, or "dev+<revision>" for a local checkout.
 var version = "dev"
 
 // releaseVersionMarker gives artifact validation an exact, dependency-proof
@@ -20,8 +22,6 @@ func main() {
 	if releaseVersionMarker == "" {
 		os.Exit(2)
 	}
-	if version != "dev" {
-		cli.Version = version
-	}
+	cli.Version = installation.RunningVersion(version)
 	os.Exit(cli.Run(os.Args[1:]))
 }
