@@ -663,9 +663,11 @@ ERRORS — two different questions:
 SECURITY FLOW — potential untrusted data paths:
   flow [term]         HTTP request / decoded JSON / environment → SQL query text,
                       process execution, filesystem path, or outbound HTTP target
-  --source / --sink   restrict to one documented source or sink kind
+  --source / --sink   restrict to one documented or policy-defined source or sink kind
   --no-tests          production-only scan (tests are included by default)
-  --config <path>     sanitizer-return policy; defaults to .gograph/flow.json when present
+  --package <path>    analyze only these import paths (prefix/... for descendants; repeatable)
+  --config <path>     policy: return or argument sanitizers, custom sources and sinks;
+                      defaults to .gograph/flow.json when present
 
 ━━━ OUTPUT FORMAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Query and composed-analysis commands document JSON individually. Files-only is
@@ -3756,19 +3758,25 @@ CODE QUALITY
   boundaries --create [--config PATH]
                              Auto-generate a baseline boundaries.json from the current repo;
                              refuses linked output paths and overwrite.
-  flow [term] [--source kind] [--sink kind] [--config path] [--no-tests] [--max-work N] [--context-depth N]
+  flow [term] [--source kind] [--sink kind] [--config path] [--no-tests] [--package path]... [--max-work N] [--context-depth N]
                              Find potential untrusted-data paths to SQL query text,
                              process execution, filesystem access, or outbound HTTP.
                              Sources: http_request, decoded_json, environment.
                              Sinks: sql_query, process_execution, filesystem, outbound_http.
+                             A constant non-shell program (git, not sh) marks process
+                             findings parameter_only, at most medium severity.
                              Tests are included by default; --no-tests excludes them.
-                             Optional return-value sanitizer policy: .gograph/flow.json.
-                             Policy changes apply without rebuilding graph.json.
-                             Schema: {"sanitizers":[{"function":"pkg.Clean",
-                               "for":["filesystem"]}]}; omit "for" for all sinks.
+                             --package limits analysis to import paths (prefix/... too).
+                             Optional policy: .gograph/flow.json; changes apply without
+                             rebuilding graph.json. Schema: {"sanitizers":[{"function":
+                               "pkg.Clean","for":["filesystem"]},{"function":"pkg.Check",
+                               "argument":0}],"sources":[{"function":"pkg.Read","kind":
+                               "agent_output"}],"sinks":[{"function":"pkg.Write","kind":
+                               "mcp_response","argument":1}]}; omit "for" for all sinks.
                              --context-depth N (default 3, max 16) call-site frames per value;
                              --max-work N overrides the size-derived work budget. An exhausted
-                             budget prints INCOMPLETE, adds JSON completeness, and exits 2.
+                             budget prints INCOMPLETE with the functions that used the most
+                             work, adds JSON completeness.top_functions, and exits 2.
   complexity [symbol]        Cyclomatic complexity per function, highest first.
                              Filter by symbol name substring. Labels: LOW / MEDIUM /
                              HIGH / VERY HIGH (McCabe thresholds: 5 / 10 / 20), or
@@ -4107,7 +4115,7 @@ func setFlowOption(options *search.FlowOptions, name, value string) error {
 
 func runFlow(args []string) int {
 	options := search.FlowOptions{IncludeTests: true}
-	usage := "usage: gograph flow [term] [--source http_request|decoded_json|environment] [--sink sql_query|process_execution|filesystem|outbound_http] [--config path] [--no-tests] [--max-work N] [--context-depth N]"
+	usage := "usage: gograph flow [term] [--source http_request|decoded_json|environment|<custom>] [--sink sql_query|process_execution|filesystem|outbound_http|<custom>] [--config path] [--no-tests] [--package path[/...]]... [--max-work N] [--context-depth N]"
 	fail := func(message string) int {
 		return failCommand("flow", message)
 	}
@@ -4117,6 +4125,12 @@ func runFlow(args []string) int {
 		switch argument {
 		case "--no-tests":
 			options.IncludeTests = false
+		case "--package":
+			if index+1 >= len(args) || args[index+1] == "" || strings.HasPrefix(args[index+1], "-") {
+				return fail("--package requires an import path or prefix/...\n" + usage)
+			}
+			index++
+			options.Packages = append(options.Packages, args[index])
 		case "--source", "--sink", "--config", "--max-work", "--context-depth":
 			if index+1 >= len(args) {
 				return fail(fmt.Sprintf("%s requires a value\n%s", argument, usage))
@@ -4171,7 +4185,15 @@ func runFlow(args []string) int {
 	if incomplete {
 		fmt.Fprintln(os.Stderr, "WARNING: "+report.Completeness.Reason)
 		if !filesOnlyMode {
-			defer fmt.Println("INCOMPLETE: " + report.Completeness.Reason)
+			defer func() {
+				fmt.Println("INCOMPLETE: " + report.Completeness.Reason)
+				if len(report.Completeness.TopFunctions) > 0 {
+					fmt.Println("Most propagation work:")
+					for _, share := range report.Completeness.TopFunctions {
+						fmt.Printf("  %10d  %s  (%s)\n", share.Work, share.Function, share.File)
+					}
+				}
+			}()
 		}
 	}
 	exit := func() int {

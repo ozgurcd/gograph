@@ -143,13 +143,14 @@ func extractFlowBody(fset *token.FileSet, body *ast.BlockStmt, relPath, function
 				}
 			}
 			function.Facts = append(function.Facts, graph.FlowFact{
-				Kind:     "sink",
-				Inputs:   uniqueFlowRefs(sinkInputs),
-				Callee:   callee,
-				SinkKind: sinkKind,
-				Detail:   renderFlowExpr(fset, call),
-				Line:     pos.Line,
-				Column:   pos.Column,
+				Kind:          "sink",
+				Inputs:        uniqueFlowRefs(sinkInputs),
+				Callee:        callee,
+				SinkKind:      sinkKind,
+				ParameterOnly: sinkKind == flowSinkCommand && len(indexes) > 0 && constantNonShellProgram(call, indexes[0]),
+				Detail:        renderFlowExpr(fset, call),
+				Line:          pos.Line,
+				Column:        pos.Column,
 			})
 		}
 	})
@@ -768,4 +769,35 @@ func startsWithSQLKeyword(expr ast.Expr) bool {
 		}
 		return false
 	}
+}
+
+// shellPrograms run their arguments as code, so a constant shell program
+// does not make a process sink parameter-only.
+var shellPrograms = map[string]bool{
+	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "fish": true, "csh": true, "tcsh": true,
+	"cmd": true, "cmd.exe": true, "powershell": true, "powershell.exe": true, "pwsh": true, "pwsh.exe": true,
+	"env": true, "xargs": true, "sudo": true, "su": true, "nohup": true, "time": true, "nice": true,
+	"python": true, "python3": true, "perl": true, "ruby": true, "node": true, "php": true,
+}
+
+// constantNonShellProgram reports whether the program argument of an
+// os/exec call is a string literal naming a program that does not
+// interpret its arguments as code.
+func constantNonShellProgram(call *ast.CallExpr, index int) bool {
+	if index < 0 || index >= len(call.Args) {
+		return false
+	}
+	literal, ok := call.Args[index].(*ast.BasicLit)
+	if !ok || literal.Kind != token.STRING {
+		return false
+	}
+	program, err := strconv.Unquote(literal.Value)
+	if err != nil || program == "" {
+		return false
+	}
+	base := program
+	if slash := strings.LastIndexAny(base, "/\\"); slash >= 0 {
+		base = base[slash+1:]
+	}
+	return !shellPrograms[strings.ToLower(base)]
 }

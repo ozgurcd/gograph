@@ -59,18 +59,87 @@ type FlowOptions struct {
 	// ContextDepth is the number of call-site frames kept per value. Zero
 	// selects DefaultFlowContextDepth.
 	ContextDepth int
+	// Packages limits analysis to functions in these import paths; an entry
+	// ending in "/..." also matches descendants. Empty analyzes everything.
+	Packages []string
 }
 
 // FlowSanitizer declares a function whose return value is trusted for the
-// listed sink kinds. An empty For list applies to every sink kind.
+// listed sink kinds. An empty For list applies to every sink kind. With
+// Argument set, the function validates that argument instead: within the
+// calling function, the variable passed there is trusted for those kinds.
 type FlowSanitizer struct {
 	Function string   `json:"function"`
 	For      []string `json:"for,omitempty"`
+	Argument *int     `json:"argument,omitempty"`
+}
+
+// FlowCustomSource declares a repository-specific untrusted input: the
+// return values of Function (all of them, or only Return when set).
+type FlowCustomSource struct {
+	Function string `json:"function"`
+	Kind     string `json:"kind"`
+	Return   *int   `json:"return,omitempty"`
+}
+
+// FlowCustomSink declares a repository-specific sensitive operation: the
+// arguments of Function (all of them, or only Argument when set).
+type FlowCustomSink struct {
+	Function string `json:"function"`
+	Kind     string `json:"kind"`
+	Argument *int   `json:"argument,omitempty"`
+	// Severity is high (default), medium or low.
+	Severity string `json:"severity,omitempty"`
 }
 
 // FlowConfig is the schema for .gograph/flow.json.
 type FlowConfig struct {
-	Sanitizers []FlowSanitizer `json:"sanitizers"`
+	Sanitizers []FlowSanitizer    `json:"sanitizers"`
+	Sources    []FlowCustomSource `json:"sources,omitempty"`
+	Sinks      []FlowCustomSink   `json:"sinks,omitempty"`
+}
+
+func (config FlowConfig) sourceKinds() map[string]bool {
+	kinds := make(map[string]bool, len(validFlowSources)+len(config.Sources))
+	for kind := range validFlowSources {
+		kinds[kind] = true
+	}
+	for _, source := range config.Sources {
+		kinds[source.Kind] = true
+	}
+	return kinds
+}
+
+func (config FlowConfig) sinkKinds() map[string]bool {
+	kinds := make(map[string]bool, len(validFlowSinks)+len(config.Sinks))
+	for kind := range validFlowSinks {
+		kinds[kind] = true
+	}
+	for _, sink := range config.Sinks {
+		kinds[sink.Kind] = true
+	}
+	return kinds
+}
+
+func sortedKinds(kinds map[string]bool) string {
+	names := make([]string, 0, len(kinds))
+	for kind := range kinds {
+		names = append(names, kind)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+func validFlowKindName(kind string) bool {
+	if kind == "" || len(kind) > 64 {
+		return false
+	}
+	for _, r := range kind {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // FlowEndpoint describes one end of a reported source-to-sink path.
@@ -93,16 +162,24 @@ type FlowStep struct {
 
 // FlowResult is one potential untrusted-data path to a security-sensitive sink.
 type FlowResult struct {
-	Severity   string       `json:"severity"`
-	Confidence string       `json:"confidence"`
-	Source     FlowEndpoint `json:"source"`
-	Sink       FlowEndpoint `json:"sink"`
-	Path       []FlowStep   `json:"path"`
+	Severity   string `json:"severity"`
+	Confidence string `json:"confidence"`
+	// ParameterOnly marks a process sink whose program (argv[0]) is a
+	// constant non-shell literal: only its arguments carry the value, so
+	// the risk is argument injection, not running another program.
+	ParameterOnly bool         `json:"parameter_only,omitempty"`
+	Source        FlowEndpoint `json:"source"`
+	Sink          FlowEndpoint `json:"sink"`
+	Path          []FlowStep   `json:"path"`
 }
 
 func (r FlowResult) String() string {
-	return fmt.Sprintf("[%s] %s -> %s (%s confidence)  (%s:%d)",
-		strings.ToUpper(r.Severity), r.Source.Kind, r.Sink.Kind, r.Confidence, r.Sink.File, r.Sink.Line)
+	scope := ""
+	if r.ParameterOnly {
+		scope = ", parameters only"
+	}
+	return fmt.Sprintf("[%s] %s -> %s (%s confidence%s)  (%s:%d)",
+		strings.ToUpper(r.Severity), r.Source.Kind, r.Sink.Kind, r.Confidence, scope, r.Sink.File, r.Sink.Line)
 }
 
 // FlowCompleteness reports whether propagation reached a fixed point.
@@ -112,6 +189,16 @@ type FlowCompleteness struct {
 	MaxWork      int    `json:"max_work"`
 	ContextDepth int    `json:"context_depth"`
 	Reason       string `json:"reason,omitempty"`
+	// TopFunctions lists the functions that consumed most of an exhausted
+	// budget, to choose --package scopes or sanitizers.
+	TopFunctions []FlowWorkShare `json:"top_functions,omitempty"`
+}
+
+// FlowWorkShare is one function's share of propagation work.
+type FlowWorkShare struct {
+	Function string `json:"function"`
+	File     string `json:"file"`
+	Work     int    `json:"work"`
 }
 
 // FlowReport is a flow answer together with its completeness. Results of an
@@ -158,12 +245,6 @@ func FlowWithReport(g *graph.Graph, options FlowOptions) (FlowReport, error) {
 	if g == nil {
 		return FlowReport{}, fmt.Errorf("flow analysis requires a graph")
 	}
-	if options.Source != "" && !validFlowSources[options.Source] {
-		return FlowReport{}, fmt.Errorf("unsupported flow source %q (valid: decoded_json, environment, http_request)", options.Source)
-	}
-	if options.Sink != "" && !validFlowSinks[options.Sink] {
-		return FlowReport{}, fmt.Errorf("unsupported flow sink %q (valid: filesystem, outbound_http, process_execution, sql_query)", options.Sink)
-	}
 	if options.MaxWork < 0 || options.MaxWork > MaxFlowWork {
 		return FlowReport{}, fmt.Errorf("flow max work must be between 1 and %d", MaxFlowWork)
 	}
@@ -174,6 +255,12 @@ func FlowWithReport(g *graph.Graph, options FlowOptions) (FlowReport, error) {
 	config, err := loadFlowConfig(g, options.ConfigPath)
 	if err != nil {
 		return FlowReport{}, err
+	}
+	if sources := config.sourceKinds(); options.Source != "" && !sources[options.Source] {
+		return FlowReport{}, fmt.Errorf("unsupported flow source %q (valid: %s)", options.Source, sortedKinds(sources))
+	}
+	if sinks := config.sinkKinds(); options.Sink != "" && !sinks[options.Sink] {
+		return FlowReport{}, fmt.Errorf("unsupported flow sink %q (valid: %s)", options.Sink, sortedKinds(sinks))
 	}
 	if len(g.FlowFunctions) == 0 {
 		return FlowReport{}, fmt.Errorf("graph contains no security-flow facts; run `gograph build .` to refresh it")
@@ -186,7 +273,8 @@ func FlowWithReport(g *graph.Graph, options FlowOptions) (FlowReport, error) {
 		MaxWork: analyzer.maxWork, ContextDepth: analyzer.contextDepth,
 	}
 	if analyzer.exhausted {
-		completeness.Reason = fmt.Sprintf("flow analysis incomplete: work budget of %d propagation steps exhausted before a fixed point at context depth %d; findings are a partial subset. Rerun with a larger --max-work (MCP max_work), a smaller --context-depth, or narrow with --source/--sink/--no-tests", analyzer.maxWork, analyzer.contextDepth)
+		completeness.TopFunctions = analyzer.topWork(10)
+		completeness.Reason = fmt.Sprintf("flow analysis incomplete: work budget of %d propagation steps exhausted before a fixed point at context depth %d; findings are a partial subset. Rerun with a larger --max-work (MCP max_work), a smaller --context-depth, or narrow with --package/--source/--sink/--no-tests; top_functions lists where the work went", analyzer.maxWork, analyzer.contextDepth)
 	}
 	return FlowReport{Results: analyzer.findings(), Completeness: completeness}, nil
 }
@@ -235,12 +323,37 @@ func loadFlowConfig(g *graph.Graph, requestedPath string) (FlowConfig, error) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return FlowConfig{}, fmt.Errorf("invalid JSON in flow config: %w", err)
 	}
+	for index, source := range config.Sources {
+		if strings.TrimSpace(source.Function) == "" || !validFlowKindName(source.Kind) {
+			return FlowConfig{}, fmt.Errorf("invalid flow config: sources[%d] needs a function and a kind of lower-case letters, digits and underscores", index)
+		}
+		if source.Return != nil && *source.Return < 0 {
+			return FlowConfig{}, fmt.Errorf("invalid flow config: sources[%d].return must not be negative", index)
+		}
+	}
+	for index, sink := range config.Sinks {
+		if strings.TrimSpace(sink.Function) == "" || !validFlowKindName(sink.Kind) {
+			return FlowConfig{}, fmt.Errorf("invalid flow config: sinks[%d] needs a function and a kind of lower-case letters, digits and underscores", index)
+		}
+		if sink.Argument != nil && *sink.Argument < 0 {
+			return FlowConfig{}, fmt.Errorf("invalid flow config: sinks[%d].argument must not be negative", index)
+		}
+		switch sink.Severity {
+		case "", "high", "medium", "low":
+		default:
+			return FlowConfig{}, fmt.Errorf("invalid flow config: sinks[%d].severity must be high, medium or low", index)
+		}
+	}
+	sinkKinds := config.sinkKinds()
 	for index, sanitizer := range config.Sanitizers {
 		if strings.TrimSpace(sanitizer.Function) == "" {
 			return FlowConfig{}, fmt.Errorf("invalid flow config: sanitizers[%d].function is required", index)
 		}
+		if sanitizer.Argument != nil && *sanitizer.Argument < 0 {
+			return FlowConfig{}, fmt.Errorf("invalid flow config: sanitizers[%d].argument must not be negative", index)
+		}
 		for _, sink := range sanitizer.For {
-			if !validFlowSinks[sink] {
+			if !sinkKinds[sink] {
 				return FlowConfig{}, fmt.Errorf("invalid flow config: sanitizer %q has unsupported sink %q", sanitizer.Function, sink)
 			}
 		}
@@ -403,10 +516,41 @@ type flowAnalyzer struct {
 	queue  []int
 	queued []bool
 
+	// customSources and customSinks index config entries per call fact.
+	customSources map[[2]int][]FlowCustomSource
+	customSinks   map[[2]int][]FlowCustomSink
+	// argSanitized lists, per function, values validated by an argument
+	// sanitizer call anywhere in that function.
+	argSanitized [][]flowArgSanitized
+	workBy       []int
+
 	work         int
 	maxWork      int
 	contextDepth int
 	exhausted    bool
+}
+
+// flowArgSanitized is a value (and its fields) trusted for kinds.
+type flowArgSanitized struct {
+	ref   string
+	kinds map[string]bool
+}
+
+func flowPackageSelected(id string, packages []string) bool {
+	if len(packages) == 0 {
+		return true
+	}
+	importPath := stableIDPackagePath(id)
+	for _, pattern := range packages {
+		if prefix, ok := strings.CutSuffix(pattern, "/..."); ok {
+			if importPath == prefix || strings.HasPrefix(importPath, prefix+"/") {
+				return true
+			}
+		} else if importPath == pattern {
+			return true
+		}
+	}
+	return false
 }
 
 func newFlowAnalyzer(g *graph.Graph, options FlowOptions, config FlowConfig) *flowAnalyzer {
@@ -434,6 +578,9 @@ func newFlowAnalyzer(g *graph.Graph, options FlowOptions, config FlowConfig) *fl
 	}
 	for _, function := range g.FlowFunctions {
 		if !options.IncludeTests && isTestFile(function.File) {
+			continue
+		}
+		if !flowPackageSelected(function.ID, options.Packages) {
 			continue
 		}
 		analyzer.functions = append(analyzer.functions, function)
@@ -481,6 +628,10 @@ func newFlowAnalyzer(g *graph.Graph, options FlowOptions, config FlowConfig) *fl
 	}
 
 	analyzer.calls = make([][]flowCall, len(analyzer.functions))
+	analyzer.customSources = make(map[[2]int][]FlowCustomSource)
+	analyzer.customSinks = make(map[[2]int][]FlowCustomSink)
+	analyzer.argSanitized = make([][]flowArgSanitized, len(analyzer.functions))
+	analyzer.workBy = make([]int, len(analyzer.functions))
 	callerSets := make([]map[int]bool, len(analyzer.functions))
 	for index, function := range analyzer.functions {
 		analyzer.calls[index] = make([]flowCall, len(function.Facts))
@@ -489,11 +640,13 @@ func newFlowAnalyzer(g *graph.Graph, options FlowOptions, config FlowConfig) *fl
 				continue
 			}
 			targets, uncertain := analyzer.resolveCall(function, fact)
+			candidates := analyzer.callCandidates(function, fact, targets)
 			analyzer.calls[index][factIndex] = flowCall{
 				targets: targets, uncertain: uncertain,
 				frame:     analyzer.internFrame(flowCallFrame(function, fact)),
-				sanitized: analyzer.sanitizerKinds(fact, targets),
+				sanitized: analyzer.sanitizerKinds(candidates),
 			}
+			analyzer.indexCustomRules(index, factIndex, fact, candidates)
 			for _, target := range targets {
 				if callerSets[target] == nil {
 					callerSets[target] = make(map[int]bool)
@@ -616,7 +769,6 @@ func (a *flowAnalyzer) propagate() {
 
 func (a *flowAnalyzer) process(index int) {
 	function := a.functions[index]
-	state := a.states[index]
 	for factIndex, fact := range function.Facts {
 		if a.exhausted {
 			return
@@ -628,7 +780,7 @@ func (a *flowAnalyzer) process(index int) {
 			}
 			a.addTrace(index, fact.Target, a.sourceTrace(function, fact))
 		case "transfer", "return":
-			for _, trace := range state.tracesForRefs(fact.Inputs) {
+			for _, trace := range a.tracesFor(index, fact.Inputs) {
 				trace.path = appendFlowPath(trace.path, FlowStep{
 					Kind: fact.Kind, Function: function.Name, Detail: fact.Detail,
 					File: function.File, Line: fact.Line,
@@ -636,6 +788,25 @@ func (a *flowAnalyzer) process(index int) {
 				a.addTrace(index, fact.Target, trace)
 			}
 		case "call":
+			for _, source := range a.customSources[[2]int{index, factIndex}] {
+				if a.options.Source != "" && source.Kind != a.options.Source {
+					continue
+				}
+				sourceFact := graph.FlowFact{Kind: "source", SourceKind: source.Kind, Target: fact.Target, Detail: "return of " + fact.Callee + " (custom source)", Line: fact.Line}
+				trace := a.sourceTrace(function, sourceFact)
+				if source.Return == nil {
+					a.addTrace(index, fact.Target, trace)
+					a.addTrace(index, fact.Target+":0", trace)
+					for result := 1; result < 8; result++ {
+						a.addTrace(index, fmt.Sprintf("%s:%d", fact.Target, result), trace)
+					}
+					continue
+				}
+				if *source.Return == 0 {
+					a.addTrace(index, fact.Target, trace)
+				}
+				a.addTrace(index, fmt.Sprintf("%s:%d", fact.Target, *source.Return), trace)
+			}
 			a.propagateCall(index, fact, a.calls[index][factIndex])
 		}
 	}
@@ -647,6 +818,7 @@ func (a *flowAnalyzer) addTrace(index int, target string, trace flowTrace) {
 		return
 	}
 	a.work++
+	a.workBy[index]++
 	if a.work > a.maxWork {
 		a.exhausted = true
 		return
@@ -748,8 +920,7 @@ func (a *flowAnalyzer) returnTraces(target, frame int) map[int][]flowTrace {
 
 func (a *flowAnalyzer) propagateCall(callerIndex int, fact graph.FlowFact, call flowCall) {
 	caller := a.functions[callerIndex]
-	callerState := a.states[callerIndex]
-	inputTraces := callerState.tracesForRefs(fact.Inputs)
+	inputTraces := a.tracesFor(callerIndex, fact.Inputs)
 
 	for _, targetIndex := range call.targets {
 		target := a.functions[targetIndex]
@@ -762,7 +933,7 @@ func (a *flowAnalyzer) propagateCall(callerIndex int, fact graph.FlowFact, call 
 				parameterIndex = len(target.Params) - 1
 			}
 			parameter := target.Params[parameterIndex]
-			for _, trace := range callerState.tracesForRefs(refs) {
+			for _, trace := range a.tracesFor(callerIndex, refs) {
 				trace = a.pushFrame(trace, call.frame)
 				trace.low = trace.low || call.uncertain
 				trace.path = appendFlowPath(trace.path, FlowStep{
@@ -875,14 +1046,130 @@ func uniqueFlowIndexes(values []int) []int {
 	return result
 }
 
-func (a *flowAnalyzer) sanitizerKinds(fact graph.FlowFact, targets []int) map[string]bool {
+// callCandidates lists the spellings a call fact can be matched by: its
+// selector text, resolved repository flow targets, and precise callee IDs
+// (including dependencies such as os/exec::Command) recorded at the site.
+func (a *flowAnalyzer) callCandidates(caller graph.FlowFunction, fact graph.FlowFact, targets []int) []string {
 	candidates := []string{fact.Callee}
 	for _, target := range targets {
 		function := a.functions[target]
 		candidates = append(candidates, function.ID, function.Name)
 	}
+	for _, call := range a.callsBySite[flowCallSite(caller.ID, caller.File, fact.Line)] {
+		if call.CalleeRaw == fact.Callee && call.CalleeSymbolID != "" {
+			candidates = append(candidates, call.CalleeSymbolID)
+		}
+	}
+	return candidates
+}
+
+func flowCandidatesMatch(candidates []string, configured string) bool {
+	for _, candidate := range candidates {
+		if flowFunctionMatches(candidate, configured) {
+			return true
+		}
+	}
+	return false
+}
+
+// indexCustomRules records configured sources, sinks and argument
+// sanitizers that match one call fact.
+func (a *flowAnalyzer) indexCustomRules(index, factIndex int, fact graph.FlowFact, candidates []string) {
+	key := [2]int{index, factIndex}
+	for _, source := range a.config.Sources {
+		if flowCandidatesMatch(candidates, source.Function) {
+			a.customSources[key] = append(a.customSources[key], source)
+		}
+	}
+	for _, sink := range a.config.Sinks {
+		if flowCandidatesMatch(candidates, sink.Function) {
+			a.customSinks[key] = append(a.customSinks[key], sink)
+		}
+	}
+	for _, sanitizer := range a.config.Sanitizers {
+		if sanitizer.Argument == nil || *sanitizer.Argument >= len(fact.Arguments) || !flowCandidatesMatch(candidates, sanitizer.Function) {
+			continue
+		}
+		refs := fact.Arguments[*sanitizer.Argument]
+		if len(refs) == 0 {
+			continue
+		}
+		kinds := map[string]bool{"*": true}
+		if len(sanitizer.For) > 0 {
+			kinds = make(map[string]bool, len(sanitizer.For))
+			for _, kind := range sanitizer.For {
+				kinds[kind] = true
+			}
+		}
+		// The first ref is the whole argument expression; its fields are
+		// validated with it, its parents are not.
+		a.argSanitized[index] = append(a.argSanitized[index], flowArgSanitized{ref: refs[0], kinds: kinds})
+	}
+}
+
+// tracesFor returns the traces reaching refs in one function, marking those
+// read through a value an argument sanitizer validated in that function.
+func (a *flowAnalyzer) tracesFor(index int, refs []string) []flowTrace {
+	state := a.states[index]
+	sanitizers := a.argSanitized[index]
+	if len(sanitizers) == 0 {
+		return state.tracesForRefs(refs)
+	}
+	var plain []string
+	var traces []flowTrace
+	for _, ref := range refs {
+		var kinds map[string]bool
+		for _, sanitizer := range sanitizers {
+			if ref == sanitizer.ref || strings.HasPrefix(ref, sanitizer.ref+".") {
+				if kinds == nil {
+					kinds = make(map[string]bool)
+				}
+				for kind := range sanitizer.kinds {
+					kinds[kind] = true
+				}
+			}
+		}
+		if kinds == nil {
+			plain = append(plain, ref)
+			continue
+		}
+		for _, trace := range state.tracesForRefs([]string{ref}) {
+			trace.key.sanitized = a.internSanitized(trace.key.sanitized, kinds)
+			traces = append(traces, trace)
+		}
+	}
+	if traces == nil {
+		return state.tracesForRefs(plain)
+	}
+	return dedupeFlowTraces(append(traces, state.tracesForRefs(plain)...))
+}
+
+// topWork returns the functions with the most propagation work.
+func (a *flowAnalyzer) topWork(limit int) []FlowWorkShare {
+	shares := make([]FlowWorkShare, 0, len(a.functions))
+	for index, work := range a.workBy {
+		if work > 0 {
+			shares = append(shares, FlowWorkShare{Function: a.functions[index].ID, File: a.functions[index].File, Work: work})
+		}
+	}
+	sort.Slice(shares, func(i, j int) bool {
+		if shares[i].Work != shares[j].Work {
+			return shares[i].Work > shares[j].Work
+		}
+		return shares[i].Function < shares[j].Function
+	})
+	if len(shares) > limit {
+		shares = shares[:limit]
+	}
+	return shares
+}
+
+func (a *flowAnalyzer) sanitizerKinds(candidates []string) map[string]bool {
 	matched := make(map[string]bool)
 	for _, sanitizer := range a.config.Sanitizers {
+		if sanitizer.Argument != nil {
+			continue
+		}
 		found := false
 		for _, candidate := range candidates {
 			if flowFunctionMatches(candidate, sanitizer.Function) {
@@ -906,41 +1193,66 @@ func (a *flowAnalyzer) sanitizerKinds(fact graph.FlowFact, targets []int) map[st
 
 func (a *flowAnalyzer) findings() []FlowResult {
 	byKey := make(map[string]FlowResult)
-	for index, function := range a.functions {
-		state := a.states[index]
-		for _, fact := range function.Facts {
-			if fact.Kind != "sink" || (a.options.Sink != "" && fact.SinkKind != a.options.Sink) {
+	record := func(index int, fact graph.FlowFact, kind, severity string, parameterOnly bool, refs []string) {
+		function := a.functions[index]
+		for _, trace := range a.tracesFor(index, refs) {
+			sanitized := a.sanitized[trace.key.sanitized]
+			if sanitized["*"] || sanitized[kind] {
 				continue
 			}
-			for _, trace := range state.tracesForRefs(fact.Inputs) {
-				sanitized := a.sanitized[trace.key.sanitized]
-				if sanitized["*"] || sanitized[fact.SinkKind] {
-					continue
-				}
-				confidence := "medium"
-				if trace.low {
-					confidence = "low"
-				}
-				source := a.sources[trace.key.source]
-				sink := FlowEndpoint{
-					Kind: fact.SinkKind, Label: fact.Detail, Function: function.Name,
+			confidence := "medium"
+			if trace.low {
+				confidence = "low"
+			}
+			source := a.sources[trace.key.source]
+			sink := FlowEndpoint{
+				Kind: kind, Label: fact.Detail, Function: function.Name,
+				File: function.File, Line: fact.Line,
+			}
+			resultSeverity := severity
+			if resultSeverity == "" {
+				resultSeverity = flowSeverity(source.endpoint.Kind, kind)
+			}
+			if parameterOnly && resultSeverity == "high" {
+				resultSeverity = "medium"
+			}
+			result := FlowResult{
+				Severity: resultSeverity, Confidence: confidence, ParameterOnly: parameterOnly,
+				Source: source.endpoint, Sink: sink,
+				Path: appendFlowPath(trace.path, FlowStep{
+					Kind: "sink", Function: function.Name, Detail: fact.Detail,
 					File: function.File, Line: fact.Line,
-				}
-				result := FlowResult{
-					Severity:   flowSeverity(source.endpoint.Kind, fact.SinkKind),
-					Confidence: confidence, Source: source.endpoint, Sink: sink,
-					Path: appendFlowPath(trace.path, FlowStep{
-						Kind: "sink", Function: function.Name, Detail: fact.Detail,
-						File: function.File, Line: fact.Line,
-					}).steps(),
-				}
-				if !flowResultMatches(result, a.options.Term) {
+				}).steps(),
+			}
+			if !flowResultMatches(result, a.options.Term) {
+				continue
+			}
+			key := fmt.Sprintf("%s|%s|%d|%s|%s|%d", source.key, sink.File, sink.Line, sink.Kind, function.ID, fact.Column)
+			if existing, ok := byKey[key]; !ok || betterFlowResult(result, existing) {
+				byKey[key] = result
+			}
+		}
+	}
+	for index, function := range a.functions {
+		for factIndex, fact := range function.Facts {
+			if fact.Kind == "sink" && (a.options.Sink == "" || fact.SinkKind == a.options.Sink) {
+				record(index, fact, fact.SinkKind, "", fact.ParameterOnly, fact.Inputs)
+			}
+			for _, sink := range a.customSinks[[2]int{index, factIndex}] {
+				if a.options.Sink != "" && sink.Kind != a.options.Sink {
 					continue
 				}
-				key := fmt.Sprintf("%s|%s|%d|%s|%s|%d", source.key, sink.File, sink.Line, sink.Kind, function.ID, fact.Column)
-				if existing, ok := byKey[key]; !ok || betterFlowResult(result, existing) {
-					byKey[key] = result
+				severity := sink.Severity
+				if severity == "" {
+					severity = "high"
 				}
+				var refs []string
+				for argumentIndex, argument := range fact.Arguments {
+					if sink.Argument == nil || *sink.Argument == argumentIndex {
+						refs = append(refs, argument...)
+					}
+				}
+				record(index, fact, sink.Kind, severity, false, refs)
 			}
 		}
 	}

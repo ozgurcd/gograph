@@ -317,3 +317,42 @@ func stdVariableText(db std, q string) { _ = db.Exec(q, "value") }
 		}
 	}
 }
+
+func TestParseFileMarksConstantNonShellProgramsParameterOnly(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "run.go")
+	source := `package sample
+
+import (
+	"context"
+	"os/exec"
+)
+
+func git(v string)   { _ = exec.Command("git", "log", v).Run() }
+func shell(v string) { _ = exec.Command("sh", "-c", v).Run() }
+func abs(v string)   { _ = exec.Command("/bin/bash", "-c", v).Run() }
+func dyn(p, v string) { _ = exec.Command(p, v).Run() }
+func ctxGit(ctx context.Context, v string) { _ = exec.CommandContext(ctx, "/usr/bin/git", v).Run() }
+`
+	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := parser.ParseFile(token.NewFileSet(), path, "run.go", "example.com/sample")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, function := range result.FlowFunctions {
+		for _, fact := range function.Facts {
+			if fact.Kind == "sink" && fact.SinkKind == "process_execution" {
+				got[function.Name] = fact.ParameterOnly
+			}
+		}
+	}
+	want := map[string]bool{"git": true, "shell": false, "abs": false, "dyn": false, "ctxGit": true}
+	for name, value := range want {
+		if got[name] != value {
+			t.Errorf("%s parameter_only = %v, want %v", name, got[name], value)
+		}
+	}
+}

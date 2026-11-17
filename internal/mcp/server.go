@@ -1668,7 +1668,7 @@ func NewServer(
 
 	// Tool: gograph_errorflow
 	flowTool := mcp.NewTool("gograph_flow",
-		mcp.WithDescription("Find potential untrusted-data paths from HTTP request objects, decoded JSON values, or environment variables to SQL query text, process execution arguments, filesystem paths, or outbound HTTP targets. Run `gograph build . --precise` first for stronger method/interface targets. WHEN TO USE: During a security review or before changing request parsing, command execution, file access, SQL construction, or URL handling. NOT TO USE: As proof of exploitability; the analysis is path-insensitive and call/return context for the 3 most recent call sites by default (context depth up to 16; deeper returns that lose their call site are kept at low confidence), bounded by a size-derived work budget that reports incomplete runs explicitly. RETURNS: Structured findings with source, sink, severity, confidence, and path steps. Configure trusted return-value sanitizers in .gograph/flow.json or with config."),
+		mcp.WithDescription("Find potential untrusted-data paths from HTTP request objects, decoded JSON values, or environment variables to SQL query text, process execution arguments, filesystem paths, or outbound HTTP targets. Run `gograph build . --precise` first for stronger method/interface targets. WHEN TO USE: During a security review or before changing request parsing, command execution, file access, SQL construction, or URL handling. NOT TO USE: As proof of exploitability; the analysis is path-insensitive and call/return context for the 3 most recent call sites by default (context depth up to 16; deeper returns that lose their call site are kept at low confidence), bounded by a size-derived work budget that reports incomplete runs explicitly. RETURNS: Structured findings with source, sink, severity, confidence, parameter_only (constant non-shell program), and path steps; an exhausted budget lists top_functions by work. The policy (.gograph/flow.json or config) adds return-value or argument sanitizers and custom sources and sinks by function."),
 		mcp.WithString("term", mcp.Description("Optional substring filter matched against functions, files, endpoints, and path steps")),
 		mcp.WithString("source", mcp.Description("Optional source kind: http_request, decoded_json, or environment")),
 		mcp.WithString("sink", mcp.Description("Optional sink kind: sql_query, process_execution, filesystem, or outbound_http")),
@@ -1676,6 +1676,7 @@ func NewServer(
 		mcp.WithBoolean("no_tests", mcp.Description("Exclude functions in *_test.go files")),
 		mcp.WithNumber("max_work", mcp.Description("Optional propagation work budget; defaults to a value derived from the number of flow facts. An exhausted budget returns completeness.complete=false with partial findings.")),
 		mcp.WithNumber("context_depth", mcp.Description("Optional call-site frames kept per value (default 3, max 16). Deeper settings are more precise and need more work.")),
+		mcp.WithArray("packages", mcp.WithStringItems(), mcp.Description("Limit analysis to these import paths; prefix/... includes descendants")),
 	)
 	addTool(flowTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
@@ -1729,9 +1730,14 @@ func NewServer(
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		packages, err := stringSliceArg(args, "packages")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		report, err := search.FlowWithReport(g, search.FlowOptions{
 			Term: term, Source: source, Sink: sink, ConfigPath: config,
 			IncludeTests: !boolArg(args, "no_tests"), MaxWork: maxWork, ContextDepth: contextDepth,
+			Packages: packages,
 		})
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil

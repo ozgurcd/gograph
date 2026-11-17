@@ -656,7 +656,7 @@ No runtime environment values are read.
 
 ### flow
 ```bash
-gograph flow [term] [--source http_request|decoded_json|environment] [--sink sql_query|process_execution|filesystem|outbound_http] [--config path] [--no-tests]
+gograph flow [term] [--source http_request|decoded_json|environment|<custom>] [--sink sql_query|process_execution|filesystem|outbound_http|<custom>] [--config path] [--no-tests] [--package path[/...]]... [--max-work N] [--context-depth N]
 ```
 Finds potential paths from untrusted inputs to security-sensitive operations. Test files are included by default; `--no-tests` limits analysis to production files.
 
@@ -665,8 +665,8 @@ Finds potential paths from untrusted inputs to security-sensitive operations. Te
   - `decoded_json`: `encoding/json.Unmarshal`, `encoding/json.NewDecoder(...).Decode`, Go 1.27's `encoding/json/v2` decode functions (`Unmarshal`, `UnmarshalRead`, and `UnmarshalDecode`), and recognized framework binding methods.
   - `environment`: `os.Getenv`, `os.LookupEnv`, and supported Viper package reads.
 - **Sinks**:
-  - `sql_query`: the query-text argument to `Query`, `QueryRow`, `Exec`, `Prepare`, and `Raw` variants. Parameter values are not treated as query text.
-  - `process_execution`: command and argument values passed to `os/exec.Command` or `CommandContext`.
+  - `sql_query`: the query-text argument to `Query`, `QueryRow`, `Exec`, `Prepare`, and `Raw` variants. Parameter values are not treated as query text, and a leading context argument (pgx-style `Query(ctx, sql, args...)`) moves the text to the second argument.
+  - `process_execution`: command and argument values passed to `os/exec.Command` or `CommandContext`. When the program is a constant literal that is not a shell or interpreter (`git`, not `sh`), findings are marked `parameter_only` and rated at most medium: only argument injection is possible.
   - `filesystem`: path arguments to common `os` file operations.
   - `outbound_http`: URL/request arguments passed to package-level `net/http` calls, request constructors, and `Do` methods.
 - **Output**: Severity, confidence, source and sink locations, and source-to-sink path steps. `--json` returns structured `FlowResult` objects; `--files-only` returns deduplicated source and sink files.
@@ -681,7 +681,20 @@ Finds potential paths from untrusted inputs to security-sensitive operations. Te
   }
   ```
 
-  Omit `for` to apply a sanitizer to every sink kind. `function` accepts the call spelling or a fully-qualified symbol ID; use the fully-qualified form for duplicate names. Validators that only return `bool` or `error` do not sanitize the original value.
+  Omit `for` to apply a sanitizer to every sink kind. `function` accepts the call spelling or a fully-qualified symbol ID (also of dependencies, such as `os/exec::Command`, on precise graphs); use the fully-qualified form for duplicate names. A sanitizer with `"argument": N` is a validator: within the calling function, the value passed as argument N (and its fields) is trusted for the listed sinks.
+
+  Repository-specific sources and sinks extend the built-in kinds:
+
+  ```json
+  {
+    "sources": [{ "function": "agent.ReadAgentOutput", "kind": "agent_output", "return": 0 }],
+    "sinks": [{ "function": "mcpio.WriteMCPResponse", "kind": "mcp_response", "argument": 1, "severity": "high" }],
+    "sanitizers": [{ "function": "mcpio.Validate", "for": ["mcp_response"], "argument": 0 }]
+  }
+  ```
+
+  A source taints the call's return values (all, or only `return`); a sink checks its arguments (all, or only `argument`); `kind` is lower-case letters, digits and underscores and works with `--source` and `--sink`; `severity` defaults to `high`. Without a policy the built-in behavior is unchanged.
+- **Budget**: when the work budget runs out, `completeness.top_functions` (and the text output) lists the functions that consumed the most propagation work; `--package` (MCP `packages`) limits analysis to chosen import paths.
 - **Limitations**: Interprocedural and path-insensitive, with call/return context for the 3 most recent call sites by default (context depth up to 16; deeper returns that lose their call site are kept at low confidence), bounded by a size-derived work budget that reports incomplete runs explicitly. Default graphs resolve direct local/imported functions; run `build . --precise` for stronger method/interface targets. Reflection, globals, arbitrary heap aliases, and unresolved dynamic calls may be missed or over-approximated. Unresolved external transformations lower confidence. Findings require source review and do not prove exploitability.
 
 ### tests
