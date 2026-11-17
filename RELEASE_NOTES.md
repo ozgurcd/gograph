@@ -1,5 +1,41 @@
 # Release Notes
 
+## Unreleased
+
+Runnable test selection, faster test attribution, and fixes found by testing
+gograph on real repositories.
+
+- `gograph tests --uncommitted`, `--since <ref>` and `<symbol> --format
+  run|go-test` select the tests to run for a change: per package, anchored
+  `-run` patterns and ready `go test` commands with the graph's `-tags`.
+  Deleted tests are never listed; deleted, new-but-unindexed and non-callable
+  declarations are reported as unselected. MCP `gograph_tests` gains
+  `uncommitted`, `since`, `select` and `max_depth`.
+- `tests --transitive` puts a summary by depth first, sorts nearest tests
+  first and returns 50 per page (`--limit`, `--cursor`, `--max-depth`). A hub
+  symbol that returned 3.2 MB now returns 33 KB by default.
+- `untested` and `tests --transitive` are up to 100 times faster: 4 min 51 s
+  to 2.7 s on a 1,100-file repository, with identical output.
+- `untested` ranks functions with no static test path before possible-only
+  ones, can skip interface methods (`--exclude-interface-methods`), and reads
+  `go test -coverprofile` output (`--coverprofile`). New `gograph uncovered`
+  (MCP `gograph_uncovered`) lists changed lines no test executed.
+- `flow` takes the SQL text from the right argument of pgx-style
+  `Query(ctx, sql, ...)` (it reported the context and missed concatenated
+  queries), supports custom sources, sinks and argument sanitizers in its
+  policy, marks constant non-shell programs `parameter_only`, names the
+  functions that used the work budget, and accepts `--package`.
+- `validate` adds `imports_only_from`, `callers_only_from` and
+  `call_arg_constant`, which list every violating file:line.
+- Policy files are read from the committable `gograph/` directory first,
+  then `.gograph/`; `boundaries --create` writes `gograph/boundaries.json`.
+- `complexity` adds `--no-tests`, `--top` and `--path`.
+- A file selector such as `search.go:Untested` no longer also matches a
+  method named `Untested` in that file.
+- A binary from `go install ...@vX.Y.Z` reports `X.Y.Z` instead of `dev`.
+- `help` and `capabilities` start with a task index, `plan` and `explore`
+  print the next commands to run, and `gograph whatsnew` shows these notes.
+
 ## v1.7.20 — 2026-11-16
 
 Smaller MCP tool list and answers, and a test suite that runs in half the time.

@@ -725,6 +725,16 @@ their results. When an in-package test and external `foo_test` package share the
 same graph ID, `--package` (MCP `package`) selects the exact Go package name.
 This is static attribution, not runtime or branch coverage.
 
+### whatsnew
+```bash
+gograph whatsnew [--since vX.Y.Z] [--json]
+```
+Prints the release notes shipped with the running binary: the section for its
+release, or, for a development or branch build, the unreleased changes plus the
+latest release. `--since` lists every release newer than the given version up
+to the running one. `--json` returns `gograph.whatsnew.v1`. This command is
+CLI-only; MCP clients read the server version from `gograph_capabilities`.
+
 ### uncovered
 ```bash
 gograph uncovered --uncommitted|--since <ref> --coverprofile <file> [--json]

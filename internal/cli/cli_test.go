@@ -369,6 +369,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 		"tests",
 		"coverage",
 		"uncovered",
+		"whatsnew",
 		"identity",
 		"constructors",
 		"literals",

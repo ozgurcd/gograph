@@ -34,6 +34,7 @@ var TaskIndex = []TaskIndexEntry{
 	{"complexity hot spots", "gograph complexity --no-tests --top 20; gograph hotspot", "gograph_complexity, gograph_hotspot"},
 	{"HTTP routes and SQL", "gograph routes; gograph sql", "gograph_routes, gograph_sql"},
 	{"is the index fresh? rebuild it", "gograph stale; gograph build . --precise", "gograph_stale"},
+	{"what changed in this gograph release", "gograph whatsnew [--since vX.Y.Z]", "gograph_capabilities (version)"},
 	{"details for one command", "gograph <command> --help", "tools/list descriptions"},
 }
 

@@ -4,6 +4,9 @@ package cli
 import (
 	"path"
 
+	"github.com/ozgurcd/gograph"
+	"github.com/ozgurcd/gograph/internal/releasenotes"
+
 	"context"
 	"encoding/json"
 	"errors"
@@ -421,6 +424,8 @@ func dispatch(args []string) int {
 		return 0
 	case "version", "--version", "-v":
 		return runVersion()
+	case "whatsnew":
+		return runWhatsnew(args[1:])
 	default:
 		if jsonMode {
 			return failCommandf(args[0], "unknown command: %s", args[0])
@@ -580,8 +585,8 @@ Workspace status, query, path, and impact use the separate four-tool workspace
 MCP server described above. CLI-only process, host, CI, and artifact operations
 are build, validate, doctor, gate, snapshot, add-claude-plugin, hook-guard,
 project/workspace MCP startup, workspace build/member refresh, and help. The
-standalone version command remains CLI-only, while gograph_capabilities exposes
-the running MCP server version directly.
+standalone version and whatsnew commands remain CLI-only, while gograph_capabilities
+exposes the running MCP server version directly.
 These boundaries describe callable functionality; output presentation remains
 transport-specific (CLI flags/envelopes versus typed MCP arguments/content).
 
@@ -3621,7 +3626,7 @@ CLI / MCP TRANSPORT COVERAGE
   CLI-only operations        build, validate, doctor, gate, snapshot,
                              add-claude-plugin, hook-guard, project/workspace MCP
                              startup, workspace build/member refresh, and help.
-                             The standalone version command has no MCP tool;
+                             The standalone version and whatsnew commands have no MCP tool;
                              gograph_capabilities reports the running server version.
                              CLI envelopes/flags and MCP typed content may differ, but
                              paired operations share their functional implementation.
@@ -4045,6 +4050,10 @@ AGENT INTEGRATION
 OTHER
   doctor [--json]            Diagnose duplicate or shadowed gograph installations.
   version, -v                Print version; add --json for gograph.version.v1.
+  whatsnew [--since vX.Y.Z]  Release notes shipped with this binary: the running release,
+                             or for a development build the unreleased changes and the
+                             latest release; --since lists every newer release
+                             (gograph.whatsnew.v1 with --json).
   help, -h                   Show this help.
 
 OUTPUTS (after 'build')
@@ -6501,6 +6510,41 @@ func runUncovered(args []string) int {
 	if len(report.FilesWithoutProfileData) > 0 {
 		fmt.Printf("No profile data for %d changed files (untested package or outside the build; use -coverpkg): %s\n",
 			len(report.FilesWithoutProfileData), strings.Join(report.FilesWithoutProfileData, ", "))
+	}
+	return 0
+}
+
+func runWhatsnew(args []string) int {
+	since := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--since":
+			if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+				return failCommand("whatsnew", "--since requires a version such as v1.7.18")
+			}
+			i++
+			since = args[i]
+		default:
+			return failCommandf("whatsnew", "unknown argument: %s\nusage: gograph whatsnew [--since vX.Y.Z]", args[i])
+		}
+	}
+	report := releasenotes.Select(releasenotes.Parse(gograph.ReleaseNotes), Version, since)
+	if jsonMode {
+		return PrintJSON(okEnvelope("whatsnew", since, report, len(report.Sections)))
+	}
+	fmt.Printf("gograph %s — %s\n", strings.TrimPrefix(report.RunningVersion, "v"), report.Selection)
+	if report.Note != "" {
+		fmt.Println(report.Note)
+	}
+	for _, section := range report.Sections {
+		header := section.Version
+		if section.Date != "" {
+			header += " — " + section.Date
+		}
+		fmt.Printf("\n## %s\n\n%s\n", header, section.Body)
+	}
+	if len(report.Sections) == 0 && report.Note == "" {
+		fmt.Println("No release notes in this range.")
 	}
 	return 0
 }
