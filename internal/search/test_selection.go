@@ -21,6 +21,7 @@ type TestSelection struct {
 	AnalysisPrecision  graph.PrecisionMode          `json:"analysis_precision"`
 	TestCallResolution graph.TestCallResolutionMode `json:"test_call_resolution"`
 	ExactOnly          bool                         `json:"exact_only"`
+	MaxDepth           int                          `json:"max_depth,omitempty"`
 	BuildTags          []string                     `json:"build_tags"`
 	Roots              []SelectionRoot              `json:"roots"`
 	Unselected         []UnselectedRoot             `json:"unselected"`
@@ -90,6 +91,12 @@ type SelectionInput struct {
 // graph, or that are not callable, are reported as unselected rather than
 // silently dropped.
 func (snapshot *Snapshot) SelectTests(selector string, roots []SelectionInput, exactOnly bool) TestSelection {
+	return snapshot.SelectTestsWithin(selector, roots, exactOnly, 0)
+}
+
+// SelectTestsWithin is SelectTests keeping only tests whose shortest path to
+// a root is at most maxDepth calls; 0 means unlimited.
+func (snapshot *Snapshot) SelectTestsWithin(selector string, roots []SelectionInput, exactOnly bool, maxDepth int) TestSelection {
 	g := snapshot.g
 	selection := TestSelection{
 		SchemaVersion:      TestSelectionSchemaVersion,
@@ -98,6 +105,7 @@ func (snapshot *Snapshot) SelectTests(selector string, roots []SelectionInput, e
 		AnalysisPrecision:  graph.PrecisionAST,
 		TestCallResolution: graph.TestCallResolutionAST,
 		ExactOnly:          exactOnly,
+		MaxDepth:           maxDepth,
 		BuildTags:          []string{},
 		Roots:              []SelectionRoot{},
 		Unselected:         []UnselectedRoot{},
@@ -138,6 +146,9 @@ func (snapshot *Snapshot) SelectTests(selector string, roots []SelectionInput, e
 	tests := make(map[string]chosen)
 	consider := func(symbol graph.SymbolNode, state reverseAttributionState) bool {
 		if exactOnly && state.resolution != "exact" {
+			return false
+		}
+		if maxDepth > 0 && state.depth > maxDepth {
 			return false
 		}
 		if deleted[symbol.ID+"\x00"+path.Clean(symbol.File)] {

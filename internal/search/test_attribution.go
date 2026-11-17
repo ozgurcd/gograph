@@ -143,15 +143,43 @@ type AttributingTest struct {
 // product symbol. It complements the legacy direct Tests query without
 // changing that command's result contract.
 type TestsReport struct {
-	SchemaVersion      string                       `json:"schema_version"`
-	Query              string                       `json:"query"`
-	Package            string                       `json:"package,omitempty"`
-	Status             string                       `json:"status"`
+	SchemaVersion string `json:"schema_version"`
+	Query         string `json:"query"`
+	Package       string `json:"package,omitempty"`
+	Status        string `json:"status"`
+	// Summary counts every reaching test (within max_depth) by depth and
+	// resolution before paging. Set by TransitiveTestsPage.
+	Summary            *TestsSummary                `json:"summary,omitempty"`
 	AnalysisPrecision  graph.PrecisionMode          `json:"analysis_precision"`
 	TestCallResolution graph.TestCallResolutionMode `json:"test_call_resolution"`
 	MatchedSymbols     []SymbolIdentity             `json:"matched_symbols"`
 	Tests              []AttributingTest            `json:"tests"`
-	Limitations        []string                     `json:"limitations"`
+	// Paging fields are set by TransitiveTestsPage.
+	MaxDepth    int      `json:"max_depth,omitempty"`
+	Total       *int     `json:"total,omitempty"`
+	Returned    *int     `json:"returned,omitempty"`
+	Offset      *int     `json:"offset,omitempty"`
+	Limit       int      `json:"limit,omitempty"`
+	Truncated   *bool    `json:"truncated,omitempty"`
+	NextCursor  *string  `json:"next_cursor,omitempty"`
+	Limitations []string `json:"limitations"`
+}
+
+// TestsSummary counts reaching tests before paging.
+type TestsSummary struct {
+	Total       int              `json:"total"`
+	Exact       int              `json:"exact"`
+	Possible    int              `json:"possible"`
+	ByDepth     []TestDepthCount `json:"by_depth"`
+	BeyondDepth int              `json:"beyond_max_depth,omitempty"`
+	NextCommand string           `json:"next_command,omitempty"`
+}
+
+// TestDepthCount counts the tests at one call depth.
+type TestDepthCount struct {
+	Depth    int `json:"depth"`
+	Exact    int `json:"exact"`
+	Possible int `json:"possible"`
 }
 
 type coverageState struct {
@@ -380,12 +408,13 @@ func (snapshot *Snapshot) TransitiveTests(query, packageName string, exactOnly b
 			Resolution: state.resolution, Depth: state.depth, Path: reverseAttributionPath(best, attribution.tests, target.StableID, state),
 		})
 	}
+	// Nearest tests first: depth, then exact before possible.
 	sort.Slice(report.Tests, func(i, j int) bool {
-		if report.Tests[i].Resolution != report.Tests[j].Resolution {
-			return report.Tests[i].Resolution == "exact"
-		}
 		if report.Tests[i].Depth != report.Tests[j].Depth {
 			return report.Tests[i].Depth < report.Tests[j].Depth
+		}
+		if report.Tests[i].Resolution != report.Tests[j].Resolution {
+			return report.Tests[i].Resolution == "exact"
 		}
 		if report.Tests[i].StableID != report.Tests[j].StableID {
 			return report.Tests[i].StableID < report.Tests[j].StableID

@@ -2036,9 +2036,35 @@ func runTests(args []string) int {
 	sinceRef := ""
 	format := ""
 	packageName := ""
+	pageOptions := search.TestsPageOptions{}
+	pageFlags := false
 	var targets []string
 	for index := 0; index < len(args); index++ {
 		switch argument := args[index]; argument {
+		case "--max-depth", "--limit":
+			value, err := parseIntegerFlag(args, &index)
+			if err != nil {
+				return failCommand("tests", err.Error())
+			}
+			if value < 0 {
+				return failCommandf("tests", "%s must not be negative", argument)
+			}
+			if argument == "--max-depth" {
+				pageOptions.MaxDepth = value
+			} else {
+				pageOptions.Limit = value
+				if value == 0 {
+					pageOptions.Limit = -1 // --limit 0 returns every test
+				}
+				pageFlags = true
+			}
+		case "--cursor":
+			if index+1 >= len(args) || args[index+1] == "" || strings.HasPrefix(args[index+1], "-") {
+				return failCommand("tests", "--cursor requires the opaque next_cursor from a previous tests result")
+			}
+			pageOptions.Cursor = args[index+1]
+			pageFlags = true
+			index++
 		case "--transitive":
 			transitive = true
 		case "--exact-only":
@@ -2082,25 +2108,48 @@ func runTests(args []string) int {
 		return failCommand("tests", "--format requires a symbol, --uncommitted, or --since <ref>\n"+testsUsage)
 	case transitive && !changeMode && len(targets) != 1:
 		return failCommand("tests", testsUsage)
-	case !transitive && !changeMode && format == "" && (exactOnly || packageName != ""):
-		return failCommand("tests", "--package and --exact-only require --transitive, --format, --uncommitted, or --since")
+	case !transitive && !changeMode && format == "" && (exactOnly || packageName != "" || pageOptions.MaxDepth > 0):
+		return failCommand("tests", "--package, --exact-only and --max-depth require --transitive, --format, --uncommitted, or --since")
+	case pageFlags && (!transitive || format != "" || changeMode):
+		return failCommand("tests", "--limit and --cursor page --transitive results")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
 		return failCommandf("tests", "failed to load graph: %v", err)
 	}
 	if changeMode {
-		return runTestSelectionForChanges(g, uncommitted, sinceRef, format, exactOnly)
+		return runTestSelectionForChanges(g, uncommitted, sinceRef, format, exactOnly, pageOptions.MaxDepth)
 	}
 	term := ""
 	if len(targets) > 0 {
 		term = targets[0]
 	}
 	if format != "" {
-		return runTestSelectionForSymbol(g, term, packageName, format, exactOnly)
+		return runTestSelectionForSymbol(g, term, packageName, format, exactOnly, pageOptions.MaxDepth)
 	}
 	if transitive {
 		report := search.TransitiveTestsInPackage(g, term, packageName, exactOnly)
+		if !filesOnlyMode {
+			command := "gograph tests " + shellQuoteArg(term) + " --transitive"
+			if packageName != "" {
+				command += " --package " + shellQuoteArg(packageName)
+			}
+			if exactOnly {
+				command += " --exact-only"
+			}
+			if pageOptions.MaxDepth > 0 {
+				command += fmt.Sprintf(" --max-depth %d", pageOptions.MaxDepth)
+			}
+			if pageOptions.Limit > 0 {
+				command += fmt.Sprintf(" --limit %d", pageOptions.Limit)
+			}
+			pageOptions.Command = command
+			paged, err := search.NewSnapshot(g).TransitiveTestsPage(term, packageName, exactOnly, pageOptions)
+			if err != nil {
+				return failCommand("tests", err.Error())
+			}
+			report = paged
+		}
 		if filesOnlyMode {
 			if report.Status == "not_found" || report.Status == "ambiguous" {
 				return failCommandf("tests", "product selector %q: %s", term, report.Status)
@@ -2137,10 +2186,27 @@ func runTests(args []string) int {
 			fmt.Printf("No test function statically reaches %q.\n", term)
 			return 0
 		}
-		fmt.Printf("Tests statically reaching %s:\n", report.MatchedSymbols[0].StableID)
+		summary := report.Summary
+		fmt.Printf("Tests statically reaching %s: %d (exact %d, possible %d)\n", report.MatchedSymbols[0].StableID, summary.Total, summary.Exact, summary.Possible)
+		for _, depth := range summary.ByDepth {
+			fmt.Printf("  depth %d: %d exact, %d possible\n", depth.Depth, depth.Exact, depth.Possible)
+		}
+		if summary.BeyondDepth > 0 {
+			fmt.Printf("  beyond --max-depth %d: %d (not listed)\n", report.MaxDepth, summary.BeyondDepth)
+		}
+		if len(report.Tests) == 0 {
+			if summary.Total == 0 {
+				fmt.Printf("No test function within --max-depth %d reaches %q.\n", report.MaxDepth, term)
+			}
+			return 0
+		}
+		fmt.Printf("\nShowing %d-%d of %d, nearest first:\n", *report.Offset+1, *report.Offset+*report.Returned, *report.Total)
 		for _, test := range report.Tests {
 			fmt.Printf("  [%s d%d] %s  (%s:%d)\n", test.Resolution, test.Depth, test.StableID, test.File, test.Line)
 			fmt.Printf("    path: %s\n", strings.Join(test.Path, " -> "))
+		}
+		if summary.NextCommand != "" {
+			fmt.Printf("\nnext: %s\n", summary.NextCommand)
 		}
 		return 0
 	}
@@ -2152,7 +2218,7 @@ func runTests(args []string) int {
 	return printResults("tests", term, results, emptyMsg)
 }
 
-func runTestSelectionForSymbol(g *graph.Graph, term, packageName, format string, exactOnly bool) int {
+func runTestSelectionForSymbol(g *graph.Graph, term, packageName, format string, exactOnly bool, maxDepth int) int {
 	snapshot := search.NewSnapshot(g)
 	report := snapshot.TransitiveTests(term, packageName, false)
 	switch report.Status {
@@ -2166,11 +2232,11 @@ func runTestSelectionForSymbol(g *graph.Graph, term, packageName, format string,
 		return failCommandf("tests", "product symbol %q is ambiguous; retry with a stable ID and, when IDs collide, --package: %s", term, strings.Join(candidates, "; "))
 	}
 	match := report.MatchedSymbols[0]
-	selection := snapshot.SelectTests(term, []search.SelectionInput{{StableID: match.StableID, Name: match.Name, File: match.File}}, exactOnly)
+	selection := snapshot.SelectTestsWithin(term, []search.SelectionInput{{StableID: match.StableID, Name: match.Name, File: match.File}}, exactOnly, maxDepth)
 	return printTestSelection(selection, format)
 }
 
-func runTestSelectionForChanges(g *graph.Graph, uncommitted bool, sinceRef, format string, exactOnly bool) int {
+func runTestSelectionForChanges(g *graph.Graph, uncommitted bool, sinceRef, format string, exactOnly bool, maxDepth int) int {
 	ref, selector := sinceRef, "--since "+sinceRef
 	if uncommitted {
 		ref, selector = "HEAD", "--uncommitted"
@@ -2182,7 +2248,7 @@ func runTestSelectionForChanges(g *graph.Graph, uncommitted bool, sinceRef, form
 	if changes.Evaluation != "complete" {
 		return failCommand("tests", "cannot select tests from incomplete changes: "+strings.Join(changes.Diagnostics, "; "))
 	}
-	selection := search.NewSnapshot(g).SelectTests(selector, search.SelectionInputsFromChanges(changes), exactOnly)
+	selection := search.NewSnapshot(g).SelectTestsWithin(selector, search.SelectionInputsFromChanges(changes), exactOnly, maxDepth)
 	return printTestSelection(selection, format)
 }
 
@@ -3858,11 +3924,14 @@ EXTRACTION
   envs [term]                Every os.Getenv / os.LookupEnv / supported Viper Get* read.
   concurrency [term]         Goroutine spawns, channel sends, and typed Mutex/RWMutex/
                              WaitGroup/Once calls (not receives or select statements).
-  tests [symbol] [--transitive] [--exact-only] [--package name] [--uncommitted|--since <ref>] [--format run|go-test]
+  tests [symbol] [--transitive] [--exact-only] [--package name] [--max-depth N] [--limit N] [--cursor T] [--uncommitted|--since <ref>] [--format run|go-test]
                              Which tests to run for a symbol or a change. Direct attributed
                              test calls by default. --transitive requires one product symbol
-                             and returns gograph.tests.v1 with every reaching test,
-                             exact/possible propagation, depth, and stable-ID path.
+                             and returns gograph.tests.v1: a summary of every reaching test
+                             by depth and exact/possible resolution, then one page (default
+                             50, --limit 0 for all, --cursor for the next) sorted nearest
+                             first, with depth and stable-ID path. --max-depth N keeps tests
+                             whose shortest path is at most N calls (also for selections).
                              --uncommitted, --since <ref>, or --format select every test that
                              reaches the changed (or named) symbols and print, per package,
                              an anchored -run pattern (gograph.test_selection.v1 with --json);
@@ -6202,4 +6271,14 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// shellQuoteArg quotes a value for a copy-pasteable command line.
+func shellQuoteArg(value string) string {
+	if value != "" && strings.IndexFunc(value, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._/:-", r))
+	}) < 0 {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }

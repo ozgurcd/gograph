@@ -2215,7 +2215,7 @@ func initNewTools(
 
 	// Tool: gograph_tests
 	testsTool := mcp.NewTool("gograph_tests",
-		mcp.WithDescription("Find test functions in *_test.go files that statically exercise a named symbol, or list all attributed test edges when no symbol is given. Direct mode accepts Receiver.Method (including pointer receivers) or a full stable symbol ID. By default this preserves the direct-edge result contract. Set transitive=true with a required symbol to return gograph.tests.v1 reverse attribution, including exact/possible resolution, depth, and a representative stable-ID path from every reaching test; exact_only omits uncertain paths and package disambiguates the selected product symbol. WHEN TO USE: To choose which tests to run after an edit (uncommitted=true); before editing a function — use transitive=true for router/callback-mediated coverage and direct mode for concrete test call sites. NOT TO USE: For test helper infrastructure (use gograph_fixtures); for running tests or proving runtime coverage. Set uncommitted=true, since=<ref>, or select=true with a symbol to get gograph.test_selection.v1: the tests to run for a change, grouped per package, each with an anchored go test -run pattern and ready go test commands (with the graph's build tags). RETURNS: Direct result rows by default, or a versioned reverse-transitive report or test selection when requested."),
+		mcp.WithDescription("Find test functions in *_test.go files that statically exercise a named symbol, or list all attributed test edges when no symbol is given. Direct mode accepts Receiver.Method (including pointer receivers) or a full stable symbol ID. By default this preserves the direct-edge result contract. Set transitive=true with a required symbol to return gograph.tests.v1 reverse attribution: a summary of every reaching test by depth and resolution, then one page (default 50, nearest first, with total, truncated and next_cursor) of tests with exact/possible resolution, depth, and a representative stable-ID path; max_depth keeps only nearby tests; exact_only omits uncertain paths and package disambiguates the selected product symbol. WHEN TO USE: To choose which tests to run after an edit (uncommitted=true); before editing a function — use transitive=true for router/callback-mediated coverage and direct mode for concrete test call sites. NOT TO USE: For test helper infrastructure (use gograph_fixtures); for running tests or proving runtime coverage. Set uncommitted=true, since=<ref>, or select=true with a symbol to get gograph.test_selection.v1: the tests to run for a change, grouped per package, each with an anchored go test -run pattern and ready go test commands (with the graph's build tags). RETURNS: Direct result rows by default, or a versioned reverse-transitive report or test selection when requested."),
 		mcp.WithString("symbol", mcp.Description("The symbol name to find tests for (optional)")),
 		mcp.WithBoolean("transitive", mcp.Description("Return reverse-transitive test attribution; requires symbol")),
 		mcp.WithBoolean("exact_only", mcp.Description("With transitive=true, omit paths containing possible edges")),
@@ -2223,6 +2223,9 @@ func initNewTools(
 		mcp.WithBoolean("select", mcp.Description("With symbol: return gograph.test_selection.v1, the tests to run grouped per package with an anchored go test -run pattern and ready commands")),
 		mcp.WithBoolean("uncommitted", mcp.Description("Select the tests to run for all uncommitted changes (gograph.test_selection.v1)")),
 		mcp.WithString("since", mcp.Description("Git ref (e.g. 'main', 'HEAD~1'): select the tests to run for all changes since this ref (gograph.test_selection.v1)")),
+		mcp.WithInteger("max_depth", mcp.Description("With transitive, select, uncommitted or since: keep tests whose shortest call path is at most this long; 0 or omitted is unlimited")),
+		mcp.WithInteger("limit", mcp.Description("With transitive=true: tests per page, nearest first (default 50; 0 returns all)")),
+		mcp.WithString("cursor", mcp.Description("With transitive=true: next_cursor from the previous page")),
 	)
 	addTool(testsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
@@ -2233,7 +2236,21 @@ func initNewTools(
 		uncommitted := false
 		sinceRef := ""
 		packageName := ""
+		pageOptions := search.TestsPageOptions{}
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
+			maxDepth, err := integerArg(args, "max_depth", 0)
+			if err != nil || maxDepth < 0 {
+				return mcp.NewToolResultError("max_depth must be a non-negative integer"), nil
+			}
+			limit, err := integerArg(args, "limit", search.DefaultTestsLimit)
+			if err != nil || limit < 0 {
+				return mcp.NewToolResultError("limit must be a non-negative integer"), nil
+			}
+			if limit == 0 {
+				limit = -1 // limit 0 returns every test
+			}
+			cursor, _ := args["cursor"].(string)
+			pageOptions = search.TestsPageOptions{MaxDepth: maxDepth, Limit: limit, Cursor: cursor}
 			if s, ok := args["symbol"].(string); ok {
 				term = s
 			}
@@ -2259,7 +2276,7 @@ func initNewTools(
 			if changes.Evaluation != "complete" {
 				return mcp.NewToolResultError("cannot select tests from incomplete changes: " + strings.Join(changes.Diagnostics, "; ")), nil
 			}
-			return jsonToolResult(queriesForRequest(ctx).SelectTests(selector, search.SelectionInputsFromChanges(changes), exactOnly))
+			return jsonToolResult(queriesForRequest(ctx).SelectTestsWithin(selector, search.SelectionInputsFromChanges(changes), exactOnly, pageOptions.MaxDepth))
 		}
 		if selectTests {
 			if strings.TrimSpace(term) == "" {
@@ -2270,18 +2287,17 @@ func initNewTools(
 				return jsonToolResult(report)
 			}
 			match := report.MatchedSymbols[0]
-			return jsonToolResult(queriesForRequest(ctx).SelectTests(term, []search.SelectionInput{{StableID: match.StableID, Name: match.Name, File: match.File}}, exactOnly))
+			return jsonToolResult(queriesForRequest(ctx).SelectTestsWithin(term, []search.SelectionInput{{StableID: match.StableID, Name: match.Name, File: match.File}}, exactOnly, pageOptions.MaxDepth))
 		}
 		if transitive {
 			if strings.TrimSpace(term) == "" {
 				return mcp.NewToolResultError("symbol must be a non-empty string when transitive=true"), nil
 			}
-			report := queriesForRequest(ctx).TransitiveTests(term, packageName, exactOnly)
-			data, err := json.Marshal(report)
+			report, err := queriesForRequest(ctx).TransitiveTestsPage(term, packageName, exactOnly, pageOptions)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return mcp.NewToolResultText(string(data)), nil
+			return jsonToolResult(report)
 		}
 		if exactOnly || packageName != "" {
 			return mcp.NewToolResultError("exact_only and package require transitive=true, select=true, uncommitted=true, or since"), nil
