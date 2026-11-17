@@ -43,6 +43,19 @@ sudo make install # copies to /usr/local/bin
 
 ## Step 1 — Build the graph
 
+> **CLI or MCP.** The steps below are for the CLI, whose analysis commands read
+> the persisted graph. The MCP server (`gograph mcp`) needs no build step: it
+> builds an in-memory graph when none is usable and rebuilds changed packages
+> before a call when source files changed.
+>
+> **Network.** gograph sends nothing itself, but it runs your `go` command:
+> every build asks it for the build context, and `--precise` loads packages
+> through `go list`. Go can download missing modules or a newer toolchain as
+> your `GOPROXY` and `GOTOOLCHAIN` allow; set `GOPROXY=off GOTOOLCHAIN=local` to
+> stay offline (precise mode then falls back to the AST graph when a module is
+> not cached). For cgo packages, `--precise` also invokes your C compiler; it
+> compiles the code and never runs it.
+
 Navigate to the root of any Go module and run:
 
 ```bash
