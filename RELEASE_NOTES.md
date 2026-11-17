@@ -1,6 +1,6 @@
 # Release Notes
 
-## Unreleased
+## v1.7.21 — 2026-11-17
 
 Runnable test selection, faster test attribution, and fixes found by testing
 gograph on real repositories.
