@@ -15,6 +15,29 @@ type PlanResult struct {
 	Routes     []string `json:"routes"`
 	Envs       []string `json:"envs"`
 	TouchesSQL string   `json:"touches_sql"` // "yes", "no"
+	// NextCommands are the exact commands to run next: tests to execute and
+	// the full blast radius.
+	NextCommands []string `json:"next_commands,omitempty"`
+}
+
+// PlanNextCommands returns the follow-up commands for a plan of one symbol,
+// or of the uncommitted change when symbol is empty.
+func PlanNextCommands(symbol string) []string {
+	if symbol == "" {
+		return []string{
+			"gograph tests --uncommitted --format go-test --max-depth 3",
+			"gograph impact --uncommitted",
+		}
+	}
+	quoted := symbol
+	if strings.ContainsAny(quoted, " '\"$*()|&;<>") {
+		quoted = "'" + strings.ReplaceAll(quoted, "'", `'"'"'`) + "'"
+	}
+	return []string{
+		"gograph tests " + quoted + " --format go-test --max-depth 3",
+		"gograph tests " + quoted + " --transitive",
+		"gograph impact " + quoted,
+	}
 }
 
 // ContextForPlanResult resolves a location-bearing ReadFirst row back to its
@@ -127,6 +150,12 @@ func (r *PlanResult) String() string {
 
 	fmt.Fprintf(&sb, "   - Touches SQL: %s\n", r.TouchesSQL)
 
+	for _, command := range r.NextCommands {
+		fmt.Fprintf(&sb, "\nnext: %s", command)
+	}
+	if len(r.NextCommands) > 0 {
+		sb.WriteString("\n")
+	}
 	return sb.String()
 }
 

@@ -128,6 +128,11 @@ func printExploreResult(result search.ExploreResult) int {
 		fmt.Printf("Mode %s omitted sections: %s. Use standard/deep mode or the focused command when needed.\n",
 			result.Mode, strings.Join(result.OmittedSections, ", "))
 	}
+	if result.Context != nil && result.SelectedSymbol != "" && !result.Ambiguous {
+		for _, command := range search.PlanNextCommands(result.SelectedSymbol) {
+			fmt.Printf("next: %s\n", command)
+		}
+	}
 	return 0
 }
 

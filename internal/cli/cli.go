@@ -432,6 +432,7 @@ func dispatch(args []string) int {
 }
 
 func runCapabilities() int {
+	fmt.Print(search.TaskIndexText())
 	fmt.Println("freshness_context: " + graphstate.FreshnessContextDescription)
 	fmt.Println("file_selector_limits: " + search.FileSelectorLimitDescription)
 	fmt.Println("mutation_resolution: " + search.MutationResolutionDescription)
@@ -4057,7 +4058,10 @@ OUTPUTS (after 'build')
 `
 
 func printHelp() {
-	fmt.Print(helpText)
+	// The task index comes right after the title so readers that stop after
+	// the first screen still see which command answers which job.
+	title, rest, _ := strings.Cut(helpText, "\n\n")
+	fmt.Print(title + "\n\n" + search.TaskIndexText() + rest)
 	printExcludeDirsHelp("")
 	printListPaginationHelp("")
 	fmt.Println("\nCHANGE SELECTION\n  " + search.CurrentChangeSelectionContract)
@@ -5897,6 +5901,11 @@ func runPlan(args []string) int {
 	}
 
 	plan := search.Plan(g, symbolNames, title)
+	if args[0] == "--uncommitted" {
+		plan.NextCommands = search.PlanNextCommands("")
+	} else {
+		plan.NextCommands = search.PlanNextCommands(args[0])
+	}
 	root := ""
 	var rawContexts []*search.ContextResult
 	var contexts []planContextJSON
