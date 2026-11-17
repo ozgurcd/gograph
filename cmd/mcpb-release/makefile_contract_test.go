@@ -216,8 +216,9 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 			path:       ".github/workflows/warm-caches.yml",
 			toolchains: 1,
 			required: []string{
-				`go test -race -c -o "$RUNNER_TEMP/race-test-binaries/" ./...`,
-				`go test -c -o "$RUNNER_TEMP/plain-test-binaries/" ./...`,
+				`mapfile -t tested < <(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)`,
+				`go test -race -c -o "$RUNNER_TEMP/race-test-binaries/" "${tested[@]}"`,
+				`go test -c -o "$RUNNER_TEMP/plain-test-binaries/" "${tested[@]}"`,
 				"      - go.mod\n      - go.sum\n",
 			},
 			forbidden: []string{"go test -count", "go vet", "staticcheck ./...", "golangci-lint", "govulncheck", "grype", "make vulnerability-check", "--snapshot", "hugo ", "uses: ./.github/workflows/checks.yml"},
