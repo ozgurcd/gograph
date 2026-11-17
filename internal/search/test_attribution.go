@@ -265,7 +265,7 @@ func (snapshot *Snapshot) Coverage(query, packageName string, exactOnly bool) Co
 			enqueue(coverageState{id: edge.TargetSymbolID, resolution: resolution, depth: 1, parent: test.StableID})
 			continue
 		}
-		for _, id := range unresolvedTargetIDs(g, edge.Target, test.Package) {
+		for _, id := range snapshot.unresolvedTargets().targetIDs(edge.Target, test.Package) {
 			enqueue(coverageState{id: id, resolution: "possible", depth: 1, parent: test.StableID})
 		}
 	}
@@ -286,7 +286,7 @@ func (snapshot *Snapshot) Coverage(query, packageName string, exactOnly bool) Co
 				enqueue(coverageState{id: edge.CalleeSymbolID, resolution: resolution, depth: state.depth + 1, parent: state.id})
 				continue
 			}
-			for _, id := range unresolvedTargetIDs(g, edge.CalleeRaw, symbols[state.id].PackageName) {
+			for _, id := range snapshot.unresolvedTargets().targetIDs(edge.CalleeRaw, symbols[state.id].PackageName) {
 				enqueue(coverageState{id: id, resolution: "possible", depth: state.depth + 1, parent: state.id})
 			}
 		}
@@ -505,13 +505,14 @@ func buildAttributionGraph(g *graph.Graph) attributionGraphData {
 	}
 
 	seen := make(map[string]struct{})
+	targetIndex := newUnresolvedTargetIndex(g)
 	resolvedTargets := make(map[string][]string)
 	resolveTargets := func(raw, callerPackage string) []string {
 		key := raw + "\x00" + callerPackage
 		if ids, ok := resolvedTargets[key]; ok {
 			return ids
 		}
-		ids := unresolvedTargetIDs(g, raw, callerPackage)
+		ids := targetIndex.targetIDs(raw, callerPackage)
 		resolvedTargets[key] = ids
 		return ids
 	}
@@ -703,24 +704,80 @@ func callResolution(resolution graph.CallResolution) string {
 	return "possible"
 }
 
-func unresolvedTargetIDs(g *graph.Graph, raw, callerPackage string) []string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
+// unresolvedTargetIndex groups callable symbols by lower-cased name so a raw
+// parser target is compared only with symbols whose name can occur in it,
+// instead of with every symbol in the graph. The index is immutable after
+// construction and safe for concurrent use.
+type unresolvedTargetIndex struct {
+	g      *graph.Graph
+	byName map[string][]int
+}
+
+func newUnresolvedTargetIndex(g *graph.Graph) *unresolvedTargetIndex {
+	index := &unresolvedTargetIndex{g: g, byName: make(map[string][]int)}
+	if g == nil {
+		return index
 	}
-	name := raw
-	if index := strings.LastIndex(name, "."); index >= 0 {
-		name = name[index+1:]
-	}
-	if index := strings.Index(name, "["); index >= 0 {
-		name = name[:index]
-	}
-	seen := make(map[string]bool)
-	var ids []string
-	for _, symbol := range g.Symbols {
+	for position, symbol := range g.Symbols {
 		if symbol.Kind != graph.KindFunction && symbol.Kind != graph.KindMethod {
 			continue
 		}
+		key := strings.ToLower(symbol.Name)
+		index.byName[key] = append(index.byName[key], position)
+	}
+	return index
+}
+
+// unresolvedTargetSeparators covers every character that can sit between a
+// symbol name and the rest of a selector, stable ID, or file selector.
+const unresolvedTargetSeparators = ".:()*/[], \t"
+
+// unresolvedCandidateNames returns every lower-cased token of raw that could equal a
+// matching symbol's name. It is a superset of the names matchSymbolExact and
+// the short-name fallback can accept, so filtering by it never drops a match.
+func unresolvedCandidateNames(raw, name string) []string {
+	names := map[string]struct{}{strings.ToLower(raw): {}, strings.ToLower(name): {}}
+	addTokens := func(value, separators string) {
+		for _, token := range strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+			return strings.ContainsRune(separators, r)
+		}) {
+			names[token] = struct{}{}
+		}
+	}
+	addTokens(raw, unresolvedTargetSeparators)
+	// Keep generic instantiation brackets for names that contain them.
+	addTokens(raw, ".:()*/, \t")
+	// matchSymbolExact compares after removing "(", ")", "*", and spaces,
+	// which can join adjacent fragments.
+	addTokens(selectorNormalizer.Replace(raw), ".:/[]")
+	out := make([]string, 0, len(names))
+	for token := range names {
+		out = append(out, token)
+	}
+	return out
+}
+
+func (index *unresolvedTargetIndex) targetIDs(raw, callerPackage string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || index.g == nil {
+		return nil
+	}
+	name := raw
+	if position := strings.LastIndex(name, "."); position >= 0 {
+		name = name[position+1:]
+	}
+	if position := strings.Index(name, "["); position >= 0 {
+		name = name[:position]
+	}
+	var positions []int
+	for _, token := range unresolvedCandidateNames(raw, name) {
+		positions = append(positions, index.byName[token]...)
+	}
+	sort.Ints(positions)
+	seen := make(map[string]bool)
+	var ids []string
+	for _, position := range positions {
+		symbol := index.g.Symbols[position]
 		matched := matchSymbolExact(symbol, raw)
 		if !matched && symbol.Name == name {
 			matched = strings.Contains(raw, ".") || symbol.PackageName == callerPackage

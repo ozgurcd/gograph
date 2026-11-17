@@ -33,6 +33,8 @@ type Snapshot struct {
 	reachability       map[string]symbolTestReach
 	downstreamOnce     sync.Once
 	downstreamCalls    map[string][]string
+	targetIndexOnce    sync.Once
+	targetIndex        *unresolvedTargetIndex
 }
 
 func NewSnapshot(g *graph.Graph) *Snapshot { return &Snapshot{g: g} }
@@ -99,6 +101,11 @@ func (s *Snapshot) attributionIndex() (attributionGraphData, map[string][]attrib
 		}
 	})
 	return s.attribution, s.reverseAttribution
+}
+
+func (s *Snapshot) unresolvedTargets() *unresolvedTargetIndex {
+	s.targetIndexOnce.Do(func() { s.targetIndex = newUnresolvedTargetIndex(s.g) })
+	return s.targetIndex
 }
 
 func (s *Snapshot) testReachability() map[string]symbolTestReach {

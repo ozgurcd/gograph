@@ -73,7 +73,7 @@ func qualifiedSymbolMatch(s graph.SymbolNode, query string) (bool, bool) {
 	}
 	if strings.Contains(query, "/") && !strings.Contains(query, "::") {
 		pkg, member, ok := strings.Cut(s.ID, "::")
-		normalize := strings.NewReplacer("(", "", ")", "", "*", "").Replace
+		normalize := receiverNormalizer.Replace
 		return ok && normalize(query) == normalize(pkg+"."+member), true
 	}
 	return false, false

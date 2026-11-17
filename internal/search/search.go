@@ -989,6 +989,14 @@ func MatchSymbol(s graph.SymbolNode, query string) bool {
 // Parentheses and pointer markers describe the same receiver identity for
 // lookup purposes, so normalizing them keeps value/pointer spelling ergonomic
 // while the package, receiver, and symbol components still match exactly.
+// selectorNormalizer and receiverNormalizer are built once: constructing a
+// strings.Replacer per comparison dominated test-attribution time on large
+// graphs. A strings.Replacer is safe for concurrent use.
+var (
+	selectorNormalizer = strings.NewReplacer("(", "", ")", "", "*", "", " ", "")
+	receiverNormalizer = strings.NewReplacer("(", "", ")", "", "*", "")
+)
+
 func matchSymbolExact(s graph.SymbolNode, query string) bool {
 	query = strings.TrimSpace(query)
 	if matched, qualified := qualifiedSymbolMatch(s, query); qualified {
@@ -1003,7 +1011,7 @@ func matchSymbolExact(s graph.SymbolNode, query string) bool {
 
 	normalize := func(value string) string {
 		value = strings.ToLower(strings.TrimSpace(value))
-		value = strings.NewReplacer("(", "", ")", "", "*", "", " ", "").Replace(value)
+		value = selectorNormalizer.Replace(value)
 		return value
 	}
 
@@ -1043,10 +1051,10 @@ func matchTestTarget(target, testFunc, term string) bool {
 	testFuncLower := strings.ToLower(testFunc)
 
 	// Retain both package and receiver identity for package.Receiver.Method.
-	normalized := strings.NewReplacer("(", "", ")", "", "*", "").Replace(tl)
+	normalized := receiverNormalizer.Replace(tl)
 	if parts := strings.Split(normalized, "."); len(parts) == 3 {
 		if pkg, name, ok := strings.Cut(targetLower, "::"); ok {
-			actual := strings.NewReplacer("(", "", ")", "", "*", "").Replace(name)
+			actual := receiverNormalizer.Replace(name)
 			return (pkg == parts[0] || strings.HasSuffix(pkg, "/"+parts[0])) && actual == parts[1]+"."+parts[2]
 		}
 	}
@@ -1095,7 +1103,7 @@ func receiverMethodSelector(value string) (string, bool) {
 	if idx := strings.LastIndex(value, "::"); idx >= 0 {
 		value = value[idx+2:]
 	}
-	value = strings.NewReplacer("(", "", ")", "", "*", "").Replace(strings.TrimSpace(value))
+	value = receiverNormalizer.Replace(strings.TrimSpace(value))
 	parts := strings.Split(value, ".")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return "", false
