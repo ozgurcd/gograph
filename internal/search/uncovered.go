@@ -75,7 +75,7 @@ func ChangedGoLines(ctx context.Context, root, ref string) (map[string][]int, er
 		if err != nil {
 			return nil, err
 		}
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 		for _, name := range strings.Split(strings.TrimSpace(string(untracked)), "\n") {
 			name = filepath.ToSlash(strings.TrimSpace(name))
 			if name == "" || strings.HasSuffix(name, "_test.go") {
@@ -168,7 +168,7 @@ func Uncovered(selector, root string, changed map[string][]int, profile *Coverag
 	if root != "" {
 		if opened, err := sourcefs.Open(root); err == nil {
 			reader = opened
-			defer reader.Close()
+			defer func() { _ = reader.Close() }()
 		}
 	}
 	report := UncoveredReport{

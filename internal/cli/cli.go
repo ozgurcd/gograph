@@ -2,16 +2,10 @@
 package cli
 
 import (
-	"path"
-
-	"github.com/ozgurcd/gograph"
-	"github.com/ozgurcd/gograph/internal/releasenotes"
-
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/ozgurcd/gograph/internal/projectfile"
 	"go/build"
 	"go/token"
 	"os"
@@ -25,6 +19,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/ozgurcd/gograph"
 	"github.com/ozgurcd/gograph/internal/baseline"
 	"github.com/ozgurcd/gograph/internal/buildctx"
 	"github.com/ozgurcd/gograph/internal/gitenv"
@@ -35,6 +30,8 @@ import (
 	"github.com/ozgurcd/gograph/internal/moduleinventory"
 	"github.com/ozgurcd/gograph/internal/parser"
 	"github.com/ozgurcd/gograph/internal/precise"
+	"github.com/ozgurcd/gograph/internal/projectfile"
+	"github.com/ozgurcd/gograph/internal/releasenotes"
 	"github.com/ozgurcd/gograph/internal/repositoryfingerprint"
 	"github.com/ozgurcd/gograph/internal/rootfind"
 	"github.com/ozgurcd/gograph/internal/scanner"
@@ -5684,7 +5681,7 @@ func runBoundaries(args []string) int {
 		// --create writes the committed location.
 		configPath, _ = projectfile.PolicyPath(graphRoot(g), "boundaries.json")
 		if createMode {
-			configPath = path.Join(projectfile.CommittedPolicyDir, "boundaries.json")
+			configPath = pathpkg.Join(projectfile.CommittedPolicyDir, "boundaries.json")
 		}
 	}
 
@@ -6413,7 +6410,7 @@ func firstNonEmpty(values ...string) string {
 // shellQuoteArg quotes a value for a copy-pasteable command line.
 func shellQuoteArg(value string) string {
 	if value != "" && strings.IndexFunc(value, func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._/:-", r))
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && !strings.ContainsRune("._/:-", r)
 	}) < 0 {
 		return value
 	}

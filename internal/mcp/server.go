@@ -3276,7 +3276,7 @@ func repositoryCoverProfile(g *graph.Graph, name string) (*search.CoverageProfil
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	data, err := reader.ReadRegularFileLimit(name, 512<<20)
 	if err != nil {
 		return nil, fmt.Errorf("read coverage profile %q (repository-relative regular file): %w", name, err)
