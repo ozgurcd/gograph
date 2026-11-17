@@ -5,8 +5,10 @@ import (
 	"debug/buildinfo"
 	"os"
 	"os/exec"
+	"runtime/debug"
 	"strings"
 
+	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
 )
 
@@ -67,4 +69,55 @@ func Inspect(running string) Status {
 		result.Message = "Running gograph " + running + " is older than installed gograph " + installed + " on PATH; restart the MCP server to use the installed version."
 	}
 	return result
+}
+
+// RunningVersion returns the version this binary reports. A release build
+// sets main.version through -ldflags and that value wins. Without it (for
+// example `go install github.com/ozgurcd/gograph/cmd/gograph@v1.7.20`), the
+// module version recorded by the Go toolchain is used. A local build from a
+// checkout reports "dev" plus its VCS revision.
+func RunningVersion(linker string) string {
+	info, _ := debug.ReadBuildInfo()
+	return versionFromBuildInfo(linker, info)
+}
+
+func versionFromBuildInfo(linker string, info *debug.BuildInfo) string {
+	if linker != "" && linker != "dev" {
+		return linker
+	}
+	if info == nil {
+		return "dev"
+	}
+	revision, modified := "", false
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.modified":
+			modified = setting.Value == "true"
+		}
+	}
+	moduleVersion := info.Main.Version
+	if moduleVersion != "" && moduleVersion != "(devel)" && semver.IsValid(moduleVersion) &&
+		semver.Build(moduleVersion) == "" && revision == "" {
+		// A module download (go install pkg@version), not a local checkout:
+		// a release tag, or a pseudo-version for an untagged commit.
+		return strings.TrimPrefix(moduleVersion, "v")
+	}
+	if moduleVersion != "" && moduleVersion != "(devel)" && semver.IsValid(moduleVersion) &&
+		!module.IsPseudoVersion(moduleVersion) && semver.Build(moduleVersion) == "" && !modified {
+		// A clean local build exactly at a release tag.
+		return strings.TrimPrefix(moduleVersion, "v")
+	}
+	if revision == "" {
+		return "dev"
+	}
+	if len(revision) > 12 {
+		revision = revision[:12]
+	}
+	version := "dev+" + revision
+	if modified {
+		version += ".dirty"
+	}
+	return version
 }
