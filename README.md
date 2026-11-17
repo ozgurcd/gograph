@@ -101,6 +101,25 @@ gograph hotspot --top 5
 gograph flow --no-tests
 ```
 
+**Two things to know before you start**
+
+- **CLI or MCP.** CLI analysis commands read `.gograph/graph.json`, so run
+  `gograph build .` (or `gograph build . --precise`) first; without it they stop
+  with `run 'gograph build' first`. The MCP server needs no build step:
+  `gograph mcp` builds an in-memory graph when no usable one exists, rebuilds
+  changed packages before a call when source files changed, and writes no graph
+  files unless started with `--persist-refresh`.
+- **Your Go toolchain may use the network.** gograph itself sends nothing. It
+  runs your installed `go` command with your environment: every build and
+  freshness check asks `go` for the build context, `--precise` loads packages
+  through `go list`, and `doc` runs `go doc`. Go can therefore download missing
+  modules or a newer toolchain, as your `GOPROXY`, `GOTOOLCHAIN` and `GOFLAGS`
+  allow. To keep runs offline, set `GOPROXY=off GOTOOLCHAIN=local`; a module
+  missing from the cache then makes `--precise` fall back to the AST graph
+  (`precision: precise_fallback`) instead of downloading. For packages that use
+  cgo, `--precise` also invokes your C compiler (it compiles, never runs, the
+  code).
+
 Homebrew and `go install` install the normal `gograph` CLI. MCP clients that
 support MCP Bundles can instead discover the local stdio server in the
 [official MCP Registry](https://registry.modelcontextprotocol.io) as
