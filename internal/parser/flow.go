@@ -7,6 +7,7 @@ import (
 	"go/printer"
 	"go/token"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
@@ -64,6 +65,7 @@ func extractFlowBody(fset *token.FileSet, body *ast.BlockStmt, relPath, function
 		parameterTypes[param.Name] = resolvedFlowType(param.Type, resolver)
 	}
 	jsonDecoders := flowJSONDecoderNames(body, resolver)
+	contextNames := flowContextVariables(body, parameterTypes, resolver)
 	walkFlowBody(body, func(node ast.Node) {
 		if call, ok := node.(*ast.CallExpr); ok {
 			pos := fset.Position(call.Pos())
@@ -133,7 +135,7 @@ func extractFlowBody(fset *token.FileSet, body *ast.BlockStmt, relPath, function
 			}
 		}
 
-		if sinkKind, indexes := classifyFlowSink(call, callee, resolver); sinkKind != "" {
+		if sinkKind, indexes := classifyFlowSink(call, callee, resolver, contextNames); sinkKind != "" {
 			var sinkInputs []string
 			for _, index := range indexes {
 				if index >= 0 && index < len(arguments) {
@@ -409,13 +411,13 @@ func isFlowFrameworkBindingCall(call *ast.CallExpr, method string, parameterType
 	}
 }
 
-func classifyFlowSink(call *ast.CallExpr, callee string, resolver *fileResolver) (string, []int) {
+func classifyFlowSink(call *ast.CallExpr, callee string, resolver *fileResolver, contexts flowContextNames) (string, []int) {
 	method := flowMethodName(callee)
 	importPath := flowCallImportPath(call, resolver)
 
 	switch method {
 	case "Query", "QueryRow", "Exec", "Prepare", "Raw":
-		return flowSinkSQL, []int{0}
+		return flowSinkSQL, []int{sqlTextArgument(call, resolver, contexts)}
 	case "QueryContext", "QueryRowContext", "ExecContext", "PrepareContext":
 		return flowSinkSQL, []int{1}
 	}
@@ -626,4 +628,144 @@ func walkFlowBody(body *ast.BlockStmt, visit func(ast.Node)) {
 		visit(node)
 		return true
 	})
+}
+
+// flowContextNames holds identifiers known to hold a context.Context: typed
+// parameters and locals assigned from a context-producing expression.
+type flowContextNames map[string]bool
+
+func flowContextVariables(body *ast.BlockStmt, parameterTypes map[string]string, resolver *fileResolver) flowContextNames {
+	names := make(flowContextNames)
+	for name, typeName := range parameterTypes {
+		if typeName == "context.Context" {
+			names[name] = true
+		}
+	}
+	walkFlowBody(body, func(node ast.Node) {
+		switch statement := node.(type) {
+		case *ast.AssignStmt:
+			// ctx := r.Context(); ctx, cancel := context.WithTimeout(...)
+			if len(statement.Rhs) == 1 && len(statement.Lhs) >= 1 && isFlowContextExpr(statement.Rhs[0], resolver, names) {
+				if ident, ok := statement.Lhs[0].(*ast.Ident); ok && ident.Name != "_" {
+					names[ident.Name] = true
+				}
+			}
+		case *ast.ValueSpec:
+			if len(statement.Values) == 1 && len(statement.Names) >= 1 && isFlowContextExpr(statement.Values[0], resolver, names) {
+				names[statement.Names[0].Name] = true
+			}
+			if selector, ok := statement.Type.(*ast.SelectorExpr); ok && selector.Sel.Name == "Context" {
+				if ident, ok := selector.X.(*ast.Ident); ok && resolver.imports[ident.Name] == "context" {
+					for _, name := range statement.Names {
+						names[name.Name] = true
+					}
+				}
+			}
+		}
+	})
+	return names
+}
+
+// isFlowContextExpr reports whether expr evidently yields a context.Context:
+// a known context variable, a call into package context, or a Context()
+// method call such as r.Context().
+func isFlowContextExpr(expr ast.Expr, resolver *fileResolver, names flowContextNames) bool {
+	switch value := expr.(type) {
+	case *ast.ParenExpr:
+		return isFlowContextExpr(value.X, resolver, names)
+	case *ast.Ident:
+		// "ctx" is the near-universal Go spelling, also for captured or
+		// package-level contexts this function does not declare.
+		return names[value.Name] || value.Name == "ctx"
+	case *ast.SelectorExpr:
+		return value.Sel.Name == "ctx"
+	case *ast.CallExpr:
+		selector, ok := value.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return false
+		}
+		if ident, ok := selector.X.(*ast.Ident); ok && resolver.imports[ident.Name] == "context" {
+			return true
+		}
+		return selector.Sel.Name == "Context" && len(value.Args) == 0
+	}
+	return false
+}
+
+// isFlowSQLTextExpr reports whether expr evidently is SQL text: a string
+// literal, a concatenation involving one, or a fmt.Sprintf-style call.
+func isFlowSQLTextExpr(expr ast.Expr, resolver *fileResolver) bool {
+	switch value := expr.(type) {
+	case *ast.ParenExpr:
+		return isFlowSQLTextExpr(value.X, resolver)
+	case *ast.BasicLit:
+		return value.Kind == token.STRING
+	case *ast.BinaryExpr:
+		return value.Op == token.ADD && (isFlowSQLTextExpr(value.X, resolver) || isFlowSQLTextExpr(value.Y, resolver))
+	case *ast.CallExpr:
+		selector, ok := value.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return false
+		}
+		ident, ok := selector.X.(*ast.Ident)
+		return ok && resolver.imports[ident.Name] == "fmt" && strings.HasPrefix(selector.Sel.Name, "Sprint")
+	}
+	return false
+}
+
+// sqlTextArgument picks the query-text argument of a Query/Exec-style call
+// that is matched by method name only. database/sql takes the text first;
+// pgx and similar drivers take a leading context. A context-looking first
+// argument (or SQL-looking second argument) moves the text to index 1.
+func sqlTextArgument(call *ast.CallExpr, resolver *fileResolver, contexts flowContextNames) int {
+	if len(call.Args) < 2 {
+		return 0
+	}
+	switch {
+	case isFlowSQLTextExpr(call.Args[0], resolver):
+		return 0
+	case isFlowContextExpr(call.Args[0], resolver, contexts):
+		return 1
+	case startsWithSQLKeyword(call.Args[1]):
+		return 1
+	}
+	return 0
+}
+
+// startsWithSQLKeyword reports whether expr is a string literal, or a
+// concatenation starting with one, whose text begins with a SQL statement
+// keyword. Parameter values rarely do, so this separates query text in the
+// second position from database/sql parameters.
+func startsWithSQLKeyword(expr ast.Expr) bool {
+	for {
+		switch value := expr.(type) {
+		case *ast.ParenExpr:
+			expr = value.X
+			continue
+		case *ast.BinaryExpr:
+			if value.Op != token.ADD {
+				return false
+			}
+			expr = value.X
+			continue
+		case *ast.BasicLit:
+			if value.Kind != token.STRING {
+				return false
+			}
+			text, err := strconv.Unquote(value.Value)
+			if err != nil {
+				return false
+			}
+			fields := strings.Fields(strings.ToUpper(text))
+			if len(fields) == 0 {
+				return false
+			}
+			switch fields[0] {
+			case "SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "CREATE", "DROP", "ALTER", "MERGE", "UPSERT", "REPLACE", "TRUNCATE", "CALL", "EXPLAIN", "SET", "BEGIN", "COMMIT", "ROLLBACK", "GRANT", "REVOKE", "COPY", "VALUES":
+				return true
+			}
+			return false
+		}
+		return false
+	}
 }
