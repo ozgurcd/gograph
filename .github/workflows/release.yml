@@ -31,6 +31,9 @@ jobs:
       contents: read
     with:
       ref: ${{ inputs.tag || github.ref }}
+      # Pull requests race only the concurrent packages; a release reuses a
+      # run only if it raced every package.
+      require-full-race: true
 
   verify:
     name: Verify release candidate
@@ -43,7 +46,8 @@ jobs:
     with:
       ref: ${{ inputs.tag || github.ref_name }}
       release-tag: ${{ inputs.tag || github.ref_name }}
-      # The race suite is skipped only if this is the commit checks.yml checks out.
+      # The race suite is skipped only if this is the commit checks.yml checks out
+      # and test-proof found a run that raced every package on this tree.
       tested-commit: ${{ needs.test-proof.outputs.verified == 'true' && needs.test-proof.outputs.commit || '' }}
 
   release:

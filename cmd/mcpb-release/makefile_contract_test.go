@@ -121,6 +121,10 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 		callChecks = "uses: ./.github/workflows/checks.yml"
 		// Gates that a full CI run on the identical tree already passed.
 		reusable = "if: ${{ !inputs.vulnerability-only && steps.head.outputs.commit != inputs.tested-commit }}"
+		// The full race suite: nightly and release runs.
+		fullRace = "if: ${{ !inputs.vulnerability-only && steps.head.outputs.commit != inputs.tested-commit && (inputs.full-race || inputs.release-tag != '') }}"
+		// Pull requests and main pushes: every test, -race only for concurrent packages.
+		scopedRace = "if: ${{ !inputs.vulnerability-only && steps.head.outputs.commit != inputs.tested-commit && !inputs.full-race && inputs.release-tag == '' }}"
 	)
 	gateCommands := []string{"go test", "go vet", "go build", "staticcheck", "golangci-lint", "govulncheck", "grype", "--snapshot", "hugo "}
 	// The release job installs Grype only for the GoReleaser build hook.
@@ -160,11 +164,19 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				"make vulnerability-check",
 				"cmp server.json \"$server\"",
 				"hugo --source docs-site --renderToMemory --minify",
+				// Pull requests race only the listed concurrent packages and run the
+				// rest plain; the guard fails when an unlisted package gains goroutines
+				// or sync primitives.
+				"      - name: Run Tests (race on concurrent packages)\n        " + scopedRace + "\n",
+				"internal/mcp internal/search internal/precise internal/workspace",
+				"RACE_EXEMPT: internal/cli internal/mcpbundle",
+				"These packages use goroutines or sync but are not in RACE_PACKAGES or RACE_EXEMPT",
+				`go test -count=1 "${plain_packages[@]}" &`,
 				// test-proof.yml finds the suite by these names.
 				"\n  verify:\n",
 				"      - name: Run Race Tests\n",
 				"      - name: Verify dependencies and formatting\n        " + reusable + "\n",
-				"      - name: Run Race Tests\n        " + reusable + "\n",
+				"      - name: Run Race Tests\n        " + fullRace + "\n",
 				"      - name: Vet\n        " + reusable + "\n",
 				"      - name: Run static analysis\n        " + reusable + "\n",
 				"      - name: Build, validate, and smoke-test MCP bundles\n        " + reusable + "\n",
@@ -190,9 +202,9 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				"if: ${{ always() }}",
 				"name: tested-commit-${{ github.sha }}",
 				// A main push whose identical tree a CI run already verified runs no checks;
-				// the nightly run refreshes the vulnerability scans.
+				// the nightly run races every package and refreshes the vulnerability scans.
 				"if: ${{ !cancelled() && needs.release-tag.outputs.tagged != 'true' && needs.test-proof.outputs.verified != 'true' }}",
-				"vulnerability-only: ${{ github.event_name == 'schedule' }}",
+				"full-race: ${{ github.event_name == 'schedule' }}",
 				"needs: [release-tag, test-proof, checks]\n    if: ${{ always() }}",
 				"VERIFIED: ${{ needs.test-proof.outputs.verified }}",
 				`if [[ "$RESULT" == skipped && "$VERIFIED" == true ]]; then`,
@@ -205,7 +217,7 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 			toolchains: 1,
 			required: []string{
 				`go test -race -c -o "$RUNNER_TEMP/race-test-binaries/" ./...`,
-				`go test -c -o "$RUNNER_TEMP/plain-test-binaries/" ./internal/mcpbundle ./cmd/mcpb-release`,
+				`go test -c -o "$RUNNER_TEMP/plain-test-binaries/" ./...`,
 				"      - go.mod\n      - go.sum\n",
 			},
 			forbidden: []string{"go test -count", "go vet", "staticcheck ./...", "golangci-lint", "govulncheck", "grype", "make vulnerability-check", "--snapshot", "hugo ", "uses: ./.github/workflows/checks.yml"},
@@ -217,6 +229,8 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				callChecks,
 				"uses: ozgurcd/gograph/.github/workflows/test-proof.yml@main",
 				"release-tag: ${{ inputs.tag || github.ref_name }}",
+				// A release reuses an earlier run only if it raced every package.
+				"require-full-race: true",
 			},
 			forbidden: releaseForbidden,
 		},
