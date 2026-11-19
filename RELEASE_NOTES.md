@@ -1,5 +1,24 @@
 # Release Notes
 
+## Unreleased
+
+- `gograph hook-guard` now serves Codex and Antigravity as well as Claude
+  Code. It detects the payload format: Claude Code and Codex get exit 2 with
+  the reason on stderr (Claude Code previously received it on stdout, which it
+  does not show the model); Antigravity gets `{"decision":"allow"|"deny"}` on
+  stdout, because it treats any other output as allow.
+- Opt-in gograph-first rules for `gograph hook-guard`, each applied only
+  inside indexed repositories and off by default: `--deny-go-writes` (shell
+  writes to `.go` files), `--deny-region-reads` (`cat`/`head`/`sed`/... of
+  `.go` files; counts, checksums and `git show`/`git diff` stay allowed; not
+  applied to Codex), `--require-reason` (Go text searches need a
+  `# gograph-cannot: <reason>` comment) and `--require-session` (`.go` edits
+  through Edit/Write, `apply_patch`, `write_to_file` or `replace_file_content`
+  need an open gograph session). `--strict` enables all four. `--ask` asks
+  the user instead of denying in Claude Code and Antigravity; Codex cannot
+  ask, so it still denies. The rules follow `cd` and `git -C`; an unknown
+  directory keeps the blocking judgement. About 9 ms per call.
+
 ## v1.7.21 — 2026-11-17
 
 Runnable test selection, faster test attribution, and fixes found by testing

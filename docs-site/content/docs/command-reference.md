@@ -1403,8 +1403,10 @@ Registers Claude Desktop MCP configuration, injects shared `~/.claude/CLAUDE.md`
 
 ### hook-guard
 ```bash
-gograph hook-guard
+gograph hook-guard [--deny-go-writes] [--deny-region-reads] [--require-reason] [--require-session] [--strict] [--ask]
 ```
+`PreToolUse` hook for Claude Code, Codex and Antigravity; the payload format is detected. Claude Code and Codex receive exit 2 with the reason on stderr; Antigravity receives `{"decision":"allow"|"deny"}` on stdout. Opt-in rules, applied only inside indexed repositories: `--deny-go-writes` (shell writes to `.go` files), `--deny-region-reads` (`cat`/`head`/`sed`/... of `.go` files; counts, checksums and `git show`/`git diff` stay allowed; not applied to Codex), `--require-reason` (Go text searches need a `# gograph-cannot: <reason>` comment), `--require-session` (`.go` edits need an open gograph session); `--strict` enables all four. `--ask` asks the user instead of denying in Claude Code and Antigravity; Codex still denies.
+
 Called by the Claude Code `PreToolUse` hook. Intercepts incoming tool-call JSON over `stdin`; resolves effective search paths against the payload's `cwd`; and blocks likely `grep`/`rg` Go-symbol searches with exit code 2 only when at least one target has a real `.gograph` ancestor. An omitted `cwd` falls back to the hook process working directory. Unindexed, non-Go, and comment-only searches are allowed. Identifier-only alternations are recognized according to grep/ripgrep regex mode; literal-pipe patterns in fixed-string mode and escaped pipes in extended grep/ripgrep remain allowed.
 
 ### version and help

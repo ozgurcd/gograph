@@ -1,0 +1,59 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Keep pinned CI tools and GitHub Actions current through reviewed pull requests. Go module dependencies are not managed here.",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "enabledManagers": ["github-actions", "custom.regex"],
+  "labels": ["dependencies"],
+  "minimumReleaseAge": "3 days",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Grype CLI passed to anchore/scan-action/download-grype",
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
+      "matchStrings": ["grype-version:\\s*['\"]?(?<currentValue>v\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "anchore/grype",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "description": "golangci-lint (workflow env and Makefile)",
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/", "/^Makefile$/"],
+      "matchStrings": ["GOLANGCI_LINT_VERSION['\"]?\\s*:?=?\\s*['\"]?(?<currentValue>v\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "github.com/golangci/golangci-lint/v2",
+      "datasourceTemplate": "go"
+    },
+    {
+      "customType": "regex",
+      "description": "govulncheck (workflow env and Makefile)",
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/", "/^Makefile$/"],
+      "matchStrings": ["GOVULNCHECK_VERSION['\"]?\\s*:?=?\\s*['\"]?(?<currentValue>v\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "golang.org/x/vuln",
+      "datasourceTemplate": "go"
+    },
+    {
+      "customType": "regex",
+      "description": "GoReleaser (workflow env and Makefile)",
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/", "/^Makefile$/"],
+      "matchStrings": ["GORELEASER_VERSION['\"]?\\s*:?=?\\s*['\"]?(?<currentValue>v\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "github.com/goreleaser/goreleaser/v2",
+      "datasourceTemplate": "go"
+    },
+    {
+      "customType": "regex",
+      "description": "MCP Registry publisher",
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
+      "matchStrings": ["MCP_PUBLISHER_VERSION['\"]?\\s*:\\s*['\"]?(?<currentValue>v\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "modelcontextprotocol/registry",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "description": "Hugo extended (docs site)",
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
+      "matchStrings": ["HUGO_VERSION['\"]?\\s*:\\s*['\"]?(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "gohugoio/hugo",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    }
+  ]
+}

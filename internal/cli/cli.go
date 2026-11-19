@@ -413,7 +413,7 @@ func dispatch(args []string) int {
 		}
 		return 0
 	case "hook-guard":
-		return runHookGuard()
+		return runHookGuard(args[1:])
 	case "httpcalls":
 		return runHTTPCalls(args[1:])
 	case "help", "--help", "-h":
@@ -958,7 +958,10 @@ gograph session <action>     : start/end audit sessions (create [word], end, aud
                                now correctly recorded in session audit counters.
 add-claude-plugin    : install Claude Desktop MCP config + shared rules + Claude Code hook;
                        Claude Code MCP registration uses the printed 'claude mcp add' command
-hook-guard           : PreToolUse hook — redirects indexed-repository Go symbol greps to gograph`)
+hook-guard [rules]   : PreToolUse hook for Claude Code, Codex and Antigravity — redirects
+                       indexed-repository Go symbol greps to gograph. Opt-in rules:
+                       --deny-go-writes, --deny-region-reads, --require-reason,
+                       --require-session (--strict = all); --ask prompts instead of denying`)
 	fmt.Println("\nCHANGE SELECTION\n" + search.CurrentChangeSelectionContract)
 	return 0
 }
@@ -4037,12 +4040,30 @@ AGENT INTEGRATION
                              that redirects Go symbol greps to gograph tools.
                              Claude Code MCP registration still requires the printed
                              'claude mcp add' command. Partial installation exits non-zero.
-  hook-guard                 PreToolUse hook invoked by Claude Code. Reads a JSON
-                             tool call and cwd from stdin; blocks grep on Go symbols
-                             only when a searched path belongs to a repository with
-                             a .gograph index, then suggests the equivalent gograph
-                             command. Exit 0 = allow, exit 2 = block. Not intended
-                             for direct human use.
+  hook-guard [rules] [--ask] PreToolUse hook for Claude Code, Codex and Antigravity.
+                             Reads the agent's tool-call JSON from stdin (format is
+                             detected); blocks grep/rg on Go symbols only when a
+                             searched path belongs to a repository with a .gograph
+                             index, then suggests the equivalent gograph command.
+                             Opt-in rules, each applied only inside such a repository:
+                               --deny-go-writes     shell writes to .go files
+                                                    (redirects, sed -i, perl -i, tee,
+                                                    cp/mv/install/ln/dd/truncate)
+                               --deny-region-reads  cat/head/tail/sed/awk/perl -n of
+                                                    .go files; counts, checksums and
+                                                    git show/diff stay allowed; not
+                                                    applied to Codex (no read tool)
+                               --require-reason     Go text searches need a
+                                                    "# gograph-cannot: <reason>" comment
+                               --require-session    .go edits need an open gograph
+                                                    session
+                               --strict             all four
+                             --ask: ask the user instead of denying (Claude Code,
+                             Antigravity); Codex cannot ask, so it still denies.
+                             Claude Code/Codex: exit 0 = allow, exit 2 = block
+                             (reason on stderr); ask = JSON on stdout. Antigravity:
+                             exit 0 with {"decision":"allow"|"deny"|"ask"} on stdout.
+                             Not intended for direct human use.
 
 OTHER
   doctor [--json]            Diagnose duplicate or shadowed gograph installations.

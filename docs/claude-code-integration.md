@@ -158,7 +158,7 @@ The hook (`gograph hook-guard`) runs automatically before every `Bash` tool call
 
 1. Resolves parsed search targets against the tool call's `cwd` and checks for a real `.gograph` ancestor
 2. Detects it is a Go symbol search (every non-exempt pattern branch is a valid identifier or an identifier-only alternation, with each branch matching `[A-Za-z_][a-zA-Z0-9_]{2,}`)
-3. Blocks the call (exit code `2`) and outputs which `gograph` tool to use instead
+3. Blocks the call (exit code `2`) and tells Claude on stderr which `gograph` tool to use instead
 4. Claude immediately retries using the correct `gograph_explore` / `gograph_query` / `gograph_context` / etc. call
 
 **The hook is smart — it only intercepts symbol searches.** These pass through unchanged:
@@ -177,6 +177,15 @@ Explicit paths take precedence over the launch directory for index detection:
 searches from an unindexed folder into an indexed sibling are steered, while
 searches from an indexed folder into only unindexed targets are allowed. When
 the hook payload omits `cwd`, the hook process working directory is used.
+
+**Optional rules and other agents.** The same `gograph hook-guard` binary
+also works as a Codex and Antigravity `PreToolUse` hook (it detects the
+payload format). Opt-in flags add gograph-first rules inside indexed
+repositories: `--deny-go-writes`, `--deny-region-reads`, `--require-reason`
+(`# gograph-cannot: <reason>` on Go text searches), `--require-session`, or
+`--strict` for all four; `--ask` asks the user instead of denying where the
+agent supports it. See
+[coding-agent usage](coding-agent-usage.md#optional-rules-and-other-agents).
 
 ### Claude Code (CLI) — Per-Project Registration
 

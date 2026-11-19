@@ -393,6 +393,15 @@ falls back to the hook process working directory. A search from an unindexed
 folder into an indexed sibling is still steered, while a search from an indexed
 folder into only unindexed targets is allowed.
 
+**Optional rules and other agents.** The same `gograph hook-guard` binary
+also works as a Codex and Antigravity `PreToolUse` hook (it detects the
+payload format). Opt-in flags add gograph-first rules inside indexed
+repositories: `--deny-go-writes`, `--deny-region-reads`, `--require-reason`
+(`# gograph-cannot: <reason>` on Go text searches), `--require-session`, or
+`--strict` for all four; `--ask` asks the user instead of denying where the
+agent supports it. See
+[coding-agent usage](https://github.com/ozgurcd/gograph/blob/main/docs/coding-agent-usage.md#optional-rules-and-other-agents).
+
 ---
 
 ## Workspace Steering Rules
