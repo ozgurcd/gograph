@@ -1,6 +1,9 @@
 # Release Notes
 
-## Unreleased
+## v1.7.22 — 2026-11-19
+
+The Claude Code hook now also serves Codex and Antigravity, with opt-in
+gograph-first rules.
 
 - `gograph hook-guard` now serves Codex and Antigravity as well as Claude
   Code. It detects the payload format: Claude Code and Codex get exit 2 with
