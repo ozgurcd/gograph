@@ -146,11 +146,8 @@ func emitHookVerdict(agent hookAgent, reason string, stdout, stderr io.Writer) i
 	return 2
 }
 
-// evaluateHookCommandAt returns 2 (block) or 0 (allow).
-func evaluateHookCommandAt(command, cwd string) int {
-	return evaluateHookCommandAtTo(command, cwd, os.Stderr)
-}
-
+// evaluateHookCommandAtTo writes the symbol-search block message to output
+// and returns 2 (block) or 0 (allow).
 func evaluateHookCommandAtTo(command, cwd string, output io.Writer) int {
 	reason := hookSymbolSearchReason(command, cwd)
 	if reason == "" {
