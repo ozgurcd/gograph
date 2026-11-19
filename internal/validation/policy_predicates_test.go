@@ -188,7 +188,15 @@ func TestPolicyPredicates(t *testing.T) {
 			name:    "argument constant on stale call positions cannot evaluate",
 			binding: Binding{Predicate: PredicateCallArgConstant, Subject: symbolRef("os/exec::Command"), Argument: argument(0), RequiredPrecision: PrecisionPrecise},
 			mutate: func(snapshot *Snapshot) {
-				snapshot.Graph.Calls[0].Column += 1000
+				// policySources is a map, so call order varies; shift a call
+				// in a production file, which the predicate always evaluates.
+				for index := range snapshot.Graph.Calls {
+					if snapshot.Graph.Calls[index].File == "tool/tool.go" {
+						snapshot.Graph.Calls[index].Column += 1000
+						return
+					}
+				}
+				panic("policy fixture has no call in tool/tool.go")
 			},
 			outcome: OutcomeCannotEvaluate, reason: ReasonAnalysisIncomplete,
 		},
