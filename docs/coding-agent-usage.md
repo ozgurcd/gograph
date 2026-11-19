@@ -143,7 +143,7 @@ gograph mcp [path] [--persist-refresh] [--tags=integration[,tag...]] [--exclude-
                                  # same GOWORK/GOFLAGS/tags as the persisted graph
 gograph httpcalls [term]         # net/http calls + possible request construction; bounded pages, method/URL/base/function filter
 gograph add-claude-plugin        # install MCP server + CLAUDE.md rules + PreToolUse hook (Claude Desktop & Claude Code)
-gograph hook-guard               # PreToolUse hook binary — blocks indexed-repository Go symbol greps (invoked automatically by Claude Code)
+gograph hook-guard [--strict]    # PreToolUse hook for Claude Code, Codex, Antigravity — blocks indexed-repository Go symbol greps; --strict enforces gograph-first
 # --- CI ENFORCEMENT ---
 gograph gate                     # read regular non-linked project-root .gograph.yml and fail CI on threshold violations
 # --- SNAPSHOTS ---
@@ -189,6 +189,34 @@ The hook (`gograph hook-guard`) is invoked automatically by Claude Code before e
 - Patterns containing non-identifier regex or literal text. In particular,
   literal-pipe patterns in fixed-string mode and escaped pipes in `grep -E`/`rg`
   remain text searches.
+
+### Strict mode and other agents
+
+`gograph hook-guard --strict` enforces gograph-first inside indexed
+repositories. In addition to symbol searches it denies:
+
+- shell writes to `.go` files: output redirects, `sed -i`, `perl -i`, `tee`,
+  `cp`/`mv`/`install`/`ln` onto a `.go` path, `dd of=`, `truncate`;
+- region reads of working-tree `.go` files (`cat`, `head`, `tail`, `less`,
+  `more`, `nl`, `sed`, `awk`, `perl -n`), unless piped into `wc` or a
+  checksum; `git show rev:x.go` and `git diff` stay allowed. Not applied to
+  Codex, which has no separate file-read tool;
+- `grep`/`rg`/`ag`/`git grep` text searches over Go source that carry no
+  `# gograph-cannot: <reason>` comment (counts and `-l` listings pass);
+- edits of `.go` files while no gograph session is open (`gograph session
+  create`).
+
+It follows `cd` and `git -C`; a `cd` into `$VAR`, `cd -`, `popd`, or a `cd`
+in a pipe, subshell or background job makes the directory unknown, and an
+unknown directory keeps the blocking judgement. Heredoc bodies are data.
+
+The same binary serves three agents; it detects the payload format:
+
+| Agent | Register in | Deny signal |
+|---|---|---|
+| Claude Code | `~/.claude/settings.json`, `PreToolUse` matchers `Bash` and `Edit\|Write\|MultiEdit` | exit 2, reason on stderr |
+| Codex | `~/.codex/config.toml` (`[[hooks.PreToolUse]]`, matchers `^Bash$` and `^apply_patch$`) | exit 2, reason on stderr |
+| Antigravity | `~/.gemini/config/hooks.json`, `PreToolUse` matcher `run_command\|write_to_file\|replace_file_content\|multi_replace_file_content` | `{"decision":"deny","reason":...}` on stdout |
 
 **Blocked and redirected:**
 ```bash

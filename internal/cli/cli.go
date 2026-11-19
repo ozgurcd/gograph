@@ -413,7 +413,7 @@ func dispatch(args []string) int {
 		}
 		return 0
 	case "hook-guard":
-		return runHookGuard()
+		return runHookGuard(args[1:])
 	case "httpcalls":
 		return runHTTPCalls(args[1:])
 	case "help", "--help", "-h":
@@ -958,7 +958,10 @@ gograph session <action>     : start/end audit sessions (create [word], end, aud
                                now correctly recorded in session audit counters.
 add-claude-plugin    : install Claude Desktop MCP config + shared rules + Claude Code hook;
                        Claude Code MCP registration uses the printed 'claude mcp add' command
-hook-guard           : PreToolUse hook — redirects indexed-repository Go symbol greps to gograph`)
+hook-guard [--strict]: PreToolUse hook for Claude Code, Codex and Antigravity — redirects
+                       indexed-repository Go symbol greps to gograph; --strict also denies
+                       shell writes and region reads of .go files, reasonless Go text
+                       searches, and .go edits without an open gograph session`)
 	fmt.Println("\nCHANGE SELECTION\n" + search.CurrentChangeSelectionContract)
 	return 0
 }
@@ -4037,12 +4040,22 @@ AGENT INTEGRATION
                              that redirects Go symbol greps to gograph tools.
                              Claude Code MCP registration still requires the printed
                              'claude mcp add' command. Partial installation exits non-zero.
-  hook-guard                 PreToolUse hook invoked by Claude Code. Reads a JSON
-                             tool call and cwd from stdin; blocks grep on Go symbols
-                             only when a searched path belongs to a repository with
-                             a .gograph index, then suggests the equivalent gograph
-                             command. Exit 0 = allow, exit 2 = block. Not intended
-                             for direct human use.
+  hook-guard [--strict]      PreToolUse hook for Claude Code, Codex and Antigravity.
+                             Reads the agent's tool-call JSON from stdin (format is
+                             detected); blocks grep/rg on Go symbols only when a
+                             searched path belongs to a repository with a .gograph
+                             index, then suggests the equivalent gograph command.
+                             --strict, inside such a repository, also denies: shell
+                             writes to .go files (redirects, sed -i, perl -i, tee,
+                             cp/mv/install/ln/dd/truncate); region reads of .go files
+                             (cat/head/tail/sed/awk/perl -n; counts, checksums and
+                             git show/diff stay allowed; not for Codex, which has no
+                             file-read tool); Go text searches without a
+                             "# gograph-cannot: <reason>" comment; and .go edits
+                             while no gograph session is open. Claude Code/Codex:
+                             exit 0 = allow, exit 2 = block (reason on stderr).
+                             Antigravity: exit 0 with {"decision":"allow"|"deny"}
+                             on stdout. Not intended for direct human use.
 
 OTHER
   doctor [--json]            Diagnose duplicate or shadowed gograph installations.
