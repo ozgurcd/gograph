@@ -13,6 +13,8 @@ import (
 
 // newHookStrictRoot creates an indexed gograph root with a Go file and a sub
 // directory, and returns its real path.
+var hookAllRules = hookGuardOptions{denyGoWrites: true, denyRegionReads: true, requireReason: true, requireSession: true}
+
 func newHookStrictRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -71,7 +73,7 @@ func TestHookStrictShellDecisions(t *testing.T) {
 	}
 	for _, tc := range deny {
 		t.Run("deny/"+tc.name, func(t *testing.T) {
-			reason := evaluateHookStrictShell(tc.command, root, hookStrictOptions{})
+			reason := evaluateHookStrictShell(tc.command, root, hookAllRules)
 			if !strings.Contains(reason, tc.want) {
 				t.Fatalf("command %q: reason = %q, want it to contain %q", tc.command, reason, tc.want)
 			}
@@ -102,14 +104,14 @@ func TestHookStrictShellDecisions(t *testing.T) {
 	}
 	for _, tc := range allow {
 		t.Run("allow/"+tc.name, func(t *testing.T) {
-			if reason := evaluateHookStrictShell(tc.command, tc.cwd, hookStrictOptions{}); reason != "" {
+			if reason := evaluateHookStrictShell(tc.command, tc.cwd, hookAllRules); reason != "" {
 				t.Fatalf("command %q denied:\n%s", tc.command, reason)
 			}
 		})
 	}
 
 	t.Run("codex may read regions", func(t *testing.T) {
-		if reason := evaluateHookStrictShell(`sed -n '1,80p' a.go`, root, hookStrictOptions{allowRegionReads: true}); reason != "" {
+		if reason := evaluateHookStrictShell(`sed -n '1,80p' a.go`, root, hookGuardOptions{denyGoWrites: true, denyRegionReads: true, requireReason: true, allowRegionReads: true}); reason != "" {
 			t.Fatalf("region read denied for an agent without a read tool:\n%s", reason)
 		}
 	})
@@ -172,12 +174,12 @@ func TestHookCallNormalization(t *testing.T) {
 
 func TestEmitHookVerdict(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := emitHookVerdict(hookAgentClaude, "nope", &stdout, &stderr); code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "nope") {
+	if code := emitHookVerdict(hookAgentClaude, "nope", false, &stdout, &stderr); code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "nope") {
 		t.Fatalf("claude deny: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := emitHookVerdict(hookAgentCodex, "", &stdout, &stderr); code != 0 || stdout.Len()+stderr.Len() != 0 {
+	if code := emitHookVerdict(hookAgentCodex, "", false, &stdout, &stderr); code != 0 || stdout.Len()+stderr.Len() != 0 {
 		t.Fatalf("codex allow wrote output: code=%d", code)
 	}
 	for _, tc := range []struct{ reason, want string }{
@@ -185,7 +187,7 @@ func TestEmitHookVerdict(t *testing.T) {
 		{"nope", `{"decision":"deny","reason":"nope"}`},
 	} {
 		stdout.Reset()
-		if code := emitHookVerdict(hookAgentAntigravity, tc.reason, &stdout, &stderr); code != 0 || strings.TrimSpace(stdout.String()) != tc.want {
+		if code := emitHookVerdict(hookAgentAntigravity, tc.reason, false, &stdout, &stderr); code != 0 || strings.TrimSpace(stdout.String()) != tc.want {
 			t.Fatalf("antigravity verdict: code=%d stdout=%q, want %s", code, stdout.String(), tc.want)
 		}
 	}
@@ -208,5 +210,61 @@ func TestSplitHookShell(t *testing.T) {
 	}
 	if _, ok := splitHookShell(`echo 'unbalanced`); ok {
 		t.Fatal("unbalanced quote should not split")
+	}
+}
+
+func TestHookRulesAreIndependent(t *testing.T) {
+	root := newHookStrictRoot(t)
+	cases := []struct {
+		name    string
+		options hookGuardOptions
+		command string
+		denied  bool
+	}{
+		{"writes only: write denied", hookGuardOptions{denyGoWrites: true}, `echo x > a.go`, true},
+		{"writes only: read allowed", hookGuardOptions{denyGoWrites: true}, `cat a.go`, false},
+		{"writes only: literal allowed", hookGuardOptions{denyGoWrites: true}, `grep -rn "a b" --include=*.go .`, false},
+		{"reads only: read denied", hookGuardOptions{denyRegionReads: true}, `cat a.go`, true},
+		{"reads only: write allowed", hookGuardOptions{denyRegionReads: true}, `echo x > a.go`, false},
+		{"reason only: literal denied", hookGuardOptions{requireReason: true}, `grep -rn "a b" --include=*.go .`, true},
+		{"reason only: read allowed", hookGuardOptions{requireReason: true}, `cat a.go`, false},
+		{"any rule still blocks symbols", hookGuardOptions{denyGoWrites: true}, `grep -rn Decide .`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reason := evaluateHookStrictShell(tc.command, root, tc.options)
+			if (reason != "") != tc.denied {
+				t.Fatalf("command %q with %+v: reason = %q, denied want %v", tc.command, tc.options, reason, tc.denied)
+			}
+		})
+	}
+
+	edit := hookCall{agent: hookAgentClaude, cwd: root, editPaths: []string{"a.go"}}
+	if reason := evaluateHookCall(edit, hookGuardOptions{denyGoWrites: true}); reason != "" {
+		t.Fatalf("edit denied without --require-session: %q", reason)
+	}
+	if reason := evaluateHookCall(edit, hookGuardOptions{requireSession: true}); reason == "" {
+		t.Fatal("edit allowed with --require-session and no session")
+	}
+	plain := hookCall{agent: hookAgentClaude, cwd: root, shell: `cat a.go`}
+	if reason := evaluateHookCall(plain, hookGuardOptions{}); reason != "" {
+		t.Fatalf("default mode denied a region read: %q", reason)
+	}
+}
+
+func TestEmitHookVerdictAsk(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := emitHookVerdict(hookAgentClaude, "why", true, &stdout, &stderr); code != 0 ||
+		!strings.Contains(stdout.String(), `"permissionDecision":"ask"`) || !strings.Contains(stdout.String(), `"permissionDecisionReason":"why"`) {
+		t.Fatalf("claude ask: code=%d stdout=%q", code, stdout.String())
+	}
+	stdout.Reset()
+	if code := emitHookVerdict(hookAgentAntigravity, "why", true, &stdout, &stderr); code != 0 || strings.TrimSpace(stdout.String()) != `{"decision":"ask","reason":"why"}` {
+		t.Fatalf("antigravity ask: code=%d stdout=%q", code, stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := emitHookVerdict(hookAgentCodex, "why", true, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "why") {
+		t.Fatalf("codex cannot ask, must deny: code=%d stderr=%q", code, stderr.String())
 	}
 }

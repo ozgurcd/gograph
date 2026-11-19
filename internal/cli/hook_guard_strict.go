@@ -11,15 +11,17 @@ import (
 	"github.com/ozgurcd/gograph/internal/session"
 )
 
-// Strict gograph-first policy (hook-guard --strict). Inside a gograph root
-// (a module root with a .gograph index) it denies, besides symbol searches:
-//   - shell writes to .go files (redirects, sed -i, perl -i, tee, cp, mv,
-//     install, ln, dd of=, truncate): use the agent's edit tool;
-//   - region reads of working-tree .go files (cat, head, tail, less, more,
-//     nl, sed, awk, perl -n), unless only counted or hashed;
-//   - text searches over Go source that carry no reason comment
-//     ("# gograph-cannot: <reason>");
-//   - edits of .go files while no gograph session is open.
+// Opt-in gograph-first rules for hook-guard. Each rule has its own flag and
+// --strict enables all of them. Inside a gograph root (a module root with a
+// .gograph index) they deny, besides symbol searches:
+//   - --deny-go-writes: shell writes to .go files (redirects, sed -i,
+//     perl -i, tee, cp, mv, install, ln, dd of=, truncate);
+//   - --deny-region-reads: region reads of working-tree .go files (cat,
+//     head, tail, less, more, nl, sed, awk, perl -n), unless only counted
+//     or hashed;
+//   - --require-reason: text searches over Go source that carry no reason
+//     comment ("# gograph-cannot: <reason>");
+//   - --require-session: edits of .go files while no gograph session is open.
 // Outside every gograph root the call is allowed. An unknown working
 // directory (cd into $VAR, cd -, popd, a cd in a pipe, subshell or
 // background job) keeps the blocking judgement.
@@ -43,8 +45,18 @@ var hookGoEmitters = map[string]bool{
 	"tail": true, "sed": true, "awk": true, "cut": true, "tr": true, "nl": true,
 }
 
-type hookStrictOptions struct {
+// hookGuardOptions selects the opt-in rules and how a denial is delivered.
+type hookGuardOptions struct {
+	denyGoWrites     bool
+	denyRegionReads  bool
+	requireReason    bool
+	requireSession   bool
+	ask              bool // ask the user instead of denying, where the agent can
 	allowRegionReads bool // the agent has no file-read tool (Codex)
+}
+
+func (options hookGuardOptions) shellRules() bool {
+	return options.denyGoWrites || options.denyRegionReads || options.requireReason
 }
 
 type hookStrictContext struct {
@@ -86,7 +98,7 @@ func (ctx hookStrictContext) dirInsideRoot() bool {
 }
 
 // evaluateHookStrictShell returns a deny reason, or "" to allow.
-func evaluateHookStrictShell(command, cwd string, options hookStrictOptions) string {
+func evaluateHookStrictShell(command, cwd string, options hookGuardOptions) string {
 	commands, ok := splitHookShell(command)
 	if !ok {
 		return ""
@@ -103,21 +115,23 @@ func evaluateHookStrictShell(command, cwd string, options hookStrictOptions) str
 		if current.name() == "git" {
 			local, argv = hookStrictGitDir(ctx, argv)
 		}
-		if reason := hookStrictWrite(local, current, argv); reason != "" {
-			return reason
+		if options.denyGoWrites {
+			if reason := hookStrictWrite(local, current, argv); reason != "" {
+				return reason
+			}
 		}
 		piped := index+1 < len(commands) && current.pipeOut
 		var sink string
 		if piped {
 			sink = commands[index+1].name()
 		}
-		if !options.allowRegionReads {
+		if options.denyRegionReads && !options.allowRegionReads {
 			if reason := hookStrictRegionRead(local, current, argv, sink); reason != "" {
 				return reason
 			}
 		}
 		upstreamGo := current.pipeIn && index > 0 && hookEmitsGo(commands[index-1])
-		if reason := hookStrictSearch(command, local, current, argv, upstreamGo, sink, hasReason); reason != "" {
+		if reason := hookStrictSearch(command, local, current, argv, upstreamGo, sink, hasReason || !options.requireReason); reason != "" {
 			return reason
 		}
 	}

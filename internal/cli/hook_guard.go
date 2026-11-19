@@ -85,15 +85,27 @@ func normalizeHookCall(input hookGuardInput) hookCall {
 // runHookGuard reads a PreToolUse tool call from stdin and allows or denies
 // it. Claude Code and Codex: exit 0 allows; exit 2 denies with the reason on
 // stderr. Antigravity: always exit 0 with {"decision":"allow"|"deny"} on
-// stdout, since it treats any other output as allow.
+// stdout, since it treats any other output as allow. With --ask, Claude Code
+// and Antigravity ask the user instead; Codex cannot ask, so it still denies.
 func runHookGuard(args []string) int {
-	strict := false
+	var options hookGuardOptions
 	for _, arg := range args {
 		switch arg {
 		case "--strict":
-			strict = true
+			options.denyGoWrites, options.denyRegionReads = true, true
+			options.requireReason, options.requireSession = true, true
+		case "--deny-go-writes":
+			options.denyGoWrites = true
+		case "--deny-region-reads":
+			options.denyRegionReads = true
+		case "--require-reason":
+			options.requireReason = true
+		case "--require-session":
+			options.requireSession = true
+		case "--ask":
+			options.ask = true
 		default:
-			fmt.Fprintf(os.Stderr, "gograph-guard: unknown flag %q; allowing\n", arg)
+			fmt.Fprintf(os.Stderr, "gograph-guard: unknown flag %q; ignoring it\n", arg)
 		}
 	}
 	var input hookGuardInput
@@ -106,13 +118,13 @@ func runHookGuard(args []string) int {
 			call.cwd = wd
 		}
 	}
-	reason := evaluateHookCall(call, strict)
-	return emitHookVerdict(call.agent, reason, os.Stdout, os.Stderr)
+	reason := evaluateHookCall(call, options)
+	return emitHookVerdict(call.agent, reason, options.ask, os.Stdout, os.Stderr)
 }
 
-func evaluateHookCall(call hookCall, strict bool) string {
+func evaluateHookCall(call hookCall, options hookGuardOptions) string {
 	if len(call.editPaths) > 0 {
-		if strict {
+		if options.requireSession {
 			return evaluateHookStrictEdit(call.editPaths, call.cwd)
 		}
 		return ""
@@ -120,19 +132,24 @@ func evaluateHookCall(call hookCall, strict bool) string {
 	if call.shell == "" || call.cwd == "" {
 		return ""
 	}
-	if strict {
-		return evaluateHookStrictShell(call.shell, call.cwd, hookStrictOptions{
-			allowRegionReads: call.agent == hookAgentCodex,
-		})
+	if options.shellRules() {
+		options.allowRegionReads = call.agent == hookAgentCodex
+		return evaluateHookStrictShell(call.shell, call.cwd, options)
 	}
 	return hookSymbolSearchReason(call.shell, call.cwd)
 }
 
-func emitHookVerdict(agent hookAgent, reason string, stdout, stderr io.Writer) int {
+// emitHookVerdict delivers the decision in the agent's format. ask turns a
+// denial into an approval prompt where the agent supports one.
+func emitHookVerdict(agent hookAgent, reason string, ask bool, stdout, stderr io.Writer) int {
 	if agent == hookAgentAntigravity {
 		verdict := map[string]string{"decision": "allow"}
 		if reason != "" {
-			verdict = map[string]string{"decision": "deny", "reason": reason}
+			decision := "deny"
+			if ask {
+				decision = "ask"
+			}
+			verdict = map[string]string{"decision": decision, "reason": reason}
 		}
 		encoder := json.NewEncoder(stdout)
 		encoder.SetEscapeHTML(false)
@@ -140,6 +157,17 @@ func emitHookVerdict(agent hookAgent, reason string, stdout, stderr io.Writer) i
 		return 0
 	}
 	if reason == "" {
+		return 0
+	}
+	if ask && agent == hookAgentClaude {
+		output := map[string]any{"hookSpecificOutput": map[string]string{
+			"hookEventName":            "PreToolUse",
+			"permissionDecision":       "ask",
+			"permissionDecisionReason": reason,
+		}}
+		encoder := json.NewEncoder(stdout)
+		encoder.SetEscapeHTML(false)
+		_ = encoder.Encode(output)
 		return 0
 	}
 	_, _ = fmt.Fprintln(stderr, reason)

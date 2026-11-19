@@ -143,7 +143,7 @@ gograph mcp [path] [--persist-refresh] [--tags=integration[,tag...]] [--exclude-
                                  # same GOWORK/GOFLAGS/tags as the persisted graph
 gograph httpcalls [term]         # net/http calls + possible request construction; bounded pages, method/URL/base/function filter
 gograph add-claude-plugin        # install MCP server + CLAUDE.md rules + PreToolUse hook (Claude Desktop & Claude Code)
-gograph hook-guard [--strict]    # PreToolUse hook for Claude Code, Codex, Antigravity — blocks indexed-repository Go symbol greps; --strict enforces gograph-first
+gograph hook-guard [rules]       # PreToolUse hook for Claude Code, Codex, Antigravity — blocks indexed-repository Go symbol greps; opt-in rules enforce gograph-first
 # --- CI ENFORCEMENT ---
 gograph gate                     # read regular non-linked project-root .gograph.yml and fail CI on threshold violations
 # --- SNAPSHOTS ---
@@ -190,21 +190,24 @@ The hook (`gograph hook-guard`) is invoked automatically by Claude Code before e
   literal-pipe patterns in fixed-string mode and escaped pipes in `grep -E`/`rg`
   remain text searches.
 
-### Strict mode and other agents
+### Optional rules and other agents
 
-`gograph hook-guard --strict` enforces gograph-first inside indexed
-repositories. In addition to symbol searches it denies:
+By default the hook only redirects Go symbol searches. Each of these rules is
+opt-in, applies only inside indexed repositories, and is added as a flag to
+the hook command:
 
-- shell writes to `.go` files: output redirects, `sed -i`, `perl -i`, `tee`,
-  `cp`/`mv`/`install`/`ln` onto a `.go` path, `dd of=`, `truncate`;
-- region reads of working-tree `.go` files (`cat`, `head`, `tail`, `less`,
-  `more`, `nl`, `sed`, `awk`, `perl -n`), unless piped into `wc` or a
-  checksum; `git show rev:x.go` and `git diff` stay allowed. Not applied to
-  Codex, which has no separate file-read tool;
-- `grep`/`rg`/`ag`/`git grep` text searches over Go source that carry no
-  `# gograph-cannot: <reason>` comment (counts and `-l` listings pass);
-- edits of `.go` files while no gograph session is open (`gograph session
-  create`).
+| Flag | Denies |
+|---|---|
+| `--deny-go-writes` | shell writes to `.go` files: output redirects, `sed -i`, `perl -i`, `tee`, `cp`/`mv`/`install`/`ln` onto a `.go` path, `dd of=`, `truncate` |
+| `--deny-region-reads` | `cat`, `head`, `tail`, `less`, `more`, `nl`, `sed`, `awk`, `perl -n` of working-tree `.go` files, unless piped into `wc` or a checksum; `git show rev:x.go` and `git diff` stay allowed. Not applied to Codex, which has no separate file-read tool |
+| `--require-reason` | `grep`/`rg`/`ag`/`git grep` text searches over Go source without a `# gograph-cannot: <reason>` comment (counts and `-l` listings pass) |
+| `--require-session` | edits of `.go` files while no gograph session is open (`gograph session create`) |
+| `--strict` | all four |
+
+`--ask` turns every denial into an approval prompt where the agent supports
+one (Claude Code, Antigravity). Codex cannot ask (it treats `ask` as
+continue), so there it still denies. With `--ask` the reason is shown to the
+user, not the model.
 
 It follows `cd` and `git -C`; a `cd` into `$VAR`, `cd -`, `popd`, or a `cd`
 in a pipe, subshell or background job makes the directory unknown, and an

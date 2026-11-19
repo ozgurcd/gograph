@@ -7,14 +7,17 @@
   the reason on stderr (Claude Code previously received it on stdout, which it
   does not show the model); Antigravity gets `{"decision":"allow"|"deny"}` on
   stdout, because it treats any other output as allow.
-- `gograph hook-guard --strict` enforces gograph-first inside indexed
-  repositories: it also denies shell writes to `.go` files, region reads of
-  `.go` files (counts, checksums and `git show`/`git diff` stay allowed; not
-  applied to Codex), Go text searches without a `# gograph-cannot: <reason>`
-  comment, and `.go` edits (Edit/Write, `apply_patch`, `write_to_file`,
-  `replace_file_content`) while no gograph session is open. It follows `cd`
-  and `git -C`; an unknown directory keeps the blocking judgement. About 9 ms
-  per call.
+- Opt-in gograph-first rules for `gograph hook-guard`, each applied only
+  inside indexed repositories and off by default: `--deny-go-writes` (shell
+  writes to `.go` files), `--deny-region-reads` (`cat`/`head`/`sed`/... of
+  `.go` files; counts, checksums and `git show`/`git diff` stay allowed; not
+  applied to Codex), `--require-reason` (Go text searches need a
+  `# gograph-cannot: <reason>` comment) and `--require-session` (`.go` edits
+  through Edit/Write, `apply_patch`, `write_to_file` or `replace_file_content`
+  need an open gograph session). `--strict` enables all four. `--ask` asks
+  the user instead of denying in Claude Code and Antigravity; Codex cannot
+  ask, so it still denies. The rules follow `cd` and `git -C`; an unknown
+  directory keeps the blocking judgement. About 9 ms per call.
 
 ## v1.7.21 — 2026-11-17
 
