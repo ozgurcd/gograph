@@ -136,3 +136,26 @@ func TestCallersDepthFollowsUnresolvedEdgesFromExactSelectors(t *testing.T) {
 		}
 	}
 }
+
+func TestCalleesSeedExactSymbolsBeforeFuzzyNames(t *testing.T) {
+	g := astCallGraph()
+	g.Calls = append(g.Calls,
+		graph.CallEdge{CallerSymbolID: "example.com/app/search::Callers", CallerName: "Callers", CalleeRaw: "helperA", File: "search/search.go", Line: 4},
+		graph.CallEdge{CallerSymbolID: "example.com/app/search::CallersDepth", CallerName: "CallersDepth", CalleeRaw: "helperB", File: "search/search.go", Line: 10},
+	)
+	for _, query := range []string{"search.Callers", "search/search.go:Callers", "example.com/app/search::Callers"} {
+		for depth, results := range map[int][]Result{1: Callees(g, query, true, false), 2: CalleesDepth(g, query, 2, true)} {
+			var raws []string
+			for _, result := range results {
+				raws = append(raws, result.Name)
+			}
+			if len(raws) != 1 || raws[0] != "helperA" {
+				t.Errorf("%s depth %d callees = %v, want [helperA]", query, depth, raws)
+			}
+		}
+	}
+	// A partial name still falls back to the fuzzy match.
+	if results := Callees(g, "CallersDep", true, false); len(results) != 1 {
+		t.Errorf("fuzzy fallback callees = %+v", results)
+	}
+}

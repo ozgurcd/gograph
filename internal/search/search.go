@@ -327,21 +327,21 @@ func Callees(g *graph.Graph, name string, includeTests bool, exactMatch bool) []
 	nl := strings.ToLower(name)
 	fqQuery := isFullyQualifiedID(name)
 	matchedIDs := make(map[string]bool)
+	// Every documented identity form matches exactly first, so
+	// "search.Callers" never also expands CallersDepth. The fuzzy substring
+	// matcher is a fallback for names that match nothing exactly.
 	for _, s := range g.Symbols {
-		if fqQuery && s.ID == name {
+		if (fqQuery && s.ID == name) || matchSymbolExact(s, name) {
 			matchedIDs[s.ID] = true
-			continue
 		}
-		sname := strings.ToLower(s.Name)
-		full := strings.ToLower(fmt.Sprintf("(%s).%s", s.Receiver, s.Name))
-		if exactMatch {
-			// Exact: accept every documented identity form without falling
-			// back to the fuzzy substring matcher.
-			if matchSymbolExact(s, name) {
+	}
+	if len(matchedIDs) == 0 && !exactMatch && !fqQuery {
+		for _, s := range g.Symbols {
+			sname := strings.ToLower(s.Name)
+			full := strings.ToLower(fmt.Sprintf("(%s).%s", s.Receiver, s.Name))
+			if MatchSymbol(s, name) || sname == nl || strings.Contains(full, nl) || strings.Contains(sname, nl) {
 				matchedIDs[s.ID] = true
 			}
-		} else if MatchSymbol(s, name) || sname == nl || strings.Contains(full, nl) || strings.Contains(sname, nl) {
-			matchedIDs[s.ID] = true
 		}
 	}
 
@@ -542,20 +542,24 @@ func CalleesDepth(g *graph.Graph, name string, maxDepth int, includeTests bool) 
 		symByName[key] = append(symByName[key], s.ID)
 	}
 
-	// Find the seed symbol IDs for name. FQ-ID queries match exactly;
-	// short names use the fuzzy substring path (existing UX).
+	// Find the seed symbol IDs for name, as Callees does: every documented
+	// identity form (file selectors, pkg.Name, Recv.Method, IDs) matches
+	// exactly first; the fuzzy substring path is only a fallback.
 	nl := strings.ToLower(name)
 	fqQuery := isFullyQualifiedID(name)
 	seedIDs := make(map[string]bool)
 	for _, s := range g.Symbols {
-		if fqQuery && s.ID == name {
+		if (fqQuery && s.ID == name) || matchSymbolExact(s, name) {
 			seedIDs[s.ID] = true
-			continue
 		}
-		sname := strings.ToLower(s.Name)
-		full := strings.ToLower(fmt.Sprintf("(%s).%s", s.Receiver, s.Name))
-		if sname == nl || strings.Contains(full, nl) || strings.Contains(sname, nl) {
-			seedIDs[s.ID] = true
+	}
+	if len(seedIDs) == 0 && !fqQuery {
+		for _, s := range g.Symbols {
+			sname := strings.ToLower(s.Name)
+			full := strings.ToLower(fmt.Sprintf("(%s).%s", s.Receiver, s.Name))
+			if sname == nl || strings.Contains(full, nl) || strings.Contains(sname, nl) {
+				seedIDs[s.ID] = true
+			}
 		}
 	}
 
