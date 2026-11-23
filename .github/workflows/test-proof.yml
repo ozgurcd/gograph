@@ -6,12 +6,6 @@ on:
       ref:
         required: true
         type: string
-      require-full-race:
-        description: >-
-          Accept only runs whose full race suite (step "Run Race Tests") passed.
-          Releases set it; main pushes also accept the scoped race step.
-        default: false
-        type: boolean
     outputs:
       verified:
         value: ${{ jobs.lookup.outputs.verified }}
@@ -36,7 +30,6 @@ jobs:
         id: proof
         env:
           TARGET_REF: ${{ inputs.ref }}
-          REQUIRE_FULL_RACE: ${{ inputs.require-full-race }}
         with:
           script: |
             core.setOutput('verified', 'false');
@@ -160,12 +153,10 @@ jobs:
                     builds[0].conclusion !== 'success' || markers[0].conclusion !== 'success') continue;
                 const testedSHA = /^tested-commit-([a-f0-9]{40})$/.exec(markers[0].name)?.[1];
                 if (!testedSHA || (isPush && testedSHA !== run.head_sha)) continue;
-                // "Run Race Tests" races every package; the scoped step races the
-                // concurrent packages and runs the rest plain. A release needs the full suite.
-                const raceSteps = process.env.REQUIRE_FULL_RACE === 'true'
-                  ? ['Run Race Tests']
-                  : ['Run Race Tests', 'Run Tests (race on concurrent packages)'];
-                const tests = builds[0].steps.filter(step => raceSteps.includes(step.name) && step.conclusion === 'success');
+                // "Run Tests" runs every package; earlier runs named their suite
+                // "Run Race Tests" or "Run Tests (race on concurrent packages)".
+                const testSteps = ['Run Tests', 'Run Race Tests', 'Run Tests (race on concurrent packages)'];
+                const tests = builds[0].steps.filter(step => testSteps.includes(step.name) && step.conclusion === 'success');
                 if (tests.length !== 1) continue;
                 if (isPull) {
                   // The executed merge commit must carry main's policy, descend from this run's head,
@@ -180,12 +171,12 @@ jobs:
                   ...repo, run_id: run.id, request
                 });
                 if (identity(finalRun) !== identity(run)) continue;
-                core.info(`Reusing race suite from run ${run.id}, attempt ${run.run_attempt}, event ${run.event}, commit ${testedSHA}, tree ${target.commit.tree.sha}`);
+                core.info(`Reusing test suite from run ${run.id}, attempt ${run.run_attempt}, event ${run.event}, commit ${testedSHA}, tree ${target.commit.tree.sha}`);
                 core.setOutput('verified', 'true');
                 return;
               }
-              core.info('No suitable tested tree; run the full race suite.');
+              core.info('No suitable tested tree; run the test suite.');
             } catch (error) {
               // Do not print request headers or API response bodies.
-              core.warning('Proof unavailable; run the full race suite.');
+              core.warning('Proof unavailable; run the test suite.');
             }

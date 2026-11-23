@@ -15,7 +15,7 @@ override STATICCHECK_VERSION := v0.8.2
 override GOLANGCI_LINT_VERSION := v2.14.0
 override GOVULNCHECK_VERSION := v1.3.0
 
-.PHONY: build test verify benchmark format-check lint staticcheck govulncheck vulnerability-check release-artifact-vulnerability-check run-build clean bump-patch bump-minor bump-major install release release-dry-run release-verify release-go-check release-goreleaser-check mcpb-build mcpb-verify mcpb-smoke mcpb-check docs-check
+.PHONY: build test race verify benchmark format-check lint staticcheck govulncheck vulnerability-check release-artifact-vulnerability-check run-build clean bump-patch bump-minor bump-major install release release-dry-run release-verify release-go-check release-goreleaser-check mcpb-build mcpb-verify mcpb-smoke mcpb-check docs-check
 
 build:
 	$(eval VERSION := $(shell grep '^current_version' .bumpversion.cfg | awk '{print $$3}'))
@@ -78,6 +78,10 @@ staticcheck:
 
 govulncheck:
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
+# Race tests run locally, not in CI: run `make race` before tagging a release.
+race:
+	go test -count=1 -race ./...
 
 test: format-check vulnerability-check
 	@echo "Running all unit tests and e2e integration tests..."

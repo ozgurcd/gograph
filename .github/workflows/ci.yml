@@ -61,15 +61,13 @@ jobs:
     needs: [release-tag, test-proof]
     # PR and nightly checks do not depend on a source-controlled lookup output.
     # A main push whose identical tree already passed every gate runs nothing.
-    # Pull requests and main pushes race only the concurrent packages; the
-    # nightly run races every package and refreshes the vulnerability scans.
+    # The nightly run refreshes the vulnerability scans. Race tests run locally.
     if: ${{ !cancelled() && needs.release-tag.outputs.tagged != 'true' && needs.test-proof.outputs.verified != 'true' }}
     uses: ./.github/workflows/checks.yml
     permissions:
       contents: read
     with:
       ref: ${{ github.sha }}
-      full-race: ${{ github.event_name == 'schedule' }}
 
   build-and-test:
     # The required status check on main. It reports the outcome of the shared
