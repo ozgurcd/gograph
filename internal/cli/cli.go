@@ -1727,6 +1727,8 @@ func printResults(cmd, query string, results []search.Result, emptyMsg string) i
 		outputGraph.RUnlock()
 		if hint := search.FileSelectorHint(loaded, query); hint != "" {
 			fmt.Println("hint: " + hint)
+		} else if cmd == "query" && !strings.Contains(query, ".go:") {
+			fmt.Println("hint: query matches declarations; for text inside string literals (messages, keys, SQL) run gograph strings " + query)
 		}
 		if cmd == "tests" || cmd == "envs" || cmd == "usages" {
 			if state := currentOutputGraphState(); state != nil {
