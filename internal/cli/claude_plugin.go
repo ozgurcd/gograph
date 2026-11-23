@@ -23,6 +23,7 @@ Rules (applied when gograph MCP server is connected):
 4. To understand a symbol, use gograph_context — it returns node, source, callers, callees, tests, and an architectural role classification in one call. Use uncommitted=true to get context for all uncommitted symbols at once.
 5. Run gograph_capabilities at the start of any Go coding session.
 6. To choose which tests to run for a change, run gograph_tests with uncommitted=true (CLI: gograph tests --uncommitted --format go-test) and run only the go test commands it returns; add max_depth=3 to keep nearby tests.
+7. If a gograph CLI command prints "WARNING: the graph is stale", run gograph build . and repeat it before relying on a missing result.
 <!-- gograph-end: do not remove -->
 `
 

@@ -242,36 +242,19 @@ func Callers(g *graph.Graph, name string, includeTests bool, exactMatch bool) []
 	if sourceReader != nil {
 		defer func() { _ = sourceReader.Close() }()
 	}
-	nl := strings.ToLower(name)
 	resolvedTargets, interfaceMethodQuery := resolvedCallTargetIDs(g, name)
 	callerSymbols := make(map[string]graph.SymbolNode)
 	for _, s := range g.Symbols {
 		callerSymbols[s.ID] = s
 	}
 
-	targetSymbols := FindSymbols(g, name)
+	targetIDs, targetSymbols := callTargets(g, name, resolvedTargets, interfaceMethodQuery)
+	matcher := newCallTargetMatcher(g, name, exactMatch, targetIDs, targetSymbols)
 	matchesCallee := func(c graph.CallEdge) bool {
 		if interfaceMethodQuery {
 			return resolvedTargets[c.CalleeSymbolID]
 		}
-		if c.CalleeSymbolID != "" && resolvedTargets[c.CalleeSymbolID] {
-			return true
-		}
-		for _, ts := range targetSymbols {
-			if c.CalleeSymbolID == ts.ID {
-				return true
-			}
-		}
-		if strings.Contains(name, ".") {
-			replaced := strings.ReplaceAll(nl, ".", "::")
-			if strings.Contains(strings.ToLower(c.CalleeRaw), replaced) {
-				return true
-			}
-		}
-		if exactMatch {
-			return strings.ToLower(c.CalleeRaw) == nl
-		}
-		return strings.Contains(strings.ToLower(c.CalleeRaw), nl)
+		return matcher.matches(c, c.CallerSymbolID)
 	}
 
 	// Collect all matching call edges (one per unique call site).
@@ -344,21 +327,21 @@ func Callees(g *graph.Graph, name string, includeTests bool, exactMatch bool) []
 	nl := strings.ToLower(name)
 	fqQuery := isFullyQualifiedID(name)
 	matchedIDs := make(map[string]bool)
+	// Every documented identity form matches exactly first, so
+	// "search.Callers" never also expands CallersDepth. The fuzzy substring
+	// matcher is a fallback for names that match nothing exactly.
 	for _, s := range g.Symbols {
-		if fqQuery && s.ID == name {
+		if (fqQuery && s.ID == name) || matchSymbolExact(s, name) {
 			matchedIDs[s.ID] = true
-			continue
 		}
-		sname := strings.ToLower(s.Name)
-		full := strings.ToLower(fmt.Sprintf("(%s).%s", s.Receiver, s.Name))
-		if exactMatch {
-			// Exact: accept every documented identity form without falling
-			// back to the fuzzy substring matcher.
-			if matchSymbolExact(s, name) {
+	}
+	if len(matchedIDs) == 0 && !exactMatch && !fqQuery {
+		for _, s := range g.Symbols {
+			sname := strings.ToLower(s.Name)
+			full := strings.ToLower(fmt.Sprintf("(%s).%s", s.Receiver, s.Name))
+			if MatchSymbol(s, name) || sname == nl || strings.Contains(full, nl) || strings.Contains(sname, nl) {
 				matchedIDs[s.ID] = true
 			}
-		} else if MatchSymbol(s, name) || sname == nl || strings.Contains(full, nl) || strings.Contains(sname, nl) {
-			matchedIDs[s.ID] = true
 		}
 	}
 
@@ -435,105 +418,94 @@ func CallersDepth(g *graph.Graph, name string, maxDepth int, includeTests bool, 
 		maxDepth = 10
 	}
 
-	type edge struct {
-		callerID       string
-		callerName     string
-		file           string
-		line           int
-		column         int
-		calleeNameLow  string
-		calleeSymbolID string
-		synthetic      bool
-	}
-	var allEdges []edge
-	for _, c := range g.Calls {
-		if !includeTests && isTestFile(c.File) {
-			continue
-		}
-		allEdges = append(allEdges, edge{
-			c.CallerSymbolID,
-			c.CallerName,
-			c.File,
-			c.Line,
-			c.Column,
-			strings.ToLower(c.CalleeRaw),
-			c.CalleeSymbolID,
-			c.Synthetic,
-		})
-	}
-
 	symByID := make(map[string]graph.SymbolNode)
 	for _, s := range g.Symbols {
 		symByID[s.ID] = s
 	}
 
-	// Frontier is a multi-key set: full SymbolNode.ID entries match exact
-	// CalleeSymbolID hits; lowercase short-name entries match CalleeRaw
-	// substring as fallback. Seeding both forms so an FQ query
-	// ("pkg::(*S).Validate") seeds the ID, and a short query ("Validate")
-	// seeds the name.
-	frontier := make(map[string]bool)
-	nl := strings.ToLower(name)
+	// The frontier holds the symbols whose callers the next hop finds. Edges
+	// with a CalleeSymbolID match by identity; unresolved edges (every edge
+	// of an AST graph) match a frontier symbol by called identifier and
+	// qualifier, as in Callers. A query naming no repository function keeps
+	// whole-identifier matching on the raw callee text for the first hop.
 	resolvedTargets, interfaceMethodQuery := resolvedCallTargetIDs(g, name)
-	for targetID := range resolvedTargets {
-		frontier[targetID] = true
+	targetIDs, targetSymbols := callTargets(g, name, resolvedTargets, interfaceMethodQuery)
+	matcher := newCallTargetMatcher(g, name, exactMatch, nil, nil)
+	matcher.indexImports(g)
+	frontierIDs := make(map[string]bool)
+	frontierByName := make(map[string][]graph.SymbolNode)
+	for id := range targetIDs {
+		frontierIDs[id] = true
 	}
 	if !interfaceMethodQuery {
-		frontier[nl] = true
+		for _, symbol := range targetSymbols {
+			if symbol.Kind == graph.KindFunction || symbol.Kind == graph.KindMethod {
+				frontierByName[symbol.Name] = append(frontierByName[symbol.Name], symbol)
+			}
+		}
 	}
+	nameFallback := !interfaceMethodQuery && len(frontierByName) == 0
+	edgeMatches := func(e graph.CallEdge) bool {
+		if e.CalleeSymbolID != "" {
+			return frontierIDs[e.CalleeSymbolID]
+		}
+		if interfaceMethodQuery {
+			return false
+		}
+		_, calledName := splitRawCallee(e.CalleeRaw)
+		for _, symbol := range frontierByName[calledName] {
+			if matcher.rawCallMayTarget(e, e.CallerSymbolID, symbol) {
+				return true
+			}
+		}
+		return nameFallback && rawCalleeMatchesName(e.CalleeRaw, name, exactMatch)
+	}
+
 	seen := make(map[string]bool) // seen caller symbol IDs across all depths
 	var results []Result
 
 	for depth := 1; depth <= maxDepth; depth++ {
-		frontier = expandForwardingTargets(g, frontier)
-		nextFrontier := make(map[string]bool)
-		for _, e := range allEdges {
-			if e.synthetic {
+		frontierIDs = expandForwardingTargets(g, frontierIDs)
+		nextIDs := make(map[string]bool)
+		nextByName := make(map[string][]graph.SymbolNode)
+		for _, c := range g.Calls {
+			if c.Synthetic || (!includeTests && isTestFile(c.File)) || !edgeMatches(c) {
 				continue
 			}
-			// Match priority: exact ID > short-name substring.
-			matched := false
-			if e.calleeSymbolID != "" && frontier[e.calleeSymbolID] {
-				matched = true
-			} else if frontier[e.calleeNameLow] {
-				matched = true
+			callerKey := c.CallerSymbolID
+			if callerKey == "" {
+				callerKey = c.File + ":" + c.CallerName
 			}
-			if !matched {
+			if seen[callerKey] {
 				continue
 			}
-			if seen[e.callerID] {
-				continue
-			}
-			seen[e.callerID] = true
-			sym, ok := symByID[e.callerID]
-			file, line := e.file, e.line
+			seen[callerKey] = true
+			sym, ok := symByID[c.CallerSymbolID]
+			file, line := c.File, c.Line
 			if ok {
 				file, line = sym.File, sym.Line
 			}
 			results = append(results, Result{
 				Kind:           "caller",
-				Name:           e.callerName,
+				Name:           c.CallerName,
 				File:           file,
 				Line:           line,
-				Detail:         fmt.Sprintf("depth %d — calls %s", depth, e.calleeNameLow),
-				CallSiteFile:   e.file,
-				CallSiteLine:   e.line,
-				CallSiteColumn: e.column,
+				Detail:         fmt.Sprintf("depth %d — calls %s", depth, strings.ToLower(c.CalleeRaw)),
+				CallSiteFile:   c.File,
+				CallSiteLine:   c.Line,
+				CallSiteColumn: c.Column,
 				Score:          10 - depth,
 			})
-			// Push BOTH forms of the caller into the next frontier so the
-			// next hop matches edges keyed by either CalleeSymbolID (exact)
-			// or CalleeRaw (name). Prefer the full ID for exactness; the
-			// short name keeps the fuzzy fallback intact.
-			if e.callerID != "" {
-				nextFrontier[e.callerID] = true
+			if ok {
+				nextIDs[sym.ID] = true
+				nextByName[sym.Name] = append(nextByName[sym.Name], sym)
 			}
-			nextFrontier[strings.ToLower(e.callerName)] = true
 		}
-		if len(nextFrontier) == 0 {
+		if len(nextIDs) == 0 {
 			break
 		}
-		frontier = nextFrontier
+		frontierIDs, frontierByName, nameFallback = nextIDs, nextByName, false
+		interfaceMethodQuery = false
 	}
 
 	sortResults(results)
@@ -570,20 +542,24 @@ func CalleesDepth(g *graph.Graph, name string, maxDepth int, includeTests bool) 
 		symByName[key] = append(symByName[key], s.ID)
 	}
 
-	// Find the seed symbol IDs for name. FQ-ID queries match exactly;
-	// short names use the fuzzy substring path (existing UX).
+	// Find the seed symbol IDs for name, as Callees does: every documented
+	// identity form (file selectors, pkg.Name, Recv.Method, IDs) matches
+	// exactly first; the fuzzy substring path is only a fallback.
 	nl := strings.ToLower(name)
 	fqQuery := isFullyQualifiedID(name)
 	seedIDs := make(map[string]bool)
 	for _, s := range g.Symbols {
-		if fqQuery && s.ID == name {
+		if (fqQuery && s.ID == name) || matchSymbolExact(s, name) {
 			seedIDs[s.ID] = true
-			continue
 		}
-		sname := strings.ToLower(s.Name)
-		full := strings.ToLower(fmt.Sprintf("(%s).%s", s.Receiver, s.Name))
-		if sname == nl || strings.Contains(full, nl) || strings.Contains(sname, nl) {
-			seedIDs[s.ID] = true
+	}
+	if len(seedIDs) == 0 && !fqQuery {
+		for _, s := range g.Symbols {
+			sname := strings.ToLower(s.Name)
+			full := strings.ToLower(fmt.Sprintf("(%s).%s", s.Receiver, s.Name))
+			if sname == nl || strings.Contains(full, nl) || strings.Contains(sname, nl) {
+				seedIDs[s.ID] = true
+			}
 		}
 	}
 
@@ -1016,11 +992,11 @@ func matchSymbolExact(s graph.SymbolNode, query string) bool {
 	}
 
 	qualifiedQuery := normalize(query)
-	if qualifiedQuery == normalize(s.PackageName+"."+s.Name) {
-		return true
-	}
 	if s.Receiver == "" {
-		return false
+		// pkg.Name selects a package-level symbol; a method is pkg.Recv.Name
+		// or Recv.Name, so "search.Untested" never also selects
+		// (*Snapshot).Untested.
+		return qualifiedQuery == normalize(s.PackageName+"."+s.Name)
 	}
 
 	receiver := strings.TrimPrefix(strings.TrimSpace(s.Receiver), "*")
@@ -1649,13 +1625,20 @@ func Concurrency(g *graph.Graph, term string) []Result {
 // Tests returns all test functions that exercise the named symbol.
 // Pass an empty term to list all test edges.
 func Tests(g *graph.Graph, term string) []Result {
+	// An AST graph records test targets by name only, so a resolved
+	// selector also matches unresolved references that can name the symbol.
+	var selected *callTargetMatcher
+	var selectedSymbol graph.SymbolNode
 	if target, ok := qualifiedTarget(g, term); ok {
 		term = target.ID
+		selected, selectedSymbol = newSymbolCallMatcher(g, target), target
 	}
 	var results []Result
 	seen := make(map[string]bool)
 	for _, te := range g.TestEdges {
-		if matchTestTarget(te.Target, te.TestFunc, term) || te.TargetSymbolID != "" && matchTestTarget(te.TargetSymbolID, te.TestFunc, term) {
+		unresolvedMatch := selected != nil && te.TargetSymbolID == "" &&
+			selected.rawCallMayTarget(graph.CallEdge{CalleeRaw: te.Target, File: te.File}, "", selectedSymbol)
+		if unresolvedMatch || matchTestTarget(te.Target, te.TestFunc, term) || te.TargetSymbolID != "" && matchTestTarget(te.TargetSymbolID, te.TestFunc, term) {
 			key := fmt.Sprintf("%s|%s|%s", te.TestFunc, te.Target, te.TargetSymbolID)
 			if seen[key] {
 				continue

@@ -27,6 +27,36 @@ func FileSelectorLimit(command string, values ...string) error {
 	return nil
 }
 
+// fileSelectorNameNormalizer turns "(*Recv).Method" and "(Recv).Method"
+// into the "Recv.Method" form fileSelector prints.
+var fileSelectorNameNormalizer = strings.NewReplacer("(", "", ")", "", "*", "", " ", "")
+
+// parseFileSelector splits "dir/file.go:Name" into the file and the
+// normalized name.
+func parseFileSelector(query string) (string, string, bool) {
+	file, name, ok := strings.Cut(strings.TrimSpace(query), ".go:")
+	if !ok {
+		return "", "", false
+	}
+	return strings.ReplaceAll(file, "\\", "/") + ".go", fileSelectorNameNormalizer.Replace(name), true
+}
+
+// fileSelectorLocation reports whether a selector's file names the symbol's
+// file: its repository-relative path, its package import path plus file
+// name, or, for a selector with no directory, its file name alone. A file
+// name shared by several packages selects each; callers report the
+// ambiguity with the full selectors.
+func fileSelectorLocation(file string, s graph.SymbolNode) bool {
+	if file == s.File {
+		return true
+	}
+	pkg, _, _ := strings.Cut(s.ID, "::")
+	if file == pkg+"/"+path.Base(s.File) {
+		return true
+	}
+	return !strings.Contains(file, "/") && file == path.Base(s.File)
+}
+
 func validateQualifiedSelector(query string) error {
 	if file, name, ok := strings.Cut(query, ".go:"); ok && (file == "" || name == "" || strings.ContainsAny(name, ":/ ")) {
 		return fmt.Errorf("malformed selector %q: use path/to/file.go:Name or path/to/file.go:Receiver.Method", query)
@@ -62,18 +92,18 @@ func qualifiedTarget(g *graph.Graph, term string) (graph.SymbolNode, bool) {
 
 // qualifiedSymbolMatch matches indexed locations, never a filesystem read.
 func qualifiedSymbolMatch(s graph.SymbolNode, query string) (bool, bool) {
-	if file, name, ok := strings.Cut(query, ".go:"); ok {
-		file += ".go"
-		pkg, _, _ := strings.Cut(s.ID, "::")
-		location := file == s.File || file == pkg+"/"+path.Base(s.File)
+	if file, name, ok := parseFileSelector(query); ok {
 		// file.go:Name selects a function, type, variable or constant;
 		// file.go:Receiver.Method selects a method. A bare name never matches
 		// a method, so the selector fileSelector prints for a function stays
 		// unique when the same file declares a method of the same name.
-		if s.Receiver == "" {
-			return location && name == s.Name, true
+		if !fileSelectorLocation(file, s) {
+			return false, true
 		}
-		return location && name == strings.Trim(s.Receiver, "(*)")+"."+s.Name, true
+		if s.Receiver == "" {
+			return name == s.Name, true
+		}
+		return name == strings.Trim(s.Receiver, "(*)")+"."+s.Name, true
 	}
 	if strings.Contains(query, "/") && !strings.Contains(query, "::") {
 		pkg, member, ok := strings.Cut(s.ID, "::")
@@ -86,23 +116,45 @@ func qualifiedSymbolMatch(s graph.SymbolNode, query string) (bool, bool) {
 // FileSelectorHint explains a file selector that names a method without its
 // receiver, listing the receiver-qualified selectors that would match.
 func FileSelectorHint(g *graph.Graph, query string) string {
-	file, name, ok := strings.Cut(strings.TrimSpace(query), ".go:")
-	if !ok || g == nil || strings.Contains(name, ".") {
+	file, name, ok := parseFileSelector(query)
+	if !ok || g == nil || name == "" {
 		return ""
 	}
-	var selectors []string
+	fileKnown := false
+	var methods, sameName []string
 	for _, symbol := range g.Symbols {
-		if symbol.Receiver == "" || symbol.Name != name {
+		if matched, _ := qualifiedSymbolMatch(symbol, query); matched {
+			return "" // the selector resolves; an empty answer is real
+		}
+		inFile := fileSelectorLocation(file, symbol)
+		fileKnown = fileKnown || inFile
+		shortName := name
+		if position := strings.LastIndex(name, "."); position >= 0 {
+			shortName = name[position+1:]
+		}
+		if symbol.Name != shortName {
 			continue
 		}
-		pkg, _, _ := strings.Cut(symbol.ID, "::")
-		if file+".go" == symbol.File || file+".go" == pkg+"/"+path.Base(symbol.File) {
-			selectors = append(selectors, fileSelector(symbol))
+		if inFile && symbol.Receiver != "" && !strings.Contains(name, ".") {
+			methods = append(methods, fileSelector(symbol))
+		} else {
+			sameName = append(sameName, fileSelector(symbol))
 		}
 	}
-	if len(selectors) == 0 {
-		return ""
+	limit := func(selectors []string) string {
+		sort.Strings(selectors)
+		if len(selectors) > 5 {
+			selectors = append(selectors[:5], fmt.Sprintf("and %d more", len(selectors)-5))
+		}
+		return strings.Join(selectors, ", ")
 	}
-	sort.Strings(selectors)
-	return "methods need their receiver: " + strings.Join(selectors, ", ")
+	switch {
+	case len(methods) > 0:
+		return "methods need their receiver: " + limit(methods)
+	case len(sameName) > 0:
+		return "no " + name + " in " + file + "; selectors for that name: " + limit(sameName)
+	case !fileKnown:
+		return "no indexed file matches " + file + "; use the repository-relative path (gograph query <name> prints it)"
+	}
+	return ""
 }

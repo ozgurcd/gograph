@@ -64,10 +64,47 @@ func TestFileSelectorHintNamesReceiverSelector(t *testing.T) {
 	if hint := FileSelectorHint(g, "search/search.go:reach"); !strings.Contains(hint, "search/search.go:Snapshot.reach") {
 		t.Fatalf("hint = %q", hint)
 	}
-	for _, query := range []string{"search/search.go:Snapshot.reach", "reach", "search/other.go:reach"} {
+	for _, query := range []string{"search/search.go:Snapshot.reach", "reach", "search.go:Snapshot.reach"} {
 		if hint := FileSelectorHint(g, query); hint != "" {
 			t.Errorf("unexpected hint for %q: %q", query, hint)
 		}
+	}
+	for query, want := range map[string]string{
+		"search/other.go:reach":         "selectors for that name: search/search.go:Snapshot.reach",
+		"search/search.go:Snapshot.mia": "no indexed", // name unknown, file known: no hint
+		"nowhere/x.go:Untested":         "selectors for that name: search/search.go:Snapshot.Untested, search/search.go:Untested",
+		"nowhere/x.go:Absent":           "no indexed file matches nowhere/x.go",
+	} {
+		hint := FileSelectorHint(g, query)
+		if want == "no indexed" {
+			if hint != "" {
+				t.Errorf("unexpected hint for %q: %q", query, hint)
+			}
+			continue
+		}
+		if !strings.Contains(hint, want) {
+			t.Errorf("hint for %q = %q, want %q", query, hint, want)
+		}
+	}
+}
+
+func TestFileSelectorAcceptsBaseNameAndPointerReceiverSpellings(t *testing.T) {
+	g := sameNameFunctionAndMethodGraph()
+	for selector, want := range map[string]string{
+		"search.go:Untested":                    "example.com/app/search::Untested",
+		"search.go:Snapshot.Untested":           "example.com/app/search::(*Snapshot).Untested",
+		"search.go:(*Snapshot).Untested":        "example.com/app/search::(*Snapshot).Untested",
+		"search/search.go:(*Snapshot).Untested": "example.com/app/search::(*Snapshot).Untested",
+		"search/search.go:(Snapshot).Untested":  "example.com/app/search::(*Snapshot).Untested",
+	} {
+		target, ok := qualifiedTarget(g, selector)
+		if !ok || target.ID != want {
+			t.Errorf("qualifiedTarget(%q) = %q, %v; want %q", selector, target.ID, ok, want)
+		}
+	}
+	// A directory that does not match is not rescued by the file name.
+	if target, ok := qualifiedTarget(g, "other/search.go:Untested"); ok {
+		t.Errorf("other/search.go:Untested resolved to %s", target.ID)
 	}
 }
 

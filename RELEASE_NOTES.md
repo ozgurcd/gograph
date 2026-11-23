@@ -1,5 +1,39 @@
 # Release Notes
 
+## v1.7.23 — 2026-11-23
+
+Fixes for the reasons agents logged when gograph could not answer: stale
+graphs answered silently, exact selectors found nothing in AST graphs, and
+common selector spellings were rejected.
+
+- CLI commands now warn when the graph is stale. Text output prints
+  `WARNING: the graph is stale` on stderr, naming the changed files and the
+  rebuild command; `--json` carries the same text in `warning` next to
+  `graph_state.freshness`. Before, a stale graph answered "no results" or
+  "No string literals matched" with no sign that new code was missing.
+  `stale`, `stats` and `changes` report freshness themselves.
+- File selectors and symbol IDs now find callers and tests in AST graphs.
+  AST graphs record calls by name only, so `callers dir/file.go:Name`,
+  `callers --depth N`, `plan` and `tests` with a file selector returned
+  nothing. Unresolved calls now match the selected symbol by its name and
+  its package's import name (functions) or a receiver expression (methods).
+  Chained calls such as `NewX().Method()` still need `--precise`.
+- `callers` and `callees` no longer select longer names. `search.Callers`
+  no longer also matched `CallersDepth`, `Snapshot.Untested` no longer
+  listed calls to `UntestedWith`, and names outside the repository match
+  whole identifiers (`json.Marshal` is not `json.MarshalIndent`). `callees`
+  keeps the substring match as a fallback for names with no exact match.
+- More selector spellings work: `file.go:Name` by file name alone,
+  `file.go:(*Recv).Method` and `file.go:(Recv).Method`. `pkg.Name` now
+  selects only package-level symbols, so `search.Untested` is no longer
+  ambiguous with `(*Snapshot).Untested`. A file selector that matches
+  nothing prints the selectors that exist for that name, and an empty
+  `query` answer suggests `gograph strings` for text inside literals.
+- `gograph strings` on a stale graph also searches Go files added since the
+  build, and says which indexed files were deleted or moved and which could
+  not be read (with the reason). It now supports `--json` and
+  `--files-only`, which its help already listed.
+
 ## v1.7.22 — 2026-11-19
 
 The Claude Code hook now also serves Codex and Antigravity, with opt-in

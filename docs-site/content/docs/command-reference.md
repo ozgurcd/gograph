@@ -28,6 +28,13 @@ Global flags may appear before or after the command:
   read-only caller outside other agents' audits; writes still refuse when another
   caller owns an active session. Independent callers may create concurrently.
 
+CLI commands answer from the persisted graph. When selected files or the Go
+build context changed since the last build, graph-backed commands print a
+`WARNING` on stderr naming the changed files and asking for `gograph build .`;
+JSON output carries the same text in `warning` and reports
+`graph_state.freshness: "stale"`. `stale`, `stats` and `changes` report
+freshness themselves and add no warning.
+
 Request only one of `--json`, `--files-only`, or `--mermaid`; unsupported or
 conflicting output flags fail instead of being silently ignored.
 
@@ -415,9 +422,12 @@ strings, URLs, SQL fragments, header names, and messages that are not
 symbols, instead of grep. Matching is a case-insensitive substring test
 with OR semantics across terms. Route-shaped terms match any path-parameter
 spelling, so `/users/{id}`, `/users/:id`, and `/users/*id` find each other.
-Files are read through the confined repository reader; files that cannot be
-read safely are named in a warning. MCP: `gograph_strings` (`term`, `query`,
-or `terms`; `no_tests`; `limit`/`cursor`).
+Files are read through the confined repository reader. Indexed files that
+were deleted or moved since the build, or cannot be read safely, are named in
+a warning with the reason and a rebuild hint. On a stale graph the CLI also
+searches Go files added since the build; those rows say so instead of naming
+an enclosing function. `--json` and `--files-only` are supported. MCP:
+`gograph_strings` (`term`, `query`, or `terms`; `no_tests`; `limit`/`cursor`).
 
 `query` also matches registered HTTP route patterns with the same parameter
 normalization, and both `query` and `strings` accept a repository path as
@@ -1447,7 +1457,7 @@ Successful-result mode support is:
 | Modes | Commands |
 |---|---|
 | JSON, files, Mermaid | `callers`, `callees`, `impact`, `dependents` |
-| JSON, files | `query`, `focus`, `node`, `public`, `fields`, `embeds`, `imports`, `implementers`, `envs`, `interfaces`, `concurrency`, `tests`, `routes`, `sql`, `errors`, `flow`, `orphans`, `mutate`, `constructors`, `literals`, `usages`, `returnusage`, `schema`, `globals`, `mocks`, `fixtures`, `boundaries`, `httpcalls` |
+| JSON, files | `query`, `focus`, `node`, `public`, `fields`, `embeds`, `imports`, `implementers`, `envs`, `interfaces`, `concurrency`, `tests`, `routes`, `sql`, `errors`, `flow`, `orphans`, `mutate`, `constructors`, `literals`, `usages`, `returnusage`, `schema`, `globals`, `mocks`, `fixtures`, `boundaries`, `httpcalls`, `strings` |
 | JSON, Mermaid | `path`, `coupling`, `deps`, `endpoint` |
 | JSON | `source`, `errorflow`, `trace`, `stale`, `stats`, `summary`, `untested`, `doc`, `doctor`, `godobj`, `skeleton`, `arity`, `complexity`, `context`, `hotspot`, `changes`, `explain`, `plan`, `review`, `risk`, `api`, `check` |
 | JSON | `workspace build`, `workspace status`, `workspace query`, `workspace path`, `workspace impact` |
