@@ -235,6 +235,7 @@ func Run(args []string) int {
 	startTime := time.Now()
 	exitCode := dispatch(args)
 	elapsed := time.Since(startTime)
+	warnIfStaleGraph(args[0])
 
 	// Log command telemetry
 	if args[0] != "session" && args[0] != "--session" && args[0] != "mcp" {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 
 	"github.com/ozgurcd/gograph/internal/graph"
@@ -29,6 +30,9 @@ func resetOutputModes() {
 var outputGraph struct {
 	sync.RWMutex
 	graph *graph.Graph
+	// stale memoizes the freshness check of graph for this invocation so the
+	// JSON graph_state and the stale warning never hash the sources twice.
+	stale *search.StaleResult
 }
 
 // SchemaVersion is the stable JSON output schema version. Bump when the
@@ -84,6 +88,14 @@ func PrintJSON(env Envelope) int {
 	}
 	if env.Status != "error" && env.GraphState != nil {
 		env.Warning = search.EmptyAnswerWarning(env.Command, string(env.GraphState.Precision), env.Count)
+		if env.GraphState.Freshness == graphstate.FreshnessStale && commandWarnsWhenStale(env.Command) {
+			outputGraph.RLock()
+			g := outputGraph.graph
+			outputGraph.RUnlock()
+			if g != nil {
+				env.Warning = strings.TrimSpace(staleGraphWarning(loadedGraphStale(g)) + " " + env.Warning)
+			}
+		}
 	}
 	data, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {
@@ -104,20 +116,37 @@ func currentOutputGraphState() *graphstate.State {
 	if g == nil {
 		return nil
 	}
-	stale := search.Stale(g, graphRoot(g))
+	stale := loadedGraphStale(g)
 	state := graphstate.ManualPersisted(g, stale.IsStale)
 	return &state
+}
+
+// loadedGraphStale returns the freshness of the graph loaded for this
+// invocation, computing it at most once.
+func loadedGraphStale(g *graph.Graph) search.StaleResult {
+	outputGraph.Lock()
+	defer outputGraph.Unlock()
+	if outputGraph.stale != nil && outputGraph.graph == g {
+		return *outputGraph.stale
+	}
+	stale := search.Stale(g, graphRoot(g))
+	if outputGraph.graph == g {
+		outputGraph.stale = &stale
+	}
+	return stale
 }
 
 func resetOutputGraph() {
 	outputGraph.Lock()
 	outputGraph.graph = nil
+	outputGraph.stale = nil
 	outputGraph.Unlock()
 }
 
 func rememberOutputGraph(g *graph.Graph) {
 	outputGraph.Lock()
 	outputGraph.graph = g
+	outputGraph.stale = nil
 	outputGraph.Unlock()
 }
 
@@ -130,7 +159,7 @@ func commandReportsGraphState(command string) bool {
 		"complexity", "diagram", "coupling", "context", "hotspot", "deps", "dependents", "changes",
 		"constructors", "literals", "usages", "returnusage", "schema", "globals", "mocks", "fixtures",
 		"boundaries", "endpoint", "explain", "plan", "review", "risk", "api", "contract", "check",
-		"httpcalls":
+		"httpcalls", "strings":
 		return true
 	default:
 		return false
