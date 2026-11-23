@@ -1,14 +1,14 @@
 name: Warm caches
 
 # Fills main's Go module and build cache, and the Staticcheck build, that pull
-# request checks restore. It compiles packages and race test binaries without
+# request checks restore. It compiles packages and test binaries without
 # running them, so it is not a verification gate: every gate stays in
 # checks.yml.
 #
 # setup-go saves a cache only under a key that does not exist yet, and its key
 # changes only with go.mod (Go version) or go.sum. Run then, right after the
-# merge, so the first copy saved for a new key already holds both the race and
-# the plain test builds that pull requests and the nightly run compile.
+# merge, so the first copy saved for a new key already holds the test builds
+# that pull requests and the nightly run compile.
 on:
   push:
     branches: [ "main" ]
@@ -37,8 +37,7 @@ jobs:
 
       - uses: ozgurcd/lictor/.github/actions/go-toolchain@fda0c2afaa765f190b7e331113a71570db802199
 
-      # Mirrors checks.yml: the nightly and release runs race every package;
-      # pull requests race the concurrent packages and run the rest plain.
+      # Mirrors checks.yml, which tests every package without the race detector.
       # Only packages with tests: `go test -c -o DIR/` names each binary after
       # the last import-path element and refuses duplicates, and the module
       # root package and cmd/gograph would both be gograph.test.
@@ -46,5 +45,4 @@ jobs:
         run: |
           mapfile -t tested < <(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)
           test "${#tested[@]}" -gt 0
-          go test -race -c -o "$RUNNER_TEMP/race-test-binaries/" "${tested[@]}"
           go test -c -o "$RUNNER_TEMP/plain-test-binaries/" "${tested[@]}"

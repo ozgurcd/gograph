@@ -27,13 +27,6 @@ on:
         description: Release tag to validate. Adds the release-candidate gates.
         default: ''
         type: string
-      full-race:
-        description: >-
-          Run every package under the race detector. Otherwise only the
-          packages with in-process concurrency run with -race and the rest run
-          plain. Release runs always use the full race suite.
-        default: false
-        type: boolean
     outputs:
       version:
         description: Release version without the leading v. Set on release runs only.
@@ -50,7 +43,7 @@ env:
   GOVULNCHECK_VERSION: 'v1.3.0'
 
 jobs:
-  # test-proof.yml identifies this job by name and its race step by name.
+  # test-proof.yml identifies this job by name and its test step by name.
   verify:
     runs-on: ubuntu-26.04
     outputs:
@@ -123,112 +116,13 @@ jobs:
             exit 1
           fi
 
-      # The MCPB packaging packages have no concurrent production code (only
-      # sync.Once), and under -race their zip and hash work ran 6-20x slower
-      # (about 3.5 CPU-minutes). They run every test without the race
-      # detector, alongside the race run of every other package.
-      #
-      # internal/cli runs its tests one after another and is the longest
-      # package, so its tests are dealt round-robin into separate processes.
-      # On 4 cores, 2 shards cut the step from 172 s to 147 s; 3 or 4 were
-      # slower because the cores are already saturated.
-      # The full race suite runs nightly and for releases. Its step name is
-      # what test-proof requires before a release reuses an earlier run.
-      - name: Run Race Tests
-        if: ${{ !inputs.vulnerability-only && steps.head.outputs.commit != inputs.tested-commit && (inputs.full-race || inputs.release-tag != '') }}
-        shell: bash
-        env:
-          CLI_TEST_SHARDS: '2'
-        run: |
-          set -euo pipefail
-          module=github.com/ozgurcd/gograph
-          plain_packages=(./internal/mcpbundle ./cmd/mcpb-release)
-          mapfile -t race_packages < <(go list ./... | grep -vxF -e "$module/internal/mcpbundle" -e "$module/cmd/mcpb-release" -e "$module/internal/cli")
-          mapfile -t cli_tests < <(go test -race -list '.*' ./internal/cli | grep -E '^(Test|Example|Fuzz)')
-          test "${#race_packages[@]}" -gt 0
-          test "${#cli_tests[@]}" -gt 0
-          pids=()
-          go test -count=1 "${plain_packages[@]}" &
-          pids+=("$!")
-          for ((shard = 0; shard < CLI_TEST_SHARDS; shard++)); do
-            names=()
-            for ((i = shard; i < ${#cli_tests[@]}; i += CLI_TEST_SHARDS)); do
-              names+=("${cli_tests[i]}")
-            done
-            go test -count=1 -race -run "^($(IFS='|'; echo "${names[*]}"))\$" ./internal/cli &
-            pids+=("$!")
-          done
-          go test -count=1 -race "${race_packages[@]}"
-          for pid in "${pids[@]}"; do
-            wait "$pid"
-          done
-
-      # Pull requests and main pushes run every test, but only the packages
-      # with in-process concurrency under -race: a data race needs goroutines
-      # sharing memory, and -race made the rest (internal/cli above all) 3-12x
-      # slower without finding anything. internal/session coordinates
-      # processes through file locks, which the race detector cannot observe.
-      # The nightly and release runs still race every package. The guard
-      # fails when a package outside RACE_PACKAGES starts using goroutines or
-      # sync primitives, so the list cannot silently fall behind; add the
-      # package to RACE_PACKAGES, or to RACE_EXEMPT with a reason.
-      - name: Run Tests (race on concurrent packages)
-        if: ${{ !inputs.vulnerability-only && steps.head.outputs.commit != inputs.tested-commit && !inputs.full-race && inputs.release-tag == '' }}
-        shell: bash
-        env:
-          # Packages with goroutines, channels shared across goroutines, or locks.
-          RACE_PACKAGES: >-
-            internal/mcp internal/search internal/precise internal/workspace
-            internal/scanner internal/memorylimit
-          # sync use that does not need a per-change race run:
-          # internal/cli: one RWMutex for MCP serving state, raced nightly.
-          # internal/mcpbundle: sync.Once only (see the full suite above).
-          RACE_EXEMPT: internal/cli internal/mcpbundle
-        run: |
-          set -euo pipefail
-          module=github.com/ozgurcd/gograph
-          read -r -a race_list <<< "$RACE_PACKAGES"
-          read -r -a exempt_list <<< "$RACE_EXEMPT"
-          listed() {
-            local relative="$1"; shift
-            local entry
-            for entry in "$@"; do [[ "$entry" == "$relative" ]] && return 0; done
-            return 1
-          }
-          race_packages=()
-          plain_packages=()
-          unlisted=()
-          while read -r path dir imports; do
-            relative="${path#"$module"}"
-            relative="${relative#/}"
-            [[ -z "$relative" ]] && relative=.
-            if listed "$relative" "${race_list[@]}"; then
-              race_packages+=("./$relative")
-              continue
-            fi
-            plain_packages+=("./$relative")
-            listed "$relative" "${exempt_list[@]}" && continue
-            concurrent=false
-            for imported in ${imports//,/ }; do
-              case "$imported" in
-                sync|sync/atomic|golang.org/x/sync/*) concurrent=true ;;
-              esac
-            done
-            if ! $concurrent && grep -qE '(^|[^[:alnum:]_.])go[[:space:]]+(func[[:space:]]*\(|[[:alpha:]_][[:alnum:]_.]*\()' $(go list -f '{{range .GoFiles}}{{$.Dir}}/{{.}} {{end}}' "$path"); then
-              concurrent=true
-            fi
-            $concurrent && unlisted+=("$relative")
-          done < <(go list -f '{{.ImportPath}} {{.Dir}} {{join .Imports ","}}' ./...)
-          if ((${#unlisted[@]} > 0)); then
-            echo "These packages use goroutines or sync but are not in RACE_PACKAGES or RACE_EXEMPT: ${unlisted[*]}" >&2
-            exit 1
-          fi
-          test "${#race_packages[@]}" -eq "${#race_list[@]}"
-          test "${#plain_packages[@]}" -gt 0
-          go test -count=1 "${plain_packages[@]}" &
-          plain_pid=$!
-          go test -count=1 -race "${race_packages[@]}"
-          wait "$plain_pid"
+      # Every package is tested without the race detector. Race testing runs
+      # locally (`make race`, also part of `make test`): with the detector the suite
+      # ran 3-12x slower on CI runners and lock-timing tests timed out there.
+      # test-proof.yml finds this suite by its step name.
+      - name: Run Tests
+        if: ${{ !inputs.vulnerability-only && steps.head.outputs.commit != inputs.tested-commit }}
+        run: go test -count=1 ./...
 
       - name: Vet
         if: ${{ !inputs.vulnerability-only && steps.head.outputs.commit != inputs.tested-commit }}

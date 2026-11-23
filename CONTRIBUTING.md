@@ -41,10 +41,10 @@ must use `make build` rather than a raw `go build` command.
    fixtures; they never reuse `bin/gograph`, `bin/gograph-test`, or a
    repository-resident graph. Install the tools used by the Makefile first.
 
-   CI runs every package's tests, under `-race` except for the MCPB packaging
-   packages (`internal/mcpbundle`, `cmd/mcpb-release`), which have no
-   concurrent production code. It splits `internal/cli` tests round-robin
-   across separate processes, so a test must not depend on the tests before
+   CI runs every package's tests without the race detector, so it stays
+   fast. Race tests run locally: `make race` (also part of `make test`) runs
+   `go test -count=1 -race ./...`; run it before you open a pull request
+   and before tagging a release. A test must not depend on the tests before
    it or on package state they left behind; `go test -shuffle=on
    ./internal/cli` should pass. Precise-graph fixtures that tests only read
    are built once per process with `sharedAnswersFixture`; a test that writes

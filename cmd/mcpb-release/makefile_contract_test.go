@@ -121,10 +121,6 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 		callChecks = "uses: ./.github/workflows/checks.yml"
 		// Gates that a full CI run on the identical tree already passed.
 		reusable = "if: ${{ !inputs.vulnerability-only && steps.head.outputs.commit != inputs.tested-commit }}"
-		// The full race suite: nightly and release runs.
-		fullRace = "if: ${{ !inputs.vulnerability-only && steps.head.outputs.commit != inputs.tested-commit && (inputs.full-race || inputs.release-tag != '') }}"
-		// Pull requests and main pushes: every test, -race only for concurrent packages.
-		scopedRace = "if: ${{ !inputs.vulnerability-only && steps.head.outputs.commit != inputs.tested-commit && !inputs.full-race && inputs.release-tag == '' }}"
 	)
 	gateCommands := []string{"go test", "go vet", "go build", "staticcheck", "golangci-lint", "govulncheck", "grype", "--snapshot", "hugo "}
 	// The release job installs Grype only for the GoReleaser build hook.
@@ -144,17 +140,8 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				"go mod verify",
 				"go mod tidy -diff",
 				"gofmt -l .",
-				// Every package is tested; all but the MCPB packaging packages,
-				// which have no concurrent production code, under -race.
-				// internal/cli's listed tests are dealt round-robin into shards.
-				"plain_packages=(./internal/mcpbundle ./cmd/mcpb-release)",
-				`mapfile -t race_packages < <(go list ./... | grep -vxF -e "$module/internal/mcpbundle" -e "$module/cmd/mcpb-release" -e "$module/internal/cli")`,
-				`mapfile -t cli_tests < <(go test -race -list '.*' ./internal/cli | grep -E '^(Test|Example|Fuzz)')`,
-				`for ((i = shard; i < ${#cli_tests[@]}; i += CLI_TEST_SHARDS)); do`,
-				`go test -count=1 -race -run "^($(IFS='|'; echo "${names[*]}"))\$" ./internal/cli &`,
-				`go test -count=1 "${plain_packages[@]}" &`,
-				`go test -count=1 -race "${race_packages[@]}"`,
-				`wait "$pid"`,
+				// Every package is tested without -race; race tests run locally.
+				"      - name: Run Tests\n        " + reusable + "\n        run: go test -count=1 ./...\n",
 				"go vet ./...",
 				"staticcheck ./...",
 				"go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION} run ./...",
@@ -164,27 +151,17 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				"make vulnerability-check",
 				"cmp server.json \"$server\"",
 				"hugo --source docs-site --renderToMemory --minify",
-				// Pull requests race only the listed concurrent packages and run the
-				// rest plain; the guard fails when an unlisted package gains goroutines
-				// or sync primitives.
-				"      - name: Run Tests (race on concurrent packages)\n        " + scopedRace + "\n",
-				"internal/mcp internal/search internal/precise internal/workspace",
-				"RACE_EXEMPT: internal/cli internal/mcpbundle",
-				"These packages use goroutines or sync but are not in RACE_PACKAGES or RACE_EXEMPT",
-				`go test -count=1 "${plain_packages[@]}" &`,
 				// test-proof.yml finds the suite by these names.
 				"\n  verify:\n",
-				"      - name: Run Race Tests\n",
 				"      - name: Verify dependencies and formatting\n        " + reusable + "\n",
-				"      - name: Run Race Tests\n        " + fullRace + "\n",
 				"      - name: Vet\n        " + reusable + "\n",
 				"      - name: Run static analysis\n        " + reusable + "\n",
 				"      - name: Build, validate, and smoke-test MCP bundles\n        " + reusable + "\n",
 				"      - name: Build documentation\n        " + reusable + "\n",
 			},
 			forbidden: []string{
-				"go test -count=1 -v ./...", "grype dir:.", "go install honnef.co/go/tools/cmd/staticcheck", "go install github.com/golangci/golangci-lint", "go install golang.org/x/vuln/cmd/govulncheck",
-				// Race tests, vet, `make vulnerability-check`, and the MCPB steps already compile and link every package.
+				"go test -count=1 -v ./...", "-race", "full-race", "grype dir:.", "go install honnef.co/go/tools/cmd/staticcheck", "go install github.com/golangci/golangci-lint", "go install golang.org/x/vuln/cmd/govulncheck",
+				// Tests, vet, `make vulnerability-check`, and the MCPB steps already compile and link every package.
 				"go build",
 				// The release job scans the build it publishes; a snapshot here would be a second, different build.
 				"--snapshot", "scan-release-artifacts", "goreleaser/goreleaser-action@", "goreleaser/v2@",
@@ -202,14 +179,13 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				"if: ${{ always() }}",
 				"name: tested-commit-${{ github.sha }}",
 				// A main push whose identical tree a CI run already verified runs no checks;
-				// the nightly run races every package and refreshes the vulnerability scans.
+				// the nightly run refreshes the vulnerability scans.
 				"if: ${{ !cancelled() && needs.release-tag.outputs.tagged != 'true' && needs.test-proof.outputs.verified != 'true' }}",
-				"full-race: ${{ github.event_name == 'schedule' }}",
 				"needs: [release-tag, test-proof, checks]\n    if: ${{ always() }}",
 				"VERIFIED: ${{ needs.test-proof.outputs.verified }}",
 				`if [[ "$RESULT" == skipped && "$VERIFIED" == true ]]; then`,
 			},
-			forbidden: append([]string{"actions/checkout@"}, gateCommands...),
+			forbidden: append([]string{"actions/checkout@", "full-race"}, gateCommands...),
 		},
 		{
 			// Compiles to warm main's caches; it must never run a gate.
@@ -217,11 +193,10 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 			toolchains: 1,
 			required: []string{
 				`mapfile -t tested < <(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)`,
-				`go test -race -c -o "$RUNNER_TEMP/race-test-binaries/" "${tested[@]}"`,
 				`go test -c -o "$RUNNER_TEMP/plain-test-binaries/" "${tested[@]}"`,
 				"      - go.mod\n      - go.sum\n",
 			},
-			forbidden: []string{"go test -count", "go vet", "staticcheck ./...", "golangci-lint", "govulncheck", "grype", "make vulnerability-check", "--snapshot", "hugo ", "uses: ./.github/workflows/checks.yml"},
+			forbidden: []string{"go test -count", "go test -race", "go vet", "staticcheck ./...", "golangci-lint", "govulncheck", "grype", "make vulnerability-check", "--snapshot", "hugo ", "uses: ./.github/workflows/checks.yml"},
 		},
 		{
 			path:       ".github/workflows/release.yml",
@@ -230,10 +205,8 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				callChecks,
 				"uses: ozgurcd/gograph/.github/workflows/test-proof.yml@main",
 				"release-tag: ${{ inputs.tag || github.ref_name }}",
-				// A release reuses an earlier run only if it raced every package.
-				"require-full-race: true",
 			},
-			forbidden: releaseForbidden,
+			forbidden: append([]string{"require-full-race"}, releaseForbidden...),
 		},
 	}
 	for _, test := range tests {
