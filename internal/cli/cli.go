@@ -1826,7 +1826,14 @@ func runStrings(args []string) int {
 	if err != nil {
 		return failCommand("strings", err.Error())
 	}
-	results, diagnostic, err := search.StringLiterals(g, terms, !noTests)
+	// A stale graph does not list Go files added since the build; search
+	// them too so a new literal is not silently missed. The stale warning
+	// printed after the command still asks for a rebuild.
+	var added []string
+	if stale := loadedGraphStale(g); stale.IsStale {
+		added = stale.ChangedFiles
+	}
+	results, diagnostic, err := search.StringLiteralsIn(g, terms, !noTests, added)
 	if err != nil {
 		return failCommand("strings", err.Error())
 	}
