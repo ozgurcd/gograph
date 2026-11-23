@@ -107,7 +107,10 @@ in-memory fallback and a trusted stale persisted result are intentionally
 usable but degraded; disclose them and cross-check important negatives. A
 different effective Go build context fails closed rather than being served.
 CLI graph-backed `--json` responses expose the same
-`gograph.graph-state.v1` object at the envelope top level.
+`gograph.graph-state.v1` object at the envelope top level. CLI text output
+prints `WARNING: the graph is stale` on stderr, naming the changed files; run
+`gograph build .` and repeat the query before trusting a missing caller, test
+or literal.
 
 ## High-value tools
 

@@ -626,11 +626,15 @@ FINDING THINGS — four different scopes:
 CALL GRAPH — two different depths:
   callers/callees <sym> [--depth N]   bounded: 1 hop (default) up to 10 — use for focused exploration
   impact <sym>                         unbounded: full BFS to ALL transitive callers — can be large on hotspots
-  Call-graph symbol selectors accept short names ("Validate" — fuzzy substring),
-    concrete package-qualified dot notation, and fully-qualified IDs where advertised.
-    callers also accepts an interface method ("Repository.Delete"), expanding every
-    recorded precise implementer and returning a shared source site once. Precise IDs
-    and interface expansion require a --precise build for full effect.
+  Call-graph symbol selectors accept short names ("Validate"), pkg.Name (package-level
+    symbols only), Recv.Method or (*Recv).Method, file selectors (dir/file.go:Name,
+    dir/file.go:Recv.Method, or file.go:Name by file name alone), and fully-qualified IDs.
+    Exact spellings win: callers/callees never also select longer names (Validate is not
+    ValidateAll); a short name matching nothing exactly falls back to a substring match.
+    Selectors work on AST graphs too; --precise also resolves chained calls
+    (NewX().Method()) and interface dispatch. callers also accepts an interface method
+    ("Repository.Delete"), expanding every recorded precise implementer and returning a
+    shared source site once. A file selector that matches nothing prints the real ones.
 
 SYMBOL UNDERSTANDING — three different outputs:
   explore <term>   discovery plus bounded symbol context; compact/default/deep control response detail
@@ -3511,6 +3515,10 @@ OUTPUT FLAGS
                              path, impact, and endpoint.
                              Bare form (no subcommand): gograph --mermaid → architecture
                              overview diagram (shorthand for 'diagram').
+  stale graph warning        CLI commands answer from the last build. When selected files
+                             or the build context changed since then, they print a WARNING
+                             on stderr naming the files (JSON: warning plus
+                             graph_state.freshness "stale"). Run gograph build . to refresh.
                              Request only one of --json, --files-only, or --mermaid.
   -i, --intention <msg>      Explain the technical rationale for executing the command.
                              MANDATORY for all analytical commands when a session is active.
@@ -3671,7 +3679,10 @@ SEARCH & NAVIGATION
                              Search Go string literals in indexed source files, with the
                              enclosing function. Use for raw route strings, URLs, SQL
                              fragments, and messages that are not symbols. Route-shaped
-                             terms match any parameter spelling.
+                             terms match any parameter spelling. On a stale graph it also
+                             searches Go files added since the build and names indexed
+                             files that were deleted or unreadable. Supports --json and
+                             --files-only.
   focus <package>           Show all symbols, imports, and call edges for one
                              package. Token-efficient alternative to reading files.
   node <name>                Show indexed AST metadata for a symbol, package, or file.
@@ -3699,6 +3710,8 @@ CALL GRAPH
                              Find functions that call a target function or interface
                              method; precise interface queries expand every recorded
                              implementation and return a shared source site once.
+                             Matches whole identifiers (Validate never selects
+                             ValidateAll); file selectors and IDs work on AST graphs.
                              --depth 2-10 expands N hops up (callers-of-callers).
   callees <function> [--no-tests] [--depth N]    find functions that a target function calls; --depth 2-10 expands N hops down
   impact <name> [--exact-only] Full upstream blast radius (all transitive callers).
@@ -3712,10 +3725,14 @@ CALL GRAPH
                              Mermaid uses dotted edges for possible paths; no silent hop cutoff.
   path <from> <to>           Best ranked call chain between two symbols.
                              For callers/callees/impact/path: the symbol argument can be a short
-                             name ("Validate" — fuzzy substring), concrete dot-notation,
+                             name ("Validate"), pkg.Name (package-level symbols only),
+                             Recv.Method or (*Recv).Method, a file selector (dir/file.go:Name,
+                             dir/file.go:Recv.Method, or file.go:Name by file name alone),
                              interface notation ("Repository.Delete" for callers), or a fully-qualified ID
                              ("pkg/path::(*S).Validate" — exact match, no same-name conflation).
-                             Use the FQ form to disambiguate overloads. --precise improves resolution.
+                             callers/callees match exact spellings first and never also select
+                             longer names; a short name with no exact match falls back to substring.
+                             --precise improves resolution (chained calls, interface dispatch).
   trace <err_str>            Find the origin of an error and trace backwards to entry points.
   orphans                    Functions unreachable from runtime/test/route/public entry
                              points via BFS, including dead chains with internal callers.

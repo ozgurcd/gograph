@@ -13,6 +13,26 @@ declares a method with that name; a bare name that matches only methods returns
 a hint naming the `file.go:Receiver.Method` selectors. `source` prefers a
 case-sensitive name match (`SymbolIdentity` versus `symbolIdentity`).
 
+The receiver may also be written `(*Receiver).Method` or `(Receiver).Method`.
+A selector without a directory (`provider_hooks.go:Manager.Run`) matches by
+file name alone; when several packages have that file name, the answer is the
+usual ambiguity list of full selectors. A file selector that matches nothing
+prints the selectors that exist for that name, or says that no indexed file
+matches. `pkg.Name` selects package-level symbols only; methods are
+`pkg.Receiver.Method` or `Receiver.Method`.
+
+File selectors and IDs find callers, callees and tests on AST graphs as well
+as precise ones. An AST graph records calls by name, so callers match an
+unresolved call when its called identifier equals the symbol's name and, for a
+function, the call is unqualified in the same package or goes through the name
+the calling file imports the package under; for a method, through a receiver
+expression that is not an import name. A chained call such as
+`NewSnapshot(g).Untested()` needs `--precise`. `callers` and `callees` select
+exact spellings first, so `search.Callers` never also selects `CallersDepth`;
+`callers` matches whole identifiers of names outside the repository
+(`json.Marshal` is not `json.MarshalIndent`), and `callees` falls back to a
+substring match only for a name that matches nothing exactly.
+
 Named limits: embeds, constructors, literals, returnusage, mutate, path and
 endpoint reject file-qualified selectors. Their relationship records use
 lexical names and cannot reliably bind that file's declaration; use the
