@@ -1137,8 +1137,18 @@ func receiverMethodSelector(value string) (string, bool) {
 // safe and unreadable matches, the safe matches are returned; it fails only
 // when no matching source block can be read safely.
 func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
-	if err := validateQualifiedSelector(symbolName); err != nil {
+	targets, err := sourceTargets(g, symbolName)
+	if err != nil {
 		return "", err
+	}
+	return sourceBlocks(g, rootDir, symbolName, targets)
+}
+
+// sourceTargets resolves the declarations a source selector names, preferring
+// exact and then case-sensitive matches. It fails when nothing matches.
+func sourceTargets(g *graph.Graph, symbolName string) ([]graph.SymbolNode, error) {
+	if err := validateQualifiedSelector(symbolName); err != nil {
+		return nil, err
 	}
 	targets := FindSymbols(g, symbolName)
 	var exact []graph.SymbolNode
@@ -1167,9 +1177,9 @@ func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
 
 	if len(targets) == 0 {
 		if hint := FileSelectorHint(g, symbolName); hint != "" {
-			return "", fmt.Errorf("symbol '%s' not found; %s", symbolName, hint)
+			return nil, fmt.Errorf("symbol '%s' not found; %s", symbolName, hint)
 		}
-		return "", fmt.Errorf("symbol '%s' not found", symbolName)
+		return nil, fmt.Errorf("symbol '%s' not found", symbolName)
 	}
 	if len(targets) > 1 {
 		candidates := make([]string, 0, len(targets))
@@ -1177,9 +1187,12 @@ func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
 			candidates = append(candidates, fmt.Sprintf("%s (%s:%d; selector %s)", target.ID, target.File, target.Line, fileSelector(target)))
 		}
 		sort.Strings(candidates)
-		return "", fmt.Errorf("source for %q is ambiguous; select a candidate: %s", symbolName, strings.Join(candidates, "; "))
+		return nil, fmt.Errorf("source for %q is ambiguous; select a candidate: %s", symbolName, strings.Join(candidates, "; "))
 	}
+	return targets, nil
+}
 
+func sourceBlocks(g *graph.Graph, rootDir, symbolName string, targets []graph.SymbolNode) (string, error) {
 	var results []string
 	var readErrs []error
 	extractedCount := 0

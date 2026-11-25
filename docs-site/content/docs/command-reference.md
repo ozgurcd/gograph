@@ -306,6 +306,7 @@ named file-selector limit. Usages supports file-qualified variables/constants,
 but reports that limit for types. Capabilities lists these exceptions.
 ```bash
 gograph source <name> [name...]
+gograph source <name|path/file.go> --lines START-END
 ```
 Extracts exact raw source blocks for a function, method, struct, interface,
 type, variable, or constant using the graph's location data. Reads are rooted
@@ -318,6 +319,12 @@ Several selectors (`gograph source slotHostDefault slotHostOverride`) print
 each block in order, separated by `---`; with `--json` the results are
 `{selector, source}` objects. If any selector fails, the blocks that resolved
 are still printed and the command fails naming each failed selector.
+`--lines START-END` (file line numbers, inclusive) prints only that part of one
+declaration, clamped to it, so a region of a body larger than the 64 KiB budget
+can be read; given an indexed file path (`gograph source internal/app/manager.go
+--lines 1-20`) it prints that region of the file, including the package clause,
+imports and comments. A file changed since the build is refused. MCP:
+`gograph_source` with `lines`.
 - **Note**: This is the preferred way for AI agents to view symbol declarations and bodies, avoiding reading entire files.
 
 ---

@@ -142,3 +142,50 @@ func TestTestsSelectionAcceptsATestFunctionName(t *testing.T) {
 		t.Fatal("an unknown name must still fail")
 	}
 }
+
+func TestSourceLinesReadsDeclarationAndFileRegions(t *testing.T) {
+	root := t.TempDir()
+	content := "package lines\n\nimport (\n\t\"fmt\"\n\t\"strings\"\n)\n\nfunc Long() string {\n\ta := \"one\"\n\tb := \"two\"\n\tc := \"three\"\n\treturn fmt.Sprint(strings.ToUpper(a), b, c)\n}\n"
+	files := map[string]string{
+		"go.mod":   "module example.com/lines\n\ngo 1.22\n",
+		"lines.go": content,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, stderr, code := runCLIParityInDir(t, root, func() int { return Run([]string{"build", "."}) }); code != 0 {
+		t.Fatalf("build failed: %s", stderr)
+	}
+	run := func(args ...string) (string, string, int) {
+		return runCLIParityInDir(t, root, func() int { return Run(args) })
+	}
+	out, stderr, code := run("source", "Long", "--lines", "10-11")
+	if code != 0 || !strings.Contains(out, "(lines.go:10-11)") || !strings.Contains(out, `b := "two"`) || strings.Contains(out, `a := "one"`) {
+		t.Fatalf("declaration region: code=%d out=%s err=%s", code, out, stderr)
+	}
+	out, stderr, code = run("source", "lines.go", "--lines=3-6")
+	if code != 0 || !strings.Contains(out, "import (") || !strings.Contains(out, `"strings"`) {
+		t.Fatalf("file region with imports: code=%d out=%s err=%s", code, out, stderr)
+	}
+	out, _, _ = run("source", "Long", "--lines", "1-30")
+	if !strings.Contains(out, "(lines.go:8-13)") {
+		t.Fatalf("a range wider than the declaration is clamped to it: %s", out)
+	}
+	for _, args := range [][]string{
+		{"source", "Long", "--lines", "1-3"},
+		{"source", "Long", "--lines", "9-x"},
+		{"source", "Long", "Other", "--lines", "9-10"},
+	} {
+		if _, _, code := run(args...); code == 0 {
+			t.Errorf("%v must fail", args)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "lines.go"), []byte(content+"\n// edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, stderr, code := run("source", "lines.go", "--lines", "1-2"); code == 0 || !strings.Contains(stderr, "changed after the graph was built") {
+		t.Fatalf("a changed file must be refused: code=%d err=%s", code, stderr)
+	}
+}

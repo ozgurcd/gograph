@@ -53,6 +53,7 @@ gograph implementers <interface> # precise production types plus test-file fakes
 gograph interfaces <struct>     # which interfaces a struct satisfies (precise if --precise used)
 gograph fields <struct>         # extract fields and types of a struct
 gograph source <symbol...>      # extract the indexed declarations' source blocks
+gograph source <sym|file.go> --lines A-B  # one region of a declaration or file (imports included)
 gograph impact <symbol>         # find downstream callers (blast radius)
 gograph impact --uncommitted    # find blast radius of all uncommitted code changes
 gograph impact --since main     # blast radius of all symbols changed since main (PR-level)
@@ -1034,7 +1035,7 @@ The current suite registers 70 MCP endpoints: 66 query, analysis, and workflow t
 - **`gograph_implementers`**: Merges type-checked production implementers with
   AST-discovered test-file fakes; `test_only=true` returns only test/mock types.
 - **`gograph_fields`**
-- **`gograph_source`**: Repository-confined source for a named function, method, struct, interface, type, variable, or constant. It refuses absent or ambiguous symbols (with candidates), unsafe/unreadable source, invalid ranges, and source over 65536 bytes (with its size).
+- **`gograph_source`**: Repository-confined source for a named function, method, struct, interface, type, variable, or constant. It refuses absent or ambiguous symbols (with candidates), unsafe/unreadable source, invalid ranges, and source over 65536 bytes (with its size). Optional `lines` (START-END, file line numbers) returns only that region of the declaration, or, when `symbol` is an indexed `.go` path, that region of the file including its imports.
 - **`gograph_orphans`**
 - **`gograph_impact`**: Identity-safe blast radius with exact/possible path labels. Choose exactly one mode: `symbol`, `uncommitted=true`, or `since=<ref>`. Optional `exact_only=true` excludes any path depending on possible evidence. Default conservative results use the shared bounded-page contract. `mermaid=true` applies to all three modes and renders possible paths as dotted edges; do not combine Mermaid with limit/cursor.
 - **`gograph_boundaries`**: Verifies package architecture constraints from a regular, non-linked file inside the selected project (default `gograph/boundaries.json`, else `.gograph/boundaries.json`; override with `config`). MCP refreshes source analysis before evaluation; CLI reads the persisted graph and should be preceded by `stale`/`build`. Returns structured output.

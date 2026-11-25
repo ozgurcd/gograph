@@ -844,7 +844,8 @@ routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor CURSOR]
                        not a complete route-row dump.
 source <sym...>      : confined exact source for function/method/struct/interface/
                        type/variable/constant — USE THIS instead of reading files;
-                       several selectors in one call
+                       several selectors in one call; --lines A-B for a region of
+                       a declaration or of path/file.go (imports included)
 sql [term] [--table T] [--verb V] [--access read|write|ddl] [--function F]
                      [--module M] [--no-tests] [--limit N] [--cursor C]
                      : bounded gograph.sql.v1 PostgreSQL static SQL census. Direct literals plus
@@ -3771,6 +3772,10 @@ SEARCH & NAVIGATION
                              structs, interfaces, types, variables, and constants.
                              Several selectors print each block; any selector that
                              fails makes the command fail with its reason.
+                             --lines START-END prints only those file lines of one
+                             declaration (for bodies over the 64 KiB budget), or of
+                             an indexed file given as path/file.go (imports, any
+                             region). Stale files are refused.
   public <package>           List only the exported (public) API of a package.
   fields <struct>            List all fields and types of a struct.
   embeds <struct>            Find which structs embed the given struct.
@@ -5135,15 +5140,34 @@ func runChanges(args []string) int {
 
 // runSource extracts the raw source code of a named symbol.
 func runSource(args []string) int {
+	const usage = "usage: gograph source <name> [name...] | gograph source <name|file.go> --lines START-END"
+	args, lines, err := sourceLineRange(args)
+	if err != nil {
+		return failCommand("source", err.Error()+"\n"+usage)
+	}
 	terms, ok := sourceTargets(args)
 	if !ok {
-		return failCommand("source", "usage: gograph source <name> [name...]")
+		return failCommand("source", usage)
+	}
+	if lines != nil && len(terms) != 1 {
+		return failCommand("source", "--lines takes exactly one selector or file\n"+usage)
 	}
 	g, err := loadGraph(".")
 	if err != nil {
 		return failCommand("source", err.Error())
 	}
 	root := graphRoot(g)
+	if lines != nil {
+		src, err := search.SourceLines(g, root, terms[0], lines[0], lines[1])
+		if err != nil {
+			return failCommandf("source", "source: %v", err)
+		}
+		if jsonMode {
+			return PrintJSON(okEnvelope("source", terms[0], src, 1))
+		}
+		fmt.Println(src)
+		return 0
+	}
 	if len(terms) == 1 {
 		src, err := search.Source(g, root, terms[0])
 		if err != nil {
@@ -5196,6 +5220,38 @@ func printSourceBlocks(blocks []sourceBlock) {
 		}
 		fmt.Println(block.Source)
 	}
+}
+
+// sourceLineRange removes --lines START-END (or --lines=START-END) from args.
+func sourceLineRange(args []string) ([]string, *[2]int, error) {
+	var rest []string
+	var lines *[2]int
+	for i := 0; i < len(args); i++ {
+		value, found := "", false
+		switch {
+		case args[i] == "--lines":
+			if i+1 >= len(args) {
+				return nil, nil, fmt.Errorf("--lines requires START-END")
+			}
+			value, found = args[i+1], true
+			i++
+		case strings.HasPrefix(args[i], "--lines="):
+			value, found = strings.TrimPrefix(args[i], "--lines="), true
+		}
+		if !found {
+			rest = append(rest, args[i])
+			continue
+		}
+		if lines != nil {
+			return nil, nil, fmt.Errorf("--lines may only be supplied once")
+		}
+		start, end, err := search.ParseLineRange(value)
+		if err != nil {
+			return nil, nil, fmt.Errorf("--lines: %w", err)
+		}
+		lines = &[2]int{start, end}
+	}
+	return rest, lines, nil
 }
 
 // sourceTargets returns the distinct selectors given to source, refusing
