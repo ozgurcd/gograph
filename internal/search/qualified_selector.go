@@ -3,6 +3,7 @@ package search
 import (
 	"fmt"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -105,12 +106,30 @@ func qualifiedSymbolMatch(s graph.SymbolNode, query string) (bool, bool) {
 		}
 		return name == strings.Trim(s.Receiver, "(*)")+"."+s.Name, true
 	}
-	if strings.Contains(query, "/") && !strings.Contains(query, "::") {
-		pkg, member, ok := strings.Cut(s.ID, "::")
-		normalize := receiverNormalizer.Replace
-		return ok && normalize(query) == normalize(pkg+"."+member), true
+	if strings.Contains(query, "/") || strings.Contains(query, "::") {
+		return packagePathSymbolMatch(s, query), true
 	}
 	return false, false
+}
+
+// packagePathSymbolMatch matches path/to/pkg.Member, path/to/pkg::Member and
+// pkg::Member selectors. The package part may be the full import path, a "/"-bounded
+// suffix of it (the repository-relative path internal/app), or the symbol's
+// repository-relative directory.
+func packagePathSymbolMatch(s graph.SymbolNode, query string) bool {
+	pkg, member, ok := strings.Cut(s.ID, "::")
+	if !ok {
+		return false
+	}
+	normalize := func(value string) string {
+		return strings.Replace(receiverNormalizer.Replace(value), "::", ".", 1)
+	}
+	q := normalize(strings.TrimPrefix(strings.TrimSpace(query), "./"))
+	full := normalize(pkg + "." + member)
+	if q == full || strings.HasSuffix(full, "/"+q) {
+		return true
+	}
+	return q == normalize(filepath.ToSlash(filepath.Dir(s.File))+"."+member)
 }
 
 // FileSelectorHint explains a file selector that names a method without its

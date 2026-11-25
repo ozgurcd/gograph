@@ -21,6 +21,13 @@ prints the selectors that exist for that name, or says that no indexed file
 matches. `pkg.Name` selects package-level symbols only; methods are
 `pkg.Receiver.Method` or `Receiver.Method`.
 
+Package-path selectors accept the full import path or the repository-relative
+directory: `internal/client::Run`, `internal/client.Run` and
+`example.com/m/internal/client::Run` select the same function, and
+`internal/client::Manager.Run` a method. A shorter path matches whole trailing
+path segments only: `client::Manager.Run` matches the last segment, and
+`ernal/client::Run` matches nothing.
+
 File selectors and IDs find callers, callees and tests on AST graphs as well
 as precise ones. An AST graph records calls by name, so callers match an
 unresolved call when its called identifier equals the symbol's name and, for a
@@ -41,7 +48,8 @@ and constants, but returns a named limit for file-qualified types because type
 references are lexical. This avoids presenting an empty answer as a complete
 identity-based census. These limits also appear in capabilities.
 
-Package selectors (focus, public, imports, deps, dependents, globals), route/SQL
+Package selectors (focus, public, imports, deps, dependents, globals; globals
+takes a package name or a path such as `internal/app`), route/SQL
 filters, and lexical filters (envs, concurrency, errors, errorflow/trace, flow,
 httpcalls) are not declaration selectors. The external `doc` command accepts
 Go import/symbol syntax, not repository file selectors. Workspace selectors
