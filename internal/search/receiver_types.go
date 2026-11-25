@@ -15,6 +15,7 @@ type receiverTypeIndex struct {
 	types    map[string]graph.SymbolNode  // pkg::Type -> type declaration
 	methods  map[string]bool              // pkg::Type.Method
 	filePkg  map[string]string            // file -> package path
+	packages map[string]bool              // package paths declared in the graph
 	importOf map[string]map[string]string // file -> qualifier -> import path
 }
 
@@ -23,6 +24,7 @@ func newReceiverTypeIndex(g *graph.Graph) *receiverTypeIndex {
 		types:    make(map[string]graph.SymbolNode),
 		methods:  make(map[string]bool),
 		filePkg:  make(map[string]string),
+		packages: make(map[string]bool),
 		importOf: make(map[string]map[string]string),
 	}
 	if g == nil {
@@ -34,6 +36,7 @@ func newReceiverTypeIndex(g *graph.Graph) *receiverTypeIndex {
 		}
 		pkg := symbolPackagePath(symbol.ID)
 		index.filePkg[symbol.File] = pkg
+		index.packages[pkg] = true
 		switch symbol.Kind {
 		case graph.KindStruct, graph.KindInterface, graph.KindType:
 			index.types[pkg+"::"+symbol.Name] = symbol
@@ -110,6 +113,24 @@ func isIdentifier(value string) bool {
 	return true
 }
 
+// mayCall reports whether a method called directly on an expression of the
+// spelled type qualifierType (T{}.M(), new(T).M(), x.(T).M()), written in
+// file, may be target. The type must be declared in the graph: a method of
+// an external type is never a repository method.
+func (index *receiverTypeIndex) mayCall(qualifierType, file string, target graph.SymbolNode) bool {
+	if index == nil || target.Kind != graph.KindMethod {
+		return false
+	}
+	key := index.typeKey(qualifierType, file)
+	if key == "" {
+		return false
+	}
+	if _, ok := index.types[key]; !ok {
+		return false
+	}
+	return !index.excludes("", qualifierType, file, target)
+}
+
 // excludes reports whether an unresolved call "qualifier.Name" whose
 // receiver root has lexical type qualifierType, written in file, provably
 // calls a method of another type than target.
@@ -148,7 +169,12 @@ func (index *receiverTypeIndex) excludes(qualifier, qualifierType, file string, 
 		return false
 	}
 	declaration, ok := index.types[key]
-	if !ok || declaration.Kind == graph.KindInterface {
+	if !ok {
+		// A type of a package outside the graph (bytes.Buffer, for
+		// example) has no repository methods.
+		return !index.packages[symbolPackagePath(key)]
+	}
+	if declaration.Kind == graph.KindInterface {
 		return false
 	}
 	if index.methods[key+"."+target.Name] {

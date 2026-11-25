@@ -160,6 +160,22 @@ func namedTypeName(expr ast.Expr) string {
 	return ""
 }
 
+// spelledReceiverType is spelledValueType for the receiver expression of a
+// method call, which may also be a type assertion x.(T).
+func spelledReceiverType(expr ast.Expr) string {
+	for {
+		paren, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		expr = paren.X
+	}
+	if assertion, ok := expr.(*ast.TypeAssertExpr); ok {
+		return namedTypeName(assertion.Type)
+	}
+	return spelledValueType(expr)
+}
+
 func spelledValueType(expr ast.Expr) string {
 	switch value := expr.(type) {
 	case *ast.CompositeLit:
@@ -179,14 +195,20 @@ func spelledValueType(expr ast.Expr) string {
 }
 
 // qualifierType returns the lexical type of the root identifier of a method
-// call's receiver chain (x in x.f.M()), or "" when the receiver is not a
-// plain identifier chain or its type is unknown.
+// call's receiver chain (x in x.f.M()), the spelled type of a method called
+// directly on T{...}, &T{...}, new(T) or x.(T), or "" when the receiver is
+// none of these or its type is unknown.
 func (types lexicalTypes) qualifierType(call *ast.CallExpr) string {
 	selector, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return ""
 	}
 	expr := selector.X
+	switch expr.(type) {
+	case *ast.Ident, *ast.SelectorExpr:
+	default:
+		return spelledReceiverType(expr)
+	}
 	for {
 		switch value := expr.(type) {
 		case *ast.SelectorExpr:

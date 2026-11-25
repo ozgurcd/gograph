@@ -3916,9 +3916,10 @@ CALL GRAPH
                              callers/callees match exact spellings first and never also select
                              longer names; a short name with no exact match falls back to substring.
                              AST graphs also record each method call's lexically known receiver
-                             type (receiver, typed params/vars, composite literals, struct fields)
-                             and skip same-name methods of a known other type; callers, tests, plan
-                             and coverage use it. Unknown receivers stay candidates.
+                             type (receiver, typed params/vars, composite literals, struct fields,
+                             T{}.M(), new(T).M(), x.(T).M()) and skip same-name methods of a known
+                             other type or of a package outside the graph (bytes.Buffer); callers,
+                             tests, plan and coverage use it. Unknown receivers stay candidates.
                              --precise improves resolution (chained calls, interface dispatch).
   trace <err_str>            Find the origin of an error and trace backwards to entry points.
   orphans                    Functions unreachable from runtime/test/route/public entry
@@ -4173,7 +4174,8 @@ EXTRACTION
   concurrency --locks <function>
                              Lock scopes in one function, parsed now: each Lock/RLock,
                              its release (unlock lines, deferred until return, or not
-                             released) and the calls between lock and release (lexical).
+                             released) and the calls between lock and release (lexical;
+                             a call after an unlock in the same block is not listed).
   tests [symbol] [--transitive] [--exact-only] [--package name] [--max-depth N] [--limit N] [--cursor T] [--uncommitted|--since <ref>] [--format run|go-test]
                              Which tests to run for a symbol or a change. Direct attributed
                              test calls by default. --transitive requires one product symbol
@@ -4322,8 +4324,17 @@ func printCommandHelp(cmd string) {
 	defer printExcludeDirsHelp(cmd)
 	lines := strings.Split(helpText, "\n")
 	found := false
+	entry := func(line string) bool {
+		return strings.HasPrefix(line, "  "+cmd) && (len(line) == len("  "+cmd) || line[len("  "+cmd)] == ' ' || line[len("  "+cmd)] == '[')
+	}
 	for _, line := range lines {
-		if !found && strings.HasPrefix(line, "  "+cmd) && (len(line) == len("  "+cmd) || line[len("  "+cmd)] == ' ' || line[len("  "+cmd)] == '[') {
+		if found && entry(line) {
+			// A second form of the same command, such as
+			// "concurrency --locks <function>", gets its own usage block.
+			fmt.Println()
+			found = false
+		}
+		if !found && entry(line) {
 			found = true
 			fmt.Println("USAGE")
 			descStart := strings.Index(line[2:], "  ")

@@ -50,10 +50,13 @@ starts from, or ends at, that one declaration, and on AST graphs the
 destination is matched with the same per-declaration rule as `callers`, so a
 same-named function in another package does not stand in for it. Unresolved
 method calls carry `qualifier_type`, the lexically known type of the receiver
-root (`x` in `x.f.M()`); AST matching for callers, path, tests, plan, review and
-coverage follows it through struct fields and drops a target whose receiver is a
-different type that declares the method itself or has no embedded types.
-Unknown or interface types keep the call a candidate.
+root (`x` in `x.f.M()`), or the spelled type of a method called directly on
+`T{}`, `&T{}`, `new(T)` or `x.(T)` (whose raw callee is the bare method name);
+AST matching for callers, path, tests, plan, review and coverage follows it
+through struct fields and drops a target whose receiver is a different type
+that declares the method itself or has no embedded types, or a type of a
+package outside the graph (such as `bytes.Buffer`). Unknown or interface types
+keep the call a candidate.
 
 Named limits: embeds, constructors, literals, returnusage, mutate and
 endpoint reject file-qualified selectors. Their relationship records use
@@ -304,7 +307,8 @@ is not required. Metadata or precision alone never proves that source is readabl
 the same declaration selection and refuses ambiguity, non-function symbols and
 files changed since the build. It parses the body at query time and reports each
 `Lock`/`RLock` with `release` = `unlock` (with `unlock_lines`), `deferred` (held
-until return) or `none`, and the calls lexically inside the span. MCP returns
+until return) or `none`, and the calls lexically inside the span, except calls
+that follow a matching unlock in the same block or case clause. MCP returns
 the text form; CLI `--json` returns the report object in the version-1 envelope,
 with `count` = number of locks. MCP rejects `term` together with `function`.
 

@@ -325,7 +325,8 @@ operations in indexed files. Filter: `gograph concurrency goroutine` or
 `gograph concurrency mutex`. To see what runs while a mutex is held, run
 `gograph concurrency --locks Manager.startPass`: each `Lock`/`RLock`, where it
 is released (unlock lines, deferred until return, or not released) and the
-calls in between. Spans are lexical.
+calls in between. Spans are lexical; a call after an unlock in the same block
+(an early-return branch) is not listed.
 
 ### 7. Test coverage lookup
 `gograph tests ValidateToken` shows direct statically mapped test calls.
@@ -1275,7 +1276,7 @@ methodology, and limitations.
 ## Limitations the agent should know about
 
 - **Go only.** No multi-language parsing.
-- **Default call edges are best-effort AST evidence.** Without precise enrichment, overloaded names and method receivers may collide and interface dispatch can be unresolved. AST graphs record a method call's lexically known receiver type (receiver, typed params and vars, composite literals, struct fields); a call whose known type declares a different same-name method is not matched. Unknown receivers (interfaces, call results, shadowed names, embedding) stay candidates. Treat `callers`/`callees` results as navigation evidence, not runtime proof. **Workaround:** when you need to disambiguate same-named methods/functions or query symbols cleanly:
+- **Default call edges are best-effort AST evidence.** Without precise enrichment, overloaded names and method receivers may collide and interface dispatch can be unresolved. AST graphs record a method call's lexically known receiver type (receiver, typed params and vars, composite literals, struct fields, and a method called directly on `T{}`, `&T{}`, `new(T)` or `x.(T)`); a call whose known type declares a different same-name method, or is a type from a package outside the graph (for example `bytes.Buffer`), is not matched. Unknown receivers (interfaces, call results, shadowed names, embedding) stay candidates. Treat `callers`/`callees` results as navigation evidence, not runtime proof. **Workaround:** when you need to disambiguate same-named methods/functions or query symbols cleanly:
   1. Use standard Go **package-qualified dot-notation** (e.g. `service.GenerateRequest`, `graph.Graph` or `graph.Graph.Build`) with call-graph commands that advertise symbol selectors. `callers` also accepts `Interface.Method` on a precise graph.
   2. For precise target matching with no same-name conflation, pass the fully-qualified symbol ID (e.g., `gograph callers 'github.com/foo/bar/internal/auth::(*Service).Validate'`). The same FQ-ID syntax works for `callees`, `impact`, and `path` (both endpoints). Requires `--precise` mode at build time.
 - **Precise interface dispatch remains conservative unless the receiver is proven.** SSA devirtualizes a call only when its interface value is constructed from one concrete dynamic type; merely seeing one implementation in the repository is insufficient. Other invokes retain all named in-repository CHA candidates. Promoted concrete methods use a traversal-only wrapper edge. Reflection, `unsafe`, plugins, unresolved function values, test-only packages, unnamed concrete types, and module-external implementations can still cause omissions.

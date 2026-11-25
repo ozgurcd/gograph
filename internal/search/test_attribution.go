@@ -833,7 +833,11 @@ func (index *unresolvedTargetIndex) receiverTargetIDs(raw, callerPackage, qualif
 		}
 		if matched && qualifierType != "" && symbol.Kind == graph.KindMethod {
 			qualifier, _ := splitRawCallee(raw)
-			matched = !index.receivers.excludes(qualifier, qualifierType, file, symbol)
+			if qualifier == "" {
+				matched = index.receivers.mayCall(qualifierType, file, symbol)
+			} else {
+				matched = !index.receivers.excludes(qualifier, qualifierType, file, symbol)
+			}
 		}
 		if matched && !seen[symbol.ID] {
 			seen[symbol.ID] = true

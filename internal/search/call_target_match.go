@@ -143,7 +143,12 @@ func (matcher *callTargetMatcher) rawCallMayTarget(edge graph.CallEdge, callerID
 	if target.Kind == graph.KindMethod {
 		// "pkg.Name" through an imported package name is a function call,
 		// not a method call; "pkg.Var.Method" stays a candidate.
-		if qualifier == "" || matcher.isImportQualifier(edge.File, qualifier) {
+		if qualifier == "" {
+			// T{}.M(), new(T).M() or x.(T).M(): the raw callee is the bare
+			// name, and only the spelled receiver type can bind it.
+			return matcher.receivers.mayCall(edge.QualifierType, edge.File, target)
+		}
+		if matcher.isImportQualifier(edge.File, qualifier) {
 			return false
 		}
 		return !matcher.receivers.excludes(qualifier, edge.QualifierType, edge.File, target)

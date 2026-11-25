@@ -49,12 +49,17 @@ type lockSite struct {
 	end      token.Pos
 	line     int
 	deferred bool
+	// blockEnd is the end of the innermost block or case clause holding an
+	// unlock; a call after the unlock and before blockEnd runs unlocked.
+	blockEnd token.Pos
 }
 
 // LockScopes parses the named function's body at query time and reports, for
 // each mutex Lock/RLock call, how far the lock reaches and the calls inside.
 // Spans are lexical: a branch that unlocks early still counts as one span up
-// to the last matching unlock before the next lock of the same mutex.
+// to the last matching unlock before the next lock of the same mutex, but a
+// call that follows an unlock in the same block (an early-return branch, for
+// example) is not listed under the lock.
 func LockScopes(g *graph.Graph, rootDir, term string) (LockScopeReport, error) {
 	if g == nil {
 		return LockScopeReport{}, fmt.Errorf("graph is unavailable")
@@ -113,11 +118,15 @@ func LockScopes(g *graph.Graph, rootDir, term string) (LockScopeReport, error) {
 		line int
 	}
 	var calls []callSite
+	type block struct{ pos, end token.Pos }
+	var blocks []block
 	deferredCalls := map[*ast.CallExpr]bool{}
 	var walk func(n ast.Node, deferred bool)
 	walk = func(n ast.Node, deferred bool) {
 		ast.Inspect(n, func(node ast.Node) bool {
 			switch x := node.(type) {
+			case *ast.BlockStmt, *ast.CaseClause, *ast.CommClause:
+				blocks = append(blocks, block{pos: x.Pos(), end: x.End()})
 			case *ast.DeferStmt:
 				deferredCalls[x.Call] = true
 				// A deferred closure releases at return too.
@@ -148,6 +157,13 @@ func LockScopes(g *graph.Graph, rootDir, term string) (LockScopeReport, error) {
 		})
 	}
 	walk(fn.Body, false)
+	for i := range unlocks {
+		for _, b := range blocks {
+			if b.pos <= unlocks[i].pos && unlocks[i].end <= b.end && (unlocks[i].blockEnd == 0 || b.end-b.pos < unlocks[i].blockEnd-b.pos) {
+				unlocks[i].blockEnd = b.end
+			}
+		}
+	}
 	sort.Slice(locks, func(i, j int) bool { return locks[i].pos < locks[j].pos })
 
 	for i, lock := range locks {
@@ -190,13 +206,28 @@ func LockScopes(g *graph.Graph, rootDir, term string) (LockScopeReport, error) {
 			scope.EndLine = report.EndLine
 		}
 		for _, call := range calls {
-			if call.pos > lock.end && call.pos < end {
-				scope.Calls = append(scope.Calls, LockCall{Call: call.text, Line: call.line})
+			if call.pos <= lock.end || call.pos >= end || releasedBefore(unlocks, lock, limit, call.pos) {
+				continue
 			}
+			scope.Calls = append(scope.Calls, LockCall{Call: call.text, Line: call.line})
 		}
 		report.Locks = append(report.Locks, scope)
 	}
 	return report, nil
+}
+
+// releasedBefore reports whether a non-deferred unlock of lock, before limit,
+// precedes pos in the same block, so the call at pos runs after the release.
+func releasedBefore(unlocks []lockSite, lock lockSite, limit, pos token.Pos) bool {
+	for _, unlock := range unlocks {
+		if unlock.deferred || unlock.mutex != lock.mutex || unlock.unlock != lock.unlock || unlock.pos <= lock.pos || unlock.pos >= limit {
+			continue
+		}
+		if unlock.end <= pos && pos < unlock.blockEnd {
+			return true
+		}
+	}
+	return false
 }
 
 func callText(fun ast.Expr) string {
