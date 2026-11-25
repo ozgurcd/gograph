@@ -20,6 +20,7 @@ type callTargetMatcher struct {
 	targetIDs  map[string]bool
 	targets    []graph.SymbolNode
 	qualifiers map[string]map[string]string // file -> import path -> qualifier
+	receivers  *receiverTypeIndex
 }
 
 func newCallTargetMatcher(g *graph.Graph, query string, exact bool, resolved map[string]bool, symbols []graph.SymbolNode) *callTargetMatcher {
@@ -48,6 +49,7 @@ func newSymbolCallMatcher(g *graph.Graph, target graph.SymbolNode) *callTargetMa
 }
 
 func (matcher *callTargetMatcher) indexImports(g *graph.Graph) {
+	matcher.receivers = newReceiverTypeIndex(g)
 	matcher.qualifiers = make(map[string]map[string]string)
 	{
 		for _, edge := range g.Imports {
@@ -132,7 +134,7 @@ func (matcher *callTargetMatcher) matches(edge graph.CallEdge, callerID string) 
 // called identifier must equal the target's name; a function must be called
 // unqualified from its own package or through the qualifier the calling file
 // imports its package under; a method must be called through some receiver
-// expression.
+// expression whose lexically known type, if any, can reach the target.
 func (matcher *callTargetMatcher) rawCallMayTarget(edge graph.CallEdge, callerID string, target graph.SymbolNode) bool {
 	qualifier, name := splitRawCallee(edge.CalleeRaw)
 	if name != target.Name {
@@ -141,7 +143,10 @@ func (matcher *callTargetMatcher) rawCallMayTarget(edge graph.CallEdge, callerID
 	if target.Kind == graph.KindMethod {
 		// "pkg.Name" through an imported package name is a function call,
 		// not a method call; "pkg.Var.Method" stays a candidate.
-		return qualifier != "" && !matcher.isImportQualifier(edge.File, qualifier)
+		if qualifier == "" || matcher.isImportQualifier(edge.File, qualifier) {
+			return false
+		}
+		return !matcher.receivers.excludes(qualifier, edge.QualifierType, edge.File, target)
 	}
 	if !strings.Contains(target.ID, "::") {
 		// Legacy IDs carry no package, so only the name can be checked.

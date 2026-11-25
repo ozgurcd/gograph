@@ -145,7 +145,7 @@ new declarations. CLI uses the same rules.
 | `gograph_flow` | Potential HTTP/JSON/env paths to SQL, process, filesystem, and outbound HTTP sinks |
 | `gograph_changes` | Declaration add/modify/delete/excluded/unknown census against persisted graph or `git_ref`; require `evaluation=complete` before treating the result as exhaustive |
 | `gograph_tests` with `uncommitted=true` (or `since=<ref>`, or `symbol=<symbol>, select=true`) | Which tests to run for a change: per-package anchored `go test -run` patterns and ready commands; `max_depth=3` keeps nearby tests |
-| `gograph_tests` with `symbol=<symbol>, transitive=true` | Tests statically reaching a symbol: summary by depth first, then 50 per page, nearest first (`limit`, `cursor`, `max_depth`); omit `transitive` for direct edges, where `Receiver.Method` and stable IDs are accepted |
+| `gograph_tests` with `symbol=<symbol>, transitive=true` | Tests statically reaching a symbol: summary by depth first, then 50 per page, nearest first (`limit`, `cursor`, `max_depth`); omit `transitive` for direct edges, where `Receiver.Method` and stable IDs are accepted. On AST graphs, calls through a receiver of a known other type (for example `e.Error()` with `e := otherErr{}`) are not attributed |
 | `gograph_coverage` with `test=<TestFunc>` | Transitive product symbols one unambiguous test statically reaches; exact/possible paths; optional `package` disambiguation |
 | `gograph_identity` with `symbol=<symbol-or-stable-id>` | Print or re-resolve canonical symbol identity without silently choosing ambiguity; optional `package` disambiguation |
 | `gograph_check` | Policy checks, including changed-route tests, coverage, orphans, API drift, arity, and complexity |

@@ -48,7 +48,12 @@ substring match only for a name that matches nothing exactly.
 `path` accepts a file, package-path or ID selector at either end: the walk
 starts from, or ends at, that one declaration, and on AST graphs the
 destination is matched with the same per-declaration rule as `callers`, so a
-same-named function in another package does not stand in for it.
+same-named function in another package does not stand in for it. Unresolved
+method calls carry `qualifier_type`, the lexically known type of the receiver
+root (`x` in `x.f.M()`); AST matching for callers, path, tests, plan, review and
+coverage follows it through struct fields and drops a target whose receiver is a
+different type that declares the method itself or has no embedded types.
+Unknown or interface types keep the call a candidate.
 
 Named limits: embeds, constructors, literals, returnusage, mutate and
 endpoint reject file-qualified selectors. Their relationship records use

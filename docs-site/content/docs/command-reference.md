@@ -339,6 +339,7 @@ imports and comments. A file changed since the build is refused. MCP:
 gograph callers <function> [--no-tests] [--depth N] [--exact] [--mermaid]
 ```
 Finds all callers of a target function or method.
+- On AST graphs, a method call whose receiver type is spelled in the calling function (the receiver, a typed parameter or `var`, a composite literal or `new(T)`, then struct fields such as `c.clock.now()`) is not matched to a same-name method of another type; `tests`, `plan`, `review` and `coverage` apply the same rule. Interface values, call results, shadowed names and structs with embedded types stay candidates. Graphs built before this need `gograph build .` (incremental builds re-parse automatically).
 - Interface-qualified names such as `Repository.Delete`, including methods inherited from embedded interfaces, resolve through every recorded precise implementer. If several targets correspond to one invocation, the source expression is returned once. Records with a known column report it as well as the line; records without a column remain line-only.
 - **Flags**:
   - `--no-tests`: Filters out test files from caller results.

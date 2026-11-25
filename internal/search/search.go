@@ -1685,12 +1685,32 @@ func Concurrency(g *graph.Graph, term string) []Result {
 
 // Tests returns all test functions that exercise the named symbol.
 // Pass an empty term to list all test edges.
+// uniqueExactMethod returns the one method that term names exactly, such as
+// Receiver.Method. Other spellings keep the name-based test match.
+func uniqueExactMethod(g *graph.Graph, term string) (graph.SymbolNode, bool) {
+	var found graph.SymbolNode
+	count := 0
+	for _, symbol := range g.Symbols {
+		if (symbol.Kind == graph.KindFunction || symbol.Kind == graph.KindMethod) && matchSymbolExact(symbol, term) {
+			found, count = symbol, count+1
+		}
+	}
+	return found, count == 1 && found.Kind == graph.KindMethod
+}
+
 func Tests(g *graph.Graph, term string) []Result {
 	// An AST graph records test targets by name only, so a resolved
 	// selector also matches unresolved references that can name the symbol.
 	var selected *callTargetMatcher
 	var selectedSymbol graph.SymbolNode
-	if target, ok := qualifiedTarget(g, term); ok {
+	target, ok := qualifiedTarget(g, term)
+	if !ok {
+		// Receiver.Method and other exact spellings that select one
+		// declaration also bind to it, so unresolved test calls are matched
+		// by name and receiver type, not by their raw text.
+		target, ok = uniqueExactMethod(g, term)
+	}
+	if ok {
 		term = target.ID
 		selected, selectedSymbol = newSymbolCallMatcher(g, target), target
 	}
@@ -1698,7 +1718,7 @@ func Tests(g *graph.Graph, term string) []Result {
 	seen := make(map[string]bool)
 	for _, te := range g.TestEdges {
 		unresolvedMatch := selected != nil && te.TargetSymbolID == "" &&
-			selected.rawCallMayTarget(graph.CallEdge{CalleeRaw: te.Target, File: te.File}, "", selectedSymbol)
+			selected.rawCallMayTarget(graph.CallEdge{CalleeRaw: te.Target, QualifierType: te.QualifierType, File: te.File}, "", selectedSymbol)
 		if unresolvedMatch || matchTestTarget(te.Target, te.TestFunc, term) || te.TargetSymbolID != "" && matchTestTarget(te.TargetSymbolID, te.TestFunc, term) {
 			key := fmt.Sprintf("%s|%s|%s", te.TestFunc, te.Target, te.TargetSymbolID)
 			if seen[key] {

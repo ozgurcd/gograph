@@ -3870,6 +3870,10 @@ CALL GRAPH
                              ("pkg/path::(*S).Validate" — exact match, no same-name conflation).
                              callers/callees match exact spellings first and never also select
                              longer names; a short name with no exact match falls back to substring.
+                             AST graphs also record each method call's lexically known receiver
+                             type (receiver, typed params/vars, composite literals, struct fields)
+                             and skip same-name methods of a known other type; callers, tests, plan
+                             and coverage use it. Unknown receivers stay candidates.
                              --precise improves resolution (chained calls, interface dispatch).
   trace <err_str>            Find the origin of an error and trace backwards to entry points.
   orphans                    Functions unreachable from runtime/test/route/public entry

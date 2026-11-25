@@ -293,7 +293,7 @@ func (snapshot *Snapshot) Coverage(query, packageName string, exactOnly bool) Co
 			enqueue(coverageState{id: edge.TargetSymbolID, resolution: resolution, depth: 1, parent: test.StableID})
 			continue
 		}
-		for _, id := range snapshot.unresolvedTargets().targetIDs(edge.Target, test.Package) {
+		for _, id := range snapshot.unresolvedTargets().receiverTargetIDs(edge.Target, test.Package, edge.QualifierType, edge.File) {
 			enqueue(coverageState{id: id, resolution: "possible", depth: 1, parent: test.StableID})
 		}
 	}
@@ -314,7 +314,7 @@ func (snapshot *Snapshot) Coverage(query, packageName string, exactOnly bool) Co
 				enqueue(coverageState{id: edge.CalleeSymbolID, resolution: resolution, depth: state.depth + 1, parent: state.id})
 				continue
 			}
-			for _, id := range snapshot.unresolvedTargets().targetIDs(edge.CalleeRaw, symbols[state.id].PackageName) {
+			for _, id := range snapshot.unresolvedTargets().receiverTargetIDs(edge.CalleeRaw, symbols[state.id].PackageName, edge.QualifierType, edge.File) {
 				enqueue(coverageState{id: id, resolution: "possible", depth: state.depth + 1, parent: state.id})
 			}
 		}
@@ -544,12 +544,15 @@ func buildAttributionGraph(g *graph.Graph) attributionGraphData {
 	seen := make(map[string]struct{})
 	targetIndex := newUnresolvedTargetIndex(g)
 	resolvedTargets := make(map[string][]string)
-	resolveTargets := func(raw, callerPackage string) []string {
+	resolveTargets := func(raw, callerPackage, qualifierType, file string) []string {
 		key := raw + "\x00" + callerPackage
+		if qualifierType != "" {
+			key += "\x00" + qualifierType + "\x00" + file
+		}
 		if ids, ok := resolvedTargets[key]; ok {
 			return ids
 		}
-		ids := targetIndex.targetIDs(raw, callerPackage)
+		ids := targetIndex.receiverTargetIDs(raw, callerPackage, qualifierType, file)
 		resolvedTargets[key] = ids
 		return ids
 	}
@@ -586,7 +589,7 @@ func buildAttributionGraph(g *graph.Graph) attributionGraphData {
 			if test, ok := tests[from]; ok {
 				callerPackage = test.PackageName
 			}
-			for _, id := range resolveTargets(call.CalleeRaw, callerPackage) {
+			for _, id := range resolveTargets(call.CalleeRaw, callerPackage, call.QualifierType, call.File) {
 				add(from, id, "possible")
 			}
 		}
@@ -602,7 +605,7 @@ func buildAttributionGraph(g *graph.Graph) attributionGraphData {
 				add(from, edge.TargetSymbolID, resolution)
 				continue
 			}
-			for _, id := range resolveTargets(edge.Target, tests[from].PackageName) {
+			for _, id := range resolveTargets(edge.Target, tests[from].PackageName, edge.QualifierType, edge.File) {
 				add(from, id, "possible")
 			}
 		}
@@ -746,8 +749,9 @@ func callResolution(resolution graph.CallResolution) string {
 // instead of with every symbol in the graph. The index is immutable after
 // construction and safe for concurrent use.
 type unresolvedTargetIndex struct {
-	g      *graph.Graph
-	byName map[string][]int
+	g         *graph.Graph
+	byName    map[string][]int
+	receivers *receiverTypeIndex
 }
 
 func newUnresolvedTargetIndex(g *graph.Graph) *unresolvedTargetIndex {
@@ -755,6 +759,7 @@ func newUnresolvedTargetIndex(g *graph.Graph) *unresolvedTargetIndex {
 	if g == nil {
 		return index
 	}
+	index.receivers = newReceiverTypeIndex(g)
 	for position, symbol := range g.Symbols {
 		if symbol.Kind != graph.KindFunction && symbol.Kind != graph.KindMethod {
 			continue
@@ -795,6 +800,13 @@ func unresolvedCandidateNames(raw, name string) []string {
 }
 
 func (index *unresolvedTargetIndex) targetIDs(raw, callerPackage string) []string {
+	return index.receiverTargetIDs(raw, callerPackage, "", "")
+}
+
+// receiverTargetIDs is targetIDs for a call written in file whose receiver
+// root has the lexical type qualifierType (CallEdge.QualifierType): methods
+// of a provably different receiver type are dropped.
+func (index *unresolvedTargetIndex) receiverTargetIDs(raw, callerPackage, qualifierType, file string) []string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || index.g == nil {
 		return nil
@@ -818,6 +830,10 @@ func (index *unresolvedTargetIndex) targetIDs(raw, callerPackage string) []strin
 		matched := matchSymbolExact(symbol, raw)
 		if !matched && symbol.Name == name {
 			matched = strings.Contains(raw, ".") || symbol.PackageName == callerPackage
+		}
+		if matched && qualifierType != "" && symbol.Kind == graph.KindMethod {
+			qualifier, _ := splitRawCallee(raw)
+			matched = !index.receivers.excludes(qualifier, qualifierType, file, symbol)
 		}
 		if matched && !seen[symbol.ID] {
 			seen[symbol.ID] = true

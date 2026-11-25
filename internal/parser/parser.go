@@ -1220,6 +1220,7 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 		functionResolver := resolver.forFunction(d)
 		result.FlowFunctions = append(result.FlowFunctions, extractFlowFunction(fset, d, relPath, sym, resolver))
 		mutationTypes := mutationValueTypes(d)
+		receiverTypes := functionLexicalTypes(d)
 		callerName := d.Name.Name
 		if receiver != "" {
 			callerName = fmt.Sprintf("(%s).%s", receiver, d.Name.Name)
@@ -1343,11 +1344,12 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 			// Test edge: record which production symbols a test calls.
 			if isTestFunc && callee != "" && !strings.HasPrefix(callee, "t.") && !strings.HasPrefix(callee, "b.") {
 				result.TestEdges = append(result.TestEdges, graph.TestEdge{
-					TestFunc: d.Name.Name,
-					Target:   callee,
-					File:     relPath,
-					Line:     callPos.Line,
-					Column:   callPos.Column,
+					TestFunc:      d.Name.Name,
+					Target:        callee,
+					QualifierType: receiverTypes.qualifierType(call),
+					File:          relPath,
+					Line:          callPos.Line,
+					Column:        callPos.Column,
 				})
 			}
 
@@ -1361,6 +1363,7 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 					CallerSymbolID: sym.ID,
 					CallerName:     callerName,
 					CalleeRaw:      callee,
+					QualifierType:  receiverTypes.qualifierType(call),
 					File:           relPath,
 					Line:           callPos.Line,
 					Column:         callPos.Column,
