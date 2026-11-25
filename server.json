@@ -15,7 +15,7 @@
       "registryType": "mcpb",
       "identifier": "https://github.com/ozgurcd/gograph/releases/download/v1.7.25/gograph_1.7.25_darwin_amd64.mcpb",
       "version": "1.7.25",
-      "fileSha256": "38a498db0e5fa8d4843cbd0c64670a8a4a7f07d166d026d693c2159d4b45d228",
+      "fileSha256": "413d65735193b68ada2acbc21f13f7a67cb0b82c7a20a698ad89a6a80774718b",
       "transport": {
         "type": "stdio"
       }
@@ -24,7 +24,7 @@
       "registryType": "mcpb",
       "identifier": "https://github.com/ozgurcd/gograph/releases/download/v1.7.25/gograph_1.7.25_darwin_arm64.mcpb",
       "version": "1.7.25",
-      "fileSha256": "bb47de6f46380157e1857cdf53f5daefbfe6a8552a3e93175a3022221dd22eb8",
+      "fileSha256": "abe2266ed57cb46c800614dbe791b165f6e18cde5e568d46c1221ef7c29e9921",
       "transport": {
         "type": "stdio"
       }
@@ -33,7 +33,7 @@
       "registryType": "mcpb",
       "identifier": "https://github.com/ozgurcd/gograph/releases/download/v1.7.25/gograph_1.7.25_linux_amd64.mcpb",
       "version": "1.7.25",
-      "fileSha256": "50cef1b2e3be3e63167248af7c012008f1835ba9b7be5db0a1b233cbb9e8f1c8",
+      "fileSha256": "082006eb0141ee1c7a3e0be6615b0f1d3f6f1da4c663d062980f3417d53dd5cc",
       "transport": {
         "type": "stdio"
       }
@@ -42,7 +42,7 @@
       "registryType": "mcpb",
       "identifier": "https://github.com/ozgurcd/gograph/releases/download/v1.7.25/gograph_1.7.25_linux_arm64.mcpb",
       "version": "1.7.25",
-      "fileSha256": "69670494f31559ce427af9832b80f33ad9f2c866586424871e5b9f50712ee611",
+      "fileSha256": "7f50a80f3ebb4bb78d0789d6f4ad4833d1d01c10abc4e7d1fb4acaef4cfded38",
       "transport": {
         "type": "stdio"
       }
