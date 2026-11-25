@@ -261,3 +261,33 @@ func TestPathAcceptsDeclarationSelectors(t *testing.T) {
 		t.Errorf("lib's resolve must not stand in for main's: %s", out)
 	}
 }
+
+func TestSkeletonFileShowsImportBlock(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":     "module example.com/imports\n\ngo 1.22\n",
+		"main.go":    "package main\n\nimport (\n\t\"fmt\"\n\tstr \"strings\"\n\n\t\"example.com/imports/lib\"\n)\n\nfunc main() { fmt.Println(str.ToUpper(lib.Name())) }\n",
+		"lib/lib.go": "package lib\n\nimport \"os\"\n\nfunc Name() string { return os.Args[0] }\n",
+	}
+	for name, body := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, stderr, code := runCLIParityInDir(t, root, func() int { return Run([]string{"build", "."}) }); code != 0 {
+		t.Fatalf("build failed: %s", stderr)
+	}
+	out, stderr, code := runCLIParityInDir(t, root, func() int { return Run([]string{"skeleton", "main.go"}) })
+	want := "package main\n\nimport (\n\t\"fmt\"\n\tstr \"strings\"\n\n\t\"example.com/imports/lib\"\n)\n\nfunc main()"
+	if code != 0 || !strings.HasPrefix(out, want) {
+		t.Fatalf("skeleton main.go: code=%d out=%q err=%s", code, out, stderr)
+	}
+	out, _, _ = runCLIParityInDir(t, root, func() int { return Run([]string{"skeleton", "lib/lib.go"}) })
+	if !strings.HasPrefix(out, "package lib\n\nimport \"os\"\n\nfunc Name()") {
+		t.Fatalf("skeleton lib/lib.go: %q", out)
+	}
+}

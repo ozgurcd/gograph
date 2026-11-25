@@ -2740,8 +2740,8 @@ func initNewTools(
 
 	// Tool: gograph_skeleton
 	skeletonTool := mcp.NewTool("gograph_skeleton",
-		mcp.WithDescription("Emit API signatures with function bodies stripped — struct definitions, interface declarations, and function/method signatures only. Supply file for one exact repository-relative indexed file; omit it for the full repository. Unknown files return an error. WARNING: whole-repository output can be very large. WHEN TO USE: For a file's declarations or a compact map of the entire codebase's shape. NOT TO USE: For full implementations (use gograph_source); for a single package (use gograph_public). RETURNS: Multi-line text of stripped declarations and package names."),
-		mcp.WithString("file", mcp.Description("Optional repository-relative indexed file; selects only that file's package and declarations. Unknown files are errors, never a repository fallback.")),
+		mcp.WithDescription("Emit API signatures with function bodies stripped — struct definitions, interface declarations, and function/method signatures only. Supply file for one exact repository-relative indexed file (its output also starts with the file's import block); omit it for the full repository. Unknown files return an error. WARNING: whole-repository output can be very large. WHEN TO USE: For a file's declarations or a compact map of the entire codebase's shape. NOT TO USE: For full implementations (use gograph_source); for a single package (use gograph_public). RETURNS: Multi-line text of stripped declarations and package names."),
+		mcp.WithString("file", mcp.Description("Optional repository-relative indexed file; selects only that file's package, import block and declarations. Unknown files are errors, never a repository fallback.")),
 	)
 	addTool(skeletonTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)

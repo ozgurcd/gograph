@@ -3793,7 +3793,8 @@ SEARCH & NAVIGATION
                              show "via <method-name>" in Detail. The ++/+= and
                              indirect-mutation cases require a --precise build.
   arity [--min 5]            Find functions with many arguments (long parameter list smell).
-  skeleton [file]            Output one indexed file's API signatures; omit file for the whole repository.
+  skeleton [file]            Output one indexed file's import block and API signatures;
+                             omit file for the whole repository (signatures only).
 
 CALL GRAPH
   callers <function> [--no-tests] [--depth N] [--exact]

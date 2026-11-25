@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/graph"
@@ -26,10 +27,13 @@ func SkeletonFile(g *graph.Graph, file string) (string, error) {
 				selected.Symbols = append(selected.Symbols, symbol)
 			}
 		}
+		header := fmt.Sprintf("package %s\n\n", indexed.PackageName)
+		imports := skeletonImports(g, indexed.Path)
 		if len(selected.Symbols) == 0 {
-			return fmt.Sprintf("package %s\n\n", indexed.PackageName), nil
+			return header + imports, nil
 		}
-		return Skeleton(selected), nil
+		body := strings.TrimPrefix(Skeleton(selected), header)
+		return header + imports + body, nil
 	}
 	return "", fmt.Errorf("skeleton: file %q is not indexed", file)
 }
@@ -100,5 +104,53 @@ func Skeleton(g *graph.Graph) string {
 		sb.WriteString("\n\n")
 	}
 
+	return sb.String()
+}
+
+// skeletonImports renders a file's import block as gofmt groups it: standard
+// library paths first, then the rest, each sorted, with any alias. It returns
+// "" when the file imports nothing.
+func skeletonImports(g *graph.Graph, file string) string {
+	type spec struct{ alias, path string }
+	var specs []spec
+	seen := make(map[spec]bool)
+	for _, edge := range g.Imports {
+		item := spec{alias: edge.Alias, path: edge.ImportPath}
+		if edge.FromFile == file && !seen[item] {
+			seen[item] = true
+			specs = append(specs, item)
+		}
+	}
+	if len(specs) == 0 {
+		return ""
+	}
+	standard := func(importPath string) bool {
+		first, _, _ := strings.Cut(importPath, "/")
+		return !strings.Contains(first, ".")
+	}
+	sort.Slice(specs, func(i, j int) bool {
+		if si, sj := standard(specs[i].path), standard(specs[j].path); si != sj {
+			return si
+		}
+		return specs[i].path < specs[j].path
+	})
+	render := func(item spec) string {
+		if item.alias != "" {
+			return item.alias + " " + strconv.Quote(item.path)
+		}
+		return strconv.Quote(item.path)
+	}
+	if len(specs) == 1 {
+		return "import " + render(specs[0]) + "\n\n"
+	}
+	var sb strings.Builder
+	sb.WriteString("import (\n")
+	for i, item := range specs {
+		if i > 0 && standard(specs[i-1].path) && !standard(item.path) {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\t" + render(item) + "\n")
+	}
+	sb.WriteString(")\n\n")
 	return sb.String()
 }
