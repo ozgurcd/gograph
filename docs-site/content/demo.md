@@ -1,14 +1,14 @@
 ---
-title: "Explore gograph"
-description: "Investigate a Go checkout service with guided structural queries and reproducible benchmark evidence."
+title: "Interactive Go Call-Graph Demo"
+date: 2026-06-03
+lastmod: 2026-11-25
+description: "Explore a sample Go checkout service in your browser: trace callers, implicit interface implementations, blast radius, and reproducible structural benchmark evidence."
 url: "/demo/"
 ---
 
-Follow a request through a small Go service, inspect the code behind each
-finding, and see what an agent can learn before it edits. Then open the verified
-comparison for three clear examples: evidence text search misses, a three-search
-checklist reduced to one call, and a smaller exact source block. The evidence
-view preserves the reproducible benchmark and complete raw output.
+Follow a request through a small Go checkout service, inspect the source behind each structural finding, and compare `gograph` against literal text search without installing anything locally.
+
+The interactive workspace below demonstrates four concrete Go engineering tasks on a checked-in repository fixture: resolving implicit interface implementations, tracing interface-dispatched callers, assembling a single-call change-impact plan, and extracting exact AST-bounded function source. For raw benchmark methodology and reproduction steps, see [Evidence & Methodology](/benchmarks/).
 
 <link rel="stylesheet" href="/demo/demo.css?v=20260816-contrast">
 

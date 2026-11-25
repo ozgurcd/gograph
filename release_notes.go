@@ -1,5 +1,3 @@
-// Package gograph embeds repository-level documents that the gograph binary
-// serves at run time. The command lives in cmd/gograph.
 package gograph
 
 import _ "embed"

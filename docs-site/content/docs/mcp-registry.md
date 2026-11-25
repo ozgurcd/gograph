@@ -1,7 +1,9 @@
 ---
-title: "Official MCP Registry"
-weight: 5
-description: "Discover and install gograph as a local MCP Bundle, select the correct platform asset, and understand the preview limitations."
+title: "Official MCP Registry (MCPB) Guide"
+weight: 7
+date: 2026-08-03
+lastmod: 2026-11-25
+description: "Install gograph as a local stdio MCP Bundle (io.github.ozgurcd/gograph) from the Official MCP Registry, choose platform assets, and review local data handling."
 ---
 
 gograph is published to the official Model Context Protocol Registry under

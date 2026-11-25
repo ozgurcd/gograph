@@ -1,153 +1,96 @@
 ---
 title: "gograph"
-description: "A local structural graph for safer Go refactors, repository-level analysis, and coding-agent workflows."
+date: 2026-05-23
+lastmod: 2026-11-25
+description: "Local Go static analysis, call-graph, blast-radius, test-selection, and CI architecture-gate CLI, with a built-in stdio MCP server."
 ---
 
-## Compiler-aware repository context for Go coding agents
+## Call-Graph and Architecture Analysis for Go
 
-gograph builds a local structural graph of a Go repository, with optional
-type-checked CHA/SSA enrichment. Use it to trace callers and interface
-implementations, plan change impact, and enforce architecture through CLI or
-MCP without embeddings or a hosted code index.
+Before refactoring a Go codebase, engineers need structural answers that text search and single-hop references do not provide: which callers break if a signature changes, which tests transitively reach a modified function, and whether a pull request introduces a forbidden package import or a complexity regression.
 
-**[Explore a Go repository without installing →](/demo/)**
+`gograph` indexes a Go repository locally into an AST and optional type-checked (CHA/SSA) dependency graph. Query it from the terminal, enforce architectural constraints in CI, or expose the same graph to AI coding agents over stdio MCP—without hosted services, embeddings, or target-code execution.
 
-Trace a checkout request, inspect source-backed graph findings, and build a
-change plan in the guided workspace. Compare actual gograph and `rg` output
-through three clear structural examples. The separate evidence view preserves
-the precise benchmark, declared ground truth, exact commands, and complete raw
-output. Read the [methodology and limitations →](/benchmarks/)
+**[Interactive browser demo →](/demo/)** · **[CI Architecture Gates →](/docs/ci-architecture-gates/)** · **[Compare with gopls, golangci-lint & ripgrep →](/docs/comparisons/)**
+
+---
+
+### Core Workflows
+
+#### 1. Blast-Radius and Call-Graph Inspection
+Trace transitive callers, interface implementations, and call paths before changing a shared function or interface. Render any call or package dependency slice as a Mermaid diagram.
 
 ```bash
-gograph build .           # fast AST graph; tolerates incomplete packages
-gograph build . --precise --tags=integration # include tagged files/tests
-gograph stats             # verify build health and analysis precision
-gograph summary           # repository overview; no symbol name required
-gograph hotspot --top 5   # choose a real symbol for context or plan
-gograph explore YourSymbol --compact # low-token discovery and complete evidence counts
-gograph explore YourSymbol --deep    # bounded depth-3 exact evidence, package context, explanation
-gograph flow --no-tests   # potential production source-to-sink paths
+gograph build . --precise
+gograph impact Store.Save
+gograph callers Store.Save --mermaid
+gograph path HandleCheckout CommitLedger --mermaid
 ```
 
-For a compilable repository, run `gograph build . --precise` before a major
-refactor; add `--tags=integration` when that build selection is relevant, and
-use the same option on MCP startup. Then pass a real function or method reported by `hotspot`, `summary`,
-or `complexity` to `gograph context` and `gograph plan`.
+#### 2. Targeted Test Selection and Coverage Gaps
+Map transitive static test reachability for uncommitted changes and combine it with `go test -coverprofile` to locate unexecuted lines.
 
-### Real Command Output Example
+```bash
+# Print runnable `go test -run` commands for uncommitted changes
+gograph tests --uncommitted --format go-test --max-depth 3
 
-This captured example shows the output shape for callers of `loadGraph`; symbols and line numbers evolve with the repository:
+# List called production symbols with no static test path
+gograph untested --exclude-interface-methods --top 20
 
-```text
-$ gograph callers loadGraph
-
-[caller] BuildBaselineGraphFromGitRef — calls loadGraph  ->  `return buildGraph(tmpDir)`  (internal/cli/baseline.go) [call @ internal/cli/baseline.go:84]
-[caller] NewServer$14 — calls loadGraph  ->  `baselineGraph, err := buildGraph(tmpDir)`  (internal/mcp/server.go) [call @ internal/mcp/server.go:531]
-[caller] runAPI — calls loadGraph  ->  `currentGraph, err := loadGraph(".")`  (internal/cli/api.go:11) [call @ internal/cli/api.go:29]
-[caller] runArity — calls loadGraph  ->  `g, err := loadGraph(".")`  (internal/cli/cli.go:1341) [call @ internal/cli/cli.go:1352]
-[caller] runErrorFlow — calls loadGraph  ->  `g, err := loadGraph(".")`  (internal/cli/cli.go:2046) [call @ internal/cli/cli.go:2064]
-[caller] runPlan — calls loadGraph  ->  `g, err := loadGraph(".")`  (internal/cli/cli.go:2433) [call @ internal/cli/cli.go:2450]
-[caller] runStats — calls loadGraph  ->  `g, err := loadGraph(".")`  (internal/cli/cli.go:1241) [call @ internal/cli/cli.go:1242]
+# List changed lines that a coverage profile never executed
+gograph uncovered --uncommitted --coverprofile cover.out
 ```
 
+#### 3. CI Package Boundaries and Quality Gates
+Commit layer import rules in `gograph/boundaries.json` and metric thresholds in `.gograph.yml` to enforce repository structure in CI.
 
+```bash
+gograph boundaries --create   # Snapshot current package layers into gograph/boundaries.json
+gograph gate init             # Scaffold .gograph.yml complexity/instability/god-object limits
+gograph build . --precise --strict && gograph boundaries && gograph gate
+```
 
-## Designed for focused agent workflows
+See the [CI Architecture Gates guide →](/docs/ci-architecture-gates/) for policy schemas and GitHub Actions configuration.
 
-Text search remains useful for strings, documentation, configuration, and
-non-Go files. Language servers provide live compiler-backed navigation and
-refactoring. gograph adds persisted repository structure and composed
-change-analysis responses for coding agents such as Claude Code, Cursor,
-Copilot, Antigravity, and OpenCode.
+#### 4. Built-In Stdio MCP Server
+For teams using Claude Code, Cursor, Codex, Copilot, or Antigravity, the same binary provides a 70-tool local stdio MCP server (`gograph mcp .`). It builds an in-memory graph on first use and refreshes changed packages automatically, with no manual build step required.
 
-* **Focused structural evidence**: AST-derived results avoid comments and raw
-  string matches when the question is about Go symbols or relationships.
-* **Explicit correctness modes**: Build metadata distinguishes AST-only,
-  successful precise analysis, and visible precise fallback. A failed precise
-  retry does not replace an existing fresh precise artifact covering the same
-  selected sources.
-* **Composed workflows**: `explore`, `context`, `plan`, `review`, and `summary`
-  combine related graph evidence. `explore` discloses lexical selection,
-  ambiguity, full totals, and truncated sections; focused commands remain the
-  complete interfaces. Savings depend on the repository and task.
+See [MCP & AI Agent Integration →](/docs/agent-integration/) or [Official MCP Registry →](/docs/mcp-registry/).
 
+---
 
+### Installation
 
-
-## Install
-
-**Homebrew**
 ```bash
 brew install --cask ozgurcd/tap/gograph
 ```
 
-**Go install**
 ```bash
 go install github.com/ozgurcd/gograph/cmd/gograph@latest
 ```
 
-**Official MCP Registry / MCPB (preview)**
+Follow the [Getting Started guide →](/docs/getting-started/) to index a module and run initial queries.
 
-Registry server ID: `io.github.ozgurcd/gograph` (this is an identifier, not a
-web address). [View installation details](/docs/mcp-registry/) or
-[inspect the official Registry records](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.ozgurcd%2Fgograph).
+---
 
-This installs a platform-specific local MCP bundle in clients that support
-MCPB; it does not place the CLI on `PATH`. Select the Go project directory and
-the macOS/Linux/Windows amd64/arm64 asset matching the host. See the
-[Registry guide](/docs/mcp-registry/) for the current CPU-selection limitation.
+### Indexed Signals
 
-**From source**
-```bash
-git clone https://github.com/ozgurcd/gograph
-cd gograph
-make build
-sudo make install
-```
-
-## How it works
-
-1. **`gograph build .`** — first rejects linked/non-regular `go.mod`, `go.sum`, `go.work`, `go.work.sum`, and `vendor/modules.txt` metadata before toolchain use. Applicable `go.work use` members may be sibling modules beneath the nearest real Git checkout; without one they remain beneath the workspace directory. Nested Git boundaries are not crossed, and member directories, `go.mod`, and optional `go.sum` are validated before `cmd/go`. The shared scanner then excludes linked directories plus linked/special recognized Go build inputs before build selection and AST reads; unrelated non-Go regular-file/dangling links do not block precision. It extracts symbols, validated call edges, imports, HTTP routes (including constant nested Gin/Echo/Fiber groups and Chi Route closures), direct and statically resolved declared SQL strings, environment reads, struct fields and construction sites, error declarations, and typed synchronization primitives. Each parsed file stores a SHA-256 digest; later builds reparse changed packages and reuse parser records for unchanged packages. Graph/report publishers require a real `.gograph` directory and regular-or-absent lock entry, stage `graph.json` plus nine reports, rename the reports first, and rename `graph.json` last as the commit marker. Same-directory replacement is atomic on Unix-like systems but is not guaranteed atomic by Go on non-Unix platforms; the ten-file bundle is not one atomic filesystem transaction, so a crash can leave reports ahead of the graph marker. The build adds `.gograph/` to an absent or regular enclosing Git-root `.gitignore` when available and falls back to the build target outside Git; it refuses a link or special file. A zero-file or zero-successful-parse build does not replace existing artifacts; parse failures and selection/security warnings are recorded in graph metadata and make status partial.
-2. **Queries and refreshes** — graph-backed CLI analysis reads the last trusted, regular repository-confined `graph.json` with the current source-policy marker and replaces its serialized root with the selected project; successful JSON envelopes add `gograph.graph-state.v1` so persisted/in-memory source, current/stale freshness, complete/partial parsing, AST/precise/fallback analysis, refresh, and persistence are explicit. Commands whose contract reads source, Git, or other local state do so through their documented boundaries. MCP source-analysis tools check source-content digests, the build/module fingerprint, and newer usable persisted artifacts, adopt a newer compatible precise graph, and incrementally reparse changed packages after edits. Precise refreshes still recompute repository-wide CHA/SSA. Refresh-backed tools return their answer once, as compact JSON text without `structuredContent`, and attach `_meta.gograph_graph_state`. A failed precise enrichment may serve a marked current in-memory fallback; an ordinary refresh failure may serve the last trusted stale graph. Neither is silently published, and build-context mismatches still fail closed. When no usable artifact exists, persisted-index MCP tools use the startup fallback. Refreshes stay in memory by default. `gograph mcp [path] --persist-refresh` opts into publishing the latest successful refresh with the same graph-last protocol; later publication failure leaves a reported fresh in-memory result available. CLI builds and MCP startup accept the same validated, fingerprinted `--tags=integration[,tag...]` selection and retain it through scanning, precision, baselines, and refresh; omission preserves inherited `GOFLAGS`, while an explicit value replaces `GOFLAGS -tags`. They also optionally accept `--memory-mode=low --max-memory=1GiB`, preserving precision while prioritizing lower heap use through a soft Go runtime memory target and phase reclamation.
-3. **`--precise` mode** — attempts type-checked CHA/SSA enrichment. It needs compilable, build-selected packages for precise data; if type/load analysis fails or omits an indexed non-test file, gograph warns and normally records `precise_fallback` on the retained AST graph. A failed retry keeps an existing fresh successful precise artifact covering the same selected sources instead of downgrading it (`ast` identifies an explicitly requested AST build). Add `--strict` when fallback must return non-zero after publication or retention.
-
-Incremental builds reuse only parser-owned test records; typed-only interface
-targets are recomputed so unchanged precise builds cannot multiply them.
-Whole-artifact JSON reads reject files larger than 512 MiB before allocation.
-Query-only operations request a rebuild, while `gograph build` reconstructs an
-oversized previous graph from authoritative source.
-Precise SSA body construction is also confined to selected repository packages;
-imported type information remains available without building the full dependency
-closure or persisting its source-less wrapper edges.
-
-## What it captures
-
-| Signal | How extracted |
+| Structural Signal | Queryable Facts |
 |---|---|
-| Functions, methods, structs, interfaces, types, variables, constants | AST `FuncDecl`, `TypeSpec`, `ValueSpec` |
-| Call edges (caller → callee, with call-site file and line) | AST `CallExpr` |
-| HTTP routes (method + path + handler) | `gin`, `echo`, `chi`, `http.Handle*` literal patterns; bounded production-first pages with term/module filters and test opt-in |
-| SQL queries | Static PostgreSQL literals on `db.Query`, `db.Exec`, etc.; bounded CLI/MCP pages classify operation, read/write/DDL access, and referenced tables with explicit exact/partial/unknown status |
-| Environment reads | `os.Getenv`, `os.LookupEnv`, supported Viper `Get*` |
-| Struct-field and package-global mutations | Direct assignments plus precise alias, compound, atomic/sync/wrapper, and channel evidence |
-| Error and panic sites | `errors.New`, `fmt.Errorf`, sentinel declarations, `panic` |
-| Concurrency primitives | `go` statements, channel sends, typed `Mutex`/`RWMutex`/`WaitGroup`/`Once` calls |
-| Test edges (test → tested symbol) | `_test.go` call analysis |
-| Composite literal sites | `StructName{...}` |
-| Security flow facts | Sources, assignments, calls, returns, and sensitive sinks for query-time analysis |
+| **Symbols & Types** | Functions, methods, structs, interfaces, fields, embeddings, constructors, and constants |
+| **Call & Dispatch Graph** | Direct calls plus type-checked CHA/SSA interface dispatch and promoted-method forwarding |
+| **HTTP & SQL Surface** | `net/http`, Gin, Echo, and Chi routes; static PostgreSQL query access, tables, and verbs |
+| **Testing & Coverage** | Direct and transitive test-to-production paths, runnable `go test -run` filters, and coverprofile gaps |
+| **Architecture & Quality** | Package fan-in/fan-out instability, McCabe complexity, god objects, arity, and layer boundaries |
+| **Security & Concurrency** | Interprocedural source-to-sink taint candidates (`flow`), goroutines, channels, and `sync` primitives |
 
-## Why use it?
+---
 
-Use `rg` for text and non-Go searches and
-[`gopls`](https://go.dev/gopls/features/mcp) for live compiler-backed
-navigation, diagnostics, implementations, and refactoring. gograph complements
-them with persisted repository-level questions such as:
+### Documentation
 
-- What is the **blast radius** of changing this function?
-- What **interfaces** does this struct satisfy?
-- What **errors** can this HTTP handler return, and where do they originate?
-- Which symbols changed **since my last commit** and what tests cover them?
-- Is this function **reachable** from any entry point, or is it dead code?
-- Can HTTP, decoded JSON, or environment data reach a **security-sensitive sink**?
-
-These questions require a full in-memory call graph. gograph builds that graph and lets you query it directly from the terminal or from an AI agent via MCP.
+- **[Getting Started](/docs/getting-started/)** — Install `gograph`, choose AST vs. `--precise` mode, and inspect a repository.
+- **[Command Reference](/docs/command-reference/)** — Complete CLI flag, output-mode (`--json`, `--files-only`, `--mermaid`), and MCP parity reference.
+- **[CI Architecture Gates](/docs/ci-architecture-gates/)** — Enforce package boundaries, instability limits, and complexity ceilings in CI.
+- **[Tool Comparisons](/docs/comparisons/)** — How `gograph` complements `gopls`, `golangci-lint`, `go-callvis`, and `ripgrep`.
+- **[Engineering Workflows](/docs/workflows/)** — Onboarding, safe-edit refactoring, package splits, and security-flow review playbooks.
+- **[Evidence & Methodology](/benchmarks/)** — Reproducible structural-evidence benchmark and raw JSON outputs.
