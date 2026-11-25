@@ -19,6 +19,16 @@ checks use the querying process's Go context; without `--tags` or GOFLAGS
 `-tags`, CLI queries use the tags the graph was built with. MCP uses its
 startup context and explicit tags. A context mismatch remains stale, even when
 source bytes have not changed. No environment values are printed.
+CLI graph queries rebuild a stale graph before answering: changed packages
+only, with the graph's recorded precision (`--precise` graphs stay precise),
+build tags and excluded directories, and a one-line note on stderr (in the
+`warning` field under `--json`). `--no-refresh` or `GOGRAPH_NO_REFRESH=1`
+turns this off. A different build context (other `--tags` or GOFLAGS tags),
+another caller's active session, `--rev`, and the `stale`, `stats`, `changes`,
+`build`, `mcp` and `hook-guard` commands never rebuild; they keep the stale
+warning. The enforcement commands `gate`, `check` and `boundaries` never
+rebuild either: they judge the persisted graph (`gate` still fails on a stale
+one), so CI builds explicitly first.
 Precise indexes include package-level constant references in `usages` and `query`,
 including comparisons, switch cases, composite values, and function arguments.
 Typed enum-like constants retain their declaration identity; local shadows are excluded.

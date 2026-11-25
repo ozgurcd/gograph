@@ -33,6 +33,14 @@ Global flags may appear before or after the command:
   exclusions unless `--tags` or `GOFLAGS -tags` select others, which rebuilds
   it. Not accepted by `build`, `mcp`, `stale` or `workspace`, or with
   `--uncommitted`/`--since`. CLI only. Delete `.gograph/revs` to reclaim space.
+- `--no-refresh`: Answer from the persisted graph even when it is stale (with
+  the stale warning). Without it, a CLI graph query rebuilds a stale graph
+  first: changed packages only, with the recorded precision, build tags and
+  excluded directories, noted on stderr (or in `warning` under `--json`).
+  `GOGRAPH_NO_REFRESH=1` does the same for every call. A different build
+  context, another caller's active session and `--rev` never rebuild, nor do
+  `stale`, `stats`, `changes` and the enforcement commands `gate`, `check` and
+  `boundaries` (`gate` still fails on a stale graph).
 - `--session-id ID` / `GOGRAPH_SESSION=ID`: Select the caller's session returned
   by `session create`. The flag overrides the environment. Omission keeps a
   read-only caller outside other agents' audits; writes still refuse when another

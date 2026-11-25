@@ -391,6 +391,14 @@ fi
 Avoid `gograph stale || gograph build .`: that also rebuilds after exit `1` and
 can mask a real freshness-check failure.
 
+Graph queries do this themselves: a CLI query that finds the graph stale
+rebuilds it (changed packages only, with the recorded precision, tags and
+excluded directories) and prints `gograph: rebuilt the stale graph ...` on
+stderr, or adds it to `warning` under `--json`. `--no-refresh` or
+`GOGRAPH_NO_REFRESH=1` keeps the old behavior (answer from the stale graph
+with a warning). A different build context or another caller's active session
+also leaves the graph as it is, with the warning.
+
 ### 10. Reading Internal Implementations (Mock Stubs, Algorithms)
 When you need to read an indexed method body (for example, to check whether a
 mock repository has a `panic("not implemented")` stub), or inspect an indexed

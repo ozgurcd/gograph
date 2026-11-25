@@ -79,6 +79,9 @@ func Run(args []string) int {
 	// one process) never inherits an earlier --json, --files-only or --mermaid.
 	defer resetOutputModes()
 	resetOutputGraph()
+	resetAutoRefresh()
+	defer resetAutoRefresh()
+	noRefresh := false
 	if len(args) == 0 {
 		printHelp()
 		return 0
@@ -146,6 +149,8 @@ func Run(args []string) int {
 			i = len(args)
 		case "--json":
 			jsonMode = true
+		case "--no-refresh":
+			noRefresh = true
 		case "--files-only":
 			filesOnlyMode = true
 		case "--mermaid":
@@ -273,6 +278,7 @@ func Run(args []string) int {
 		}
 	}
 
+	autoRefresh.enabled = !noRefresh && !autoRefreshDisabledByEnv() && queryRev == "" && commandAutoRefreshes(args[0])
 	startTime := time.Now()
 	exitCode := dispatch(args)
 	elapsed := time.Since(startTime)
@@ -524,7 +530,8 @@ Partial builds record parse failures and selection/security warnings in graph.js
                     exits 0 (pass), 1 (evaluated fail), or 2 (cannot evaluate)
 
 CLI graph-backed analysis uses the last trusted persisted graph, written by a manual build or an
-opt-in MCP publication. Repository graph-backed --json envelopes add
+opt-in MCP publication; a query that finds it stale rebuilds it first with its recorded precision,
+tags and excluded dirs (--no-refresh or GOGRAPH_NO_REFRESH=1 turns this off). Repository graph-backed --json envelopes add
 gograph.graph-state.v1 so source, freshness, completeness, precision, refresh,
 and persistence are explicit. Text stats/stale show the persisted state.
 The MCP server checks source freshness and newer persisted graphs per call.
@@ -1258,7 +1265,9 @@ func buildGraphWithConfigContext(ctx context.Context, absRoot string, buildConfi
 		fmt.Fprintf(os.Stderr, "  warning: %v\n", e)
 		buildMetadata.Warnings = append(buildMetadata.Warnings, e.Error())
 	}
-	fmt.Fprintf(os.Stderr, "  found %d Go files to parse\n", len(files))
+	if !quietBuildProgress {
+		fmt.Fprintf(os.Stderr, "  found %d Go files to parse\n", len(files))
+	}
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no Go files in %s%s", absRoot, func() string {
 			if len(buildMetadata.Warnings) == 0 {
@@ -3194,8 +3203,13 @@ func loadGraph(root string) (*graph.Graph, error) {
 			return nil, fmt.Errorf("--rev %s: %w", queryRev, err)
 		}
 		root = revRoot
+		return loadGraphIgnoringRev(root)
 	}
-	return loadGraphIgnoringRev(root)
+	g, err := loadGraphIgnoringRev(root)
+	if err != nil {
+		return nil, err
+	}
+	return refreshStaleLoadedGraph(g), nil
 }
 
 // loadGraphIgnoringRev loads the persisted graph of root without applying --rev.
@@ -3688,6 +3702,11 @@ OUTPUT FLAGS
                              (working graph's recorded tags unless --tags/GOFLAGS);
                              later queries reuse it. Not with --uncommitted or --since.
                              CLI only; delete .gograph/revs to reclaim space.
+  --no-refresh               Answer from a stale graph (with a warning) instead of
+                             rebuilding it first. By default a graph query rebuilds a
+                             stale graph (changed packages; recorded precision, tags and
+                             excluded dirs) and notes it on stderr. GOGRAPH_NO_REFRESH=1
+                             sets this for every call.
                              Request only one of --json, --files-only, or --mermaid.
   -i, --intention <msg>      Explain the technical rationale for executing the command.
                              MANDATORY for all analytical commands when a session is active.

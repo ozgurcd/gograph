@@ -97,6 +97,9 @@ func PrintJSON(env Envelope) int {
 			}
 		}
 	}
+	if autoRefresh.note != "" {
+		env.Warning = strings.TrimSpace(autoRefresh.note + " " + env.Warning)
+	}
 	data, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "json marshal error: %v\n", err)

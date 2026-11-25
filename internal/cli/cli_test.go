@@ -400,6 +400,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 		"hook-guard",
 		"--", // end of global flags: later arguments go to the command verbatim
 		"--json",
+		"--no-refresh",
 		"--files-only",
 		"--mermaid",
 		"session",
