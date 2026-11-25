@@ -5,7 +5,7 @@
 `path/to/file.go:Name` and `path/to/file.go:Receiver.Method` select indexed
 declarations, as do the import-qualified forms printed by an ambiguous `source`
 answer. CLI and MCP support them in query, node, source, context, callers,
-callees, impact, explain, explore, plan, review, risk, identity, fields,
+callees, impact, path, explain, explore, plan, review, risk, identity, fields,
 interfaces, implementers, mocks, tests (direct and transitive), and coverage.
 `file.go:Name` selects only a function, type, variable or constant, never a
 method, so the selector printed for a function stays unique when the same file
@@ -18,8 +18,20 @@ A selector without a directory (`provider_hooks.go:Manager.Run`) matches by
 file name alone; when several packages have that file name, the answer is the
 usual ambiguity list of full selectors. A file selector that matches nothing
 prints the selectors that exist for that name, or says that no indexed file
-matches. `pkg.Name` selects package-level symbols only; methods are
+matches. Any other selector that matches nothing in `source` (CLI and MCP) gets
+up to five "did you mean" selectors: the same
+name under another receiver or package, another letter case, then close
+spellings. An empty `callers`/`callees` answer says when no indexed declaration
+matches the name, with the same suggestions, so a typo is not read as "no
+callers". `pkg.Name` selects package-level symbols only; methods are
 `pkg.Receiver.Method` or `Receiver.Method`.
+
+Package-path selectors accept the full import path or the repository-relative
+directory: `internal/client::Run`, `internal/client.Run` and
+`example.com/m/internal/client::Run` select the same function, and
+`internal/client::Manager.Run` a method. A shorter path matches whole trailing
+path segments only: `client::Manager.Run` matches the last segment, and
+`ernal/client::Run` matches nothing.
 
 File selectors and IDs find callers, callees and tests on AST graphs as well
 as precise ones. An AST graph records calls by name, so callers match an
@@ -33,7 +45,20 @@ exact spellings first, so `search.Callers` never also selects `CallersDepth`;
 (`json.Marshal` is not `json.MarshalIndent`), and `callees` falls back to a
 substring match only for a name that matches nothing exactly.
 
-Named limits: embeds, constructors, literals, returnusage, mutate, path and
+`path` accepts a file, package-path or ID selector at either end: the walk
+starts from, or ends at, that one declaration, and on AST graphs the
+destination is matched with the same per-declaration rule as `callers`, so a
+same-named function in another package does not stand in for it. Unresolved
+method calls carry `qualifier_type`, the lexically known type of the receiver
+root (`x` in `x.f.M()`), or the spelled type of a method called directly on
+`T{}`, `&T{}`, `new(T)` or `x.(T)` (whose raw callee is the bare method name);
+AST matching for callers, path, tests, plan, review and coverage follows it
+through struct fields and drops a target whose receiver is a different type
+that declares the method itself or has no embedded types, or a type of a
+package outside the graph (such as `bytes.Buffer`). Unknown or interface types
+keep the call a candidate.
+
+Named limits: embeds, constructors, literals, returnusage, mutate and
 endpoint reject file-qualified selectors. Their relationship records use
 lexical names and cannot reliably bind that file's declaration; use the
 documented name/type/field/route form. `usages` supports file-qualified variables
@@ -41,8 +66,9 @@ and constants, but returns a named limit for file-qualified types because type
 references are lexical. This avoids presenting an empty answer as a complete
 identity-based census. These limits also appear in capabilities.
 
-Package selectors (focus, public, imports, deps, dependents, globals), route/SQL
-filters, and lexical filters (envs, concurrency, errors, errorflow/trace, flow,
+Package selectors (focus, public, imports, deps, dependents, globals; globals
+takes a package name or a path such as `internal/app`), route/SQL
+filters, and lexical filters (envs, concurrency `[term]`, errors, errorflow/trace, flow,
 httpcalls) are not declaration selectors. The external `doc` command accepts
 Go import/symbol syntax, not repository file selectors. Workspace selectors
 use their separate member-and-stable-ID contract.
@@ -74,19 +100,34 @@ of every reaching test; `--files-only` is not paged.
 ## Freshness check context
 
 Graph-state output and capabilities include `freshness_context`. CLI compares
-the saved graph to the querying process's effective Go context, including
-GOFLAGS; MCP uses its startup context and explicit startup tags when supplied.
-Recorded directory exclusions remain in force. A different build context can
-therefore make unchanged source appear stale. This diagnostic preserves that
-fail-closed comparison; it does not automatically reuse saved tags or print
-environment values. Reproduce the build's context when asking freshness
-questions. MCP refreshes in its chosen startup context.
+the saved graph to the querying process's effective Go context. Query commands
+accept `--tags=a,b` to name the tags; without `--tags` and without `-tags` in
+GOFLAGS, the CLI uses the tags the graph was built with, so a graph built with
+`--tags=integration` is current for plain `gograph source X`. Tags given by
+`--tags` or GOFLAGS that differ from the recorded ones are stale (fail-closed).
+`stale` and `gate` without `--tags` follow the same rule. MCP uses its startup
+context and explicit startup tags when supplied. Recorded directory exclusions
+remain in force. No environment values are printed. MCP refreshes in its chosen
+startup context.
 
 CLI and MCP share search implementations. CLI normally reads the persisted
 repository graph; MCP refreshes before source-analysis queries. Compare results
 from the same graph content and filters when testing parity. A running MCP
 process does not load a replacement binary: restart it after upgrading and
 check the `version` returned by `gograph_capabilities`.
+
+## Git revisions
+
+The global CLI `--rev <ref>` resolves `ref` to a full commit ID with
+`git rev-parse --verify <ref>^{commit}` (refs are validated like baseline refs)
+and answers from `.gograph/revs/<commit>/`, the project's `git archive` tree at
+that commit with its own AST graph. Paths, selectors and JSON envelopes are the
+same as for the working tree; `graph_state` describes the revision graph, which
+is current unless its files were edited. The graph uses the working graph's
+recorded build tags and exclusions unless `--tags` or `GOFLAGS -tags` select
+others. `--rev` is refused by commands that build, serve or compare with the
+working tree (`build`, `mcp`, `stale`, `workspace`, `--uncommitted`, `--since`).
+MCP has no per-call revision.
 
 ## Bounded result lists
 
@@ -261,6 +302,15 @@ and invalid indexed line ranges are explicit refusals. The complete source block
 has a 65536-byte budget; an oversized block is refused with its actual byte size
 and the limit, never truncated. AST precision can serve source; precise analysis
 is not required. Metadata or precision alone never proves that source is readable.
+
+`concurrency --locks FUNCTION` (MCP `gograph_concurrency` with `function`) uses
+the same declaration selection and refuses ambiguity, non-function symbols and
+files changed since the build. It parses the body at query time and reports each
+`Lock`/`RLock` with `release` = `unlock` (with `unlock_lines`), `deferred` (held
+until return) or `none`, and the calls lexically inside the span, except calls
+that follow a matching unlock in the same block or case clause. MCP returns
+the text form; CLI `--json` returns the report object in the version-1 envelope,
+with `count` = number of locks. MCP rejects `term` together with `function`.
 
 CLI and MCP graph state include additive `read_diagnostic` when a read refuses
 or a context's indexed node cannot supply source. This reports the finding that

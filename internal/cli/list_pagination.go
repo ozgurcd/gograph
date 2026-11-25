@@ -19,6 +19,10 @@ func stripListPagination(args []string) ([]string, error) {
 	filtered := []string{args[0]}
 	seen := make(map[string]bool)
 	for i := 1; i < len(args); i++ {
+		if args[i] == "--" {
+			filtered = append(filtered, args[i:]...)
+			break
+		}
 		name, value, hasValue := strings.Cut(args[i], "=")
 		if name != "--limit" && name != "--cursor" {
 			filtered = append(filtered, args[i])

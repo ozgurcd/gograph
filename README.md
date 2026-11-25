@@ -15,7 +15,8 @@ constants across packages, including net/http method patterns.
 the MCP transitive report.
 
 Graph-state output and capabilities expose `freshness_context`: CLI freshness
-checks use the querying process's Go context, including GOFLAGS; MCP uses its
+checks use the querying process's Go context; without `--tags` or GOFLAGS
+`-tags`, CLI queries use the tags the graph was built with. MCP uses its
 startup context and explicit tags. A context mismatch remains stale, even when
 source bytes have not changed. No environment values are printed.
 Precise indexes include package-level constant references in `usages` and `query`,
@@ -91,6 +92,9 @@ gograph build . --precise --memory-mode=low --max-memory=1GiB
 
 # Optional: include integration-tagged files and tests in this graph
 gograph build . --precise --tags=integration
+
+# Query another commit, branch or tag without a checkout (cached in .gograph/revs/)
+gograph --rev origin/main callers Run
 
 # Optional: omit unrelated broken package directories
 gograph build . --precise --strict --exclude-dirs=legacy,examples/broken
@@ -354,7 +358,7 @@ normal response format.
 | **Change Analysis** | `plan`, `review`, `risk`, `impact [--uncommitted\|--since]`, `changes [--git]`, `api --since` | Pre-edit planning, post-edit review, risk analysis, blast radius, drift. |
 | **Architecture** | `boundaries`, `coupling`, `complexity [--no-tests] [--top N] [--path DIR]`, `godobj`, `orphans`, `arity` | Quality gates, dead code, coupling, god objects. Policies live in the committable `gograph/` directory (`.gograph/` still read). |
 | **Types & Structs** | `fields`, `implementers [--test-only]`, `interfaces`, `embeds`, `constructors`, `literals`, `usages`, `mutate`, `schema` | Struct fields, interface satisfaction, type usage. |
-| **Infrastructure** | `routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor CURSOR]`, `sql [term] [--table T] [--verb V] [--access read\|write\|ddl] [--function F] [--module M] [--no-tests] [--limit N] [--cursor C]`, `envs`, `errors`, `concurrency`, `globals`, `httpcalls`, `deps [--transitive]`, `dependents`, `imports` | Bounded CLI/MCP route and PostgreSQL static SQL pages with cursor continuation, module selectors, explicit test controls, and structured filtering; plus env vars, concurrency, outbound HTTP calls, and imports. |
+| **Infrastructure** | `routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor CURSOR]`, `sql [term] [--table T] [--verb V] [--access read\|write\|ddl] [--function F] [--module M] [--no-tests] [--limit N] [--cursor C]`, `envs`, `errors`, `concurrency [--locks <function>]`, `globals`, `httpcalls`, `deps [--transitive]`, `dependents`, `imports` | Bounded CLI/MCP route and PostgreSQL static SQL pages with cursor continuation, module selectors, explicit test controls, and structured filtering; plus env vars, concurrency (with per-function lock scopes), outbound HTTP calls, and imports. |
 | **Security** | `flow [term] [--source kind] [--sink kind] [--config path] [--no-tests] [--package path]... [--max-work N] [--context-depth N]` | Potential untrusted-data paths to SQL, process, filesystem, and outbound HTTP sinks, plus policy-defined sources, sinks and argument sanitizers; constant non-shell programs are `parameter_only`. |
 | **Testing** | `tests [symbol] [--transitive] [--exact-only] [--package name] [--max-depth N] [--limit N] [--cursor T]`, `tests --uncommitted`, `tests --since <ref>`, `tests <symbol> --format go-test`, `coverage <TestFunc> [--exact-only] [--package name]`, `untested [--pkg name] [--top N] [--exclude glob] [--wide] [--exclude-interface-methods] [--coverprofile file]`, `uncovered --uncommitted\|--since <ref> --coverprofile file`, `fixtures`, `mocks` | Direct and transitive reverse exact/possible static test attribution, runnable per-package `go test -run` selection for a change, one-sweep gap census, runtime coverage gaps and unexecuted changed lines, full stable-ID output, helpers, mock implementations. |
 | **Error Tracing** | `errorflow [--no-tests]`, `trace` | Reverse-BFS from error strings to HTTP entry points. |
@@ -544,6 +548,7 @@ drop-in replacement for another.
 - Open CHA dispatch is conservative rather than points-to precise: it may retain implementations that cannot occur in one runtime configuration. Reflection, `unsafe`, plugins, unresolved function values, test-only implementations, unnamed concrete types, and module-external implementations can still be incomplete. Precise test attribution also proves single-assignment, non-escaping concrete interface locals; other interface targets remain explicitly possible, and `typed_partial` means some tests stayed on parser heuristics.
 - Callback references are retained only when they resolve to repository callables, and exact call edges are deduplicated before serialization.
 - Mutation queries ignore ordinary local assignments and retain owning type information when statically known, so `Type.Field` disambiguates same-named fields.
+- AST call matching records each method call's lexically known receiver type, so `callers`, `tests` and `plan` for `Receiver.Method` skip same-name methods called on a known other type (including `T{}.M()`, `new(T).M()` and `x.(T).M()`, and receivers of packages outside the graph such as `bytes.Buffer`); unknown receivers stay candidates and `--precise` resolves the rest.
 - Synchronization extraction requires a receiver tied to a known `sync` type. Error messages come from `panic`, `errors.New`, and `fmt.Errorf`, including import aliases.
 - Heuristic extractors (routes, SQL, parser-only tests, and error mapping) are navigation aids, not authoritative program analysis. SQL classification is limited to static PostgreSQL literals, reports `exact`/`partial`/`unknown`, resolves CTEs to their terminal operation, preserves data-modifying CTE write evidence, and does not claim coverage of runtime-generated SQL. Typed test attribution is still static evidence rather than runtime coverage proof.
 - Security flow analysis is interprocedural and path-insensitive, with call/return context for the 3 most recent call sites by default (context depth up to 16; deeper returns that lose their call site are kept at low confidence), bounded by a size-derived work budget that reports incomplete runs explicitly. Default graphs resolve direct local/imported functions; `build . --precise` supplies stronger method/interface targets. It does not model reflection, globals, arbitrary heap aliases, or every dynamic call. Unresolved external transformations are retained with low confidence; every finding requires source review.

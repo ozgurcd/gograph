@@ -126,8 +126,11 @@ new declarations. CLI uses the same rules.
 | `gograph_explore` with `query=<term-or-symbol>` | Compact/standard/deep bounded discovery with shared CLI semantics; start compact and deepen only when needed |
 | `gograph_query` with `term=<term>` or `terms=[...]` | AST-derived structural symbol search |
 | `gograph_context` with `symbol=<symbol>` | Node + source + callers + callees + tests in one call |
+| `gograph_source` with `symbol=<symbol>`, optional `lines=START-END` | Verbatim declaration; `lines` reads part of a long body, or any region of an indexed `.go` file (`symbol=internal/app/manager.go`), including its imports |
+| CLI `gograph --rev <ref> <query>` | Read code, callers or tests at another commit, branch or tag without a checkout (CLI only; cached per commit in `.gograph/revs/`) |
+| `gograph_concurrency` with `function=<selector>` | Lock scopes in one function: each `Lock`/`RLock`, its release (unlock lines, deferred until return, or not released) and the calls between lock and release; spans are lexical, and a call after an unlock in the same block is not listed |
 | `gograph_plan` with `symbol=<symbol>` | Pre-edit blast radius + callers + tests |
-| `gograph_review` with `uncommitted=true` | Post-edit coverage check |
+| `gograph_review` with `uncommitted=true` or `since=<ref>` | Post-edit coverage check; `since` covers commits after the ref too |
 | `gograph_impact` with `symbol=<symbol>` | Canonical upstream identities with exact/possible labels; `exact_only=true` excludes uncertain paths |
 | `gograph_callers` / `gograph_callees` with `function=<symbol>` | Explicit call-graph traversal |
 | `gograph_implementers` with `interface=<interface>` | Type-checked production implementers plus AST-discovered test fakes; set `test_only=true` for only fakes |
@@ -143,7 +146,7 @@ new declarations. CLI uses the same rules.
 | `gograph_flow` | Potential HTTP/JSON/env paths to SQL, process, filesystem, and outbound HTTP sinks |
 | `gograph_changes` | Declaration add/modify/delete/excluded/unknown census against persisted graph or `git_ref`; require `evaluation=complete` before treating the result as exhaustive |
 | `gograph_tests` with `uncommitted=true` (or `since=<ref>`, or `symbol=<symbol>, select=true`) | Which tests to run for a change: per-package anchored `go test -run` patterns and ready commands; `max_depth=3` keeps nearby tests |
-| `gograph_tests` with `symbol=<symbol>, transitive=true` | Tests statically reaching a symbol: summary by depth first, then 50 per page, nearest first (`limit`, `cursor`, `max_depth`); omit `transitive` for direct edges, where `Receiver.Method` and stable IDs are accepted |
+| `gograph_tests` with `symbol=<symbol>, transitive=true` | Tests statically reaching a symbol: summary by depth first, then 50 per page, nearest first (`limit`, `cursor`, `max_depth`); omit `transitive` for direct edges, where `Receiver.Method` and stable IDs are accepted. On AST graphs, calls through a receiver of a known other type (for example `e.Error()` with `e := otherErr{}`, or `otherErr{}.Error()`) and through receivers of external packages (`bytes.Buffer`) are not attributed |
 | `gograph_coverage` with `test=<TestFunc>` | Transitive product symbols one unambiguous test statically reaches; exact/possible paths; optional `package` disambiguation |
 | `gograph_identity` with `symbol=<symbol-or-stable-id>` | Print or re-resolve canonical symbol identity without silently choosing ambiguity; optional `package` disambiguation |
 | `gograph_check` | Policy checks, including changed-route tests, coverage, orphans, API drift, arity, and complexity |

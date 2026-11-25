@@ -4,6 +4,7 @@ package search
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -191,20 +192,64 @@ func Node(g *graph.Graph, name string) []Result {
 			add(Result{Kind: "file", Name: f.Path, File: f.Path})
 		}
 	}
-	for _, s := range g.Symbols {
-		sname := strings.ToLower(s.Name)
-		full := strings.ToLower(fmt.Sprintf("(%s).%s", s.Receiver, s.Name))
-		if MatchSymbol(s, name) || sname == nl || strings.Contains(full, nl) || strings.Contains(sname, nl) {
-			n2 := s.Name
-			if s.Receiver != "" {
-				n2 = fmt.Sprintf("(%s).%s", s.Receiver, s.Name)
-			}
-			add(Result{Kind: string(s.Kind), Name: n2, File: s.File, Line: s.Line, Detail: s.Signature})
+	// Go names are case-sensitive: an exact spelling (Manager) selects only
+	// that declaration, not manager or Manager's methods. A case-insensitive
+	// exact match comes next, and the substring match only when neither finds
+	// anything.
+	matches := nodeSymbolTier(g, func(s graph.SymbolNode) bool { return exactCaseSymbolMatch(s, name) })
+	if len(matches) == 0 {
+		matches = nodeSymbolTier(g, func(s graph.SymbolNode) bool { return matchSymbolExact(s, name) })
+	}
+	if len(matches) == 0 {
+		matches = nodeSymbolTier(g, func(s graph.SymbolNode) bool {
+			sname := strings.ToLower(s.Name)
+			full := strings.ToLower(fmt.Sprintf("(%s).%s", s.Receiver, s.Name))
+			return MatchSymbol(s, name) || sname == nl || strings.Contains(full, nl) || strings.Contains(sname, nl)
+		})
+	}
+	for _, s := range matches {
+		n2 := s.Name
+		if s.Receiver != "" {
+			n2 = fmt.Sprintf("(%s).%s", s.Receiver, s.Name)
 		}
+		detail := s.Signature
+		if s.Kind == graph.KindConst && s.Value != "" {
+			detail = s.Value
+		}
+		add(Result{Kind: string(s.Kind), Name: n2, File: s.File, Line: s.Line, Detail: detail})
 	}
 
 	sortResults(results)
 	return results
+}
+
+func nodeSymbolTier(g *graph.Graph, match func(graph.SymbolNode) bool) []graph.SymbolNode {
+	var matches []graph.SymbolNode
+	for _, s := range g.Symbols {
+		if match(s) {
+			matches = append(matches, s)
+		}
+	}
+	return matches
+}
+
+// exactCaseSymbolMatch reports a case-sensitive exact selection: the name or
+// ID, a file or package-path selector, pkg.Name, Receiver.Method,
+// (*Receiver).Method or pkg.Receiver.Method.
+func exactCaseSymbolMatch(s graph.SymbolNode, query string) bool {
+	query = strings.TrimSpace(query)
+	if matched, qualified := qualifiedSymbolMatch(s, query); qualified {
+		return matched
+	}
+	if s.ID == query {
+		return true
+	}
+	if s.Receiver == "" {
+		return s.Name == query || s.PackageName+"."+s.Name == query
+	}
+	q := receiverNormalizer.Replace(query)
+	receiver := receiverNormalizer.Replace(s.Receiver)
+	return q == receiver+"."+s.Name || q == s.PackageName+"."+receiver+"."+s.Name
 }
 
 // callSiteSnippet enriches a structural call edge with its source line when
@@ -1092,8 +1137,18 @@ func receiverMethodSelector(value string) (string, bool) {
 // safe and unreadable matches, the safe matches are returned; it fails only
 // when no matching source block can be read safely.
 func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
-	if err := validateQualifiedSelector(symbolName); err != nil {
+	targets, err := sourceTargets(g, symbolName)
+	if err != nil {
 		return "", err
+	}
+	return sourceBlocks(g, rootDir, symbolName, targets)
+}
+
+// sourceTargets resolves the declarations a source selector names, preferring
+// exact and then case-sensitive matches. It fails when nothing matches.
+func sourceTargets(g *graph.Graph, symbolName string) ([]graph.SymbolNode, error) {
+	if err := validateQualifiedSelector(symbolName); err != nil {
+		return nil, err
 	}
 	targets := FindSymbols(g, symbolName)
 	var exact []graph.SymbolNode
@@ -1122,9 +1177,12 @@ func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
 
 	if len(targets) == 0 {
 		if hint := FileSelectorHint(g, symbolName); hint != "" {
-			return "", fmt.Errorf("symbol '%s' not found; %s", symbolName, hint)
+			return nil, fmt.Errorf("symbol '%s' not found; %s", symbolName, hint)
 		}
-		return "", fmt.Errorf("symbol '%s' not found", symbolName)
+		if hint := NotFoundHint(g, symbolName); hint != "" {
+			return nil, fmt.Errorf("symbol '%s' not found; %s", symbolName, hint)
+		}
+		return nil, fmt.Errorf("symbol '%s' not found", symbolName)
 	}
 	if len(targets) > 1 {
 		candidates := make([]string, 0, len(targets))
@@ -1132,9 +1190,12 @@ func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
 			candidates = append(candidates, fmt.Sprintf("%s (%s:%d; selector %s)", target.ID, target.File, target.Line, fileSelector(target)))
 		}
 		sort.Strings(candidates)
-		return "", fmt.Errorf("source for %q is ambiguous; select a candidate: %s", symbolName, strings.Join(candidates, "; "))
+		return nil, fmt.Errorf("source for %q is ambiguous; select a candidate: %s", symbolName, strings.Join(candidates, "; "))
 	}
+	return targets, nil
+}
 
+func sourceBlocks(g *graph.Graph, rootDir, symbolName string, targets []graph.SymbolNode) (string, error) {
 	var results []string
 	var readErrs []error
 	extractedCount := 0
@@ -1624,12 +1685,32 @@ func Concurrency(g *graph.Graph, term string) []Result {
 
 // Tests returns all test functions that exercise the named symbol.
 // Pass an empty term to list all test edges.
+// uniqueExactMethod returns the one method that term names exactly, such as
+// Receiver.Method. Other spellings keep the name-based test match.
+func uniqueExactMethod(g *graph.Graph, term string) (graph.SymbolNode, bool) {
+	var found graph.SymbolNode
+	count := 0
+	for _, symbol := range g.Symbols {
+		if (symbol.Kind == graph.KindFunction || symbol.Kind == graph.KindMethod) && matchSymbolExact(symbol, term) {
+			found, count = symbol, count+1
+		}
+	}
+	return found, count == 1 && found.Kind == graph.KindMethod
+}
+
 func Tests(g *graph.Graph, term string) []Result {
 	// An AST graph records test targets by name only, so a resolved
 	// selector also matches unresolved references that can name the symbol.
 	var selected *callTargetMatcher
 	var selectedSymbol graph.SymbolNode
-	if target, ok := qualifiedTarget(g, term); ok {
+	target, ok := qualifiedTarget(g, term)
+	if !ok {
+		// Receiver.Method and other exact spellings that select one
+		// declaration also bind to it, so unresolved test calls are matched
+		// by name and receiver type, not by their raw text.
+		target, ok = uniqueExactMethod(g, term)
+	}
+	if ok {
 		term = target.ID
 		selected, selectedSymbol = newSymbolCallMatcher(g, target), target
 	}
@@ -1637,7 +1718,7 @@ func Tests(g *graph.Graph, term string) []Result {
 	seen := make(map[string]bool)
 	for _, te := range g.TestEdges {
 		unresolvedMatch := selected != nil && te.TargetSymbolID == "" &&
-			selected.rawCallMayTarget(graph.CallEdge{CalleeRaw: te.Target, File: te.File}, "", selectedSymbol)
+			selected.rawCallMayTarget(graph.CallEdge{CalleeRaw: te.Target, QualifierType: te.QualifierType, File: te.File}, "", selectedSymbol)
 		if unresolvedMatch || matchTestTarget(te.Target, te.TestFunc, term) || te.TargetSymbolID != "" && matchTestTarget(te.TargetSymbolID, te.TestFunc, term) {
 			key := fmt.Sprintf("%s|%s|%s", te.TestFunc, te.Target, te.TargetSymbolID)
 			if seen[key] {
@@ -1766,12 +1847,12 @@ func Schema(g *graph.Graph, tableName string) []Result {
 // Globals finds package-level variables, constants, and functions mutating variables.
 func Globals(g *graph.Graph, pkgName string) []Result {
 	var results []Result
-	nl := strings.ToLower(pkgName)
+	inPackage := globalsPackageMatcher(pkgName)
 	var globalVars []graph.SymbolNode
 
 	// Find global variables and constants in the given package
 	for _, s := range g.Symbols {
-		if (s.Kind == graph.KindVar || s.Kind == graph.KindConst) && strings.Contains(strings.ToLower(s.PackageName), nl) {
+		if (s.Kind == graph.KindVar || s.Kind == graph.KindConst) && inPackage(s) {
 			if s.Kind == graph.KindVar {
 				globalVars = append(globalVars, s)
 			}
@@ -1806,6 +1887,27 @@ func Globals(g *graph.Graph, pkgName string) []Result {
 
 	sortResults(results)
 	return results
+}
+
+// globalsPackageMatcher selects symbols for Globals. A term containing "/" is a
+// package path: it matches the symbol's directory (repository-relative) or its
+// import path exactly or as a "/"-bounded suffix. Any other term keeps the
+// case-insensitive substring match on the package name.
+func globalsPackageMatcher(term string) func(graph.SymbolNode) bool {
+	cleaned := strings.Trim(filepath.ToSlash(filepath.Clean(term)), "/")
+	if !strings.Contains(cleaned, "/") {
+		nl := strings.ToLower(term)
+		return func(s graph.SymbolNode) bool {
+			return strings.Contains(strings.ToLower(s.PackageName), nl)
+		}
+	}
+	return func(s graph.SymbolNode) bool {
+		if filepath.ToSlash(filepath.Dir(s.File)) == cleaned {
+			return true
+		}
+		importPath := symbolPackagePath(s.ID)
+		return importPath == cleaned || strings.HasSuffix(importPath, "/"+cleaned)
+	}
 }
 
 // Mocks finds structs that implement the given interface, filtered to test or mock files.

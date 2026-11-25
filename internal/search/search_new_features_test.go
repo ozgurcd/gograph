@@ -295,3 +295,19 @@ func TestMocks(t *testing.T) {
 		t.Errorf("expected Kind 'mock', got %s", res[0].Kind)
 	}
 }
+
+func TestGlobalsAcceptsPackagePath(t *testing.T) {
+	g := &graph.Graph{Symbols: []graph.SymbolNode{
+		{ID: "example.com/m/internal/app::limit", Kind: graph.KindVar, Name: "limit", PackageName: "app", File: "internal/app/app.go"},
+		{ID: "example.com/m/cmd/app::other", Kind: graph.KindVar, Name: "other", PackageName: "app", File: "cmd/app/main.go"},
+	}}
+	for _, term := range []string{"internal/app", "./internal/app/", "example.com/m/internal/app"} {
+		res := search.Globals(g, term)
+		if len(res) != 1 || res[0].Name != "limit" {
+			t.Errorf("Globals(%q) = %v, want only limit", term, res)
+		}
+	}
+	if res := search.Globals(g, "app"); len(res) != 2 {
+		t.Errorf("Globals(app) = %v, want both package-name matches", res)
+	}
+}

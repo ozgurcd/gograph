@@ -165,7 +165,7 @@ func TestCLIEndpointNotFoundIsAnEmptySuccess(t *testing.T) {
 
 func TestCLISingleTargetCommandsRejectSurplusPositionals(t *testing.T) {
 	commands := []string{
-		"callers", "callees", "focus", "source", "public", "fields", "embeds", "imports",
+		"callers", "callees", "focus", "public", "fields", "embeds", "imports",
 		"impact", "implementers", "mocks", "envs", "interfaces", "concurrency", "tests",
 		"complexity", "context", "dependents", "sql", "errors", "httpcalls", "mutate",
 		"constructors", "usages", "returnusage", "literals", "schema", "globals", "fixtures",

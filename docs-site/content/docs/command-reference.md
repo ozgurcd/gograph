@@ -23,6 +23,16 @@ Global flags may appear before or after the command:
   CLI command telemetry. It is mandatory for analytical commands while an
   the caller selects an active audit session; session, MCP startup, build, installation, help,
   version, doctor, stale, stats, capabilities, wiki, and doc commands do not require it.
+- `--rev <ref>`: Answer a graph query from the tree of a Git commit, branch or
+  tag instead of the working tree (`gograph --rev 3b37747 source
+  internal/app/client.go`, `gograph callers Run --rev origin/main`). The first
+  query for a commit extracts the project with `git archive` into
+  `.gograph/revs/<commit>/` (a standalone repository, so the scanner applies
+  only the commit's own ignore rules) and builds an AST graph there; later
+  queries reuse it. The graph uses the working graph's recorded build tags and
+  exclusions unless `--tags` or `GOFLAGS -tags` select others, which rebuilds
+  it. Not accepted by `build`, `mcp`, `stale` or `workspace`, or with
+  `--uncommitted`/`--since`. CLI only. Delete `.gograph/revs` to reclaim space.
 - `--session-id ID` / `GOGRAPH_SESSION=ID`: Select the caller's session returned
   by `session create`. The flag overrides the environment. Omission keeps a
   read-only caller outside other agents' audits; writes still refuse when another
@@ -152,8 +162,10 @@ dependency that included code imports.
 gograph stale [--tags=integration[,tag...]] [--exclude-dirs=dir1,dir2] [--json]
 ```
 Compares the selected-file inventory, effective Go build context, and SHA-256 source-content digests with `.gograph/graph.json`. Modification times remain diagnostic fields only. It reports added, deleted, newly active, newly inactive, and byte-modified selected files plus build-context changes.
-Use the same `--tags` value supplied to `build` when checking an explicitly
-tagged artifact. Without it, `stale` continues to resolve inherited `GOFLAGS`.
+Without `--tags`, a graph built with tags is checked against those recorded
+tags unless `GOFLAGS` sets `-tags`; an explicit `--tags` or `GOFLAGS -tags`
+that differs is reported as a build-context change. Query commands (`source`,
+`callers`, `query`, ...) accept the same `--tags` and follow the same rule.
 Text output reports the persisted graph's source, freshness, completeness, and
 precision. JSON adds the same full `gograph.graph-state.v1` object as top-level
 `graph_state`, including refresh and persistence outcomes.
@@ -273,7 +285,7 @@ bounded impact section. Use focused `impact` for broader fallback traversal.
 
 ### query
 ```bash
-gograph query <term...> [--no-tests]
+gograph query <term...> [--no-tests] [--path DIR|FILE]
 ```
 Performs a broad, case-insensitive substring search across multiple entities.
 - **Scans**: Symbol names, struct fields, file paths, package names, import paths, and call sites.
@@ -292,24 +304,40 @@ Extracts targeted package orientation context.
 gograph node <name>
 ```
 Displays detailed AST metadata for a single named symbol, package, or file.
-- **Output fields**: Kind, file, line, signature, comments/docstrings, and struct fields.
+An exact, case-sensitive name or selector (`Manager`, `Manager.Run`, `pkg.Manager`)
+selects only that declaration; a case-insensitive exact match comes next, and a
+substring match only when neither finds anything.
+- **Output fields**: Kind, file, line, signature, comments/docstrings, and struct fields. A constant shows its declared value (`SymbolKind = "method"`, `= 16 * 1024`); a constant that repeats its group's expression is marked with its iota. Graphs built before v1.7.24 have no values; rebuild to add them.
 
 ### source
 
 File-qualified selectors also work with the declaration tools listed in
 [the query contract](https://github.com/ozgurcd/gograph/blob/main/docs/query-contracts.md#file-qualified-selectors).
-Embeds, constructors, literals, returnusage, mutate, path and endpoint report a
+Embeds, constructors, literals, returnusage, mutate and endpoint report a
 named file-selector limit. Usages supports file-qualified variables/constants,
 but reports that limit for types. Capabilities lists these exceptions.
 ```bash
-gograph source <name>
+gograph source <name> [name...]
+gograph source <name|path/file.go> --lines START-END
 ```
 Extracts exact raw source blocks for a function, method, struct, interface,
 type, variable, or constant using the graph's location data. Reads are rooted
 at the analyzed repository and accept only regular `.go` files without symlink
 path components. An ambiguous name prints exact selectors, such as
-`internal/auth/auth.go:Verifier.Verify`; the full import path plus file name is
-also accepted. The command errors when no matching block can be read safely.
+`internal/auth/auth.go:Verifier.Verify`, and a name that matches nothing lists
+close selectors ("did you mean"); the full import path plus file name is
+also accepted, and so is a package path with the symbol, as a full import path
+or repository-relative (`internal/auth::Verifier.Verify`, `internal/auth.Verify`). The command errors when no matching block can be read safely.
+Several selectors (`gograph source slotHostDefault slotHostOverride`) print
+each block in order, separated by `---`; with `--json` the results are
+`{selector, source}` objects. If any selector fails, the blocks that resolved
+are still printed and the command fails naming each failed selector.
+`--lines START-END` (file line numbers, inclusive) prints only that part of one
+declaration, clamped to it, so a region of a body larger than the 64 KiB budget
+can be read; given an indexed file path (`gograph source internal/app/manager.go
+--lines 1-20`) it prints that region of the file, including the package clause,
+imports and comments. A file changed since the build is refused. MCP:
+`gograph_source` with `lines`.
 - **Note**: This is the preferred way for AI agents to view symbol declarations and bodies, avoiding reading entire files.
 
 ---
@@ -321,6 +349,7 @@ also accepted. The command errors when no matching block can be read safely.
 gograph callers <function> [--no-tests] [--depth N] [--exact] [--mermaid]
 ```
 Finds all callers of a target function or method.
+- On AST graphs, a method call whose receiver type is spelled in the calling function (the receiver, a typed parameter or `var`, a composite literal or `new(T)`, then struct fields such as `c.clock.now()`), or that is called directly on `T{}`, `&T{}`, `new(T)` or `x.(T)`, is not matched to a same-name method of another type, and a receiver of a package outside the graph (such as `bytes.Buffer`) matches no repository method; `tests`, `plan`, `review` and `coverage` apply the same rule. Interface values, call results, shadowed names and structs with embedded types stay candidates. Graphs built before this need `gograph build .` (incremental builds re-parse automatically).
 - Interface-qualified names such as `Repository.Delete`, including methods inherited from embedded interfaces, resolve through every recorded precise implementer. If several targets correspond to one invocation, the source expression is returned once. Records with a known column report it as well as the line; records without a column remain line-only.
 - **Flags**:
   - `--no-tests`: Filters out test files from caller results.
@@ -364,6 +393,9 @@ Calculates the best indexed call chain between two symbols. Competing paths are
 ranked deterministically by exact before possible, then shorter paths,
 production before tests, typed resolution before heuristics, and a canonical
 relationship key. CLI and `gograph_path` use the same implementation.
+Either end may be a file selector (`internal/app/run.go:Run`), a package-path
+selector (`internal/app::Run`) or a stable ID; the chain then starts from, or
+ends at, exactly that declaration, also on AST graphs.
 
 ### orphans
 ```bash
@@ -413,7 +445,7 @@ Finds factory and constructor functions that return the named struct (e.g., `New
 ### strings
 
 ```bash
-gograph strings <term...> [--no-tests] [--path DIR]
+gograph strings <term...> [--no-tests] [--path DIR|FILE]
 ```
 
 Searches Go string literals in the indexed source files and reports each
@@ -431,7 +463,11 @@ an enclosing function. `--json` and `--files-only` are supported. MCP:
 
 `query` also matches registered HTTP route patterns with the same parameter
 normalization, and both `query` and `strings` accept a repository path as
-`--path DIR` or as a trailing directory argument (`gograph query org-link .`).
+`--path` or as a trailing directory argument (`gograph query org-link .`).
+A `--path` file or subdirectory inside the repository also keeps only results
+in that file or subtree (`gograph query Run --path internal/app/manager.go`).
+Arguments after `--` are terms, even when they start with `-`
+(`gograph strings -- --log-file`); global flags such as `--json` go before `--`.
 
 ### literals
 ```bash
@@ -482,9 +518,9 @@ Finds structs mapped to a database table or schema via struct tags (e.g. `db:"..
 
 ### globals
 ```bash
-gograph globals <pkg>
+gograph globals <pkg|dir>
 ```
-Finds all package-level variables and constants, as well as functions that mutate them.
+Finds all package-level variables and constants, as well as functions that mutate them. A term containing `/` (for example `internal/app` or the full import path) selects exactly that package; any other term matches package names by case-insensitive substring.
 
 ### mocks
 ```bash
@@ -650,10 +686,23 @@ codebase, with file and line. Optional substring filter by key name.
 ### concurrency
 ```bash
 gograph concurrency [term]
+gograph concurrency --locks <function>
 ```
 Maps goroutine spawns (`go func`), channel sends, and calls on mutex/RWMutex,
 `WaitGroup`, and `sync.Once`. Channel receives and `select` statements are not
 indexed.
+
+`--locks <function>` takes one function or method selector (`Manager.start`,
+`pkg::(*Manager).start`, `internal/app/manager.go:Manager.start`), parses its
+body at query time, and lists each `Lock`/`RLock` call with its release: the
+matching unlock lines, "held until return" for a deferred unlock (including one
+inside a deferred closure), or "not released in this function". Under each lock
+it lists the calls between the lock and its last matching unlock before the
+next lock of the same mutex. Spans are lexical: an early-return unlock in a
+branch does not split the span, but calls that follow an unlock in the same
+block (such as the `return fmt.Errorf(...)` after it) are not listed. `--json` returns `{function, file, start_line,
+end_line, locks: [{lock, line, release, release_line, unlock_lines, end_line,
+calls: [{call, line}]}]}`. MCP: `gograph_concurrency` with `function`.
 
 ### httpcalls
 ```bash
@@ -721,8 +770,9 @@ gograph tests <symbol> --format run|go-test [--package name] [--exact-only] [--m
 `HEAD`), `--since <ref>`, or `--format` with one symbol select every test that
 reaches the changed (or named) functions and print, per import path, an anchored
 and regex-escaped `-run` pattern of top-level test names (benchmarks get a
-`-bench` pattern). `--format go-test` prints only runnable commands, one per
-package, with the graph's `-tags`:
+`-bench` pattern). Naming a test function (`gograph tests TestRun --format
+go-test`) selects that test itself. `--format go-test` prints only runnable
+commands, one per package, with the graph's `-tags`:
 
 ```text
 go test -tags=integration example.com/app/calc -run '^(TestMul|TestTotal)$'
@@ -871,8 +921,11 @@ Generates a comprehensive change-impact plan prior to editing.
 ```bash
 gograph review <symbol>
 gograph review --uncommitted
+gograph review --since <ref>
 ```
-Performs post-edit verification.
+Performs post-edit verification. `--since <ref>` reviews every declaration
+changed between the Git ref and the working tree, committed or not (MCP
+`gograph_review` with `since`).
 - **Output**: Code changes, complexity drift, test coverage status, and a risk evaluation.
 
 ### risk
@@ -1030,7 +1083,8 @@ Ranks structs that exceed any enabled method, field, or outgoing-call threshold;
 ```bash
 gograph skeleton [file] [--json]
 ```
-Outputs API signatures with function/method bodies stripped. Supply an exact repository-relative indexed file, such as `tools/devseed/main.go`, to return only that file's package and declarations. A missing file is an error; basename matching and repository fallback are not used. With no file argument, outputs the entire repository for structural orientation. The MCP tool `gograph_skeleton` accepts the same optional `file` parameter.
+Outputs API signatures with function/method bodies stripped. Supply an exact repository-relative indexed file, such as `tools/devseed/main.go`, to return only that file's package clause, import block (grouped as gofmt
+does, with aliases) and declarations. A missing file is an error; basename matching and repository fallback are not used. With no file argument, outputs the entire repository for structural orientation. The MCP tool `gograph_skeleton` accepts the same optional `file` parameter.
 
 ### mutate
 ```bash

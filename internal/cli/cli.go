@@ -90,10 +90,41 @@ func Run(args []string) int {
 	jsonMode = requestsJSON(args)
 	filesOnlyMode = false
 	mermaidMode = false
+	queryBuildTags = nil
+	queryRev = ""
+	revisionRoots = map[string]string{}
+	takesQueryTags := commandTakesQueryTags(commandFromArgs(args))
 	var intention string
 	filtered := args[:0]
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		if takesQueryTags && (a == "--tags" || strings.HasPrefix(a, "--tags=")) {
+			var values []string
+			_, next, err := parseBuildTagsOption(args, i, &values)
+			if err == nil {
+				queryBuildTags, err = buildctx.NormalizeBuildTags(append(queryBuildTags, values...))
+			}
+			if err != nil {
+				return failCommand(commandFromArgs(args), "invalid --tags: "+err.Error())
+			}
+			i = next
+			continue
+		}
+		if takesQueryTags && (a == "--rev" || strings.HasPrefix(a, "--rev=")) {
+			value := strings.TrimPrefix(a, "--rev=")
+			if a == "--rev" {
+				if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+					return failCommand(commandFromArgs(args), "--rev requires a git ref")
+				}
+				value = args[i+1]
+				i++
+			}
+			if value == "" {
+				return failCommand(commandFromArgs(args), "--rev requires a git ref")
+			}
+			queryRev = value
+			continue
+		}
 		switch a {
 		case "--help", "-h":
 			if len(args) > 1 && args[0] != "--help" && args[0] != "-h" {
@@ -108,6 +139,11 @@ func Run(args []string) int {
 				printHelp()
 			}
 			return 0
+		case "--":
+			// Arguments after "--" belong to the command verbatim, so a
+			// search term such as --json is not taken as a global flag.
+			filtered = append(filtered, args[i:]...)
+			i = len(args)
 		case "--json":
 			jsonMode = true
 		case "--files-only":
@@ -143,6 +179,11 @@ func Run(args []string) int {
 		}
 	}
 	args = filtered
+	if queryRev != "" {
+		if err := commandTakesRev(args); err != nil {
+			return failCommand(commandFromArgs(args), err.Error())
+		}
+	}
 	var paginationErr error
 	args, paginationErr = stripListPagination(args)
 	if paginationErr != nil {
@@ -613,6 +654,7 @@ transport-specific (CLI flags/envelopes versus typed MCP arguments/content).
   Diagnose install/graph health → doctor --json  (PATH, freshness, analysis capabilities, diagnostic)
   External symbol signature    → doc <pkg.Symbol>  (stdlib/third-party — no graph required)
   API breaking-change check    → api --since <ref>
+  Read code at another commit   → --rev <ref> <query>  (e.g. --rev 3b37747 source file.go; cached per commit)
   CI enforcement               → gate, check --since <ref>
 
 ━━━ WHEN TO USE WHAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -628,7 +670,8 @@ CALL GRAPH — two different depths:
   impact <sym>                         unbounded: full BFS to ALL transitive callers — can be large on hotspots
   Call-graph symbol selectors accept short names ("Validate"), pkg.Name (package-level
     symbols only), Recv.Method or (*Recv).Method, file selectors (dir/file.go:Name,
-    dir/file.go:Recv.Method, or file.go:Name by file name alone), and fully-qualified IDs.
+    dir/file.go:Recv.Method, or file.go:Name by file name alone), package-path selectors
+    (internal/app::Name, internal/app.Name), and fully-qualified IDs; path accepts them too.
     Exact spellings win: callers/callees never also select longer names (Validate is not
     ValidateAll); a short name matching nothing exactly falls back to a substring match.
     Selectors work on AST graphs too; --precise also resolves chained calls
@@ -805,6 +848,9 @@ callers <fn> [--no-tests] [--depth N] [--exact]: who calls fn (depth=1 direct; m
   complexity [sym]     : cyclomatic complexity estimate per function (highest first;
                          source unreadable/unparseable is retained as UNKNOWN/-1)
 concurrency [str]    : goroutine spawns, channel sends, and typed sync calls
+concurrency --locks <function>
+                     : each Lock/RLock in the function, its release (unlock lines,
+                       deferred, or none) and the calls under the lock (lexical)
 coupling [pkg] [--include-stdlib] [--internal-only]
                      : fan-in, fan-out, and instability per package
 diagram [--group-by package|module|service|file] [--max-depth N] [--include-stdlib]
@@ -825,8 +871,8 @@ node <sym>           : AST metadata for one symbol (kind, file, line, signature,
 orphans              : symbols unreachable via BFS from main/init, test, route, and eligible public roots
 path <from> <to>     : best ranked call chain between two symbols
 public <pkg>         : exported symbols only
-query <term...> [--no-tests] [--path DIR] : broad OR search — symbols, struct fields, files, packages, imports, call sites, routes
-strings <term...> [--no-tests] [--path DIR] : Go string literals containing a term, with enclosing function
+query <term...> [--no-tests] [--path DIR|FILE] : broad OR search — symbols, struct fields, files, packages, imports, call sites, routes
+strings <term...> [--no-tests] [--path DIR|FILE] : Go string literals containing a term, with enclosing function
 routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor CURSOR]
                      : deterministic HTTP route pages. Production only by default;
                        term matches method/path, handler, or file; module accepts
@@ -837,8 +883,10 @@ routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor CURSOR]
                        JSON mirrors total/returned/truncated/next_cursor on its envelope.
                        --files-only follows all pages and emits the complete file set,
                        not a complete route-row dump.
-source <sym>         : confined exact source for function/method/struct/interface/
-                       type/variable/constant — USE THIS instead of reading files
+source <sym...>      : confined exact source for function/method/struct/interface/
+                       type/variable/constant — USE THIS instead of reading files;
+                       several selectors in one call; --lines A-B for a region of
+                       a declaration or of path/file.go (imports included)
 sql [term] [--table T] [--verb V] [--access read|write|ddl] [--function F]
                      [--module M] [--no-tests] [--limit N] [--cursor C]
                      : bounded gograph.sql.v1 PostgreSQL static SQL census. Direct literals plus
@@ -896,7 +944,7 @@ flow [term] [--source kind] [--sink kind] [--config path] [--no-tests] [--max-wo
 explain <sym>        : narrative summary — role, complexity, SQL, env, routes, interfaces, tests
                        (use explain for understanding; use context for raw data to act on)
 fixtures <pkg>       : test helper structs and functions in test files
-globals <pkg>        : package-level vars, consts, and functions mutating them
+globals <pkg|dir>    : package-level vars, consts, and functions mutating them
 hotspot [--top N] [--include-tests]
                      : functions ranked by incoming call count — study these first
 mocks <iface>        : alias for 'implementers --test-only' (kept for compatibility)
@@ -909,6 +957,7 @@ plan --uncommitted [--with-context]
                      : change plan for all currently uncommitted modified symbols
 review <sym>         : post-edit review — test coverage, complexity, risk profile
 review --uncommitted : post-edit review for all uncommitted changes
+review --since <ref> : review everything changed after a Git ref (commits + edits)
 risk <sym>           : change risk profile — blast radius, complexity, test coverage, SQL/env dependencies
 risk --uncommitted   : change risk profile for all uncommitted changes
 schema <table>       : structs mapped to a DB table via struct tags
@@ -1759,21 +1808,28 @@ func printResults(cmd, query string, results []search.Result, emptyMsg string) i
 func termsAndPath(command string, args []string) (terms []string, path string, noTests bool, err error) {
 	path = "."
 	explicit := false
+	termsOnly := false
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
+		case termsOnly:
+			// After "--" every argument is a term, so a term may start
+			// with "-" (gograph strings -- --log-file).
+			terms = append(terms, arg)
+		case arg == "--":
+			termsOnly = true
 		case arg == "--no-tests":
 			noTests = true
 		case arg == "--path":
 			if index+1 >= len(args) || args[index+1] == "" {
-				return nil, "", false, fmt.Errorf("--path requires a directory")
+				return nil, "", false, fmt.Errorf("--path requires a directory or file")
 			}
 			index++
 			path, explicit = args[index], true
 		case strings.HasPrefix(arg, "--path="):
 			path, explicit = strings.TrimPrefix(arg, "--path="), true
 			if path == "" {
-				return nil, "", false, fmt.Errorf("--path requires a directory")
+				return nil, "", false, fmt.Errorf("--path requires a directory or file")
 			}
 		case strings.HasPrefix(arg, "-"):
 			return nil, "", false, fmt.Errorf("unknown flag: %s", arg)
@@ -1790,14 +1846,49 @@ func termsAndPath(command string, args []string) (terms []string, path string, n
 		}
 	}
 	if len(terms) == 0 {
-		return nil, "", false, fmt.Errorf("usage: gograph %s <term...> [--path DIR] [--no-tests]", command)
+		return nil, "", false, fmt.Errorf("usage: gograph %s [--path DIR|FILE] [--no-tests] [--] <term...>", command)
 	}
 	if explicit {
-		if info, statErr := os.Stat(path); statErr != nil || !info.IsDir() {
-			return nil, "", false, fmt.Errorf("--path %q is not a directory", path)
+		if info, statErr := os.Stat(path); statErr != nil || (!info.IsDir() && !info.Mode().IsRegular()) {
+			return nil, "", false, fmt.Errorf("--path %q is not a directory or file", path)
 		}
 	}
 	return terms, path, noTests, nil
+}
+
+// pathScope resolves a query/strings --path. The graph comes from the project
+// that contains path; a path below that project's root also limits results to
+// that file or directory subtree, returned as a slash-separated
+// repository-relative scope ("" for the whole project).
+func pathScope(path string) (root, scope string) {
+	if path == "." {
+		return ".", ""
+	}
+	root = projectRoot(path)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return root, ""
+	}
+	rel, err := filepath.Rel(root, abs)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return root, ""
+	}
+	return root, filepath.ToSlash(rel)
+}
+
+// resultsUnder keeps results whose file is scope or lies below it.
+func resultsUnder(results []search.Result, scope string) []search.Result {
+	if scope == "" {
+		return results
+	}
+	kept := results[:0:0]
+	for _, result := range results {
+		file := filepath.ToSlash(result.File)
+		if file == scope || strings.HasPrefix(file, scope+"/") {
+			kept = append(kept, result)
+		}
+	}
+	return kept
 }
 
 func loadGraphAt(path string) (*graph.Graph, error) {
@@ -1812,11 +1903,12 @@ func runQuery(args []string) int {
 	if err != nil {
 		return failCommand("query", err.Error())
 	}
-	g, err := loadGraphAt(path)
+	root, scope := pathScope(path)
+	g, err := loadGraphAt(root)
 	if err != nil {
 		return failCommand("query", err.Error())
 	}
-	results := search.Query(g, terms)
+	results := resultsUnder(search.Query(g, terms), scope)
 	if noTests {
 		results = search.WithoutTestResults(results)
 	}
@@ -1828,7 +1920,8 @@ func runStrings(args []string) int {
 	if err != nil {
 		return failCommand("strings", err.Error())
 	}
-	g, err := loadGraphAt(path)
+	root, scope := pathScope(path)
+	g, err := loadGraphAt(root)
 	if err != nil {
 		return failCommand("strings", err.Error())
 	}
@@ -1843,6 +1936,7 @@ func runStrings(args []string) int {
 	if err != nil {
 		return failCommand("strings", err.Error())
 	}
+	results = resultsUnder(results, scope)
 	if diagnostic != "" {
 		fmt.Fprintln(os.Stderr, "WARNING: "+diagnostic)
 	}
@@ -1923,7 +2017,7 @@ func runCallers(args []string) int {
 	} else {
 		results = search.Callers(g, term, includeTests, exactMatch)
 	}
-	return printResults("callers", term, results, "no callers found")
+	return printResults("callers", term, results, emptyCallGraphMessage(g, term, "no callers found"))
 }
 
 func runCallees(args []string) int {
@@ -1973,7 +2067,7 @@ func runCallees(args []string) int {
 	} else {
 		results = search.Callees(g, term, includeTests, false)
 	}
-	return printResults("callees", term, results, "no callees found")
+	return printResults("callees", term, results, emptyCallGraphMessage(g, term, "no callees found"))
 }
 
 func runImplementers(args []string) int {
@@ -2037,8 +2131,35 @@ func runInterfaces(args []string) int {
 }
 
 func runConcurrency(args []string) int {
+	const usage = "usage: gograph concurrency [term] | gograph concurrency --locks <function>"
+	if len(args) > 0 && (args[0] == "--locks" || strings.HasPrefix(args[0], "--locks=")) {
+		function := strings.TrimPrefix(args[0], "--locks=")
+		rest := args[1:]
+		if args[0] == "--locks" {
+			if len(rest) == 0 {
+				return failCommand("concurrency", usage)
+			}
+			function, rest = rest[0], rest[1:]
+		}
+		if len(rest) > 0 || strings.TrimSpace(function) == "" {
+			return failCommand("concurrency", usage)
+		}
+		g, err := loadGraph(".")
+		if err != nil {
+			return failCommandf("concurrency", "failed to load graph: %v", err)
+		}
+		report, err := search.LockScopes(g, graphRoot(g), function)
+		if err != nil {
+			return failCommandf("concurrency", "concurrency: %v", err)
+		}
+		if jsonMode {
+			return PrintJSON(okEnvelope("concurrency", function, report, len(report.Locks)))
+		}
+		fmt.Print(search.FormatLockScopes(report))
+		return 0
+	}
 	if !hasOptionalTarget(args) {
-		return failCommand("concurrency", "usage: gograph concurrency [term]")
+		return failCommand("concurrency", usage)
 	}
 	g, err := loadGraph(".")
 	if err != nil {
@@ -2201,6 +2322,9 @@ func runTests(args []string) int {
 		switch report.Status {
 		case "not_found":
 			fmt.Printf("Product symbol %q was not found. Use gograph identity <name> to resolve its stable ID.\n", term)
+			if len(search.ResolveTestEntries(g, term)) > 0 {
+				fmt.Printf("%s is a test function: gograph tests %s --format go-test prints its run command; gograph coverage %s lists what it exercises.\n", term, term, term)
+			}
 			return 0
 		case "ambiguous":
 			fmt.Printf("Product symbol %q is ambiguous; retry with a stable ID and, when IDs collide, --package:\n", term)
@@ -2250,7 +2374,27 @@ func runTestSelectionForSymbol(g *graph.Graph, term, packageName, format string,
 	report := snapshot.TransitiveTests(term, packageName, false)
 	switch report.Status {
 	case "not_found":
-		return failCommandf("tests", "product symbol %q was not found; use gograph identity <name> to resolve its stable ID", term)
+		// A test function is not a product symbol, but naming one asks for
+		// that test: select it so --format go-test prints its run command.
+		entries := search.ResolveTestEntries(g, term)
+		if packageName != "" {
+			entries = testEntriesInPackage(entries, packageName)
+		}
+		switch len(entries) {
+		case 0:
+			return failCommandf("tests", "product symbol %q was not found; use gograph identity <name> to resolve its stable ID", term)
+		case 1:
+			entry := entries[0]
+			selection := snapshot.SelectTestsWithin(term, []search.SelectionInput{{StableID: entry.ID, Name: entry.Name, File: entry.File}}, exactOnly, maxDepth)
+			return printTestSelection(selection, format)
+		default:
+			var candidates []string
+			for _, entry := range entries {
+				candidates = append(candidates, fmt.Sprintf("%s [package=%s] %s:%d", entry.ID, entry.PackageName, entry.File, entry.Line))
+			}
+			sort.Strings(candidates)
+			return failCommandf("tests", "test function %q is ambiguous; retry with a file selector or --package: %s", term, strings.Join(candidates, "; "))
+		}
 	case "ambiguous":
 		var candidates []string
 		for _, match := range report.MatchedSymbols {
@@ -3040,6 +3184,22 @@ func loadGraph(root string) (*graph.Graph, error) {
 	if root == "." {
 		root = rootfind.FindRepositoryRoot()
 	}
+	if queryRev != "" {
+		absRoot, err := filepath.Abs(root)
+		if err != nil {
+			return nil, fmt.Errorf("resolving path: %w", err)
+		}
+		revRoot, err := revisionRoot(absRoot, queryRev)
+		if err != nil {
+			return nil, fmt.Errorf("--rev %s: %w", queryRev, err)
+		}
+		root = revRoot
+	}
+	return loadGraphIgnoringRev(root)
+}
+
+// loadGraphIgnoringRev loads the persisted graph of root without applying --rev.
+func loadGraphIgnoringRev(root string) (*graph.Graph, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("resolving path: %w", err)
@@ -3519,6 +3679,15 @@ OUTPUT FLAGS
                              or the build context changed since then, they print a WARNING
                              on stderr naming the files (JSON: warning plus
                              graph_state.freshness "stale"). Run gograph build . to refresh.
+  --tags <a,b>               Build tags for a query command's freshness check. Without it
+                             (and without GOFLAGS -tags) the graph's recorded build tags
+                             are used, so a --tags=integration build stays current.
+  --rev <ref>                Read the tree of a Git commit, branch or tag instead of the
+                             working tree. The first query extracts it with git archive
+                             into .gograph/revs/<commit>/ and builds an AST graph there
+                             (working graph's recorded tags unless --tags/GOFLAGS);
+                             later queries reuse it. Not with --uncommitted or --since.
+                             CLI only; delete .gograph/revs to reclaim space.
                              Request only one of --json, --files-only, or --mermaid.
   -i, --intention <msg>      Explain the technical rationale for executing the command.
                              MANDATORY for all analytical commands when a session is active.
@@ -3669,25 +3838,38 @@ SEARCH & NAVIGATION
                              overrides mode defaults and clamps to 1-100; response modes
                              are mutually exclusive. --exact disables promotion
                              of a fuzzy lexical match into selected-symbol context.
-  query <term...> [--no-tests] [--path DIR]
+  query <term...> [--no-tests] [--path DIR|FILE]
                              Search across symbols, struct fields, packages, files, imports,
                              call sites, and HTTP route patterns. Case-insensitive, OR logic
                              across terms. Route paths match any parameter spelling
                              (:id, {id}, *id). A trailing directory argument (., .., or a
-                             path with /) or --path DIR selects another repository.
-  strings <term...> [--no-tests] [--path DIR]
+                             path with /) or --path selects another repository; a
+                             --path file or subdirectory also keeps only results in it.
+                             Terms after -- may start with "-".
+  strings <term...> [--no-tests] [--path DIR|FILE]
                              Search Go string literals in indexed source files, with the
                              enclosing function. Use for raw route strings, URLs, SQL
                              fragments, and messages that are not symbols. Route-shaped
                              terms match any parameter spelling. On a stale graph it also
                              searches Go files added since the build and names indexed
-                             files that were deleted or unreadable. Supports --json and
-                             --files-only.
+                             files that were deleted or unreadable. --path FILE or a
+                             subdirectory keeps only literals in it. Put -- before a
+                             term that starts with "-" (strings -- --log-file).
+                             Supports --json and --files-only.
   focus <package>           Show all symbols, imports, and call edges for one
                              package. Token-efficient alternative to reading files.
   node <name>                Show indexed AST metadata for a symbol, package, or file.
-  source <name>              Extract confined raw source for functions, methods,
+                             Constants show their declared value. An exact,
+                             case-sensitive name selects only that declaration;
+                             substring matching applies only when nothing matches.
+  source <name> [name...]    Extract confined raw source for functions, methods,
                              structs, interfaces, types, variables, and constants.
+                             Several selectors print each block; any selector that
+                             fails makes the command fail with its reason.
+                             --lines START-END prints only those file lines of one
+                             declaration (for bodies over the 64 KiB budget), or of
+                             an indexed file given as path/file.go (imports, any
+                             region). Stale files are refused.
   public <package>           List only the exported (public) API of a package.
   fields <struct>            List all fields and types of a struct.
   embeds <struct>            Find which structs embed the given struct.
@@ -3703,7 +3885,8 @@ SEARCH & NAVIGATION
                              show "via <method-name>" in Detail. The ++/+= and
                              indirect-mutation cases require a --precise build.
   arity [--min 5]            Find functions with many arguments (long parameter list smell).
-  skeleton [file]            Output one indexed file's API signatures; omit file for the whole repository.
+  skeleton [file]            Output one indexed file's import block and API signatures;
+                             omit file for the whole repository (signatures only).
 
 CALL GRAPH
   callers <function> [--no-tests] [--depth N] [--exact]
@@ -3732,6 +3915,11 @@ CALL GRAPH
                              ("pkg/path::(*S).Validate" — exact match, no same-name conflation).
                              callers/callees match exact spellings first and never also select
                              longer names; a short name with no exact match falls back to substring.
+                             AST graphs also record each method call's lexically known receiver
+                             type (receiver, typed params/vars, composite literals, struct fields,
+                             T{}.M(), new(T).M(), x.(T).M()) and skip same-name methods of a known
+                             other type or of a package outside the graph (bytes.Buffer); callers,
+                             tests, plan and coverage use it. Unknown receivers stay candidates.
                              --precise improves resolution (chained calls, interface dispatch).
   trace <err_str>            Find the origin of an error and trace backwards to entry points.
   orphans                    Functions unreachable from runtime/test/route/public entry
@@ -3764,7 +3952,9 @@ INTERFACES & TYPES
                              Typed rows need a precise build (production packages); AST graphs
                              return labelled name-only possible_field_use rows.
   schema <table>            Find structs mapped to a database table/schema via tags.
-  globals <pkg>              Find pkg-level vars, consts, and mutators.
+  globals <pkg|dir>          Find pkg-level vars, consts, and mutators. A term
+                             with "/" (internal/app) selects that package path;
+                             otherwise it matches package names.
   mocks <interface>          Alias for 'implementers --test-only'. Kept for compatibility.
   fixtures <pkg>             Find test helper structs and functions in test files.
 
@@ -3916,6 +4106,8 @@ CODE QUALITY
                              Generate a change plan for all currently uncommitted modified symbols.
   review <symbol>            Generate a post-edit final review report for a modified symbol.
   review --uncommitted       Generate a post-edit final review report for all uncommitted changes.
+  review --since <ref>       Review every declaration changed after a Git ref (commits plus
+                             uncommitted edits), e.g. review --since HEAD~1.
   risk <symbol>              Evaluate change risk profile (blast radius, complexity, test coverage, SQL/env).
   risk --uncommitted         Evaluate risk profile for all uncommitted changes.
   api --since <ref|graph.json>
@@ -3979,6 +4171,11 @@ EXTRACTION
   envs [term]                Every os.Getenv / os.LookupEnv / supported Viper Get* read.
   concurrency [term]         Goroutine spawns, channel sends, and typed Mutex/RWMutex/
                              WaitGroup/Once calls (not receives or select statements).
+  concurrency --locks <function>
+                             Lock scopes in one function, parsed now: each Lock/RLock,
+                             its release (unlock lines, deferred until return, or not
+                             released) and the calls between lock and release (lexical;
+                             a call after an unlock in the same block is not listed).
   tests [symbol] [--transitive] [--exact-only] [--package name] [--max-depth N] [--limit N] [--cursor T] [--uncommitted|--since <ref>] [--format run|go-test]
                              Which tests to run for a symbol or a change. Direct attributed
                              test calls by default. --transitive requires one product symbol
@@ -3991,7 +4188,8 @@ EXTRACTION
                              reaches the changed (or named) symbols and print, per package,
                              an anchored -run pattern (gograph.test_selection.v1 with --json);
                              --format go-test prints one runnable go test line per package,
-                             with the graph's -tags. --exact-only drops possible paths.
+                             with the graph's -tags. A test function name selects that
+                             test. --exact-only drops possible paths.
                              Direct lookup accepts Receiver.Method, including pointer receivers,
                              as well as a full stable symbol ID.
   coverage <test> [--exact-only] [--package name]
@@ -4126,8 +4324,17 @@ func printCommandHelp(cmd string) {
 	defer printExcludeDirsHelp(cmd)
 	lines := strings.Split(helpText, "\n")
 	found := false
+	entry := func(line string) bool {
+		return strings.HasPrefix(line, "  "+cmd) && (len(line) == len("  "+cmd) || line[len("  "+cmd)] == ' ' || line[len("  "+cmd)] == '[')
+	}
 	for _, line := range lines {
-		if !found && strings.HasPrefix(line, "  "+cmd) && (len(line) == len("  "+cmd) || line[len("  "+cmd)] == ' ' || line[len("  "+cmd)] == '[') {
+		if found && entry(line) {
+			// A second form of the same command, such as
+			// "concurrency --locks <function>", gets its own usage block.
+			fmt.Println()
+			found = false
+		}
+		if !found && entry(line) {
 			found = true
 			fmt.Println("USAGE")
 			descStart := strings.Index(line[2:], "  ")
@@ -4363,7 +4570,7 @@ func runStale(rawArgs []string) int {
 	if err != nil {
 		return failCommand("stale", err.Error())
 	}
-	sr := search.Stale(g, graphRoot(g))
+	sr := search.StaleForQuery(g, graphRoot(g), nil)
 	if len(normalizedTags) > 0 || len(excludeDirs) > 0 {
 		if len(excludeDirs) == 0 && g.Build != nil && g.Build.Selection != nil {
 			excludeDirs = g.Build.Selection.ExcludeDirs
@@ -4415,7 +4622,7 @@ func runStats() int {
 		return failCommand("stats", err.Error())
 	}
 	st := search.Stats(g)
-	freshness := search.Stale(g, graphRoot(g))
+	freshness := search.StaleForQuery(g, graphRoot(g), queryBuildTags)
 	state := graphstate.ManualPersisted(g, freshness.IsStale)
 	if jsonMode {
 		envelope := okEnvelope("stats", "", st, 1)
@@ -5049,24 +5256,138 @@ func runChanges(args []string) int {
 
 // runSource extracts the raw source code of a named symbol.
 func runSource(args []string) int {
-	if !hasSingleTarget(args) {
-		return failCommand("source", "usage: gograph source <name>")
+	const usage = "usage: gograph source <name> [name...] | gograph source <name|file.go> --lines START-END"
+	args, lines, err := sourceLineRange(args)
+	if err != nil {
+		return failCommand("source", err.Error()+"\n"+usage)
+	}
+	terms, ok := sourceTargets(args)
+	if !ok {
+		return failCommand("source", usage)
+	}
+	if lines != nil && len(terms) != 1 {
+		return failCommand("source", "--lines takes exactly one selector or file\n"+usage)
 	}
 	g, err := loadGraph(".")
 	if err != nil {
 		return failCommand("source", err.Error())
 	}
-	term := args[0]
 	root := graphRoot(g)
-	src, err := search.Source(g, root, term)
-	if err != nil {
-		return failCommandf("source", "source: %v", err)
+	if lines != nil {
+		src, err := search.SourceLines(g, root, terms[0], lines[0], lines[1])
+		if err != nil {
+			return failCommandf("source", "source: %v", err)
+		}
+		if jsonMode {
+			return PrintJSON(okEnvelope("source", terms[0], src, 1))
+		}
+		fmt.Println(src)
+		return 0
+	}
+	if len(terms) == 1 {
+		src, err := search.Source(g, root, terms[0])
+		if err != nil {
+			return failCommandf("source", "source: %v", err)
+		}
+		if jsonMode {
+			return PrintJSON(okEnvelope("source", terms[0], src, 1))
+		}
+		fmt.Println(src)
+		return 0
+	}
+
+	// Several selectors: each is resolved on its own. Text output prints every
+	// block that resolved; any selector that failed makes the command fail
+	// with its reason, so a partial answer is never mistaken for a full one.
+	var blocks []sourceBlock
+	var failures []string
+	for _, term := range terms {
+		src, err := search.Source(g, root, term)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", term, err))
+			continue
+		}
+		blocks = append(blocks, sourceBlock{Selector: term, Source: src})
+	}
+	query := strings.Join(terms, " ")
+	if len(failures) > 0 {
+		if !jsonMode {
+			printSourceBlocks(blocks)
+		}
+		return failCommandf("source", "source: %d of %d selectors failed: %s", len(failures), len(terms), strings.Join(failures, "; "))
 	}
 	if jsonMode {
-		return PrintJSON(okEnvelope("source", term, src, 1))
+		return PrintJSON(okEnvelope("source", query, blocks, len(blocks)))
 	}
-	fmt.Println(src)
+	printSourceBlocks(blocks)
 	return 0
+}
+
+// sourceBlock is one selector's answer when source is given several.
+type sourceBlock struct {
+	Selector string `json:"selector"`
+	Source   string `json:"source"`
+}
+
+func printSourceBlocks(blocks []sourceBlock) {
+	for i, block := range blocks {
+		if i > 0 {
+			fmt.Print("\n---\n\n")
+		}
+		fmt.Println(block.Source)
+	}
+}
+
+// sourceLineRange removes --lines START-END (or --lines=START-END) from args.
+func sourceLineRange(args []string) ([]string, *[2]int, error) {
+	var rest []string
+	var lines *[2]int
+	for i := 0; i < len(args); i++ {
+		value, found := "", false
+		switch {
+		case args[i] == "--lines":
+			if i+1 >= len(args) {
+				return nil, nil, fmt.Errorf("--lines requires START-END")
+			}
+			value, found = args[i+1], true
+			i++
+		case strings.HasPrefix(args[i], "--lines="):
+			value, found = strings.TrimPrefix(args[i], "--lines="), true
+		}
+		if !found {
+			rest = append(rest, args[i])
+			continue
+		}
+		if lines != nil {
+			return nil, nil, fmt.Errorf("--lines may only be supplied once")
+		}
+		start, end, err := search.ParseLineRange(value)
+		if err != nil {
+			return nil, nil, fmt.Errorf("--lines: %w", err)
+		}
+		lines = &[2]int{start, end}
+	}
+	return rest, lines, nil
+}
+
+// sourceTargets returns the distinct selectors given to source, refusing
+// flags and empty arguments.
+func sourceTargets(args []string) ([]string, bool) {
+	if len(args) == 0 {
+		return nil, false
+	}
+	seen := make(map[string]bool, len(args))
+	var terms []string
+	for _, arg := range args {
+		if arg == "" || strings.HasPrefix(arg, "-") {
+			return nil, false
+		}
+		if !seen[arg] {
+			seen[arg] = true
+			terms = append(terms, arg)
+		}
+	}
+	return terms, true
 }
 
 // runPublic lists only the exported (public) API of a package.
@@ -5677,7 +5998,7 @@ func runGlobals(args []string) int {
 	if hasSingleTarget(args) {
 		term = args[0]
 	} else {
-		return failCommand("globals", "Usage: gograph globals <package>")
+		return failCommand("globals", "Usage: gograph globals <package|dir>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
@@ -5999,8 +6320,18 @@ func runPlan(args []string) int {
 
 // runReview generates a post-edit checklist for modified symbols.
 func runReview(args []string) int {
-	if len(args) != 1 || args[0] == "" || (strings.HasPrefix(args[0], "-") && args[0] != "--uncommitted") {
-		return failCommand("review", "usage: gograph review <symbol> OR gograph review --uncommitted")
+	const usage = "usage: gograph review <symbol> OR gograph review --uncommitted OR gograph review --since <ref>"
+	sinceRef := ""
+	switch {
+	case len(args) == 2 && args[0] == "--since" && args[1] != "" && !strings.HasPrefix(args[1], "-"):
+		sinceRef = args[1]
+	case len(args) == 1 && strings.HasPrefix(args[0], "--since="):
+		sinceRef = strings.TrimPrefix(args[0], "--since=")
+		if sinceRef == "" || strings.HasPrefix(sinceRef, "-") {
+			return failCommand("review", usage)
+		}
+	case len(args) != 1 || args[0] == "" || (strings.HasPrefix(args[0], "-") && args[0] != "--uncommitted"):
+		return failCommand("review", usage)
 	}
 
 	g, err := loadGraph(".")
@@ -6011,20 +6342,24 @@ func runReview(args []string) int {
 	var symbolNames []string
 	var title string
 
-	if args[0] == "--uncommitted" {
-		report, reviewErr := search.ReviewUncommittedContext(context.Background(), g)
+	if sinceRef != "" || args[0] == "--uncommitted" {
+		title, ref, empty := "Uncommitted Changes", "HEAD", "No uncommitted modified symbols found in the graph."
+		if sinceRef != "" {
+			title, ref, empty = "Changes since "+sinceRef, sinceRef, "No modified symbols since "+sinceRef+" found in the graph."
+		}
+		report, reviewErr := search.ReviewSinceContext(context.Background(), g, ref, title)
 		if reviewErr != nil {
 			return failCommand("review", reviewErr.Error())
 		}
 		if report.Message != "" && report.DeclarationEvidence == nil {
 			if jsonMode {
-				return PrintJSON(okEnvelope("review", "Uncommitted Changes", nil, 0))
+				return PrintJSON(okEnvelope("review", title, nil, 0))
 			}
-			fmt.Println("No uncommitted modified symbols found in the graph.")
+			fmt.Println(empty)
 			return 0
 		}
 		if jsonMode {
-			return PrintJSON(okEnvelope("review", "Uncommitted Changes", report, 1))
+			return PrintJSON(okEnvelope("review", title, report, 1))
 		}
 		fmt.Print(report.String())
 		return 0
@@ -6592,4 +6927,44 @@ func runWhatsnew(args []string) int {
 		fmt.Println("No release notes in this range.")
 	}
 	return 0
+}
+
+// testEntriesInPackage keeps test functions whose package name or import path
+// is packageName.
+func testEntriesInPackage(entries []graph.SymbolNode, packageName string) []graph.SymbolNode {
+	var kept []graph.SymbolNode
+	for _, entry := range entries {
+		importPath, _, _ := strings.Cut(entry.ID, "::")
+		if entry.PackageName == packageName || importPath == packageName {
+			kept = append(kept, entry)
+		}
+	}
+	return kept
+}
+
+// emptyCallGraphMessage tells an absent declaration apart from one with no
+// edges, and suggests close declarations for the former.
+func emptyCallGraphMessage(g *graph.Graph, term, empty string) string {
+	if term == "" || search.DeclarationKnown(g, term) {
+		return empty
+	}
+	message := fmt.Sprintf("%s; no indexed declaration matches %q", empty, term)
+	if hint := search.NotFoundHint(g, term); hint != "" {
+		message += "; " + hint
+	}
+	return message
+}
+
+// queryBuildTags holds a query command's --tags: the build context its
+// freshness check uses instead of the graph's recorded tags.
+var queryBuildTags []string
+
+// commandTakesQueryTags reports whether --tags is the global query option for
+// command. build, mcp, stale and workspace parse their own --tags.
+func commandTakesQueryTags(command string) bool {
+	switch command {
+	case "build", "mcp", "stale", "workspace", "gograph", "--":
+		return false
+	}
+	return true
 }

@@ -96,7 +96,7 @@ func runGate(args []string) int {
 	}
 
 	root = graphRoot(g)
-	sr := search.Stale(g, root)
+	sr := search.StaleForQuery(g, root, nil)
 	if sr.IsStale {
 		fmt.Fprintf(os.Stderr, "error: graph is stale due to %d freshness change(s); refusing to evaluate outdated data.\n", sr.ChangeCount())
 		fmt.Fprintln(os.Stderr, "Run 'gograph build .' and retry.")

@@ -143,16 +143,13 @@ func TestAnswers1711SelectorCensus(t *testing.T) {
 
 func TestAnswers1711SelectorLimits(t *testing.T) {
 	root, handlers := answers1711Fixture(t)
-	for _, command := range []string{"embeds", "constructors", "literals", "returnusage", "mutate", "path", "endpoint"} {
+	// path resolves file selectors to one declaration since v1.7.24.
+	for _, command := range []string{"embeds", "constructors", "literals", "returnusage", "mutate", "endpoint"} {
 		t.Run(command, func(t *testing.T) {
 			selector := "app.go:APIResource"
 			args := []string{command, selector, "--json"}
-			parameter := map[string]string{"embeds": "struct", "constructors": "struct", "literals": "type", "returnusage": "function", "mutate": "field", "path": "from", "endpoint": "query"}[command]
+			parameter := map[string]string{"embeds": "struct", "constructors": "struct", "literals": "type", "returnusage": "function", "mutate": "field", "endpoint": "query"}[command]
 			parameters := map[string]any{parameter: selector}
-			if command == "path" {
-				args = []string{command, selector, "Update", "--json"}
-				parameters["to"] = "Update"
-			}
 			out, stderr, code := runCLIParityInDir(t, root, func() int { return Run(args) })
 			value := answers177MCP(t, handlers["gograph_"+command], parameters)
 			if code == 0 {

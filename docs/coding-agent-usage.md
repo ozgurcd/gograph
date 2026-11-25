@@ -52,7 +52,8 @@ gograph callees <function> [--no-tests] [--depth N] # what it calls; --depth 2-1
 gograph implementers <interface> # precise production types plus test-file fakes; add --test-only for only fakes
 gograph interfaces <struct>     # which interfaces a struct satisfies (precise if --precise used)
 gograph fields <struct>         # extract fields and types of a struct
-gograph source <symbol>         # extract the indexed declaration's source block
+gograph source <symbol...>      # extract the indexed declarations' source blocks
+gograph source <sym|file.go> --lines A-B  # one region of a declaration or file (imports included)
 gograph impact <symbol>         # find downstream callers (blast radius)
 gograph impact --uncommitted    # find blast radius of all uncommitted code changes
 gograph impact --since main     # blast radius of all symbols changed since main (PR-level)
@@ -64,7 +65,9 @@ gograph errors                  # custom error variables and panics mapped to th
 gograph embeds <struct>         # find which structs embed a target struct
 gograph public <pkg>            # list only the exported API surface of a package
 gograph envs [term]             # list indexed environment reads
+gograph --rev <ref> <query>     # answer any graph query from a commit/branch/tag (cached in .gograph/revs/<commit>/)
 gograph concurrency [term]      # map goroutines, channel sends, mutexes, waitgroups, sync.Once
+gograph concurrency --locks <function>  # each Lock/RLock in a function, its release, calls under it
 gograph tests [symbol]          # direct attributed test calls; accepts Receiver.Method or stable ID
 gograph tests <symbol> --transitive [--exact-only] [--package name] # every reaching test with path/depth
 gograph coverage <TestFunc> [--exact-only] [--package name] # transitive product symbols one test statically reaches
@@ -113,7 +116,7 @@ gograph strings <term...>        # Go string literals (raw route strings, URLs, 
 gograph usages <type>            # indexed signature/field/interface-method/composite-literal uses
 gograph returnusage <function>   # how each caller uses the return value (discarded/assigned/partially_ignored/returned/passed) — run before changing a return signature
 gograph schema <table>           # find structs mapped to a database table or schema via tags
-gograph globals <pkg>            # find pkg-level vars, consts, and functions mutating them
+gograph globals <pkg|dir>        # find pkg-level vars, consts, and functions mutating them
 gograph implementers <interface> --test-only  # find structs implementing an interface in test or mock files
 gograph mocks <interface>        # alias for implementers --test-only (kept for compatibility)
 gograph fixtures <pkg>           # find test helper structs and functions in test files
@@ -319,7 +322,11 @@ name: `gograph envs DATABASE`.
 ### 6. Concurrency audit
 `gograph concurrency` shows recognized goroutine, channel, and typed `sync`
 operations in indexed files. Filter: `gograph concurrency goroutine` or
-`gograph concurrency mutex`.
+`gograph concurrency mutex`. To see what runs while a mutex is held, run
+`gograph concurrency --locks Manager.startPass`: each `Lock`/`RLock`, where it
+is released (unlock lines, deferred until return, or not released) and the
+calls in between. Spans are lexical; a call after an unlock in the same block
+(an early-return branch) is not listed.
 
 ### 7. Test coverage lookup
 `gograph tests ValidateToken` shows direct statically mapped test calls.
@@ -1034,7 +1041,7 @@ The current suite registers 70 MCP endpoints: 66 query, analysis, and workflow t
 - **`gograph_implementers`**: Merges type-checked production implementers with
   AST-discovered test-file fakes; `test_only=true` returns only test/mock types.
 - **`gograph_fields`**
-- **`gograph_source`**: Repository-confined source for a named function, method, struct, interface, type, variable, or constant. It refuses absent or ambiguous symbols (with candidates), unsafe/unreadable source, invalid ranges, and source over 65536 bytes (with its size).
+- **`gograph_source`**: Repository-confined source for a named function, method, struct, interface, type, variable, or constant. It refuses absent or ambiguous symbols (with candidates), unsafe/unreadable source, invalid ranges, and source over 65536 bytes (with its size). Optional `lines` (START-END, file line numbers) returns only that region of the declaration, or, when `symbol` is an indexed `.go` path, that region of the file including its imports.
 - **`gograph_orphans`**
 - **`gograph_impact`**: Identity-safe blast radius with exact/possible path labels. Choose exactly one mode: `symbol`, `uncommitted=true`, or `since=<ref>`. Optional `exact_only=true` excludes any path depending on possible evidence. Default conservative results use the shared bounded-page contract. `mermaid=true` applies to all three modes and renders possible paths as dotted edges; do not combine Mermaid with limit/cursor.
 - **`gograph_boundaries`**: Verifies package architecture constraints from a regular, non-linked file inside the selected project (default `gograph/boundaries.json`, else `.gograph/boundaries.json`; override with `config`). MCP refreshes source analysis before evaluation; CLI reads the persisted graph and should be preceded by `stale`/`build`. Returns structured output.
@@ -1049,7 +1056,7 @@ The current suite registers 70 MCP endpoints: 66 query, analysis, and workflow t
 - **`gograph_changes`**: Declaration-level `gograph.changes.v1` comparison against the trusted persisted graph, or a confined Git declaration baseline with `git_ref`. Reports new/modified/deleted/excluded/unknown and aggregate complete/partial/cannot_evaluate with diagnostics. Existing but deselected files are excluded; unsafe paths are never proof of deletion. Default mode does not refresh and attaches the state it inspected; Git mode refreshes and attaches its live state.
 - **`gograph_context`**: Bundles node details, callers, callees, tests, source code, and top-level architectural role into one compact structured response shared with CLI JSON. `node` retains the first match for compatibility, `nodes[]` preserves all ambiguous matches, test names and `test_results[]` preserve test evidence, and `source_error` reports a non-fatal source read failure. Supports exact matching and uncommitted mode.
 - **`gograph_plan`**: Pre-edit planning. Highlights likely affected tests, routes, env reads, SQL touches, and public API impact, and lists the `next` tool calls (test selection, transitive tests, impact). Set `with_context=true` to bundle full context for every `inspect_first` symbol — eliminates follow-up `context` calls.
-- **`gograph_review`**: Post-edit review. Summarizes what changed and its risk profile in a structured JSON payload.
+- **`gograph_review`**: Post-edit review. Summarizes what changed and its risk profile in a structured JSON payload. Parameters: `symbol`, `uncommitted` (bool), or `since` (Git ref; commits after it plus uncommitted edits).
 - **`gograph_risk`**: Risk evaluation. Combines blast radius, complexity, test coverage, and SQL/env dependencies into a 0–100 risk score and verdict (SAFE/REVIEW/DANGER). Supports `symbol` or `uncommitted=true`.
 - **`gograph_errorflow`**: Traces likely error paths up to entry points (HTTP routes or CLI commands). CLI JSON, this tool, and `gograph_trace` share definition sites, return sites, paths, test names, and structured test rows. (*Limitation: Uses heuristic static call-graph and AST reference analysis, not SSA data-flow tracking.*)
 - **`gograph_flow`**: Potential source-to-sink security paths with severity, confidence, `parameter_only` (constant non-shell program), and path steps. Optional parameters: `term`, `source`, `sink`, `config`, `no_tests`, `packages[]`, `max_work`, and `context_depth`. Built-in source kinds are `http_request`, `decoded_json`, and `environment`; sink kinds are `sql_query`, `process_execution`, `filesystem`, and `outbound_http`; the policy adds custom sources, sinks and argument sanitizers. Uses `gograph/flow.json`, else `.gograph/flow.json`, by default when present and reports `policy_path`; an exhausted budget lists `completeness.top_functions`.
@@ -1077,12 +1084,12 @@ The current suite registers 70 MCP endpoints: 66 query, analysis, and workflow t
 - **`gograph_deps`**: Import dependency tree of a package. Set `transitive=true` for full BFS closure or `mermaid=true` for a diagram.
 - **`gograph_dependents`**: All packages that import the named package (inverse of `gograph_deps`). Essential before any package-level refactor; accepts `mermaid=true`.
 - **`gograph_hotspot`**: Functions ranked by fan-in (incoming call count). High fan-in = highest-risk change target. Optional `top` parameter (default: 10); `include_tests` adds test-file call edges.
-- **`gograph_concurrency`**: Map goroutine spawns, channel sends, and calls on mutex/RWMutex, WaitGroup, and sync.Once. Channel receives and `select` statements are not indexed. Optional filter by kind.
+- **`gograph_concurrency`**: Map goroutine spawns, channel sends, and calls on mutex/RWMutex, WaitGroup, and sync.Once. Channel receives and `select` statements are not indexed. Optional filter by kind. Pass `function` instead for the lock scopes of one function (each Lock/RLock, its release, and the calls under it).
 - **`gograph_fixtures`**: Find test helper structs and functions in test files for a package.
 - **`gograph_godobj`**: Find god-object struct candidates. Optional thresholds: `methods`, `fields`, `calls`, `top`.
 - **`gograph_skeleton`**: Full repository API signatures with bodies stripped. Large output — use on small repos or targeted packages.
 - **`gograph_schema`**
-- **`gograph_globals`**
+- **`gograph_globals`**: Package-level vars/consts and the functions that assign them. Parameter: `package` — a package name (substring match) or a path containing `/` such as `internal/app` (exact package).
 - **`gograph_mocks`**
 - **`gograph_explain`**: LLM-ready architectural summary. Synthesizes callers (prod vs test), callees, complexity, SQL, env, routes, concurrency, test coverage, interface satisfaction, and an opinionated role classification into one structured narrative.
 - **`gograph_stats`**: Compact trusted persisted-index health summary, or startup-fallback health when no usable artifact exists. Returns schema version, build timestamp, complete/partial build status, production analysis precision (`ast`, `precise`, or `precise_fallback`), test-call resolution (`ast_heuristic`, `typed_complete`, or `typed_partial`), parsed/scanned file counts, parse-failure count, and graph entity counts including persisted flow functions. It attaches the same inspected graph state as `gograph_stale`. Use this as a quick sanity check at the start of any analysis session.
@@ -1269,7 +1276,7 @@ methodology, and limitations.
 ## Limitations the agent should know about
 
 - **Go only.** No multi-language parsing.
-- **Default call edges are best-effort AST evidence.** Without precise enrichment, overloaded names and method receivers may collide and interface dispatch can be unresolved. Treat `callers`/`callees` results as navigation evidence, not runtime proof. **Workaround:** when you need to disambiguate same-named methods/functions or query symbols cleanly:
+- **Default call edges are best-effort AST evidence.** Without precise enrichment, overloaded names and method receivers may collide and interface dispatch can be unresolved. AST graphs record a method call's lexically known receiver type (receiver, typed params and vars, composite literals, struct fields, and a method called directly on `T{}`, `&T{}`, `new(T)` or `x.(T)`); a call whose known type declares a different same-name method, or is a type from a package outside the graph (for example `bytes.Buffer`), is not matched. Unknown receivers (interfaces, call results, shadowed names, embedding) stay candidates. Treat `callers`/`callees` results as navigation evidence, not runtime proof. **Workaround:** when you need to disambiguate same-named methods/functions or query symbols cleanly:
   1. Use standard Go **package-qualified dot-notation** (e.g. `service.GenerateRequest`, `graph.Graph` or `graph.Graph.Build`) with call-graph commands that advertise symbol selectors. `callers` also accepts `Interface.Method` on a precise graph.
   2. For precise target matching with no same-name conflation, pass the fully-qualified symbol ID (e.g., `gograph callers 'github.com/foo/bar/internal/auth::(*Service).Validate'`). The same FQ-ID syntax works for `callees`, `impact`, and `path` (both endpoints). Requires `--precise` mode at build time.
 - **Precise interface dispatch remains conservative unless the receiver is proven.** SSA devirtualizes a call only when its interface value is constructed from one concrete dynamic type; merely seeing one implementation in the repository is insufficient. Other invokes retain all named in-repository CHA candidates. Promoted concrete methods use a traversal-only wrapper edge. Reflection, `unsafe`, plugins, unresolved function values, test-only packages, unnamed concrete types, and module-external implementations can still cause omissions.

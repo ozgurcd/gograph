@@ -105,6 +105,9 @@ func requestsJSON(args []string) bool {
 		if strings.HasPrefix(argument, "-i=") || strings.HasPrefix(argument, "--intention=") {
 			continue
 		}
+		if argument == "--" {
+			return false
+		}
 		if argument == "--json" {
 			return true
 		}

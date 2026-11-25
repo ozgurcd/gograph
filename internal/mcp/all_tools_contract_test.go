@@ -163,4 +163,10 @@ func main() { _ = Work() }
 	if called != 66 {
 		t.Fatalf("executed %d non-session MCP tools, want 66", called)
 	}
+	if out := callTool(t, handlers["gograph_concurrency"], map[string]any{"function": "Work"}); !strings.Contains(out, "no Lock/RLock calls in this function") {
+		t.Fatalf("concurrency function mode: %s", out)
+	}
+	if res := callToolResult(t, handlers["gograph_concurrency"], map[string]any{"function": "Work", "term": "mutex"}); !res.IsError {
+		t.Fatal("concurrency must reject term together with function")
+	}
 }

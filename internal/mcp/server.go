@@ -978,7 +978,7 @@ func NewServer(
 
 	// Tool: gograph_callers
 	callersTool := mcp.NewTool("gograph_callers",
-		mcp.WithDescription("Find functions and methods that call the specified function or interface method. Defaults to one-hop fan-in; depth 2-10 expands callers-of-callers. In a precise graph, Interface.Method expands through all recorded implementations and reports a shared source call site once. WHEN TO USE: Before renaming, removing, or changing a function or interface method signature. NOT TO USE: For unbounded upstream blast radius (use gograph_impact); for downstream callees (use gograph_callees). RETURNS: Caller symbols with package paths, file locations, and call-site line numbers; with mermaid=true, Mermaid flowchart text."),
+		mcp.WithDescription("Find functions and methods that call the specified function or interface method. Defaults to one-hop fan-in; depth 2-10 expands callers-of-callers. In a precise graph, Interface.Method expands through all recorded implementations and reports a shared source call site once. In an AST graph, a method call whose receiver type is spelled in the calling function (receiver, typed parameter or var, composite literal, then struct fields), or that is called directly on T{}, new(T) or x.(T), is not matched to a same-name method of another type, and a receiver of a package outside the graph (bytes.Buffer) matches no repository method; unknown receivers stay candidates. WHEN TO USE: Before renaming, removing, or changing a function or interface method signature. NOT TO USE: For unbounded upstream blast radius (use gograph_impact); for downstream callees (use gograph_callees). RETURNS: Caller symbols with package paths, file locations, and call-site line numbers; with mermaid=true, Mermaid flowchart text."),
 		mcp.WithString("function", mcp.Required(), mcp.Description("The target function or method (supports short name 'BuildGraph', interface notation 'Repository.Delete', concrete dot-notation 'Store.Delete', or a fully-qualified ID)")),
 		mcp.WithInteger("depth", mcp.Description("Traversal depth from 1 to 10 (default 1)")),
 		mcp.WithBoolean("no_tests", mcp.Description("Exclude call edges originating in *_test.go files")),
@@ -1093,8 +1093,9 @@ func NewServer(
 
 	// Tool: gograph_source
 	sourceTool := mcp.NewTool("gograph_source",
-		mcp.WithDescription("Retrieve verbatim Go source for a named function, method, struct, interface, type, variable, or constant, including complete bodies or declarations. Source reads are confined to regular .go files beneath the analyzed repository and reject symlink path components. WHEN TO USE: When you need a specific implementation or declaration in full without loading a large file — a targeted alternative to reading the whole file. NOT TO USE: For call hierarchy information (use gograph_callers/gograph_callees); for AST metadata without the full source (use gograph_node). RETURNS: Raw Go source blocks with file paths and line numbers. The text carries the source or a named refusal: absent symbol, ambiguity with candidates, unsafe/unreadable source, invalid indexed range, or source exceeding 65536 bytes (with its size)."),
-		mcp.WithString("symbol", mcp.Required(), mcp.Description("The name of the symbol to retrieve source for (supports short name 'ValidateToken', dot-notation 'graph.Graph', or fully-qualified ID)")),
+		mcp.WithDescription("Retrieve verbatim Go source for a named function, method, struct, interface, type, variable, or constant, including complete bodies or declarations. Source reads are confined to regular .go files beneath the analyzed repository and reject symlink path components. WHEN TO USE: When you need a specific implementation or declaration in full without loading a large file — a targeted alternative to reading the whole file. NOT TO USE: For call hierarchy information (use gograph_callers/gograph_callees); for AST metadata without the full source (use gograph_node). RETURNS: Raw Go source blocks with file paths and line numbers. The text carries the source or a named refusal: absent symbol, ambiguity with candidates, unsafe/unreadable source, invalid indexed range, or source exceeding 65536 bytes (with its size). With `lines` (START-END, file line numbers) it returns only that part of the declaration, so a region of a body over the budget can be read; `symbol` may then also be an indexed .go file path (e.g. 'internal/app/manager.go') to read any region of that file, including its import block."),
+		mcp.WithString("symbol", mcp.Required(), mcp.Description("The name of the symbol to retrieve source for (supports short name 'ValidateToken', dot-notation 'graph.Graph', or fully-qualified ID); with lines, also an indexed .go file path")),
+		mcp.WithString("lines", mcp.Description("Optional file line range START-END (1-based, inclusive). Limits the answer to those lines of the declaration, or of the file when symbol is a .go path")),
 	)
 	addTool(sourceTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
@@ -1106,8 +1107,18 @@ func NewServer(
 		if !ok {
 			return mcp.NewToolResultError("symbol must be a string"), nil
 		}
-		// MCP currently defaults to root = g.Root
-		code, err := search.Source(g, g.Root, sym)
+		var code string
+		var err error
+		if lines, _ := args["lines"].(string); strings.TrimSpace(lines) != "" {
+			start, end, rangeErr := search.ParseLineRange(lines)
+			if rangeErr != nil {
+				return mcp.NewToolResultError(rangeErr.Error()), nil
+			}
+			code, err = search.SourceLines(g, g.Root, sym, start, end)
+		} else {
+			// MCP currently defaults to root = g.Root
+			code, err = search.Source(g, g.Root, sym)
+		}
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -1579,9 +1590,10 @@ func NewServer(
 
 	// Tool: gograph_review
 	reviewTool := mcp.NewTool("gograph_review",
-		mcp.WithDescription("Summarize the scope and risk profile of a change: which symbols changed, which tests cover them, which routes and env vars they touch, and whether SQL is involved. Requires either symbol or uncommitted=true. WHEN TO USE: After editing — as a post-edit verification step before committing; confirms the blast radius matches expectations. Use uncommitted=true to review all current unstaged changes at once. NOT TO USE: For boundary constraint enforcement (use gograph_boundaries); for pre-edit planning (use gograph_plan). RETURNS: JSON with changed_symbols[], tests[], routes[], env[], errors[], and a risk object (public_api, touches_sql, touches_routes, touches_env)."),
+		mcp.WithDescription("Summarize the scope and risk profile of a change: which symbols changed, which tests cover them, which routes and env vars they touch, and whether SQL is involved. Requires symbol, uncommitted=true, or since=<git ref>. WHEN TO USE: After editing — as a post-edit verification step before committing; confirms the blast radius matches expectations. Use uncommitted=true to review all current unstaged changes at once, or since=<ref> to review everything changed after that ref (commits plus uncommitted edits). NOT TO USE: For boundary constraint enforcement (use gograph_boundaries); for pre-edit planning (use gograph_plan). RETURNS: JSON with changed_symbols[], tests[], routes[], env[], errors[], and a risk object (public_api, touches_sql, touches_routes, touches_env)."),
 		mcp.WithString("symbol", mcp.Description("The name of the target symbol to run the design review for (e.g. 'AuthService')")),
 		mcp.WithBoolean("uncommitted", mcp.Description("Set to true to review all uncommitted/modified changes in the repository")),
+		mcp.WithString("since", mcp.Description("Git ref (e.g. 'HEAD~3', 'main'); review every declaration changed between it and the working tree")),
 	)
 	addTool(reviewTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
@@ -1592,7 +1604,17 @@ func NewServer(
 		var symbolNames []string
 		var title string
 		var revRes *search.ReviewResult
-		if u, ok := args["uncommitted"].(bool); ok && u {
+		if since, ok := args["since"].(string); ok && since != "" {
+			if err := sanitizeGitRef(since); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			title = "Changes since " + since
+			var err error
+			revRes, err = search.ReviewSinceContext(ctx, g, since, title)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+		} else if u, ok := args["uncommitted"].(bool); ok && u {
 			var err error
 			revRes, err = search.ReviewUncommittedContext(ctx, g)
 			if err != nil {
@@ -1603,7 +1625,7 @@ func NewServer(
 			symbolNames = []string{sym}
 			title = sym
 		} else {
-			return mcp.NewToolResultError("must provide either symbol or set uncommitted to true"), nil
+			return mcp.NewToolResultError("must provide symbol, uncommitted=true, or since=<git ref>"), nil
 		}
 
 		if revRes == nil {
@@ -2121,7 +2143,7 @@ func initNewTools(
 	// Tool: gograph_globals
 	globalsTool := mcp.NewTool("gograph_globals",
 		mcp.WithDescription("Find package-level variable declarations (var blocks) and the functions that mutate them in a specific package. WHEN TO USE: When auditing mutable global state, identifying thread-safety hazards, or locating shared singleton variables before a concurrency refactor. NOT TO USE: For local-scope variables; for environment variable reads (use gograph_envs). RETURNS: Package-level variable names, types, and the functions that write to them; empty when the package has no package-level variables."),
-		mcp.WithString("package", mcp.Required(), mcp.Description("The package name or path to inspect (e.g., 'internal/config')")),
+		mcp.WithString("package", mcp.Required(), mcp.Description("Package to inspect: a path containing '/' (e.g., 'internal/config' or the full import path) selects that package exactly; a bare name matches package names by substring")),
 	)
 	addTool(globalsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
@@ -2180,7 +2202,7 @@ func initNewTools(
 
 	// Tool: gograph_node
 	nodeTool := mcp.NewTool("gograph_node",
-		mcp.WithDescription("Fetch AST metadata for a named symbol, package, or file: kind, file path, line number, full signature, doc comment, and struct fields if applicable. WHEN TO USE: When you need structural metadata (kind, signature, line number) without the full source body — lighter than gograph_source for metadata-only lookups. NOT TO USE: For full source code (use gograph_source); for call relationships (use gograph_callers/gograph_callees). RETURNS: Node properties array with kind, file, line, and signature; empty when the name is not found."),
+		mcp.WithDescription("Fetch AST metadata for a named symbol, package, or file: kind, file path, line number, full signature (a constant's declared value), doc comment, and struct fields if applicable. An exact case-sensitive name or selector selects only that declaration; substring matching applies only when nothing matches exactly. WHEN TO USE: When you need structural metadata (kind, signature, line number) without the full source body — lighter than gograph_source for metadata-only lookups. NOT TO USE: For full source code (use gograph_source); for call relationships (use gograph_callers/gograph_callees). RETURNS: Node properties array with kind, file, line, and signature; empty when the name is not found."),
 		mcp.WithString("name", mcp.Required(), mcp.Description("The exact symbol, package path, or Go file name to inspect (e.g., 'Graph', 'internal/search', 'server.go')")),
 	)
 	addTool(nodeTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -2616,8 +2638,9 @@ func initNewTools(
 
 	// Tool: gograph_concurrency
 	concurrencyTool := mcp.NewTool("gograph_concurrency",
-		mcp.WithDescription("Find indexed concurrency sites in the codebase: goroutine spawns (`go` statements), channel sends, and calls on sync.Mutex/RWMutex, sync.WaitGroup, and sync.Once. Optional `term` filter (e.g., \"mutex\", \"goroutine\", \"channel\"). WHEN TO USE: When auditing race safety, understanding async flow, or locating synchronization points before a concurrency refactor. NOT TO USE: For standard sequential call flow analysis (use gograph_callers/gograph_callees). RETURNS: File locations, line numbers, and primitive kind for each indexed concurrency site; empty when no sites are found. Channel receives and select statements are not indexed."),
+		mcp.WithDescription("Find indexed concurrency sites in the codebase: goroutine spawns (`go` statements), channel sends, and calls on sync.Mutex/RWMutex, sync.WaitGroup, and sync.Once. Optional `term` filter (e.g., \"mutex\", \"goroutine\", \"channel\"). WHEN TO USE: When auditing race safety, understanding async flow, or locating synchronization points before a concurrency refactor. NOT TO USE: For standard sequential call flow analysis (use gograph_callers/gograph_callees). RETURNS: File locations, line numbers, and primitive kind for each indexed concurrency site; empty when no sites are found. Channel receives and select statements are not indexed. LOCK SCOPE: pass `function` (a function or method selector) instead of `term` to parse that body now and list each Lock/RLock with its release (unlock lines, deferred until return, or not released) and the calls between lock and release; spans are lexical, and a call after an unlock in the same block (an early-return branch) is not listed."),
 		mcp.WithString("term", mcp.Description("Optional filter term (e.g., 'goroutine', 'mutex', 'channel')")),
+		mcp.WithString("function", mcp.Description("Function or method selector (e.g., 'Manager.startPass'); returns its lock scopes instead of the site list")),
 	)
 	addTool(concurrencyTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
@@ -2625,6 +2648,16 @@ func initNewTools(
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if t, ok := args["term"].(string); ok {
 				term = t
+			}
+			if function, _ := args["function"].(string); strings.TrimSpace(function) != "" {
+				if strings.TrimSpace(term) != "" {
+					return mcp.NewToolResultError("pass either term or function, not both"), nil
+				}
+				report, err := search.LockScopes(g, g.Root, function)
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				return mcp.NewToolResultText(search.FormatLockScopes(report)), nil
 			}
 		}
 		results := search.Concurrency(g, term)
@@ -2718,8 +2751,8 @@ func initNewTools(
 
 	// Tool: gograph_skeleton
 	skeletonTool := mcp.NewTool("gograph_skeleton",
-		mcp.WithDescription("Emit API signatures with function bodies stripped — struct definitions, interface declarations, and function/method signatures only. Supply file for one exact repository-relative indexed file; omit it for the full repository. Unknown files return an error. WARNING: whole-repository output can be very large. WHEN TO USE: For a file's declarations or a compact map of the entire codebase's shape. NOT TO USE: For full implementations (use gograph_source); for a single package (use gograph_public). RETURNS: Multi-line text of stripped declarations and package names."),
-		mcp.WithString("file", mcp.Description("Optional repository-relative indexed file; selects only that file's package and declarations. Unknown files are errors, never a repository fallback.")),
+		mcp.WithDescription("Emit API signatures with function bodies stripped — struct definitions, interface declarations, and function/method signatures only. Supply file for one exact repository-relative indexed file (its output also starts with the file's import block); omit it for the full repository. Unknown files return an error. WARNING: whole-repository output can be very large. WHEN TO USE: For a file's declarations or a compact map of the entire codebase's shape. NOT TO USE: For full implementations (use gograph_source); for a single package (use gograph_public). RETURNS: Multi-line text of stripped declarations and package names."),
+		mcp.WithString("file", mcp.Description("Optional repository-relative indexed file; selects only that file's package, import block and declarations. Unknown files are errors, never a repository fallback.")),
 	)
 	addTool(skeletonTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)

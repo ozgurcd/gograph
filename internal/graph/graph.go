@@ -28,7 +28,7 @@ const CurrentSourcePolicyVersion = 2
 // CurrentAnalysisCacheVersion identifies graphs whose file-level records can
 // be decomposed back into parser output and safely reused by an incremental
 // build. Bump this whenever parser/precise provenance changes.
-const CurrentAnalysisCacheVersion = 12
+const CurrentAnalysisCacheVersion = 14
 
 // MaxArtifactBytes bounds whole-artifact JSON decoding. Repository graphs are
 // intentionally in-memory query artifacts; accepting an unbounded serialized
@@ -375,8 +375,10 @@ type ConcurrencyNode struct {
 
 // TestEdge links a *testing.T test function to the symbols it exercises.
 type TestEdge struct {
-	TestFunc       string         `json:"test_func"`
-	Target         string         `json:"target"` // parser spelling of the callee expression
+	TestFunc string `json:"test_func"`
+	Target   string `json:"target"` // parser spelling of the callee expression
+	// QualifierType is the lexical receiver root type; see CallEdge.QualifierType.
+	QualifierType  string         `json:"qualifier_type,omitempty"`
 	TargetSymbolID string         `json:"target_symbol_id,omitempty"`
 	Resolution     CallResolution `json:"resolution,omitempty"`
 	File           string         `json:"file"`
@@ -495,6 +497,9 @@ type SymbolNode struct {
 	StructFields             []StructField     `json:"struct_fields,omitempty"`
 	EmbeddedStructs          []string          `json:"embedded_structs,omitempty"`
 	Arity                    int               `json:"arity,omitempty"`
+	// Value is a constant's declared expression, "[Type ]= expr"; empty for
+	// other kinds and on artifacts built before this field existed.
+	Value string `json:"value,omitempty"`
 }
 
 // StructField represents a field inside a struct.
@@ -523,9 +528,15 @@ type CallEdge struct {
 	// (eliminates the (*A).M vs (*B).M name-conflation footgun) and fall
 	// back to CalleeRaw for legacy or unresolvable edges.
 	CalleeSymbolID string `json:"callee_symbol_id,omitempty"`
-	File           string `json:"file"`
-	Line           int    `json:"line"`
-	Column         int    `json:"column,omitempty"`
+	// QualifierType is the parser's lexically known type ("T" or "pkg.T") of
+	// the root identifier of a method call's receiver chain: x in x.f.M().
+	// Empty when the receiver is not an identifier chain or its type is not
+	// spelled in the function. AST matching uses it to reject same-name
+	// methods of a different receiver type.
+	QualifierType string `json:"qualifier_type,omitempty"`
+	File          string `json:"file"`
+	Line          int    `json:"line"`
+	Column        int    `json:"column,omitempty"`
 	// Synthetic marks an identity-only forwarding edge introduced by precise
 	// analysis for an SSA method wrapper. It has no source call site and is
 	// retained for graph traversal/reachability only; presentation layers must

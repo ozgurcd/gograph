@@ -873,10 +873,11 @@ func (r *fileResolver) isErrorConstructor(call *ast.CallExpr) bool {
 
 // extractGenDecl handles type declarations (structs, interfaces).
 func extractGenDecl(fset *token.FileSet, d *ast.GenDecl, relPath, pkgName, pkgImportPath string, result *FileResult) {
-	for _, spec := range d.Specs {
+	var previousConst *ast.ValueSpec
+	for specIndex, spec := range d.Specs {
 		if vs, ok := spec.(*ast.ValueSpec); ok {
 			if d.Tok == token.VAR || d.Tok == token.CONST {
-				for _, name := range vs.Names {
+				for nameIndex, name := range vs.Names {
 					pos := fset.Position(name.Pos())
 					endPos := fset.Position(vs.End()) // use vs.End() to capture the entire expression block
 					doc := ""
@@ -905,8 +906,12 @@ func extractGenDecl(fset *token.FileSet, d *ast.GenDecl, relPath, pkgName, pkgIm
 					if d.Tok == token.CONST {
 						// iota and omitted expressions depend on the enclosing group.
 						sym.DeclarationDigest = declarationDigest(fset, d)
+						sym.Value = constValue(vs, previousConst, nameIndex, specIndex)
 					}
 					result.Symbols = append(result.Symbols, sym)
+				}
+				if d.Tok == token.CONST && (len(vs.Values) > 0 || vs.Type != nil) {
+					previousConst = vs
 				}
 				// Walk package-level initializer expressions for call edges.
 				// `var x = compute()` and `var y = registry{handler: h.method}`
@@ -1215,6 +1220,7 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 		functionResolver := resolver.forFunction(d)
 		result.FlowFunctions = append(result.FlowFunctions, extractFlowFunction(fset, d, relPath, sym, resolver))
 		mutationTypes := mutationValueTypes(d)
+		receiverTypes := functionLexicalTypes(d)
 		callerName := d.Name.Name
 		if receiver != "" {
 			callerName = fmt.Sprintf("(%s).%s", receiver, d.Name.Name)
@@ -1338,11 +1344,12 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 			// Test edge: record which production symbols a test calls.
 			if isTestFunc && callee != "" && !strings.HasPrefix(callee, "t.") && !strings.HasPrefix(callee, "b.") {
 				result.TestEdges = append(result.TestEdges, graph.TestEdge{
-					TestFunc: d.Name.Name,
-					Target:   callee,
-					File:     relPath,
-					Line:     callPos.Line,
-					Column:   callPos.Column,
+					TestFunc:      d.Name.Name,
+					Target:        callee,
+					QualifierType: receiverTypes.qualifierType(call),
+					File:          relPath,
+					Line:          callPos.Line,
+					Column:        callPos.Column,
 				})
 			}
 
@@ -1356,6 +1363,7 @@ func extractFuncDecl(fset *token.FileSet, d *ast.FuncDecl, relPath, pkgName, pkg
 					CallerSymbolID: sym.ID,
 					CallerName:     callerName,
 					CalleeRaw:      callee,
+					QualifierType:  receiverTypes.qualifierType(call),
 					File:           relPath,
 					Line:           callPos.Line,
 					Column:         callPos.Column,

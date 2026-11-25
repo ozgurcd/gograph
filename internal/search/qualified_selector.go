@@ -3,6 +3,7 @@ package search
 import (
 	"fmt"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -11,13 +12,13 @@ import (
 
 // FileSelectorLimitDescription names legacy queries whose evidence is lexical,
 // rather than bound to the declaration selected by a file-qualified spelling.
-const FileSelectorLimitDescription = "File-qualified selectors are not supported by embeds, constructors, literals, returnusage, mutate, path or endpoint. These queries retain lexical relationship records that cannot reliably bind a file-qualified declaration; use their documented name/type/field/route forms. Usages supports file-qualified variables/constants but reports a named limit for types, whose reference records are lexical."
+const FileSelectorLimitDescription = "File-qualified selectors are not supported by embeds, constructors, literals, returnusage, mutate or endpoint. These queries retain lexical relationship records that cannot reliably bind a file-qualified declaration; use their documented name/type/field/route forms. Usages supports file-qualified variables/constants but reports a named limit for types, whose reference records are lexical."
 
 // FileSelectorLimit refuses unsupported selectors rather than returning an
 // apparently complete empty answer or conflating same-named declarations.
 func FileSelectorLimit(command string, values ...string) error {
 	switch command {
-	case "embeds", "constructors", "literals", "returnusage", "mutate", "path", "endpoint":
+	case "embeds", "constructors", "literals", "returnusage", "mutate", "endpoint":
 		for _, value := range values {
 			if strings.Contains(value, ".go:") {
 				return fmt.Errorf("%s file-selector limit: %s", command, FileSelectorLimitDescription)
@@ -105,12 +106,30 @@ func qualifiedSymbolMatch(s graph.SymbolNode, query string) (bool, bool) {
 		}
 		return name == strings.Trim(s.Receiver, "(*)")+"."+s.Name, true
 	}
-	if strings.Contains(query, "/") && !strings.Contains(query, "::") {
-		pkg, member, ok := strings.Cut(s.ID, "::")
-		normalize := receiverNormalizer.Replace
-		return ok && normalize(query) == normalize(pkg+"."+member), true
+	if strings.Contains(query, "/") || strings.Contains(query, "::") {
+		return packagePathSymbolMatch(s, query), true
 	}
 	return false, false
+}
+
+// packagePathSymbolMatch matches path/to/pkg.Member, path/to/pkg::Member and
+// pkg::Member selectors. The package part may be the full import path, a "/"-bounded
+// suffix of it (the repository-relative path internal/app), or the symbol's
+// repository-relative directory.
+func packagePathSymbolMatch(s graph.SymbolNode, query string) bool {
+	pkg, member, ok := strings.Cut(s.ID, "::")
+	if !ok {
+		return false
+	}
+	normalize := func(value string) string {
+		return strings.Replace(receiverNormalizer.Replace(value), "::", ".", 1)
+	}
+	q := normalize(strings.TrimPrefix(strings.TrimSpace(query), "./"))
+	full := normalize(pkg + "." + member)
+	if q == full || strings.HasSuffix(full, "/"+q) {
+		return true
+	}
+	return q == normalize(filepath.ToSlash(filepath.Dir(s.File))+"."+member)
 }
 
 // FileSelectorHint explains a file selector that names a method without its

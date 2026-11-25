@@ -1,5 +1,60 @@
 # Release Notes
 
+## v1.7.24 — 2026-11-25
+
+Fixes for the reasons agents logged when gograph could not answer: reading
+code at another commit, part of a long function, import blocks and constant
+values; seeing what runs under a mutex; and same-name methods mixed up on
+AST graphs.
+
+Behavior changes:
+
+- `query` and `strings` with `--path <subdir>` now filter to that directory
+  (before, a subdirectory searched everything).
+- Freshness checks (queries, `stats`, `gate`, `stale`) use the build tags the
+  graph was built with unless `--tags` or `GOFLAGS=-tags=...` says otherwise,
+  so a `--tags=integration` graph no longer reads as stale. A graph built with
+  different tags stays stale.
+- On AST graphs, `callers`, `tests`, `plan`, `review`, `path` and `coverage`
+  no longer match a method call to a same-name method of another type when
+  the receiver's type is known from the source: the receiver, a typed
+  parameter or `var`, a composite literal, `new(T)`, struct fields, or a call
+  directly on `T{}`, `&T{}`, `new(T)` or `x.(T)`. A receiver whose type comes
+  from a package outside the graph (`bytes.Buffer`, `testing.T`) matches no
+  repository method. Interfaces, call results and shadowed names stay
+  candidates. `tests Receiver.Method` selects that one method. Graphs
+  re-parse automatically (analysis cache version 14).
+
+New:
+
+- `--rev <ref>` (CLI) answers a query from a commit, branch or tag: the tree
+  is extracted to `.gograph/revs/<commit>/` and its graph is built once and
+  reused (about 50 MB per gograph commit; not cleaned up automatically).
+  Not accepted by `build`, `mcp`, `stale`, `workspace`, or with
+  `--uncommitted`/`--since`.
+- `source <symbol|file.go> --lines A-B` reads a line range (clamped, with
+  the file's imports; refused when the file changed since the build). MCP
+  `gograph_source` takes `lines`.
+- `source A B ...` reads several symbols in one call; one failure fails the
+  call after printing the rest.
+- `concurrency --locks <function>` lists each `Lock`/`RLock`, where it is
+  released (unlock lines, deferred until return, or not released) and the
+  calls made under it; a call after an unlock in the same block is not
+  listed. MCP `gograph_concurrency` takes `function`.
+- `review --since <ref>` (MCP `since`); global `--tags` on queries.
+- `skeleton <file>` shows the import block; `node` shows constant values
+  (graphs built before this need `gograph build .`).
+- `path` accepts file, package-path and ID selectors at either end.
+- `globals` takes a package path; `internal/app::Run`, `internal/app.Run`
+  and `app::Run` select by package.
+- `tests TestX --format go-test` selects that test; terms after `--` may
+  start with `-`.
+- `node` tries an exact, case-sensitive match first; `source` suggests up to
+  five close names when nothing matches; empty `callers`/`callees` say when
+  no declaration matches.
+- Per-command help prints every form of a command (for example
+  `concurrency --help` shows `--locks`, `impact --help` shows `--since`).
+
 ## v1.7.23 — 2026-11-23
 
 Fixes for the reasons agents logged when gograph could not answer: stale
