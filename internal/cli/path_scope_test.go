@@ -291,3 +291,39 @@ func TestSkeletonFileShowsImportBlock(t *testing.T) {
 		t.Fatalf("skeleton lib/lib.go: %q", out)
 	}
 }
+
+func TestQueriesUseRecordedBuildTagsForFreshness(t *testing.T) {
+	t.Setenv("GOFLAGS", "")
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod": "module example.com/tagged\n\ngo 1.22\n",
+		"a.go":   "package tagged\n\nfunc Plain() {}\n",
+		"b.go":   "//go:build integration\n\npackage tagged\n\nfunc Tagged() { Plain() }\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, stderr, code := runCLIParityInDir(t, root, func() int { return Run([]string{"build", ".", "--tags=integration"}) }); code != 0 {
+		t.Fatalf("build failed: %s", stderr)
+	}
+	for _, args := range [][]string{
+		{"source", "Tagged"},
+		{"source", "Tagged", "--tags=integration"},
+		{"callers", "Plain", "--tags", "integration"},
+	} {
+		out, stderr, code := runCLIParityInDir(t, root, func() int { return Run(args) })
+		if code != 0 || strings.Contains(stderr, "graph is stale") {
+			t.Errorf("%v on a graph built with its tags must be fresh: code=%d out=%s err=%s", args, code, out, stderr)
+		}
+	}
+	_, stderr, code := runCLIParityInDir(t, root, func() int { return Run([]string{"source", "Tagged", "--tags=other"}) })
+	if code != 0 || !strings.Contains(stderr, "graph is stale") {
+		t.Errorf("different explicit tags must report stale: code=%d err=%s", code, stderr)
+	}
+	t.Setenv("GOFLAGS", "-tags=other")
+	if _, stderr, _ := runCLIParityInDir(t, root, func() int { return Run([]string{"source", "Tagged"}) }); !strings.Contains(stderr, "graph is stale") {
+		t.Errorf("GOFLAGS tags that differ from the recorded ones must report stale: %s", stderr)
+	}
+}

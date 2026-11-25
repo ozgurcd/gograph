@@ -92,13 +92,15 @@ of every reaching test; `--files-only` is not paged.
 ## Freshness check context
 
 Graph-state output and capabilities include `freshness_context`. CLI compares
-the saved graph to the querying process's effective Go context, including
-GOFLAGS; MCP uses its startup context and explicit startup tags when supplied.
-Recorded directory exclusions remain in force. A different build context can
-therefore make unchanged source appear stale. This diagnostic preserves that
-fail-closed comparison; it does not automatically reuse saved tags or print
-environment values. Reproduce the build's context when asking freshness
-questions. MCP refreshes in its chosen startup context.
+the saved graph to the querying process's effective Go context. Query commands
+accept `--tags=a,b` to name the tags; without `--tags` and without `-tags` in
+GOFLAGS, the CLI uses the tags the graph was built with, so a graph built with
+`--tags=integration` is current for plain `gograph source X`. Tags given by
+`--tags` or GOFLAGS that differ from the recorded ones are stale (fail-closed).
+`stale` and `gate` without `--tags` follow the same rule. MCP uses its startup
+context and explicit startup tags when supplied. Recorded directory exclusions
+remain in force. No environment values are printed. MCP refreshes in its chosen
+startup context.
 
 CLI and MCP share search implementations. CLI normally reads the persisted
 repository graph; MCP refreshes before source-analysis queries. Compare results

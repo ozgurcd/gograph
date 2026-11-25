@@ -13,7 +13,7 @@ const SchemaVersion = "gograph.graph-state.v1"
 
 // FreshnessContextDescription identifies the context used by freshness checks
 // without exposing environment values or treating a mismatch as source drift.
-const FreshnessContextDescription = "Checked against the querying process Go build context (including GOFLAGS); MCP uses its explicit startup tags when supplied. A context mismatch is stale even without source edits."
+const FreshnessContextDescription = "Checked against the querying process Go build context (including GOFLAGS); CLI --tags selects the tags, and without --tags or GOFLAGS -tags the CLI uses the tags the graph was built with. MCP uses its explicit startup tags when supplied. A context mismatch is stale even without source edits."
 
 const maxDiagnosticRunes = 2048
 

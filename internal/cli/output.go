@@ -129,7 +129,7 @@ func loadedGraphStale(g *graph.Graph) search.StaleResult {
 	if outputGraph.stale != nil && outputGraph.graph == g {
 		return *outputGraph.stale
 	}
-	stale := search.Stale(g, graphRoot(g))
+	stale := search.StaleForQuery(g, graphRoot(g), queryBuildTags)
 	if outputGraph.graph == g {
 		outputGraph.stale = &stale
 	}

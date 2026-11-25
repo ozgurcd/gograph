@@ -90,10 +90,24 @@ func Run(args []string) int {
 	jsonMode = requestsJSON(args)
 	filesOnlyMode = false
 	mermaidMode = false
+	queryBuildTags = nil
+	takesQueryTags := commandTakesQueryTags(commandFromArgs(args))
 	var intention string
 	filtered := args[:0]
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		if takesQueryTags && (a == "--tags" || strings.HasPrefix(a, "--tags=")) {
+			var values []string
+			_, next, err := parseBuildTagsOption(args, i, &values)
+			if err == nil {
+				queryBuildTags, err = buildctx.NormalizeBuildTags(append(queryBuildTags, values...))
+			}
+			if err != nil {
+				return failCommand(commandFromArgs(args), "invalid --tags: "+err.Error())
+			}
+			i = next
+			continue
+		}
 		switch a {
 		case "--help", "-h":
 			if len(args) > 1 && args[0] != "--help" && args[0] != "-h" {
@@ -3596,6 +3610,9 @@ OUTPUT FLAGS
                              or the build context changed since then, they print a WARNING
                              on stderr naming the files (JSON: warning plus
                              graph_state.freshness "stale"). Run gograph build . to refresh.
+  --tags <a,b>               Build tags for a query command's freshness check. Without it
+                             (and without GOFLAGS -tags) the graph's recorded build tags
+                             are used, so a --tags=integration build stays current.
                              Request only one of --json, --files-only, or --mermaid.
   -i, --intention <msg>      Explain the technical rationale for executing the command.
                              MANDATORY for all analytical commands when a session is active.
@@ -4459,7 +4476,7 @@ func runStale(rawArgs []string) int {
 	if err != nil {
 		return failCommand("stale", err.Error())
 	}
-	sr := search.Stale(g, graphRoot(g))
+	sr := search.StaleForQuery(g, graphRoot(g), nil)
 	if len(normalizedTags) > 0 || len(excludeDirs) > 0 {
 		if len(excludeDirs) == 0 && g.Build != nil && g.Build.Selection != nil {
 			excludeDirs = g.Build.Selection.ExcludeDirs
@@ -4511,7 +4528,7 @@ func runStats() int {
 		return failCommand("stats", err.Error())
 	}
 	st := search.Stats(g)
-	freshness := search.Stale(g, graphRoot(g))
+	freshness := search.StaleForQuery(g, graphRoot(g), queryBuildTags)
 	state := graphstate.ManualPersisted(g, freshness.IsStale)
 	if jsonMode {
 		envelope := okEnvelope("stats", "", st, 1)
@@ -6842,4 +6859,18 @@ func emptyCallGraphMessage(g *graph.Graph, term, empty string) string {
 		message += "; " + hint
 	}
 	return message
+}
+
+// queryBuildTags holds a query command's --tags: the build context its
+// freshness check uses instead of the graph's recorded tags.
+var queryBuildTags []string
+
+// commandTakesQueryTags reports whether --tags is the global query option for
+// command. build, mcp, stale and workspace parse their own --tags.
+func commandTakesQueryTags(command string) bool {
+	switch command {
+	case "build", "mcp", "stale", "workspace", "gograph", "--":
+		return false
+	}
+	return true
 }

@@ -15,7 +15,8 @@ constants across packages, including net/http method patterns.
 the MCP transitive report.
 
 Graph-state output and capabilities expose `freshness_context`: CLI freshness
-checks use the querying process's Go context, including GOFLAGS; MCP uses its
+checks use the querying process's Go context; without `--tags` or GOFLAGS
+`-tags`, CLI queries use the tags the graph was built with. MCP uses its
 startup context and explicit tags. A context mismatch remains stale, even when
 source bytes have not changed. No environment values are printed.
 Precise indexes include package-level constant references in `usages` and `query`,

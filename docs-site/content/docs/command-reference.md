@@ -152,8 +152,10 @@ dependency that included code imports.
 gograph stale [--tags=integration[,tag...]] [--exclude-dirs=dir1,dir2] [--json]
 ```
 Compares the selected-file inventory, effective Go build context, and SHA-256 source-content digests with `.gograph/graph.json`. Modification times remain diagnostic fields only. It reports added, deleted, newly active, newly inactive, and byte-modified selected files plus build-context changes.
-Use the same `--tags` value supplied to `build` when checking an explicitly
-tagged artifact. Without it, `stale` continues to resolve inherited `GOFLAGS`.
+Without `--tags`, a graph built with tags is checked against those recorded
+tags unless `GOFLAGS` sets `-tags`; an explicit `--tags` or `GOFLAGS -tags`
+that differs is reported as a build-context change. Query commands (`source`,
+`callers`, `query`, ...) accept the same `--tags` and follow the same rule.
 Text output reports the persisted graph's source, freshness, completeness, and
 precision. JSON adds the same full `gograph.graph-state.v1` object as top-level
 `graph_state`, including refresh and persistence outcomes.
