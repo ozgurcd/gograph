@@ -97,6 +97,56 @@ func loadGraphFile(projectRoot, path string) (*graph.Graph, error) {
 	return &g, nil
 }
 
+// ResolveCommit returns the full commit ID that ref names in the Git
+// repository holding projectRoot.
+func ResolveCommit(ctx context.Context, projectRoot, ref string) (string, error) {
+	if ref == "" || strings.HasPrefix(ref, "-") || !safeGitRef.MatchString(ref) {
+		return "", fmt.Errorf("invalid or unsafe git ref: %q", ref)
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", projectRoot, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	cmd.Env = gitenv.Clean(os.Environ())
+	out, err := cmd.Output()
+	commit := strings.TrimSpace(string(out))
+	if err != nil || !fullCommitID.MatchString(commit) {
+		return "", fmt.Errorf("git ref %q does not name a commit in the repository at %s", ref, projectRoot)
+	}
+	return commit, nil
+}
+
+var fullCommitID = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
+// ExtractProject writes the project's files at commit into destination, as
+// Build does for a baseline, and returns the directory that corresponds to
+// projectRoot.
+func ExtractProject(ctx context.Context, projectRoot, commit, destination string) (string, error) {
+	projectRoot, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve project root: %w", err)
+	}
+	if resolvedRoot, resolveErr := filepath.EvalSymlinks(projectRoot); resolveErr == nil {
+		projectRoot = resolvedRoot
+	}
+	repoRoot, projectRel, err := gitRoots(ctx, projectRoot)
+	if err != nil {
+		return "", err
+	}
+	return extractGitArchive(ctx, repoRoot, projectRel, commit, destination)
+}
+
+// ProjectSubdir returns projectRoot's path relative to the top level of its
+// Git repository: where ExtractProject places it inside destination.
+func ProjectSubdir(ctx context.Context, projectRoot string) (string, error) {
+	projectRoot, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve project root: %w", err)
+	}
+	if resolvedRoot, resolveErr := filepath.EvalSymlinks(projectRoot); resolveErr == nil {
+		projectRoot = resolvedRoot
+	}
+	_, projectRel, err := gitRoots(ctx, projectRoot)
+	return projectRel, err
+}
+
 func gitRoots(ctx context.Context, projectRoot string) (string, string, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", projectRoot, "rev-parse", "--show-toplevel")
 	cmd.Env = gitenv.Clean(os.Environ())

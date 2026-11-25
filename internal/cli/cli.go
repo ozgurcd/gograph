@@ -91,6 +91,8 @@ func Run(args []string) int {
 	filesOnlyMode = false
 	mermaidMode = false
 	queryBuildTags = nil
+	queryRev = ""
+	revisionRoots = map[string]string{}
 	takesQueryTags := commandTakesQueryTags(commandFromArgs(args))
 	var intention string
 	filtered := args[:0]
@@ -106,6 +108,21 @@ func Run(args []string) int {
 				return failCommand(commandFromArgs(args), "invalid --tags: "+err.Error())
 			}
 			i = next
+			continue
+		}
+		if takesQueryTags && (a == "--rev" || strings.HasPrefix(a, "--rev=")) {
+			value := strings.TrimPrefix(a, "--rev=")
+			if a == "--rev" {
+				if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+					return failCommand(commandFromArgs(args), "--rev requires a git ref")
+				}
+				value = args[i+1]
+				i++
+			}
+			if value == "" {
+				return failCommand(commandFromArgs(args), "--rev requires a git ref")
+			}
+			queryRev = value
 			continue
 		}
 		switch a {
@@ -162,6 +179,11 @@ func Run(args []string) int {
 		}
 	}
 	args = filtered
+	if queryRev != "" {
+		if err := commandTakesRev(args); err != nil {
+			return failCommand(commandFromArgs(args), err.Error())
+		}
+	}
 	var paginationErr error
 	args, paginationErr = stripListPagination(args)
 	if paginationErr != nil {
@@ -632,6 +654,7 @@ transport-specific (CLI flags/envelopes versus typed MCP arguments/content).
   Diagnose install/graph health → doctor --json  (PATH, freshness, analysis capabilities, diagnostic)
   External symbol signature    → doc <pkg.Symbol>  (stdlib/third-party — no graph required)
   API breaking-change check    → api --since <ref>
+  Read code at another commit   → --rev <ref> <query>  (e.g. --rev 3b37747 source file.go; cached per commit)
   CI enforcement               → gate, check --since <ref>
 
 ━━━ WHEN TO USE WHAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3161,6 +3184,22 @@ func loadGraph(root string) (*graph.Graph, error) {
 	if root == "." {
 		root = rootfind.FindRepositoryRoot()
 	}
+	if queryRev != "" {
+		absRoot, err := filepath.Abs(root)
+		if err != nil {
+			return nil, fmt.Errorf("resolving path: %w", err)
+		}
+		revRoot, err := revisionRoot(absRoot, queryRev)
+		if err != nil {
+			return nil, fmt.Errorf("--rev %s: %w", queryRev, err)
+		}
+		root = revRoot
+	}
+	return loadGraphIgnoringRev(root)
+}
+
+// loadGraphIgnoringRev loads the persisted graph of root without applying --rev.
+func loadGraphIgnoringRev(root string) (*graph.Graph, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("resolving path: %w", err)
@@ -3643,6 +3682,12 @@ OUTPUT FLAGS
   --tags <a,b>               Build tags for a query command's freshness check. Without it
                              (and without GOFLAGS -tags) the graph's recorded build tags
                              are used, so a --tags=integration build stays current.
+  --rev <ref>                Read the tree of a Git commit, branch or tag instead of the
+                             working tree. The first query extracts it with git archive
+                             into .gograph/revs/<commit>/ and builds an AST graph there
+                             (working graph's recorded tags unless --tags/GOFLAGS);
+                             later queries reuse it. Not with --uncommitted or --since.
+                             CLI only; delete .gograph/revs to reclaim space.
                              Request only one of --json, --files-only, or --mermaid.
   -i, --intention <msg>      Explain the technical rationale for executing the command.
                              MANDATORY for all analytical commands when a session is active.

@@ -113,6 +113,19 @@ from the same graph content and filters when testing parity. A running MCP
 process does not load a replacement binary: restart it after upgrading and
 check the `version` returned by `gograph_capabilities`.
 
+## Git revisions
+
+The global CLI `--rev <ref>` resolves `ref` to a full commit ID with
+`git rev-parse --verify <ref>^{commit}` (refs are validated like baseline refs)
+and answers from `.gograph/revs/<commit>/`, the project's `git archive` tree at
+that commit with its own AST graph. Paths, selectors and JSON envelopes are the
+same as for the working tree; `graph_state` describes the revision graph, which
+is current unless its files were edited. The graph uses the working graph's
+recorded build tags and exclusions unless `--tags` or `GOFLAGS -tags` select
+others. `--rev` is refused by commands that build, serve or compare with the
+working tree (`build`, `mcp`, `stale`, `workspace`, `--uncommitted`, `--since`).
+MCP has no per-call revision.
+
 ## Bounded result lists
 
 These commands share result pagination with their `gograph_<command>` tools:

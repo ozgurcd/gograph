@@ -23,6 +23,16 @@ Global flags may appear before or after the command:
   CLI command telemetry. It is mandatory for analytical commands while an
   the caller selects an active audit session; session, MCP startup, build, installation, help,
   version, doctor, stale, stats, capabilities, wiki, and doc commands do not require it.
+- `--rev <ref>`: Answer a graph query from the tree of a Git commit, branch or
+  tag instead of the working tree (`gograph --rev 3b37747 source
+  internal/app/client.go`, `gograph callers Run --rev origin/main`). The first
+  query for a commit extracts the project with `git archive` into
+  `.gograph/revs/<commit>/` (a standalone repository, so the scanner applies
+  only the commit's own ignore rules) and builds an AST graph there; later
+  queries reuse it. The graph uses the working graph's recorded build tags and
+  exclusions unless `--tags` or `GOFLAGS -tags` select others, which rebuilds
+  it. Not accepted by `build`, `mcp`, `stale` or `workspace`, or with
+  `--uncommitted`/`--since`. CLI only. Delete `.gograph/revs` to reclaim space.
 - `--session-id ID` / `GOGRAPH_SESSION=ID`: Select the caller's session returned
   by `session create`. The flag overrides the environment. Omission keeps a
   read-only caller outside other agents' audits; writes still refuse when another

@@ -93,6 +93,9 @@ gograph build . --precise --memory-mode=low --max-memory=1GiB
 # Optional: include integration-tagged files and tests in this graph
 gograph build . --precise --tags=integration
 
+# Query another commit, branch or tag without a checkout (cached in .gograph/revs/)
+gograph --rev origin/main callers Run
+
 # Optional: omit unrelated broken package directories
 gograph build . --precise --strict --exclude-dirs=legacy,examples/broken
 

@@ -65,6 +65,7 @@ gograph errors                  # custom error variables and panics mapped to th
 gograph embeds <struct>         # find which structs embed a target struct
 gograph public <pkg>            # list only the exported API surface of a package
 gograph envs [term]             # list indexed environment reads
+gograph --rev <ref> <query>     # answer any graph query from a commit/branch/tag (cached in .gograph/revs/<commit>/)
 gograph concurrency [term]      # map goroutines, channel sends, mutexes, waitgroups, sync.Once
 gograph concurrency --locks <function>  # each Lock/RLock in a function, its release, calls under it
 gograph tests [symbol]          # direct attributed test calls; accepts Receiver.Method or stable ID

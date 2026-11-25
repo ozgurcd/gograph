@@ -26,6 +26,7 @@ Rules (applied when gograph MCP server is connected):
 7. If a gograph CLI command prints "WARNING: the graph is stale", run gograph build . and repeat it before relying on a missing result.
 8. To read part of a long body, or a file region such as its imports, use gograph_source with lines=START-END (CLI: gograph source <symbol|path/file.go> --lines START-END) instead of shell or region reads of Go files.
 9. To see what runs while a mutex is held in a function, use gograph_concurrency with function=<selector> (CLI: gograph concurrency --locks <function>); it lists each Lock/RLock, its release, and the calls under it.
+10. To read code, callers or tests at another commit or branch, run the CLI with --rev <ref> (for example gograph --rev 3b37747 source internal/app/client.go) instead of git show or a scratch checkout.
 <!-- gograph-end: do not remove -->
 `
 
