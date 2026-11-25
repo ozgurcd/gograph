@@ -7,6 +7,10 @@ import (
 	"github.com/ozgurcd/gograph/internal/session"
 )
 
+// commandIntention is this invocation's --intention; session create records
+// it as the session's default intention.
+var commandIntention string
+
 // runSession manages the `--session` / `session` CLI subcommands.
 func runSession(args []string) int {
 	if len(args) == 0 {
@@ -20,12 +24,15 @@ func runSession(args []string) int {
 		if len(args) >= 2 {
 			customWord = args[1]
 		}
-		sessionID, err := session.StartCallerSessionAt("", customWord, callerSessionID)
+		sessionID, err := session.StartCallerSessionWithIntentionAt("", customWord, callerSessionID, session.OwnerCLI, commandIntention)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error starting session: %v\n", err)
 			return 1
 		}
 		fmt.Printf("Session %q successfully created and activated.\n", sessionID)
+		if commandIntention != "" {
+			fmt.Printf("Calls in this session without --intention use its default: %q\n", commandIntention)
+		}
 		fmt.Printf("Use --session-id %s or GOGRAPH_SESSION=%s on this caller's commands.\n", sessionID, sessionID)
 		fmt.Println("While it is the repository's only active session, CLI commands on this host without a selector use it automatically.")
 		return 0
@@ -78,7 +85,7 @@ func printSessionHelp() {
 	fmt.Println("Usage:")
 	fmt.Println("  Caller selection: --session-id ID or GOGRAPH_SESSION=ID; use the ID printed by create.")
 	fmt.Println("  Without a selector, the repository's only active session is used when this host's CLI created it.")
-	fmt.Println("  gograph session create [unique_identifier_word]  - Starts a new audit session")
+	fmt.Println("  gograph session create [unique_identifier_word] [-i \"<task>\"]  - Starts a new audit session; -i sets the default intention")
 	fmt.Println("  gograph session end [session_id]                 - Ends the selected (or named) audit session")
 	fmt.Println("  gograph session audit [session_id]               - Audits and scores agent compliance & success")
 	fmt.Println("  gograph session cleanup                          - Ends stale sessions, then moves inactive logs into .gograph/_to_delete/")
@@ -90,8 +97,8 @@ func printSessionVerbHelp(verb string) bool {
 	var usage, description, options string
 	switch verb {
 	case "create":
-		usage = "create [unique_identifier_word]"
-		description = "Start an independent caller audit session. Returns an ID to pass as --session-id or GOGRAPH_SESSION. Other callers may create concurrently."
+		usage = "create [unique_identifier_word] [-i \"<task>\"]"
+		description = "Start an independent caller audit session. Returns an ID to pass as --session-id or GOGRAPH_SESSION. Other callers may create concurrently. With -i, the text becomes the session's default intention: calls in the session that omit --intention use it."
 	case "end":
 		usage = "end"
 		description = "End only the selected caller's session; refuses unselected callers while another session is active."

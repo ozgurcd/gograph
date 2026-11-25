@@ -107,10 +107,16 @@ in-memory fallback and a trusted stale persisted result are intentionally
 usable but degraded; disclose them and cross-check important negatives. A
 different effective Go build context fails closed rather than being served.
 CLI graph-backed `--json` responses expose the same
-`gograph.graph-state.v1` object at the envelope top level. CLI text output
-prints `WARNING: the graph is stale` on stderr, naming the changed files; run
-`gograph build .` and repeat the query before trusting a missing caller, test
-or literal.
+`gograph.graph-state.v1` object at the envelope top level. CLI queries rebuild
+a stale graph first (recorded precision, tags and exclusions; note on stderr,
+or in `warning` under `--json`; `--no-refresh`/`GOGRAPH_NO_REFRESH=1` turns it
+off). When they cannot (another build context, another caller's session), text
+output prints `WARNING: the graph is stale` on stderr, naming the changed
+files; run `gograph build .` and repeat the query before trusting a missing
+caller, test or literal. With an audit session, pass `intention` to
+`gograph_session_create` (CLI `session create <word> -i "<task>"`) so later
+calls may omit it, and audit a task split over several sessions by its word
+(`gograph_session_audit` with the word as `session_id`).
 
 ## High-value tools
 
@@ -145,7 +151,7 @@ new declarations. CLI uses the same rules.
 | `gograph_errorflow` with `query=<term>` | Error propagation paths |
 | `gograph_flow` | Potential HTTP/JSON/env paths to SQL, process, filesystem, and outbound HTTP sinks |
 | `gograph_changes` | Declaration add/modify/delete/excluded/unknown census against persisted graph or `git_ref`; require `evaluation=complete` before treating the result as exhaustive |
-| `gograph_tests` with `uncommitted=true` (or `since=<ref>`, or `symbol=<symbol>, select=true`) | Which tests to run for a change: per-package anchored `go test -run` patterns and ready commands; `max_depth=3` keeps nearby tests |
+| `gograph_tests` with `uncommitted=true` (or `since=<ref>`, or `symbol=<symbol>, select=true`) | Which tests to run for a change: per-package anchored `go test -run` patterns and ready commands; `max_depth=3` keeps nearby tests. Changed types select their users' tests (variables and constants on precise graphs); main-package tests that run the binary are possible matches |
 | `gograph_tests` with `symbol=<symbol>, transitive=true` | Tests statically reaching a symbol: summary by depth first, then 50 per page, nearest first (`limit`, `cursor`, `max_depth`); omit `transitive` for direct edges, where `Receiver.Method` and stable IDs are accepted. On AST graphs, calls through a receiver of a known other type (for example `e.Error()` with `e := otherErr{}`, or `otherErr{}.Error()`) and through receivers of external packages (`bytes.Buffer`) are not attributed |
 | `gograph_coverage` with `test=<TestFunc>` | Transitive product symbols one unambiguous test statically reaches; exact/possible paths; optional `package` disambiguation |
 | `gograph_identity` with `symbol=<symbol-or-stable-id>` | Print or re-resolve canonical symbol identity without silently choosing ambiguity; optional `package` disambiguation |

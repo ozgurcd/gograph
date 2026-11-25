@@ -185,7 +185,8 @@ func TestSourceLinesReadsDeclarationAndFileRegions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "lines.go"), []byte(content+"\n// edited\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, stderr, code := run("source", "lines.go", "--lines", "1-2"); code == 0 || !strings.Contains(stderr, "changed after the graph was built") {
+	// Automatic refresh would rebuild first; --no-refresh keeps the refusal.
+	if _, stderr, code := run("--no-refresh", "source", "lines.go", "--lines", "1-2"); code == 0 || !strings.Contains(stderr, "changed after the graph was built") {
 		t.Fatalf("a changed file must be refused: code=%d err=%s", code, stderr)
 	}
 }

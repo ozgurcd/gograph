@@ -35,6 +35,14 @@ Global flags may appear before or after the command:
   exclusions unless `--tags` or `GOFLAGS -tags` select others, which rebuilds
   it. Not accepted by `build`, `mcp`, `stale` or `workspace`, or with
   `--uncommitted`/`--since`. CLI only. Delete `.gograph/revs` to reclaim space.
+- `--no-refresh`: Answer from the persisted graph even when it is stale (with
+  the stale warning). Without it, a CLI graph query rebuilds a stale graph
+  first: changed packages only, with the recorded precision, build tags and
+  excluded directories, noted on stderr (or in `warning` under `--json`).
+  `GOGRAPH_NO_REFRESH=1` does the same for every call. A different build
+  context, another caller's active session and `--rev` never rebuild, nor do
+  `stale`, `stats`, `changes` and the enforcement commands `gate`, `check` and
+  `boundaries` (`gate` still fails on a stale graph).
 - `--session-id ID` / `GOGRAPH_SESSION=ID`: Select the caller's session returned
   by `session create`. The flag overrides the environment. Omission keeps a
   read-only caller outside other agents' audits; writes still refuse when another
@@ -784,9 +792,17 @@ go test example.com/app/api
 A package whose every test is selected runs without `-run`, and long patterns
 are split at 16 KiB. Changed tests select themselves; tests deleted by the
 change are never listed; a deleted function still in the pre-change graph
-selects the tests that reached it; changed types, variables and constants, and
-new functions missing from a stale graph, are reported under `unselected`
-(status `partial`). `--max-depth N` keeps tests whose shortest call path is at
+selects the tests that reached it. A changed type (or `tests <Type>`) selects
+the tests of the functions that use it: its methods (exact), functions whose
+signatures name it and composite literals of it (possible), and, on precise
+graphs, its field uses (exact); its root reports `users`. A changed variable or
+constant selects the tests of its uses on precise graphs only; on AST graphs it
+is reported under `unselected` with a `--precise` hint. When a change reaches
+the `main` function of a package, that package's tests that start a process
+(`exec.Command`/`exec.CommandContext`, directly or through a helper) are
+added as possible: they usually run the built binary. Tests in other packages
+that run a binary are not linked. New functions missing from a stale graph are
+reported under `unselected` (status `partial`). `--max-depth N` keeps tests whose shortest call path is at
 most N, `--exact-only` drops paths through dynamic dispatch. `--json` returns
 `gograph.test_selection.v1`.
 
@@ -1426,11 +1442,14 @@ must already have started with a usable artifact or buildable Go source.
 
 ### session
 ```bash
-gograph session create [word]
+gograph session create [word] [-i "<task>"]
 gograph session end [session_id]
-gograph session audit [session_id]
+gograph session audit [session_id|word]
 gograph session cleanup
 ```
+`create -i "<task>"` records a default intention: calls in that session without
+`-i` use it instead of failing. `audit <word>` grades every session created with
+that word together (plan in one session, review in another).
 Manages local workflow metadata under `.gograph/sessions/`. Session IDs contain
 only letters, digits, and underscores. The `.gograph`/sessions directories must
 be real, and markers/logs must be regular non-linked entries. Audit reads and

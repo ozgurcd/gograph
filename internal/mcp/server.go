@@ -452,6 +452,10 @@ func NewServer(
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
+				if activeID != "" && intention == "" {
+					// A session created with an intention gives every call its default.
+					intention = session.SessionIntentionAt(serverRoot, activeID)
+				}
 				if activeID != "" && intention == "" && toolName != "gograph_capabilities" && toolName != "gograph_stats" && toolName != "gograph_stale" && toolName != "gograph_wiki" && toolName != "gograph_doc" {
 					return mcp.NewToolResultError(fmt.Sprintf("Active session %q requires an intention; supply intention with your technical rationale", activeID)), nil
 				}
@@ -2325,6 +2329,13 @@ func initNewTools(
 				return mcp.NewToolResultError("symbol must be a non-empty string when select=true"), nil
 			}
 			report := queriesForRequest(ctx).TransitiveTests(term, packageName, false)
+			if report.Status == "not_found" {
+				// A type, variable or constant selects the tests of its uses.
+				if declarations := search.ResolveDeclarations(g, term, packageName); len(declarations) == 1 {
+					declaration := declarations[0]
+					return jsonToolResult(queriesForRequest(ctx).SelectTestsWithin(term, []search.SelectionInput{{StableID: declaration.ID, Name: declaration.Name, File: declaration.File}}, exactOnly, pageOptions.MaxDepth))
+				}
+			}
 			if report.Status != "exact" {
 				return jsonToolResult(report)
 			}
@@ -2968,7 +2979,7 @@ func initNewTools(
 
 	// Tool: gograph_session_create
 	sessionCreateTool := mcp.NewTool("gograph_session_create",
-		mcp.WithDescription("Start a telemetry audit session for tracking agent compliance and tool success metrics. Writes only regular, repository-confined session state under .gograph/sessions and refuses linked storage; MCP annotations mark it mutating and non-idempotent. No prerequisites once the MCP server is running. WHEN TO USE: Call once at the start of a multi-step coding task to track your work. Pass the returned ID as session_id on this caller's later requests. Independent callers may create alongside other active sessions. RETURNS: Message with the caller session ID."),
+		mcp.WithDescription("Start a telemetry audit session for tracking agent compliance and tool success metrics. Writes only regular, repository-confined session state under .gograph/sessions and refuses linked storage; MCP annotations mark it mutating and non-idempotent. No prerequisites once the MCP server is running. WHEN TO USE: Call once at the start of a multi-step coding task to track your work. Pass the returned ID as session_id on this caller's later requests. An intention given here becomes the session's default: later calls that omit intention use it. Independent callers may create alongside other active sessions. RETURNS: Message with the caller session ID."),
 		mcp.WithString("custom_word", mcp.Description("Optional custom word prefix to incorporate in the timestamped session ID (e.g. 'implement_feature')")),
 	)
 	addTool(sessionCreateTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -2980,7 +2991,8 @@ func initNewTools(
 			}
 		}
 		callerID, _ := args["session_id"].(string)
-		sessionID, err := session.StartCallerSessionOwnedAt(serverRoot, customWord, callerID, session.OwnerMCP)
+		intention, _ := args["intention"].(string)
+		sessionID, err := session.StartCallerSessionWithIntentionAt(serverRoot, customWord, callerID, session.OwnerMCP, intention)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

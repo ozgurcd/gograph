@@ -391,6 +391,14 @@ fi
 Avoid `gograph stale || gograph build .`: that also rebuilds after exit `1` and
 can mask a real freshness-check failure.
 
+Graph queries do this themselves: a CLI query that finds the graph stale
+rebuilds it (changed packages only, with the recorded precision, tags and
+excluded directories) and prints `gograph: rebuilt the stale graph ...` on
+stderr, or adds it to `warning` under `--json`. `--no-refresh` or
+`GOGRAPH_NO_REFRESH=1` keeps the old behavior (answer from the stale graph
+with a warning). A different build context or another caller's active session
+also leaves the graph as it is, with the warning.
+
 ### 10. Reading Internal Implementations (Mock Stubs, Algorithms)
 When you need to read an indexed method body (for example, to check whether a
 mock repository has a `panic("not implemented")` stub), or inspect an indexed
@@ -1065,7 +1073,7 @@ The current suite registers 70 MCP endpoints: 66 query, analysis, and workflow t
 - **`gograph_endpoint`**: Full vertical slice for one HTTP route: handler, BFS call chain (default depth 5; clamped to 1-20), SQL, and env reads. Query by route pattern, path fragment, or handler name. `include_tests` includes routes registered in `_test.go` files; `mermaid` selects flowchart output.
 - **`gograph_interfaces`**: Interfaces satisfied by a named struct — inverse of `gograph_implementers`. Use before refactoring a method to know which contracts break.
 - **`gograph_mutate`**: Struct-field and package-global mutation sites. AST mode reports direct assignments; precise mode adds `++`/`+=`, pointer aliases, atomic/sync/wrapper calls, and channel evidence. Use before adding field validation or changing shared state.
-- **`gograph_tests`**: Which tests to run, and which tests reach a symbol. `uncommitted=true`, `since=<ref>`, or `symbol` with `select=true` return `gograph.test_selection.v1`: per package, anchored `go test -run` patterns and ready `go test` commands with the graph's build tags (`max_depth`, `exact_only` narrow it). Direct attributed test calls by default; `symbol` accepts `Receiver.Method` (including pointer receivers) or a stable ID without matching another receiver's same-named method. Set `transitive=true` to receive `gograph.tests.v1`: a summary by depth and resolution, then 50 tests per page nearest first with a representative stable-ID path (`limit`, `limit=0` for all, `cursor`, `max_depth`). Optional `exact_only` filters uncertain paths and `package` disambiguates the selected product symbol. CLI uses `--uncommitted`, `--since`, `--format run|go-test`, `--transitive`, `--exact-only`, `--package`, `--max-depth`, `--limit`, and `--cursor`.
+- **`gograph_tests`**: Which tests to run, and which tests reach a symbol. `uncommitted=true`, `since=<ref>`, or `symbol` with `select=true` (also a type, variable or constant: the tests of the functions that use it; variables and constants need a precise graph) return `gograph.test_selection.v1`: per package, anchored `go test -run` patterns and ready `go test` commands with the graph's build tags (`max_depth`, `exact_only` narrow it). Direct attributed test calls by default; `symbol` accepts `Receiver.Method` (including pointer receivers) or a stable ID without matching another receiver's same-named method. Set `transitive=true` to receive `gograph.tests.v1`: a summary by depth and resolution, then 50 tests per page nearest first with a representative stable-ID path (`limit`, `limit=0` for all, `cursor`, `max_depth`). Optional `exact_only` filters uncertain paths and `package` disambiguates the selected product symbol. CLI uses `--uncommitted`, `--since`, `--format run|go-test`, `--transitive`, `--exact-only`, `--package`, `--max-depth`, `--limit`, and `--cursor`.
 - **`gograph_coverage`**: Transitive product symbols statically reachable from one unambiguous test, with stable-ID paths and exact/possible propagation. Parameters: required `test`; optional `exact_only` and exact `package` disambiguator. Equivalent to CLI `coverage`.
 - **`gograph_uncovered`**: Changed lines of non-test Go files that a `go test -coverprofile` run never executed, as exact line ranges (`gograph.uncovered.v1`). Parameters: required repository-relative `coverprofile`; exactly one of `uncommitted=true` or `since`. Equivalent to CLI `uncovered`.
 - **`gograph_identity`**: Resolve an exact symbol spelling or stable ID. Returns exact, ambiguous, or not_found without silently choosing a candidate; optional `package` disambiguates an external-test collision. Equivalent to CLI `identity`.
@@ -1170,8 +1178,12 @@ gograph stale -i "Check if the graph is stale before analyzing the codebase"
 ```
 If the agent fails to supply `-i` when a session is active, `gograph` blocks execution and returns a structured exit code `1` with an error message:
 ```
-Error: Active session "implement_refactor_20260530_200840" requires an intention. Please supply the --intention (-i) flag stating your technical rationale.
+Error: Active session "implement_refactor_20260530_200840" requires an intention. Please supply the --intention (-i) flag stating your technical rationale, or create the session with `gograph session create <word> -i "<task>"` to give every call a default.
 ```
+Create the session with a task intention to avoid repeating it: `gograph session
+create fix_parser -i "fix the parser's error recovery"` (MCP:
+`gograph_session_create` with `intention`). Calls in that session that omit
+`-i` are logged with that default; a call's own `-i` still wins.
 *Note: Session commands, `mcp`, `build`, `doctor`, `stale`, `stats`, `capabilities`, `wiki`, `doc`, plugin/hook setup, help, and version are exempt from intention enforcement. Other analytical commands require an intention while a session is active.*
 
 ### 3. Ending a Session
@@ -1205,6 +1217,10 @@ You can audit the agent's work at any time during or after a session using the `
 gograph session audit [session_id]
 ```
 If `session_id` is omitted, the tool automatically scans `.gograph/sessions/` and audits the **most recent** session.
+Pass the session's creation word instead of an ID (`gograph session audit fix_parser`)
+to grade every session created with that word as one task, so a `plan` run in one
+session and a `review` in a later one both count. A single-session audit names the
+word when other sessions share it.
 
 The audit report provides:
 1. **Agent Compliance Score & Grade**:

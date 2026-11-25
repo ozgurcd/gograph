@@ -149,6 +149,9 @@ type SessionStartEntry struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
 	CreatedAt string `json:"created_at"`
+	// Intention is the session's default rationale, used by calls that
+	// supply none.
+	Intention string `json:"intention,omitempty"`
 }
 
 // SessionEndEntry logs the termination of a session.
@@ -388,29 +391,32 @@ type AuditReport struct {
 	InvocationErrors        []string `json:"invocation_errors,omitempty"`
 	ComposabilityDefinition string   `json:"composability_definition"`
 	SessionID               string   `json:"session_id"`
-	Status                  string   `json:"status"`
-	CreatedAt               string   `json:"created_at"`
-	EndedAt                 string   `json:"ended_at"`
-	DurationSeconds         float64  `json:"duration_seconds"`
-	TotalCommands           int      `json:"total_commands"`
-	SuccessCount            int      `json:"success_count"`
-	FailureCount            int      `json:"failure_count"`
-	SuccessRate             float64  `json:"success_rate"`
-	PlanRun                 bool     `json:"plan_run"`
-	ReviewRun               bool     `json:"review_run"`
-	PlanSymbols             []string `json:"plan_symbols,omitempty"`
-	ReviewTargets           []string `json:"review_targets,omitempty"`
-	UnselectedPlan          int      `json:"unselected_plan,omitempty"`
-	UnselectedReview        int      `json:"unselected_review,omitempty"`
-	UnattributedPlan        int      `json:"unattributed_plan,omitempty"`
-	UnattributedReview      int      `json:"unattributed_review,omitempty"`
-	JournalDropped          int      `json:"journal_dropped,omitempty"`
-	ComposedCount           int      `json:"composed_count"`
-	RawQueryCount           int      `json:"raw_query_count"`
-	Composability           float64  `json:"composability"`
-	ComplianceScore         float64  `json:"compliance_score"`
-	Grade                   string   `json:"grade"`
-	Recommendations         []string `json:"recommendations"`
+	// SessionIDs lists the sessions graded together when the audit names a
+	// session word rather than one session.
+	SessionIDs         []string `json:"session_ids,omitempty"`
+	Status             string   `json:"status"`
+	CreatedAt          string   `json:"created_at"`
+	EndedAt            string   `json:"ended_at"`
+	DurationSeconds    float64  `json:"duration_seconds"`
+	TotalCommands      int      `json:"total_commands"`
+	SuccessCount       int      `json:"success_count"`
+	FailureCount       int      `json:"failure_count"`
+	SuccessRate        float64  `json:"success_rate"`
+	PlanRun            bool     `json:"plan_run"`
+	ReviewRun          bool     `json:"review_run"`
+	PlanSymbols        []string `json:"plan_symbols,omitempty"`
+	ReviewTargets      []string `json:"review_targets,omitempty"`
+	UnselectedPlan     int      `json:"unselected_plan,omitempty"`
+	UnselectedReview   int      `json:"unselected_review,omitempty"`
+	UnattributedPlan   int      `json:"unattributed_plan,omitempty"`
+	UnattributedReview int      `json:"unattributed_review,omitempty"`
+	JournalDropped     int      `json:"journal_dropped,omitempty"`
+	ComposedCount      int      `json:"composed_count"`
+	RawQueryCount      int      `json:"raw_query_count"`
+	Composability      float64  `json:"composability"`
+	ComplianceScore    float64  `json:"compliance_score"`
+	Grade              string   `json:"grade"`
+	Recommendations    []string `json:"recommendations"`
 }
 
 // FindMostRecentSessionID finds the session log file with the newest modification time.
@@ -494,95 +500,124 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 		}
 	}
 
-	relLogFilePath, err := sessionLogPath(sessionID)
+	ids, err := store.auditSessionIDs(sessionID)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "Error opening session log: %v\n", err)
 		return 1
 	}
-	logFilePath := filepath.Join(store.rootPath, relLogFilePath)
-	data, err := store.files.ReadRegularFile(relLogFilePath)
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "Error opening session log %q: %v\n", logFilePath, err)
-		return 1
+	type sessionLog struct {
+		id    string
+		lines []GenericLogLine
 	}
-
-	var lines []GenericLogLine
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	for scanner.Scan() {
-		text := scanner.Text()
-		if strings.TrimSpace(text) == "" {
-			continue
+	var logs []sessionLog
+	for _, id := range ids {
+		relLogFilePath, err := sessionLogPath(id)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "Error opening session log: %v\n", err)
+			return 1
 		}
-		var line GenericLogLine
-		if err := json.Unmarshal([]byte(text), &line); err == nil {
-			lines = append(lines, line)
+		logFilePath := filepath.Join(store.rootPath, relLogFilePath)
+		data, err := store.files.ReadRegularFile(relLogFilePath)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "Error opening session log %q: %v\n", logFilePath, err)
+			return 1
 		}
+		var lines []GenericLogLine
+		scanner := bufio.NewScanner(bytes.NewReader(data))
+		for scanner.Scan() {
+			text := scanner.Text()
+			if strings.TrimSpace(text) == "" {
+				continue
+			}
+			var line GenericLogLine
+			if err := json.Unmarshal([]byte(text), &line); err == nil {
+				lines = append(lines, line)
+			}
+		}
+		if len(lines) == 0 {
+			_, _ = fmt.Fprintf(stderr, "Error: session log %q is empty or corrupt\n", logFilePath)
+			return 1
+		}
+		logs = append(logs, sessionLog{id: id, lines: lines})
 	}
 
-	if len(lines) == 0 {
-		_, _ = fmt.Fprintf(stderr, "Error: session log %q is empty or corrupt\n", logFilePath)
-		return 1
-	}
-
-	// 1. Accumulate metrics
+	// 1. Accumulate metrics over every selected session: a task split across
+	// sessions created with one word is graded as a whole.
 	var start time.Time
 	var end time.Time
-	status := "In Progress"
+	status := "Completed"
 	var totalCommands, successCount, failureCount int
 	var planRun, reviewRun bool
 	var composedCount, rawQueryCount int
 	var invocationErrors []string
 	planSet, reviewSet := map[string]bool{}, map[string]bool{}
+	var unselected, unattributed planReviewCount
+	var journalDropped int
 
-	for _, l := range lines {
-		switch l.Type {
-		case "session_start":
-			start, _ = time.Parse(time.RFC3339, l.CreatedAt)
-		case "session_end":
-			end, _ = time.Parse(time.RFC3339, l.EndedAt)
-			status = "Completed"
-		case "command":
-			totalCommands++
-			if l.Status == "invocation_error" {
-				invocationErrors = append(invocationErrors, l.Command)
-				continue
-			}
-			if l.Status == "success" {
-				successCount++
-			} else {
-				failureCount++
-			}
+	for _, log := range logs {
+		var sessionStart, sessionEnd time.Time
+		ended := false
+		for _, l := range log.lines {
+			switch l.Type {
+			case "session_start":
+				sessionStart, _ = time.Parse(time.RFC3339, l.CreatedAt)
+			case "session_end":
+				sessionEnd, _ = time.Parse(time.RFC3339, l.EndedAt)
+				ended = true
+			case "command":
+				totalCommands++
+				if l.Status == "invocation_error" {
+					invocationErrors = append(invocationErrors, l.Command)
+					continue
+				}
+				if l.Status == "success" {
+					successCount++
+				} else {
+					failureCount++
+				}
 
-			// Trace command signatures
-			switch l.Command {
-			case "plan":
-				planRun = true
-				composedCount++
-				planSet = addCoverage(planSet, l.Args)
-			case "review":
-				reviewRun = true
-				composedCount++
-				reviewSet = addCoverage(reviewSet, l.Args)
-			case "context", "explain", "api", "changes", "mutate":
-				composedCount++
-			case "node", "callers", "callees", "source":
-				rawQueryCount++
+				// Trace command signatures
+				switch l.Command {
+				case "plan":
+					planRun = true
+					composedCount++
+					planSet = addCoverage(planSet, l.Args)
+				case "review":
+					reviewRun = true
+					composedCount++
+					reviewSet = addCoverage(reviewSet, l.Args)
+				case "context", "explain", "api", "changes", "mutate":
+					composedCount++
+				case "node", "callers", "callees", "source":
+					rawQueryCount++
+				}
 			}
 		}
+		if !ended {
+			status = "In Progress"
+		}
+		if sessionEnd.IsZero() && !sessionStart.IsZero() {
+			lastLine := log.lines[len(log.lines)-1]
+			if lastLine.Timestamp != "" {
+				sessionEnd, _ = time.Parse(time.RFC3339, lastLine.Timestamp)
+			} else {
+				sessionEnd = time.Now()
+			}
+		}
+		if !sessionStart.IsZero() && (start.IsZero() || sessionStart.Before(start)) {
+			start = sessionStart
+		}
+		if sessionEnd.After(end) {
+			end = sessionEnd
+		}
+		credited, notCredited, dropped := creditUnselected(store, log.id, planSet, reviewSet)
+		unselected.plan += credited.plan
+		unselected.review += credited.review
+		// The unattributed journal is shared, so its counts are not summed.
+		unattributed, journalDropped = notCredited, dropped
 	}
-
-	unselected, unattributed, journalDropped := creditUnselected(store, sessionID, planSet, reviewSet)
 	planRun = planRun || unselected.plan > 0
 	reviewRun = reviewRun || unselected.review > 0
-
-	if end.IsZero() && !start.IsZero() && len(lines) > 0 {
-		lastLine := lines[len(lines)-1]
-		if lastLine.Timestamp != "" {
-			end, _ = time.Parse(time.RFC3339, lastLine.Timestamp)
-		} else {
-			end = time.Now()
-		}
-	}
 
 	duration := max(end.Sub(start), 0)
 
@@ -626,6 +661,13 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 	if !reviewRun {
 		recs = append(recs, "Agent failed to execute 'review --uncommitted' or 'review <symbol>' to verify its edits. Instruct the agent to run 'review --uncommitted' post-edit.")
 	}
+	if len(ids) == 1 {
+		if word, ok := sessionWord(ids[0]); ok {
+			if siblings, err := store.auditSessionIDs(word); err == nil && len(siblings) > 1 {
+				recs = append(recs, fmt.Sprintf("%d sessions were created with the word %q; run 'gograph session audit %s' to grade them together.", len(siblings), word, word))
+			}
+		}
+	}
 	if rawQueryCount > 3 && composedCount == 0 {
 		recs = append(recs, "Agent executed multiple individual raw queries (node/callers/callees) instead of the composed single-call 'context' tool. Prompt the agent to use 'context <symbol>' to save API context window tokens.")
 	}
@@ -634,7 +676,8 @@ func RunAuditToAt(root, sessionID string, jsonMode bool, stdout, stderr io.Write
 		InvocationErrorCount:    len(invocationErrors),
 		InvocationErrors:        invocationErrors,
 		ComposabilityDefinition: "Share of composed queries (plan, review, context, explain, api, changes, mutate) among composed and raw queries (node, callers, callees, source); invocation errors excluded. Measures command mix, not correctness or token savings.",
-		SessionID:               sessionID,
+		SessionID:               auditLabel(sessionID, ids),
+		SessionIDs:              auditSessionList(ids),
 		Status:                  status,
 		CreatedAt:               start.Format(time.RFC3339),
 		EndedAt:                 end.Format(time.RFC3339),
@@ -760,6 +803,9 @@ func formatAudit(report AuditReport, jsonMode bool, duration time.Duration) (str
 	write("GOGRAPH AGENT SESSION AUDIT\n")
 	write("%s\n", strings.Repeat("=", 80))
 	write("Session ID      : %s\n", report.SessionID)
+	if len(report.SessionIDs) > 0 {
+		write("Sessions        : %d graded together (%s)\n", len(report.SessionIDs), strings.Join(report.SessionIDs, ", "))
+	}
 	write("Status          : %s\n", report.Status)
 	write("Created At      : %s\n", report.CreatedAt)
 	write("Ended At        : %s\n", report.EndedAt)
@@ -858,4 +904,91 @@ func CleanupSessionsAt(root string) (int, error) {
 	}
 
 	return deletedCount, nil
+}
+
+// SessionIntentionAt returns the default intention recorded when session id
+// was created, or "" when it has none or its log cannot be read.
+func SessionIntentionAt(root, id string) string {
+	path, err := sessionLogPath(id)
+	if err != nil {
+		return ""
+	}
+	store, err := openSessionStore(root)
+	if err != nil {
+		return ""
+	}
+	defer store.close()
+	data, err := store.files.ReadRegularFile(path)
+	if err != nil {
+		return ""
+	}
+	first, _, _ := bytes.Cut(data, []byte("\n"))
+	var start SessionStartEntry
+	if json.Unmarshal(first, &start) != nil || start.Type != "session_start" || start.SessionID != id {
+		return ""
+	}
+	return start.Intention
+}
+
+// sessionWordSuffix matches the "_<date>_<time>_<nonce>" a session ID adds
+// to its creation word.
+var sessionWordSuffix = regexp.MustCompile(`^_[0-9]{8}_[0-9]{6}_[0-9a-f]{16}$`)
+
+// auditSessionIDs resolves an audit selector: an existing session ID, or a
+// creation word, which selects every session created with it, oldest first.
+func (s *sessionStore) auditSessionIDs(selector string) ([]string, error) {
+	if err := validateSessionID(selector); err != nil {
+		return nil, err
+	}
+	files, err := s.files.ReadDirectory(relSessionsDir)
+	if err != nil {
+		return nil, fmt.Errorf("read sessions directory: %w", err)
+	}
+	var byWord []string
+	for _, f := range files {
+		id, matches, err := sessionIDFromEntry(f)
+		if err != nil {
+			return nil, err
+		}
+		if !matches {
+			continue
+		}
+		if id == selector {
+			return []string{id}, nil
+		}
+		if rest, ok := strings.CutPrefix(id, selector); ok && sessionWordSuffix.MatchString(rest) {
+			byWord = append(byWord, id)
+		}
+	}
+	if len(byWord) == 0 {
+		return nil, fmt.Errorf("no session %q and no session created with that word", selector)
+	}
+	sort.Slice(byWord, func(i, j int) bool {
+		return byWord[i][len(selector):] < byWord[j][len(selector):]
+	})
+	return byWord, nil
+}
+
+func auditLabel(selector string, ids []string) string {
+	if len(ids) == 1 {
+		return ids[0]
+	}
+	return selector
+}
+
+func auditSessionList(ids []string) []string {
+	if len(ids) < 2 {
+		return nil
+	}
+	return ids
+}
+
+// sessionWord returns the creation word of a session ID.
+func sessionWord(id string) (string, bool) {
+	parts := strings.Split(id, "_")
+	if len(parts) < 4 {
+		return "", false
+	}
+	word := strings.Join(parts[:len(parts)-3], "_")
+	return word, sessionWordSuffix.MatchString(id[len(word):])
 }

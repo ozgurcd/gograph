@@ -79,6 +79,10 @@ func Run(args []string) int {
 	// one process) never inherits an earlier --json, --files-only or --mermaid.
 	defer resetOutputModes()
 	resetOutputGraph()
+	resetAutoRefresh()
+	defer resetAutoRefresh()
+	commandIntention = ""
+	noRefresh := false
 	if len(args) == 0 {
 		printHelp()
 		return 0
@@ -146,6 +150,8 @@ func Run(args []string) int {
 			i = len(args)
 		case "--json":
 			jsonMode = true
+		case "--no-refresh":
+			noRefresh = true
 		case "--files-only":
 			filesOnlyMode = true
 		case "--mermaid":
@@ -268,11 +274,17 @@ func Run(args []string) int {
 		}
 		if activeID != "" && !nonAnalytical[args[0]] {
 			if intention == "" {
-				return failCommandf(args[0], "Error: Active session %q requires an intention. Please supply the --intention (-i) flag stating your technical rationale.", activeID)
+				// A session created with -i gives every call its default.
+				intention = session.SessionIntentionAt(root, activeID)
+			}
+			if intention == "" {
+				return failCommandf(args[0], "Error: Active session %q requires an intention. Please supply the --intention (-i) flag stating your technical rationale, or create the session with `gograph session create <word> -i \"<task>\"` to give every call a default.", activeID)
 			}
 		}
 	}
 
+	commandIntention = intention
+	autoRefresh.enabled = !noRefresh && !autoRefreshDisabledByEnv() && queryRev == "" && commandAutoRefreshes(args[0])
 	startTime := time.Now()
 	exitCode := dispatch(args)
 	elapsed := time.Since(startTime)
@@ -524,7 +536,8 @@ Partial builds record parse failures and selection/security warnings in graph.js
                     exits 0 (pass), 1 (evaluated fail), or 2 (cannot evaluate)
 
 CLI graph-backed analysis uses the last trusted persisted graph, written by a manual build or an
-opt-in MCP publication. Repository graph-backed --json envelopes add
+opt-in MCP publication; a query that finds it stale rebuilds it first with its recorded precision,
+tags and excluded dirs (--no-refresh or GOGRAPH_NO_REFRESH=1 turns this off). Repository graph-backed --json envelopes add
 gograph.graph-state.v1 so source, freshness, completeness, precision, refresh,
 and persistence are explicit. Text stats/stale show the persisted state.
 The MCP server checks source freshness and newer persisted graphs per call.
@@ -1258,7 +1271,9 @@ func buildGraphWithConfigContext(ctx context.Context, absRoot string, buildConfi
 		fmt.Fprintf(os.Stderr, "  warning: %v\n", e)
 		buildMetadata.Warnings = append(buildMetadata.Warnings, e.Error())
 	}
-	fmt.Fprintf(os.Stderr, "  found %d Go files to parse\n", len(files))
+	if !quietBuildProgress {
+		fmt.Fprintf(os.Stderr, "  found %d Go files to parse\n", len(files))
+	}
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no Go files in %s%s", absRoot, func() string {
 			if len(buildMetadata.Warnings) == 0 {
@@ -2325,6 +2340,7 @@ func runTests(args []string) int {
 			if len(search.ResolveTestEntries(g, term)) > 0 {
 				fmt.Printf("%s is a test function: gograph tests %s --format go-test prints its run command; gograph coverage %s lists what it exercises.\n", term, term, term)
 			}
+			printDeclarationTestsHint(g, term, packageName)
 			return 0
 		case "ambiguous":
 			fmt.Printf("Product symbol %q is ambiguous; retry with a stable ID and, when IDs collide, --package:\n", term)
@@ -2366,7 +2382,21 @@ func runTests(args []string) int {
 	if term != "" {
 		emptyMsg = fmt.Sprintf("No test functions found exercising '%s'.", term)
 	}
-	return printResults("tests", term, results, emptyMsg)
+	code := printResults("tests", term, results, emptyMsg)
+	if len(results) == 0 && term != "" && !jsonMode && !filesOnlyMode {
+		printDeclarationTestsHint(g, term, "")
+	}
+	return code
+}
+
+// printDeclarationTestsHint points a call-based tests answer for a type,
+// variable or constant at the selection that follows its uses.
+func printDeclarationTestsHint(g *graph.Graph, term, packageName string) {
+	declarations := search.ResolveDeclarations(g, term, packageName)
+	if len(declarations) == 0 {
+		return
+	}
+	fmt.Printf("%s is a %s: direct and --transitive answers follow calls; gograph tests %s --format go-test selects the tests of the functions that use it.\n", term, declarations[0].Kind, shellQuoteArg(term))
 }
 
 func runTestSelectionForSymbol(g *graph.Graph, term, packageName, format string, exactOnly bool, maxDepth int) int {
@@ -2382,6 +2412,19 @@ func runTestSelectionForSymbol(g *graph.Graph, term, packageName, format string,
 		}
 		switch len(entries) {
 		case 0:
+			// A type, variable or constant selects the tests of its uses.
+			if declarations := search.ResolveDeclarations(g, term, packageName); len(declarations) == 1 {
+				declaration := declarations[0]
+				selection := snapshot.SelectTestsWithin(term, []search.SelectionInput{{StableID: declaration.ID, Name: declaration.Name, File: declaration.File}}, exactOnly, maxDepth)
+				return printTestSelection(selection, format)
+			} else if len(declarations) > 1 {
+				var candidates []string
+				for _, declaration := range declarations {
+					candidates = append(candidates, fmt.Sprintf("%s [package=%s] %s:%d", declaration.ID, declaration.PackageName, declaration.File, declaration.Line))
+				}
+				sort.Strings(candidates)
+				return failCommandf("tests", "%q is ambiguous; retry with a stable ID, a file selector or --package: %s", term, strings.Join(candidates, "; "))
+			}
 			return failCommandf("tests", "product symbol %q was not found; use gograph identity <name> to resolve its stable ID", term)
 		case 1:
 			entry := entries[0]
@@ -3194,8 +3237,13 @@ func loadGraph(root string) (*graph.Graph, error) {
 			return nil, fmt.Errorf("--rev %s: %w", queryRev, err)
 		}
 		root = revRoot
+		return loadGraphIgnoringRev(root)
 	}
-	return loadGraphIgnoringRev(root)
+	g, err := loadGraphIgnoringRev(root)
+	if err != nil {
+		return nil, err
+	}
+	return refreshStaleLoadedGraph(g), nil
 }
 
 // loadGraphIgnoringRev loads the persisted graph of root without applying --rev.
@@ -3688,9 +3736,15 @@ OUTPUT FLAGS
                              (working graph's recorded tags unless --tags/GOFLAGS);
                              later queries reuse it. Not with --uncommitted or --since.
                              CLI only; delete .gograph/revs to reclaim space.
+  --no-refresh               Answer from a stale graph (with a warning) instead of
+                             rebuilding it first. By default a graph query rebuilds a
+                             stale graph (changed packages; recorded precision, tags and
+                             excluded dirs) and notes it on stderr. GOGRAPH_NO_REFRESH=1
+                             sets this for every call.
                              Request only one of --json, --files-only, or --mermaid.
   -i, --intention <msg>      Explain the technical rationale for executing the command.
-                             MANDATORY for all analytical commands when a session is active.
+                             MANDATORY for all analytical commands when a session is active,
+                             unless the session was created with -i (its default intention).
 
 INDEXING
   build [path] [--precise] [--strict] [--tags=<tag[,tag...]>] [--exclude-dirs=<dir1,dir2>] [--memory-mode=low] [--max-memory=<size>]
@@ -4189,7 +4243,12 @@ EXTRACTION
                              an anchored -run pattern (gograph.test_selection.v1 with --json);
                              --format go-test prints one runnable go test line per package,
                              with the graph's -tags. A test function name selects that
-                             test. --exact-only drops possible paths.
+                             test. A type, variable or constant selects the tests of the
+                             functions that use it (methods, signatures, literals, precise
+                             field/variable uses; variables and constants need --precise).
+                             A change reaching a main package's main adds its tests that
+                             start a process (exec.Command), as possible.
+                             --exact-only drops possible paths.
                              Direct lookup accepts Receiver.Method, including pointer receivers,
                              as well as a full stable symbol ID.
   coverage <test> [--exact-only] [--package name]
@@ -4244,9 +4303,11 @@ AGENT INTEGRATION
                              a graph built under a different GOWORK/build context is
                              diagnosed as stale instead of silently served.
   session <action> [word]    Manage telemetry & audit sessions. Actions:
-                             - create [unique_word]: Starts an audit session.
+                             - create [unique_word] [-i "<task>"]: Starts an audit session;
+                               -i sets the default intention for its calls.
                              - end: Ends the active session.
-                             - audit [session_id]: Audits and scores agent compliance & success.
+                             - audit [session_id|word]: Audits and scores agent compliance &
+                               success; a creation word grades all its sessions together.
                              - cleanup: Ends stale sessions of other callers, then moves
                                inactive session logs into .gograph/_to_delete/<time>/.
                              Session IDs and regular files are confined beneath the

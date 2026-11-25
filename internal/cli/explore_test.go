@@ -12,6 +12,8 @@ import (
 )
 
 func TestCLIExploreJSONReturnsNativeComposedPayload(t *testing.T) {
+	// The hand-written graph does not match its sources; keep it as written.
+	t.Setenv("GOGRAPH_NO_REFRESH", "1")
 	g := &graph.Graph{
 		Packages: []graph.PackageNode{{ID: "sample", Name: "sample", ImportPathBestEffort: "example.com/explore", Dir: ".", Files: []string{"target.go"}}},
 		Files:    []graph.FileNode{{ID: "target.go", Path: "target.go", PackageName: "sample"}},
@@ -180,6 +182,8 @@ func TestCLIExploreCompactUsesLowTokenNativeMode(t *testing.T) {
 }
 
 func TestCLIExploreDeepAddsExpandedEvidenceAndHonorsExplicitLimit(t *testing.T) {
+	// The hand-written graph does not match its sources; keep it as written.
+	t.Setenv("GOGRAPH_NO_REFRESH", "1")
 	g := &graph.Graph{
 		Packages: []graph.PackageNode{{ID: "sample", Name: "sample", ImportPathBestEffort: "example.com/explore", Dir: ".", Files: []string{"target.go"}}},
 		Files:    []graph.FileNode{{ID: "target.go", Path: "target.go", PackageName: "sample"}},

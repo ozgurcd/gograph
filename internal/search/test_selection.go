@@ -41,6 +41,9 @@ type SelectionRoot struct {
 	Line     int    `json:"line"`
 	Change   string `json:"change,omitempty"`
 	Tests    int    `json:"tests"`
+	// Users counts the functions that use a changed type, variable or
+	// constant; their tests are its tests.
+	Users int `json:"users,omitempty"`
 }
 
 // UnselectedRoot is a changed declaration that could not select tests.
@@ -113,7 +116,8 @@ func (snapshot *Snapshot) SelectTestsWithin(selector string, roots []SelectionIn
 		Limitations: []string{
 			"Static test attribution is not runtime or branch coverage proof.",
 			"Possible results may over-approximate dynamic dispatch or parser-only call targets.",
-			"Attribution follows calls; changed types, variables and constants select no tests by themselves.",
+			"Attribution follows calls. A changed type selects the tests of its methods, of functions whose signatures name it, of composite literals of it, and (precise graphs) of its field uses; a changed variable or constant selects the tests of its uses only on precise graphs.",
+			"Tests that start a process (exec.Command) in a main package are possible matches when the change reaches that package's main function; tests in other packages that run a built binary are not linked.",
 		},
 	}
 	if g == nil {
@@ -161,6 +165,20 @@ func (snapshot *Snapshot) SelectTestsWithin(selector string, roots []SelectionIn
 		return true
 	}
 
+	var processTests map[string][]graph.SymbolNode
+	considerProcessTests := func(best map[string]reverseAttributionState) int {
+		if processTests == nil {
+			processTests = snapshot.processTests()
+		}
+		count := 0
+		for _, match := range processTestStates(processTests, best) {
+			if consider(match.test, match.state) {
+				count++
+			}
+		}
+		return count
+	}
+
 	seenRoot := make(map[string]bool)
 	for _, root := range roots {
 		key := root.StableID + "\x00" + root.Change
@@ -183,7 +201,49 @@ func (snapshot *Snapshot) SelectTestsWithin(selector string, roots []SelectionIn
 		}
 		symbol := matches[0]
 		if symbol.Kind != graph.KindFunction && symbol.Kind != graph.KindMethod {
-			selection.Unselected = append(selection.Unselected, UnselectedRoot{StableID: root.StableID, Name: symbol.Name, File: symbol.File, Change: root.Change, Reason: "not a function or method; attribution follows calls only"})
+			users := snapshot.declarationUsers(symbol)
+			if len(users) == 0 {
+				reason := "no recorded uses of this declaration"
+				if (symbol.Kind == graph.KindVar || symbol.Kind == graph.KindConst) && (g.Build == nil || !g.Build.PreciseRequested()) {
+					reason += "; AST graphs record no variable or constant uses, run gograph build --precise"
+				}
+				selection.Unselected = append(selection.Unselected, UnselectedRoot{StableID: root.StableID, Name: symbol.Name, File: symbol.File, Change: root.Change, Reason: reason})
+				continue
+			}
+			ids := make([]string, 0, len(users))
+			for id := range users {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			count := 0
+			for _, id := range ids {
+				attribution, best := snapshot.reverseTestReach(id)
+				for testID, state := range best {
+					test, ok := attribution.tests[testID]
+					if !ok {
+						for _, match := range symbols[testID] {
+							if testID == id && isTestEntrySymbol(match) {
+								test, ok = match, true
+							}
+						}
+					}
+					if !ok {
+						continue
+					}
+					state.depth++
+					if users[id] == "possible" {
+						state.resolution = "possible"
+					}
+					if consider(test, state) {
+						count++
+					}
+				}
+				count += considerProcessTests(best)
+			}
+			selection.Roots = append(selection.Roots, SelectionRoot{
+				StableID: symbol.ID, Name: symbol.Name, Kind: string(symbol.Kind), File: symbol.File, Line: symbol.Line,
+				Change: root.Change, Tests: count, Users: len(users),
+			})
 			continue
 		}
 		count := 0
@@ -202,6 +262,7 @@ func (snapshot *Snapshot) SelectTestsWithin(selector string, roots []SelectionIn
 				count++
 			}
 		}
+		count += considerProcessTests(best)
 		selection.Roots = append(selection.Roots, SelectionRoot{
 			StableID: symbol.ID, Name: symbol.Name, Kind: string(symbol.Kind), File: symbol.File, Line: symbol.Line,
 			Change: root.Change, Tests: count,

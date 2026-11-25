@@ -62,7 +62,10 @@ selection. Excluded source edits alone do not invalidate the selected graph;
 as with other unindexed dependencies, rebuild after modifying an excluded package
 that included code imports. Required module/build metadata remains fingerprinted.
 
-CLI queries and ordinary `stale` checks describe the persisted selection.
+CLI queries and ordinary `stale` checks describe the persisted selection. A
+CLI query that finds the graph stale rebuilds it with that selection (and its
+recorded tags and precision) before answering, unless `--no-refresh` or
+`GOGRAPH_NO_REFRESH=1` is set.
 `doctor --json` also reports and checks that selection in `repository.exclude_dirs`.
 `stale --exclude-dirs=...` checks a different explicit selection when needed.
 If using build tags, continue supplying the matching `--tags` value as well.
