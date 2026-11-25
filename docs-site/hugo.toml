@@ -1,14 +1,15 @@
 baseURL = "https://gograph.identuum.ai/"
 locale = "en-us"
-title = "gograph – Go Codebase Analysis & MCP Server"
+title = "gograph – Go Call Graph, Static Analysis & CI Architecture CLI"
 theme = "PaperMod"
 relativeURLs = false
 canonifyURLs = false
 
 enableRobotsTXT = true
+disableKinds = ["taxonomy", "term"]
 
 [params]
-  description = "gograph is a local structural graph and MCP server for safer Go refactors, repository analysis, and coding-agent workflows."
+  description = "Local Go static analysis, call-graph, blast-radius, test-selection, and CI architecture-gate CLI, with a built-in stdio MCP server."
   author = "Ozgur Demir"
   images = ["/images/gograph-social-preview.png"]
   defaultTheme = "auto"
@@ -20,7 +21,7 @@ enableRobotsTXT = true
   disableAnchoredHeadings = false
   comments = false
 
-  homeInfoParams = { Title = "gograph", Content = "A local structural graph for safer Go refactors, repository-level analysis, and coding-agent workflows — from the terminal or any compatible MCP client." }
+  homeInfoParams = { Title = "gograph", Content = "Local Go call-graph, blast-radius, and CI architecture-gate CLI, with a built-in stdio MCP server." }
 
   [params.schema]
     publisherType = "Person"
@@ -31,32 +32,32 @@ enableRobotsTXT = true
 
 [menu]
   [[menu.main]]
-    name = "Try Demo"
-    url = "/demo/"
-    weight = 1
-  [[menu.main]]
     name = "Get Started"
     url = "/docs/getting-started/"
-    weight = 2
+    weight = 1
   [[menu.main]]
     name = "Commands"
     url = "/docs/command-reference/"
+    weight = 2
+  [[menu.main]]
+    name = "CI Gates"
+    url = "/docs/ci-architecture-gates/"
     weight = 3
   [[menu.main]]
-    name = "AI Integration"
-    url = "/docs/agent-integration/"
+    name = "Comparisons"
+    url = "/docs/comparisons/"
     weight = 4
   [[menu.main]]
     name = "Workflows"
     url = "/docs/workflows/"
     weight = 5
   [[menu.main]]
-    name = "Evidence"
-    url = "/benchmarks/"
+    name = "MCP / AI"
+    url = "/docs/agent-integration/"
     weight = 6
   [[menu.main]]
-    name = "Blog"
-    url = "/posts/"
+    name = "Demo"
+    url = "/demo/"
     weight = 7
   [[menu.main]]
     name = "GitHub"

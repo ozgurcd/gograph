@@ -36,3 +36,4 @@ llm-wiki/packages/*
 !llm-wiki/packages/README.md
 opencode.json
 docs/private
+docs-site/public/

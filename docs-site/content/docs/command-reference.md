@@ -1,7 +1,9 @@
 ---
-title: "Command Reference"
+title: "Go Static Analysis CLI Command Reference"
 weight: 2
-description: "Detailed documentation for every gograph CLI command."
+date: 2026-05-23
+lastmod: 2026-11-25
+description: "Complete reference for all 66+ gograph CLI commands, flags, JSON/Mermaid output modes, federated workspaces, and MCP server tool parity."
 ---
 
 This reference documents every command available in the `gograph` CLI, compiled directly from the production source code.
