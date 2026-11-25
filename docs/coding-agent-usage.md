@@ -113,7 +113,7 @@ gograph strings <term...>        # Go string literals (raw route strings, URLs, 
 gograph usages <type>            # indexed signature/field/interface-method/composite-literal uses
 gograph returnusage <function>   # how each caller uses the return value (discarded/assigned/partially_ignored/returned/passed) — run before changing a return signature
 gograph schema <table>           # find structs mapped to a database table or schema via tags
-gograph globals <pkg>            # find pkg-level vars, consts, and functions mutating them
+gograph globals <pkg|dir>        # find pkg-level vars, consts, and functions mutating them
 gograph implementers <interface> --test-only  # find structs implementing an interface in test or mock files
 gograph mocks <interface>        # alias for implementers --test-only (kept for compatibility)
 gograph fixtures <pkg>           # find test helper structs and functions in test files
@@ -1082,7 +1082,7 @@ The current suite registers 70 MCP endpoints: 66 query, analysis, and workflow t
 - **`gograph_godobj`**: Find god-object struct candidates. Optional thresholds: `methods`, `fields`, `calls`, `top`.
 - **`gograph_skeleton`**: Full repository API signatures with bodies stripped. Large output — use on small repos or targeted packages.
 - **`gograph_schema`**
-- **`gograph_globals`**
+- **`gograph_globals`**: Package-level vars/consts and the functions that assign them. Parameter: `package` — a package name (substring match) or a path containing `/` such as `internal/app` (exact package).
 - **`gograph_mocks`**
 - **`gograph_explain`**: LLM-ready architectural summary. Synthesizes callers (prod vs test), callees, complexity, SQL, env, routes, concurrency, test coverage, interface satisfaction, and an opinionated role classification into one structured narrative.
 - **`gograph_stats`**: Compact trusted persisted-index health summary, or startup-fallback health when no usable artifact exists. Returns schema version, build timestamp, complete/partial build status, production analysis precision (`ast`, `precise`, or `precise_fallback`), test-call resolution (`ast_heuristic`, `typed_complete`, or `typed_partial`), parsed/scanned file counts, parse-failure count, and graph entity counts including persisted flow functions. It attaches the same inspected graph state as `gograph_stale`. Use this as a quick sanity check at the start of any analysis session.

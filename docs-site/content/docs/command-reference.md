@@ -482,9 +482,9 @@ Finds structs mapped to a database table or schema via struct tags (e.g. `db:"..
 
 ### globals
 ```bash
-gograph globals <pkg>
+gograph globals <pkg|dir>
 ```
-Finds all package-level variables and constants, as well as functions that mutate them.
+Finds all package-level variables and constants, as well as functions that mutate them. A term containing `/` (for example `internal/app` or the full import path) selects exactly that package; any other term matches package names by case-insensitive substring.
 
 ### mocks
 ```bash

@@ -4,6 +4,7 @@ package search
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -1766,12 +1767,12 @@ func Schema(g *graph.Graph, tableName string) []Result {
 // Globals finds package-level variables, constants, and functions mutating variables.
 func Globals(g *graph.Graph, pkgName string) []Result {
 	var results []Result
-	nl := strings.ToLower(pkgName)
+	inPackage := globalsPackageMatcher(pkgName)
 	var globalVars []graph.SymbolNode
 
 	// Find global variables and constants in the given package
 	for _, s := range g.Symbols {
-		if (s.Kind == graph.KindVar || s.Kind == graph.KindConst) && strings.Contains(strings.ToLower(s.PackageName), nl) {
+		if (s.Kind == graph.KindVar || s.Kind == graph.KindConst) && inPackage(s) {
 			if s.Kind == graph.KindVar {
 				globalVars = append(globalVars, s)
 			}
@@ -1806,6 +1807,27 @@ func Globals(g *graph.Graph, pkgName string) []Result {
 
 	sortResults(results)
 	return results
+}
+
+// globalsPackageMatcher selects symbols for Globals. A term containing "/" is a
+// package path: it matches the symbol's directory (repository-relative) or its
+// import path exactly or as a "/"-bounded suffix. Any other term keeps the
+// case-insensitive substring match on the package name.
+func globalsPackageMatcher(term string) func(graph.SymbolNode) bool {
+	cleaned := strings.Trim(filepath.ToSlash(filepath.Clean(term)), "/")
+	if !strings.Contains(cleaned, "/") {
+		nl := strings.ToLower(term)
+		return func(s graph.SymbolNode) bool {
+			return strings.Contains(strings.ToLower(s.PackageName), nl)
+		}
+	}
+	return func(s graph.SymbolNode) bool {
+		if filepath.ToSlash(filepath.Dir(s.File)) == cleaned {
+			return true
+		}
+		importPath := symbolPackagePath(s.ID)
+		return importPath == cleaned || strings.HasSuffix(importPath, "/"+cleaned)
+	}
 }
 
 // Mocks finds structs that implement the given interface, filtered to test or mock files.

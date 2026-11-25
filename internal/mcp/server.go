@@ -2121,7 +2121,7 @@ func initNewTools(
 	// Tool: gograph_globals
 	globalsTool := mcp.NewTool("gograph_globals",
 		mcp.WithDescription("Find package-level variable declarations (var blocks) and the functions that mutate them in a specific package. WHEN TO USE: When auditing mutable global state, identifying thread-safety hazards, or locating shared singleton variables before a concurrency refactor. NOT TO USE: For local-scope variables; for environment variable reads (use gograph_envs). RETURNS: Package-level variable names, types, and the functions that write to them; empty when the package has no package-level variables."),
-		mcp.WithString("package", mcp.Required(), mcp.Description("The package name or path to inspect (e.g., 'internal/config')")),
+		mcp.WithString("package", mcp.Required(), mcp.Description("Package to inspect: a path containing '/' (e.g., 'internal/config' or the full import path) selects that package exactly; a bare name matches package names by substring")),
 	)
 	addTool(globalsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)

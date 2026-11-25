@@ -896,7 +896,7 @@ flow [term] [--source kind] [--sink kind] [--config path] [--no-tests] [--max-wo
 explain <sym>        : narrative summary — role, complexity, SQL, env, routes, interfaces, tests
                        (use explain for understanding; use context for raw data to act on)
 fixtures <pkg>       : test helper structs and functions in test files
-globals <pkg>        : package-level vars, consts, and functions mutating them
+globals <pkg|dir>    : package-level vars, consts, and functions mutating them
 hotspot [--top N] [--include-tests]
                      : functions ranked by incoming call count — study these first
 mocks <iface>        : alias for 'implementers --test-only' (kept for compatibility)
@@ -3764,7 +3764,9 @@ INTERFACES & TYPES
                              Typed rows need a precise build (production packages); AST graphs
                              return labelled name-only possible_field_use rows.
   schema <table>            Find structs mapped to a database table/schema via tags.
-  globals <pkg>              Find pkg-level vars, consts, and mutators.
+  globals <pkg|dir>          Find pkg-level vars, consts, and mutators. A term
+                             with "/" (internal/app) selects that package path;
+                             otherwise it matches package names.
   mocks <interface>          Alias for 'implementers --test-only'. Kept for compatibility.
   fixtures <pkg>             Find test helper structs and functions in test files.
 
@@ -5677,7 +5679,7 @@ func runGlobals(args []string) int {
 	if hasSingleTarget(args) {
 		term = args[0]
 	} else {
-		return failCommand("globals", "Usage: gograph globals <package>")
+		return failCommand("globals", "Usage: gograph globals <package|dir>")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
