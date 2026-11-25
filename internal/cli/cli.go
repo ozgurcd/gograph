@@ -1977,7 +1977,7 @@ func runCallers(args []string) int {
 	} else {
 		results = search.Callers(g, term, includeTests, exactMatch)
 	}
-	return printResults("callers", term, results, "no callers found")
+	return printResults("callers", term, results, emptyCallGraphMessage(g, term, "no callers found"))
 }
 
 func runCallees(args []string) int {
@@ -2027,7 +2027,7 @@ func runCallees(args []string) int {
 	} else {
 		results = search.Callees(g, term, includeTests, false)
 	}
-	return printResults("callees", term, results, "no callees found")
+	return printResults("callees", term, results, emptyCallGraphMessage(g, term, "no callees found"))
 }
 
 func runImplementers(args []string) int {
@@ -6828,4 +6828,17 @@ func testEntriesInPackage(entries []graph.SymbolNode, packageName string) []grap
 		}
 	}
 	return kept
+}
+
+// emptyCallGraphMessage tells an absent declaration apart from one with no
+// edges, and suggests close declarations for the former.
+func emptyCallGraphMessage(g *graph.Graph, term, empty string) string {
+	if term == "" || search.DeclarationKnown(g, term) {
+		return empty
+	}
+	message := fmt.Sprintf("%s; no indexed declaration matches %q", empty, term)
+	if hint := search.NotFoundHint(g, term); hint != "" {
+		message += "; " + hint
+	}
+	return message
 }

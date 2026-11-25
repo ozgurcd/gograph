@@ -18,7 +18,12 @@ A selector without a directory (`provider_hooks.go:Manager.Run`) matches by
 file name alone; when several packages have that file name, the answer is the
 usual ambiguity list of full selectors. A file selector that matches nothing
 prints the selectors that exist for that name, or says that no indexed file
-matches. `pkg.Name` selects package-level symbols only; methods are
+matches. Any other selector that matches nothing in `source` (CLI and MCP) gets
+up to five "did you mean" selectors: the same
+name under another receiver or package, another letter case, then close
+spellings. An empty `callers`/`callees` answer says when no indexed declaration
+matches the name, with the same suggestions, so a typo is not read as "no
+callers". `pkg.Name` selects package-level symbols only; methods are
 `pkg.Receiver.Method` or `Receiver.Method`.
 
 Package-path selectors accept the full import path or the repository-relative

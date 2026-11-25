@@ -1179,6 +1179,9 @@ func sourceTargets(g *graph.Graph, symbolName string) ([]graph.SymbolNode, error
 		if hint := FileSelectorHint(g, symbolName); hint != "" {
 			return nil, fmt.Errorf("symbol '%s' not found; %s", symbolName, hint)
 		}
+		if hint := NotFoundHint(g, symbolName); hint != "" {
+			return nil, fmt.Errorf("symbol '%s' not found; %s", symbolName, hint)
+		}
 		return nil, fmt.Errorf("symbol '%s' not found", symbolName)
 	}
 	if len(targets) > 1 {
