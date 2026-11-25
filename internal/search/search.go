@@ -200,7 +200,11 @@ func Node(g *graph.Graph, name string) []Result {
 			if s.Receiver != "" {
 				n2 = fmt.Sprintf("(%s).%s", s.Receiver, s.Name)
 			}
-			add(Result{Kind: string(s.Kind), Name: n2, File: s.File, Line: s.Line, Detail: s.Signature})
+			detail := s.Signature
+			if s.Kind == graph.KindConst && s.Value != "" {
+				detail = s.Value
+			}
+			add(Result{Kind: string(s.Kind), Name: n2, File: s.File, Line: s.Line, Detail: detail})
 		}
 	}
 

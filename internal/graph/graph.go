@@ -495,6 +495,9 @@ type SymbolNode struct {
 	StructFields             []StructField     `json:"struct_fields,omitempty"`
 	EmbeddedStructs          []string          `json:"embedded_structs,omitempty"`
 	Arity                    int               `json:"arity,omitempty"`
+	// Value is a constant's declared expression, "[Type ]= expr"; empty for
+	// other kinds and on artifacts built before this field existed.
+	Value string `json:"value,omitempty"`
 }
 
 // StructField represents a field inside a struct.

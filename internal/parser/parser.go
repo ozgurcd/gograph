@@ -873,10 +873,11 @@ func (r *fileResolver) isErrorConstructor(call *ast.CallExpr) bool {
 
 // extractGenDecl handles type declarations (structs, interfaces).
 func extractGenDecl(fset *token.FileSet, d *ast.GenDecl, relPath, pkgName, pkgImportPath string, result *FileResult) {
-	for _, spec := range d.Specs {
+	var previousConst *ast.ValueSpec
+	for specIndex, spec := range d.Specs {
 		if vs, ok := spec.(*ast.ValueSpec); ok {
 			if d.Tok == token.VAR || d.Tok == token.CONST {
-				for _, name := range vs.Names {
+				for nameIndex, name := range vs.Names {
 					pos := fset.Position(name.Pos())
 					endPos := fset.Position(vs.End()) // use vs.End() to capture the entire expression block
 					doc := ""
@@ -905,8 +906,12 @@ func extractGenDecl(fset *token.FileSet, d *ast.GenDecl, relPath, pkgName, pkgIm
 					if d.Tok == token.CONST {
 						// iota and omitted expressions depend on the enclosing group.
 						sym.DeclarationDigest = declarationDigest(fset, d)
+						sym.Value = constValue(vs, previousConst, nameIndex, specIndex)
 					}
 					result.Symbols = append(result.Symbols, sym)
+				}
+				if d.Tok == token.CONST && (len(vs.Values) > 0 || vs.Type != nil) {
+					previousConst = vs
 				}
 				// Walk package-level initializer expressions for call edges.
 				// `var x = compute()` and `var y = registry{handler: h.method}`

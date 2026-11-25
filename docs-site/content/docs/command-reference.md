@@ -292,7 +292,7 @@ Extracts targeted package orientation context.
 gograph node <name>
 ```
 Displays detailed AST metadata for a single named symbol, package, or file.
-- **Output fields**: Kind, file, line, signature, comments/docstrings, and struct fields.
+- **Output fields**: Kind, file, line, signature, comments/docstrings, and struct fields. A constant shows its declared value (`SymbolKind = "method"`, `= 16 * 1024`); a constant that repeats its group's expression is marked with its iota. Graphs built before v1.7.24 have no values; rebuild to add them.
 
 ### source
 
