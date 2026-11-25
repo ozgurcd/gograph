@@ -1,7 +1,9 @@
 ---
-title: "AI Agent Integration"
-weight: 3
-description: "Integrate gograph's local structural graph with Claude Code, Cursor, Copilot, Antigravity, OpenCode, and other MCP clients."
+title: "MCP Server & AI Coding Agent Integration"
+weight: 6
+date: 2026-05-23
+lastmod: 2026-11-25
+description: "Connect gograph's built-in 70-tool local Go MCP server to Claude Code, Cursor, Codex, Copilot, Antigravity, and OpenCode with zero-step in-memory refreshes."
 ---
 
 gograph is an **agent-oriented static-analysis tool**. Humans can use the CLI,

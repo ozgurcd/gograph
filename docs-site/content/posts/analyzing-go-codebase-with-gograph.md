@@ -1,8 +1,8 @@
 ---
 title: "Analyzing a Go Codebase with gograph — Starting with Itself"
 date: 2026-06-24
-description: "A historical, reproducible snapshot of gograph analyzing its own Go codebase, with structural-query examples and documented limitations."
-tags: ["golang", "go", "call-graph", "static-analysis", "developer-tools", "llm-tokens", "mcp-server"]
+lastmod: 2026-11-25
+description: "A reproducible case study of gograph analyzing its own Go codebase: call-graph hotspots, blast-radius planning, error-flow tracing, and CI boundary gates."
 showToc: true
 TocOpen: true
 ---

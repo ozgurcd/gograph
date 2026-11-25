@@ -1,6 +1,8 @@
 ---
-title: "Evidence & Methodology"
-description: "Reproduce gograph's structural evidence benchmark and inspect its complete raw results."
+title: "Structural Benchmark Evidence & Methodology"
+date: 2026-06-03
+lastmod: 2026-11-25
+description: "Reproduce gograph's deterministic Go static-analysis benchmark comparing AST/CHA call-graph queries against text search on implicit interfaces and change context."
 url: "/benchmarks/"
 ---
 

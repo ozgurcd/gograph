@@ -1,7 +1,9 @@
 ---
-title: "Agent Workflows"
-weight: 4
-description: "Recommended operational workflows for developers and AI agents using gograph."
+title: "Go Engineering & Refactoring Workflows"
+weight: 5
+date: 2026-05-23
+lastmod: 2026-11-25
+description: "Practical Go engineering playbooks using gograph: codebase onboarding, blast-radius planning, transitive test selection, security-flow review, and CI quality gates."
 ---
 
 To maximize efficiency, reduce latency, and guarantee safety when modifying codebases, we recommend following these standardized workflows. These steps can be programmed into AI system instructions or executed manually.

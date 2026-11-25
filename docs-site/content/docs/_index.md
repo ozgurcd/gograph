@@ -1,35 +1,40 @@
 ---
 title: "Documentation Portal"
-description: "Explore installation, CLI command references, AI agent MCP integration, and structural analysis workflows."
+date: 2026-05-23
+lastmod: 2026-11-25
+description: "Browse gograph documentation: installation, Go call-graph CLI reference, CI architecture gates, tool comparisons, engineering workflows, and MCP integration."
 ---
 
-Welcome to the `gograph` documentation portal! 
-
-gograph is a developer and AI agent tool built to index, trace, and query Go codebases using AST-derived call graphs and dependency maps.
+Welcome to the `gograph` documentation portal. `gograph` is a local-only Go static analysis, call-graph, blast-radius, and CI architecture-gate CLI for Go engineers, with a built-in zero-step MCP server for AI coding agents.
 
 ---
 
-## 🗺️ Documentation Map
+## Documentation Map
 
-Explore the documentation across five primary categories:
+### [Getting Started](/docs/getting-started/)
+Install `gograph`, build your first AST or type-checked (`--precise`) call graph, and run blast-radius and targeted test queries.
+- **Topics**: Homebrew and `go install`, AST vs. `--precise --strict`, `stats`, `stale`, `impact`, `tests --uncommitted`.
 
-### 🚀 [Getting Started](/docs/getting-started/)
-Set up gograph on your system, initialize your first repository graph index, and run basic queries.
-- **Topics**: Homebrew install, Go build, compilation requirements, `stats` verification, stale checks.
+### [Command Reference](/docs/command-reference/)
+Exhaustive manual covering every CLI command, flag, output mode (`--json`, `--files-only`, `--mermaid`), federated workspaces, and the CLI/MCP parity matrix.
+- **Topics**: Indexing, call-graph traversal, interface resolution, HTTP/SQL extraction, security flow, test attribution, and CI gates.
 
-### 📝 [Command Reference](/docs/command-reference/)
-An exhaustive command manual detailing all gograph capabilities.
-- **Topics**: Indexing commands, Search & Navigation, Call Graph traversal, Interface resolution, Packages & Imports, security flow analysis, Concurrency mapping, custom error flows, and composite literals mapping.
+### [CI Architecture Gates](/docs/ci-architecture-gates/)
+Enforce Go package boundaries, fan-in/fan-out coupling limits, cyclomatic complexity ceilings, and exported API drift in CI pipelines.
+- **Topics**: `gograph/boundaries.json`, `.gograph.yml`, `gograph gate`, `gograph api --since`, `gograph validate`, and GitHub Actions YAML.
 
-### 🤖 [AI Agent Integration](/docs/agent-integration/)
-Connect gograph with AI coding assistants (like Claude Code, Cursor, and custom LLM workflows) to reduce broad file reads and unsupported structural guesses.
-- **Topics**: MCP stdio setup, default in-memory refreshes, opt-in artifact publication, CLI/MCP Mermaid output, Claude Desktop/plugin configuration, and the PreToolUse hook guard for Claude Code, Codex and Antigravity, with opt-in gograph-first rules.
+### [Tool Comparisons](/docs/comparisons/)
+An honest engineering breakdown of how `gograph` complements `gopls`, `golangci-lint`, `go-callvis`, and `ripgrep`.
+- **Topics**: Structural graphs vs. LSP cursor navigation vs. file-level linters vs. visual call graphs vs. text search.
 
-### ⚙️ [Agent Workflows](/docs/workflows/)
-Discover safe development workflows and optimization protocols.
-- **Topics**: Onboarding to fresh codebases, the plan-to-review edit lifecycle, and package refactoring dependencies extraction.
+### [Engineering Workflows](/docs/workflows/)
+Step-by-step operational playbooks for onboarding, safe refactoring, package splits, security-flow triage, and CI quality gates.
+- **Topics**: Plan-to-review edit lifecycle, transitive test selection, coverage-gap audits, and CI baselines.
 
-### 📦 [Official MCP Registry](/docs/mcp-registry/)
-Install a platform-specific MCP Bundle from the preview Registry and select the
-Go project directory it analyzes.
-- **Topics**: MCPB versus Homebrew/`go install`, six release targets, local data handling, and the current CPU-selection limitation.
+### [MCP & AI Agent Integration](/docs/agent-integration/)
+Connect `gograph`'s built-in stdio MCP server to Claude Code, Cursor, Codex, Copilot, Antigravity, and OpenCode.
+- **Topics**: Zero-step in-memory refreshes, `--persist-refresh`, Mermaid output, and `PreToolUse` hook guards.
+
+### [Official MCP Registry](/docs/mcp-registry/)
+Install a platform-specific local MCP Bundle (`io.github.ozgurcd/gograph`) in MCPB-capable clients.
+- **Topics**: MCPB vs. Homebrew/`go install`, supported OS/arch targets, and local data handling.
