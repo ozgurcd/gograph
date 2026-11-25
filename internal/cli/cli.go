@@ -825,6 +825,9 @@ callers <fn> [--no-tests] [--depth N] [--exact]: who calls fn (depth=1 direct; m
   complexity [sym]     : cyclomatic complexity estimate per function (highest first;
                          source unreadable/unparseable is retained as UNKNOWN/-1)
 concurrency [str]    : goroutine spawns, channel sends, and typed sync calls
+concurrency --locks <function>
+                     : each Lock/RLock in the function, its release (unlock lines,
+                       deferred, or none) and the calls under the lock (lexical)
 coupling [pkg] [--include-stdlib] [--internal-only]
                      : fan-in, fan-out, and instability per package
 diagram [--group-by package|module|service|file] [--max-depth N] [--include-stdlib]
@@ -2105,8 +2108,35 @@ func runInterfaces(args []string) int {
 }
 
 func runConcurrency(args []string) int {
+	const usage = "usage: gograph concurrency [term] | gograph concurrency --locks <function>"
+	if len(args) > 0 && (args[0] == "--locks" || strings.HasPrefix(args[0], "--locks=")) {
+		function := strings.TrimPrefix(args[0], "--locks=")
+		rest := args[1:]
+		if args[0] == "--locks" {
+			if len(rest) == 0 {
+				return failCommand("concurrency", usage)
+			}
+			function, rest = rest[0], rest[1:]
+		}
+		if len(rest) > 0 || strings.TrimSpace(function) == "" {
+			return failCommand("concurrency", usage)
+		}
+		g, err := loadGraph(".")
+		if err != nil {
+			return failCommandf("concurrency", "failed to load graph: %v", err)
+		}
+		report, err := search.LockScopes(g, graphRoot(g), function)
+		if err != nil {
+			return failCommandf("concurrency", "concurrency: %v", err)
+		}
+		if jsonMode {
+			return PrintJSON(okEnvelope("concurrency", function, report, len(report.Locks)))
+		}
+		fmt.Print(search.FormatLockScopes(report))
+		return 0
+	}
 	if !hasOptionalTarget(args) {
-		return failCommand("concurrency", "usage: gograph concurrency [term]")
+		return failCommand("concurrency", usage)
 	}
 	g, err := loadGraph(".")
 	if err != nil {
@@ -4091,6 +4121,10 @@ EXTRACTION
   envs [term]                Every os.Getenv / os.LookupEnv / supported Viper Get* read.
   concurrency [term]         Goroutine spawns, channel sends, and typed Mutex/RWMutex/
                              WaitGroup/Once calls (not receives or select statements).
+  concurrency --locks <function>
+                             Lock scopes in one function, parsed now: each Lock/RLock,
+                             its release (unlock lines, deferred until return, or not
+                             released) and the calls between lock and release (lexical).
   tests [symbol] [--transitive] [--exact-only] [--package name] [--max-depth N] [--limit N] [--cursor T] [--uncommitted|--since <ref>] [--format run|go-test]
                              Which tests to run for a symbol or a change. Direct attributed
                              test calls by default. --transitive requires one product symbol

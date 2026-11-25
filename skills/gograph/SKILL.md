@@ -127,6 +127,7 @@ new declarations. CLI uses the same rules.
 | `gograph_query` with `term=<term>` or `terms=[...]` | AST-derived structural symbol search |
 | `gograph_context` with `symbol=<symbol>` | Node + source + callers + callees + tests in one call |
 | `gograph_source` with `symbol=<symbol>`, optional `lines=START-END` | Verbatim declaration; `lines` reads part of a long body, or any region of an indexed `.go` file (`symbol=internal/app/manager.go`), including its imports |
+| `gograph_concurrency` with `function=<selector>` | Lock scopes in one function: each `Lock`/`RLock`, its release (unlock lines, deferred until return, or not released) and the calls between lock and release; spans are lexical |
 | `gograph_plan` with `symbol=<symbol>` | Pre-edit blast radius + callers + tests |
 | `gograph_review` with `uncommitted=true` or `since=<ref>` | Post-edit coverage check; `since` covers commits after the ref too |
 | `gograph_impact` with `symbol=<symbol>` | Canonical upstream identities with exact/possible labels; `exact_only=true` excludes uncertain paths |

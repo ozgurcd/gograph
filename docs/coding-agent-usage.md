@@ -66,6 +66,7 @@ gograph embeds <struct>         # find which structs embed a target struct
 gograph public <pkg>            # list only the exported API surface of a package
 gograph envs [term]             # list indexed environment reads
 gograph concurrency [term]      # map goroutines, channel sends, mutexes, waitgroups, sync.Once
+gograph concurrency --locks <function>  # each Lock/RLock in a function, its release, calls under it
 gograph tests [symbol]          # direct attributed test calls; accepts Receiver.Method or stable ID
 gograph tests <symbol> --transitive [--exact-only] [--package name] # every reaching test with path/depth
 gograph coverage <TestFunc> [--exact-only] [--package name] # transitive product symbols one test statically reaches
@@ -320,7 +321,10 @@ name: `gograph envs DATABASE`.
 ### 6. Concurrency audit
 `gograph concurrency` shows recognized goroutine, channel, and typed `sync`
 operations in indexed files. Filter: `gograph concurrency goroutine` or
-`gograph concurrency mutex`.
+`gograph concurrency mutex`. To see what runs while a mutex is held, run
+`gograph concurrency --locks Manager.startPass`: each `Lock`/`RLock`, where it
+is released (unlock lines, deferred until return, or not released) and the
+calls in between. Spans are lexical.
 
 ### 7. Test coverage lookup
 `gograph tests ValidateToken` shows direct statically mapped test calls.
@@ -1078,7 +1082,7 @@ The current suite registers 70 MCP endpoints: 66 query, analysis, and workflow t
 - **`gograph_deps`**: Import dependency tree of a package. Set `transitive=true` for full BFS closure or `mermaid=true` for a diagram.
 - **`gograph_dependents`**: All packages that import the named package (inverse of `gograph_deps`). Essential before any package-level refactor; accepts `mermaid=true`.
 - **`gograph_hotspot`**: Functions ranked by fan-in (incoming call count). High fan-in = highest-risk change target. Optional `top` parameter (default: 10); `include_tests` adds test-file call edges.
-- **`gograph_concurrency`**: Map goroutine spawns, channel sends, and calls on mutex/RWMutex, WaitGroup, and sync.Once. Channel receives and `select` statements are not indexed. Optional filter by kind.
+- **`gograph_concurrency`**: Map goroutine spawns, channel sends, and calls on mutex/RWMutex, WaitGroup, and sync.Once. Channel receives and `select` statements are not indexed. Optional filter by kind. Pass `function` instead for the lock scopes of one function (each Lock/RLock, its release, and the calls under it).
 - **`gograph_fixtures`**: Find test helper structs and functions in test files for a package.
 - **`gograph_godobj`**: Find god-object struct candidates. Optional thresholds: `methods`, `fields`, `calls`, `top`.
 - **`gograph_skeleton`**: Full repository API signatures with bodies stripped. Large output — use on small repos or targeted packages.

@@ -675,10 +675,22 @@ codebase, with file and line. Optional substring filter by key name.
 ### concurrency
 ```bash
 gograph concurrency [term]
+gograph concurrency --locks <function>
 ```
 Maps goroutine spawns (`go func`), channel sends, and calls on mutex/RWMutex,
 `WaitGroup`, and `sync.Once`. Channel receives and `select` statements are not
 indexed.
+
+`--locks <function>` takes one function or method selector (`Manager.start`,
+`pkg::(*Manager).start`, `internal/app/manager.go:Manager.start`), parses its
+body at query time, and lists each `Lock`/`RLock` call with its release: the
+matching unlock lines, "held until return" for a deferred unlock (including one
+inside a deferred closure), or "not released in this function". Under each lock
+it lists the calls between the lock and its last matching unlock before the
+next lock of the same mutex. Spans are lexical: an early-return unlock in a
+branch does not split the span. `--json` returns `{function, file, start_line,
+end_line, locks: [{lock, line, release, release_line, unlock_lines, end_line,
+calls: [{call, line}]}]}`. MCP: `gograph_concurrency` with `function`.
 
 ### httpcalls
 ```bash

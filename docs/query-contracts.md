@@ -60,7 +60,7 @@ identity-based census. These limits also appear in capabilities.
 
 Package selectors (focus, public, imports, deps, dependents, globals; globals
 takes a package name or a path such as `internal/app`), route/SQL
-filters, and lexical filters (envs, concurrency, errors, errorflow/trace, flow,
+filters, and lexical filters (envs, concurrency `[term]`, errors, errorflow/trace, flow,
 httpcalls) are not declaration selectors. The external `doc` command accepts
 Go import/symbol syntax, not repository file selectors. Workspace selectors
 use their separate member-and-stable-ID contract.
@@ -281,6 +281,14 @@ and invalid indexed line ranges are explicit refusals. The complete source block
 has a 65536-byte budget; an oversized block is refused with its actual byte size
 and the limit, never truncated. AST precision can serve source; precise analysis
 is not required. Metadata or precision alone never proves that source is readable.
+
+`concurrency --locks FUNCTION` (MCP `gograph_concurrency` with `function`) uses
+the same declaration selection and refuses ambiguity, non-function symbols and
+files changed since the build. It parses the body at query time and reports each
+`Lock`/`RLock` with `release` = `unlock` (with `unlock_lines`), `deferred` (held
+until return) or `none`, and the calls lexically inside the span. MCP returns
+the text form; CLI `--json` returns the report object in the version-1 envelope,
+with `count` = number of locks. MCP rejects `term` together with `function`.
 
 CLI and MCP graph state include additive `read_diagnostic` when a read refuses
 or a context's indexed node cannot supply source. This reports the finding that

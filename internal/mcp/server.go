@@ -2638,8 +2638,9 @@ func initNewTools(
 
 	// Tool: gograph_concurrency
 	concurrencyTool := mcp.NewTool("gograph_concurrency",
-		mcp.WithDescription("Find indexed concurrency sites in the codebase: goroutine spawns (`go` statements), channel sends, and calls on sync.Mutex/RWMutex, sync.WaitGroup, and sync.Once. Optional `term` filter (e.g., \"mutex\", \"goroutine\", \"channel\"). WHEN TO USE: When auditing race safety, understanding async flow, or locating synchronization points before a concurrency refactor. NOT TO USE: For standard sequential call flow analysis (use gograph_callers/gograph_callees). RETURNS: File locations, line numbers, and primitive kind for each indexed concurrency site; empty when no sites are found. Channel receives and select statements are not indexed."),
+		mcp.WithDescription("Find indexed concurrency sites in the codebase: goroutine spawns (`go` statements), channel sends, and calls on sync.Mutex/RWMutex, sync.WaitGroup, and sync.Once. Optional `term` filter (e.g., \"mutex\", \"goroutine\", \"channel\"). WHEN TO USE: When auditing race safety, understanding async flow, or locating synchronization points before a concurrency refactor. NOT TO USE: For standard sequential call flow analysis (use gograph_callers/gograph_callees). RETURNS: File locations, line numbers, and primitive kind for each indexed concurrency site; empty when no sites are found. Channel receives and select statements are not indexed. LOCK SCOPE: pass `function` (a function or method selector) instead of `term` to parse that body now and list each Lock/RLock with its release (unlock lines, deferred until return, or not released) and the calls between lock and release; spans are lexical."),
 		mcp.WithString("term", mcp.Description("Optional filter term (e.g., 'goroutine', 'mutex', 'channel')")),
+		mcp.WithString("function", mcp.Description("Function or method selector (e.g., 'Manager.startPass'); returns its lock scopes instead of the site list")),
 	)
 	addTool(concurrencyTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
@@ -2647,6 +2648,16 @@ func initNewTools(
 		if args, ok := request.Params.Arguments.(map[string]any); ok {
 			if t, ok := args["term"].(string); ok {
 				term = t
+			}
+			if function, _ := args["function"].(string); strings.TrimSpace(function) != "" {
+				if strings.TrimSpace(term) != "" {
+					return mcp.NewToolResultError("pass either term or function, not both"), nil
+				}
+				report, err := search.LockScopes(g, g.Root, function)
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				return mcp.NewToolResultText(search.FormatLockScopes(report)), nil
 			}
 		}
 		results := search.Concurrency(g, term)
