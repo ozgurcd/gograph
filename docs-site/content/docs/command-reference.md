@@ -790,9 +790,17 @@ go test example.com/app/api
 A package whose every test is selected runs without `-run`, and long patterns
 are split at 16 KiB. Changed tests select themselves; tests deleted by the
 change are never listed; a deleted function still in the pre-change graph
-selects the tests that reached it; changed types, variables and constants, and
-new functions missing from a stale graph, are reported under `unselected`
-(status `partial`). `--max-depth N` keeps tests whose shortest call path is at
+selects the tests that reached it. A changed type (or `tests <Type>`) selects
+the tests of the functions that use it: its methods (exact), functions whose
+signatures name it and composite literals of it (possible), and, on precise
+graphs, its field uses (exact); its root reports `users`. A changed variable or
+constant selects the tests of its uses on precise graphs only; on AST graphs it
+is reported under `unselected` with a `--precise` hint. When a change reaches
+the `main` function of a package, that package's tests that start a process
+(`exec.Command`/`exec.CommandContext`, directly or through a helper) are
+added as possible: they usually run the built binary. Tests in other packages
+that run a binary are not linked. New functions missing from a stale graph are
+reported under `unselected` (status `partial`). `--max-depth N` keeps tests whose shortest call path is at
 most N, `--exact-only` drops paths through dynamic dispatch. `--json` returns
 `gograph.test_selection.v1`.
 

@@ -127,8 +127,18 @@ func TestSelectTestsChangesDeletedAndUnselected(t *testing.T) {
 	for _, unselected := range selection.Unselected {
 		reasons = append(reasons, unselected.Name)
 	}
-	if want := []string{"Gone", "NewF", "Sq"}; !reflect.DeepEqual(reasons, want) {
+	if want := []string{"Gone", "NewF"}; !reflect.DeepEqual(reasons, want) {
 		t.Fatalf("unselected = %v, want %v", reasons, want)
+	}
+	// The changed struct Sq selects the tests of its method Area.
+	var sq *search.SelectionRoot
+	for i := range selection.Roots {
+		if selection.Roots[i].Name == "Sq" {
+			sq = &selection.Roots[i]
+		}
+	}
+	if sq == nil || sq.Users != 1 || sq.Tests == 0 {
+		t.Fatalf("Sq root = %+v, want one user with tests", sq)
 	}
 }
 

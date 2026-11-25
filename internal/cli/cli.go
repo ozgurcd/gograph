@@ -2340,6 +2340,7 @@ func runTests(args []string) int {
 			if len(search.ResolveTestEntries(g, term)) > 0 {
 				fmt.Printf("%s is a test function: gograph tests %s --format go-test prints its run command; gograph coverage %s lists what it exercises.\n", term, term, term)
 			}
+			printDeclarationTestsHint(g, term, packageName)
 			return 0
 		case "ambiguous":
 			fmt.Printf("Product symbol %q is ambiguous; retry with a stable ID and, when IDs collide, --package:\n", term)
@@ -2381,7 +2382,21 @@ func runTests(args []string) int {
 	if term != "" {
 		emptyMsg = fmt.Sprintf("No test functions found exercising '%s'.", term)
 	}
-	return printResults("tests", term, results, emptyMsg)
+	code := printResults("tests", term, results, emptyMsg)
+	if len(results) == 0 && term != "" && !jsonMode && !filesOnlyMode {
+		printDeclarationTestsHint(g, term, "")
+	}
+	return code
+}
+
+// printDeclarationTestsHint points a call-based tests answer for a type,
+// variable or constant at the selection that follows its uses.
+func printDeclarationTestsHint(g *graph.Graph, term, packageName string) {
+	declarations := search.ResolveDeclarations(g, term, packageName)
+	if len(declarations) == 0 {
+		return
+	}
+	fmt.Printf("%s is a %s: direct and --transitive answers follow calls; gograph tests %s --format go-test selects the tests of the functions that use it.\n", term, declarations[0].Kind, shellQuoteArg(term))
 }
 
 func runTestSelectionForSymbol(g *graph.Graph, term, packageName, format string, exactOnly bool, maxDepth int) int {
@@ -2397,6 +2412,19 @@ func runTestSelectionForSymbol(g *graph.Graph, term, packageName, format string,
 		}
 		switch len(entries) {
 		case 0:
+			// A type, variable or constant selects the tests of its uses.
+			if declarations := search.ResolveDeclarations(g, term, packageName); len(declarations) == 1 {
+				declaration := declarations[0]
+				selection := snapshot.SelectTestsWithin(term, []search.SelectionInput{{StableID: declaration.ID, Name: declaration.Name, File: declaration.File}}, exactOnly, maxDepth)
+				return printTestSelection(selection, format)
+			} else if len(declarations) > 1 {
+				var candidates []string
+				for _, declaration := range declarations {
+					candidates = append(candidates, fmt.Sprintf("%s [package=%s] %s:%d", declaration.ID, declaration.PackageName, declaration.File, declaration.Line))
+				}
+				sort.Strings(candidates)
+				return failCommandf("tests", "%q is ambiguous; retry with a stable ID, a file selector or --package: %s", term, strings.Join(candidates, "; "))
+			}
 			return failCommandf("tests", "product symbol %q was not found; use gograph identity <name> to resolve its stable ID", term)
 		case 1:
 			entry := entries[0]
@@ -4215,7 +4243,12 @@ EXTRACTION
                              an anchored -run pattern (gograph.test_selection.v1 with --json);
                              --format go-test prints one runnable go test line per package,
                              with the graph's -tags. A test function name selects that
-                             test. --exact-only drops possible paths.
+                             test. A type, variable or constant selects the tests of the
+                             functions that use it (methods, signatures, literals, precise
+                             field/variable uses; variables and constants need --precise).
+                             A change reaching a main package's main adds its tests that
+                             start a process (exec.Command), as possible.
+                             --exact-only drops possible paths.
                              Direct lookup accepts Receiver.Method, including pointer receivers,
                              as well as a full stable symbol ID.
   coverage <test> [--exact-only] [--package name]

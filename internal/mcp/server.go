@@ -2329,6 +2329,13 @@ func initNewTools(
 				return mcp.NewToolResultError("symbol must be a non-empty string when select=true"), nil
 			}
 			report := queriesForRequest(ctx).TransitiveTests(term, packageName, false)
+			if report.Status == "not_found" {
+				// A type, variable or constant selects the tests of its uses.
+				if declarations := search.ResolveDeclarations(g, term, packageName); len(declarations) == 1 {
+					declaration := declarations[0]
+					return jsonToolResult(queriesForRequest(ctx).SelectTestsWithin(term, []search.SelectionInput{{StableID: declaration.ID, Name: declaration.Name, File: declaration.File}}, exactOnly, pageOptions.MaxDepth))
+				}
+			}
 			if report.Status != "exact" {
 				return jsonToolResult(report)
 			}
