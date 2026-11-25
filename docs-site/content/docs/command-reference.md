@@ -292,6 +292,9 @@ Extracts targeted package orientation context.
 gograph node <name>
 ```
 Displays detailed AST metadata for a single named symbol, package, or file.
+An exact, case-sensitive name or selector (`Manager`, `Manager.Run`, `pkg.Manager`)
+selects only that declaration; a case-insensitive exact match comes next, and a
+substring match only when neither finds anything.
 - **Output fields**: Kind, file, line, signature, comments/docstrings, and struct fields. A constant shows its declared value (`SymbolKind = "method"`, `= 16 * 1024`); a constant that repeats its group's expression is marked with its iota. Graphs built before v1.7.24 have no values; rebuild to add them.
 
 ### source

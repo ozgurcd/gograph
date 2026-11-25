@@ -192,24 +192,64 @@ func Node(g *graph.Graph, name string) []Result {
 			add(Result{Kind: "file", Name: f.Path, File: f.Path})
 		}
 	}
-	for _, s := range g.Symbols {
-		sname := strings.ToLower(s.Name)
-		full := strings.ToLower(fmt.Sprintf("(%s).%s", s.Receiver, s.Name))
-		if MatchSymbol(s, name) || sname == nl || strings.Contains(full, nl) || strings.Contains(sname, nl) {
-			n2 := s.Name
-			if s.Receiver != "" {
-				n2 = fmt.Sprintf("(%s).%s", s.Receiver, s.Name)
-			}
-			detail := s.Signature
-			if s.Kind == graph.KindConst && s.Value != "" {
-				detail = s.Value
-			}
-			add(Result{Kind: string(s.Kind), Name: n2, File: s.File, Line: s.Line, Detail: detail})
+	// Go names are case-sensitive: an exact spelling (Manager) selects only
+	// that declaration, not manager or Manager's methods. A case-insensitive
+	// exact match comes next, and the substring match only when neither finds
+	// anything.
+	matches := nodeSymbolTier(g, func(s graph.SymbolNode) bool { return exactCaseSymbolMatch(s, name) })
+	if len(matches) == 0 {
+		matches = nodeSymbolTier(g, func(s graph.SymbolNode) bool { return matchSymbolExact(s, name) })
+	}
+	if len(matches) == 0 {
+		matches = nodeSymbolTier(g, func(s graph.SymbolNode) bool {
+			sname := strings.ToLower(s.Name)
+			full := strings.ToLower(fmt.Sprintf("(%s).%s", s.Receiver, s.Name))
+			return MatchSymbol(s, name) || sname == nl || strings.Contains(full, nl) || strings.Contains(sname, nl)
+		})
+	}
+	for _, s := range matches {
+		n2 := s.Name
+		if s.Receiver != "" {
+			n2 = fmt.Sprintf("(%s).%s", s.Receiver, s.Name)
 		}
+		detail := s.Signature
+		if s.Kind == graph.KindConst && s.Value != "" {
+			detail = s.Value
+		}
+		add(Result{Kind: string(s.Kind), Name: n2, File: s.File, Line: s.Line, Detail: detail})
 	}
 
 	sortResults(results)
 	return results
+}
+
+func nodeSymbolTier(g *graph.Graph, match func(graph.SymbolNode) bool) []graph.SymbolNode {
+	var matches []graph.SymbolNode
+	for _, s := range g.Symbols {
+		if match(s) {
+			matches = append(matches, s)
+		}
+	}
+	return matches
+}
+
+// exactCaseSymbolMatch reports a case-sensitive exact selection: the name or
+// ID, a file or package-path selector, pkg.Name, Receiver.Method,
+// (*Receiver).Method or pkg.Receiver.Method.
+func exactCaseSymbolMatch(s graph.SymbolNode, query string) bool {
+	query = strings.TrimSpace(query)
+	if matched, qualified := qualifiedSymbolMatch(s, query); qualified {
+		return matched
+	}
+	if s.ID == query {
+		return true
+	}
+	if s.Receiver == "" {
+		return s.Name == query || s.PackageName+"."+s.Name == query
+	}
+	q := receiverNormalizer.Replace(query)
+	receiver := receiverNormalizer.Replace(s.Receiver)
+	return q == receiver+"."+s.Name || q == s.PackageName+"."+receiver+"."+s.Name
 }
 
 // callSiteSnippet enriches a structural call edge with its source line when

@@ -2180,7 +2180,7 @@ func initNewTools(
 
 	// Tool: gograph_node
 	nodeTool := mcp.NewTool("gograph_node",
-		mcp.WithDescription("Fetch AST metadata for a named symbol, package, or file: kind, file path, line number, full signature (a constant's declared value), doc comment, and struct fields if applicable. WHEN TO USE: When you need structural metadata (kind, signature, line number) without the full source body — lighter than gograph_source for metadata-only lookups. NOT TO USE: For full source code (use gograph_source); for call relationships (use gograph_callers/gograph_callees). RETURNS: Node properties array with kind, file, line, and signature; empty when the name is not found."),
+		mcp.WithDescription("Fetch AST metadata for a named symbol, package, or file: kind, file path, line number, full signature (a constant's declared value), doc comment, and struct fields if applicable. An exact case-sensitive name or selector selects only that declaration; substring matching applies only when nothing matches exactly. WHEN TO USE: When you need structural metadata (kind, signature, line number) without the full source body — lighter than gograph_source for metadata-only lookups. NOT TO USE: For full source code (use gograph_source); for call relationships (use gograph_callers/gograph_callees). RETURNS: Node properties array with kind, file, line, and signature; empty when the name is not found."),
 		mcp.WithString("name", mcp.Required(), mcp.Description("The exact symbol, package path, or Go file name to inspect (e.g., 'Graph', 'internal/search', 'server.go')")),
 	)
 	addTool(nodeTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

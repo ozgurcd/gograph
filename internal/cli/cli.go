@@ -3740,7 +3740,9 @@ SEARCH & NAVIGATION
   focus <package>           Show all symbols, imports, and call edges for one
                              package. Token-efficient alternative to reading files.
   node <name>                Show indexed AST metadata for a symbol, package, or file.
-                             Constants show their declared value.
+                             Constants show their declared value. An exact,
+                             case-sensitive name selects only that declaration;
+                             substring matching applies only when nothing matches.
   source <name>              Extract confined raw source for functions, methods,
                              structs, interfaces, types, variables, and constants.
   public <package>           List only the exported (public) API of a package.
