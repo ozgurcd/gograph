@@ -282,6 +282,13 @@ func StartCallerSessionAt(root, word, id string) (string, error) {
 // StartCallerSessionOwnedAt creates a session whose marker records owner, the
 // creating process ID, host, working directory and creation time.
 func StartCallerSessionOwnedAt(root, word, id, owner string) (string, error) {
+	return StartCallerSessionWithIntentionAt(root, word, id, owner, "")
+}
+
+// StartCallerSessionWithIntentionAt is StartCallerSessionOwnedAt with a
+// default intention recorded in the session's start entry. Calls in the
+// session that supply no intention use it (SessionIntentionAt).
+func StartCallerSessionWithIntentionAt(root, word, id, owner, intention string) (string, error) {
 	if id != "" {
 		if _, err := ActiveCallerSessionAt(root, id); err != nil {
 			return "", err
@@ -312,7 +319,7 @@ func StartCallerSessionOwnedAt(root, word, id, owner string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, err := json.Marshal(SessionStartEntry{Type: "session_start", SessionID: id, CreatedAt: time.Now().Format(time.RFC3339)})
+	data, err := json.Marshal(SessionStartEntry{Type: "session_start", SessionID: id, CreatedAt: time.Now().Format(time.RFC3339), Intention: strings.TrimSpace(intention)})
 	if err != nil {
 		return "", err
 	}

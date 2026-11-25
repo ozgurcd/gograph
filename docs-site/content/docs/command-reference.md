@@ -1432,11 +1432,14 @@ must already have started with a usable artifact or buildable Go source.
 
 ### session
 ```bash
-gograph session create [word]
+gograph session create [word] [-i "<task>"]
 gograph session end [session_id]
-gograph session audit [session_id]
+gograph session audit [session_id|word]
 gograph session cleanup
 ```
+`create -i "<task>"` records a default intention: calls in that session without
+`-i` use it instead of failing. `audit <word>` grades every session created with
+that word together (plan in one session, review in another).
 Manages local workflow metadata under `.gograph/sessions/`. Session IDs contain
 only letters, digits, and underscores. The `.gograph`/sessions directories must
 be real, and markers/logs must be regular non-linked entries. Audit reads and

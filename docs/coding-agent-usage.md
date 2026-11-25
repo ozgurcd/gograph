@@ -1178,8 +1178,12 @@ gograph stale -i "Check if the graph is stale before analyzing the codebase"
 ```
 If the agent fails to supply `-i` when a session is active, `gograph` blocks execution and returns a structured exit code `1` with an error message:
 ```
-Error: Active session "implement_refactor_20260530_200840" requires an intention. Please supply the --intention (-i) flag stating your technical rationale.
+Error: Active session "implement_refactor_20260530_200840" requires an intention. Please supply the --intention (-i) flag stating your technical rationale, or create the session with `gograph session create <word> -i "<task>"` to give every call a default.
 ```
+Create the session with a task intention to avoid repeating it: `gograph session
+create fix_parser -i "fix the parser's error recovery"` (MCP:
+`gograph_session_create` with `intention`). Calls in that session that omit
+`-i` are logged with that default; a call's own `-i` still wins.
 *Note: Session commands, `mcp`, `build`, `doctor`, `stale`, `stats`, `capabilities`, `wiki`, `doc`, plugin/hook setup, help, and version are exempt from intention enforcement. Other analytical commands require an intention while a session is active.*
 
 ### 3. Ending a Session
@@ -1213,6 +1217,10 @@ You can audit the agent's work at any time during or after a session using the `
 gograph session audit [session_id]
 ```
 If `session_id` is omitted, the tool automatically scans `.gograph/sessions/` and audits the **most recent** session.
+Pass the session's creation word instead of an ID (`gograph session audit fix_parser`)
+to grade every session created with that word as one task, so a `plan` run in one
+session and a `review` in a later one both count. A single-session audit names the
+word when other sessions share it.
 
 The audit report provides:
 1. **Agent Compliance Score & Grade**:

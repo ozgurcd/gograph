@@ -113,7 +113,10 @@ or in `warning` under `--json`; `--no-refresh`/`GOGRAPH_NO_REFRESH=1` turns it
 off). When they cannot (another build context, another caller's session), text
 output prints `WARNING: the graph is stale` on stderr, naming the changed
 files; run `gograph build .` and repeat the query before trusting a missing
-caller, test or literal.
+caller, test or literal. With an audit session, pass `intention` to
+`gograph_session_create` (CLI `session create <word> -i "<task>"`) so later
+calls may omit it, and audit a task split over several sessions by its word
+(`gograph_session_audit` with the word as `session_id`).
 
 ## High-value tools
 

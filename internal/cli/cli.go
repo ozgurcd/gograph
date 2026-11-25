@@ -81,6 +81,7 @@ func Run(args []string) int {
 	resetOutputGraph()
 	resetAutoRefresh()
 	defer resetAutoRefresh()
+	commandIntention = ""
 	noRefresh := false
 	if len(args) == 0 {
 		printHelp()
@@ -273,11 +274,16 @@ func Run(args []string) int {
 		}
 		if activeID != "" && !nonAnalytical[args[0]] {
 			if intention == "" {
-				return failCommandf(args[0], "Error: Active session %q requires an intention. Please supply the --intention (-i) flag stating your technical rationale.", activeID)
+				// A session created with -i gives every call its default.
+				intention = session.SessionIntentionAt(root, activeID)
+			}
+			if intention == "" {
+				return failCommandf(args[0], "Error: Active session %q requires an intention. Please supply the --intention (-i) flag stating your technical rationale, or create the session with `gograph session create <word> -i \"<task>\"` to give every call a default.", activeID)
 			}
 		}
 	}
 
+	commandIntention = intention
 	autoRefresh.enabled = !noRefresh && !autoRefreshDisabledByEnv() && queryRev == "" && commandAutoRefreshes(args[0])
 	startTime := time.Now()
 	exitCode := dispatch(args)
@@ -3709,7 +3715,8 @@ OUTPUT FLAGS
                              sets this for every call.
                              Request only one of --json, --files-only, or --mermaid.
   -i, --intention <msg>      Explain the technical rationale for executing the command.
-                             MANDATORY for all analytical commands when a session is active.
+                             MANDATORY for all analytical commands when a session is active,
+                             unless the session was created with -i (its default intention).
 
 INDEXING
   build [path] [--precise] [--strict] [--tags=<tag[,tag...]>] [--exclude-dirs=<dir1,dir2>] [--memory-mode=low] [--max-memory=<size>]
@@ -4263,9 +4270,11 @@ AGENT INTEGRATION
                              a graph built under a different GOWORK/build context is
                              diagnosed as stale instead of silently served.
   session <action> [word]    Manage telemetry & audit sessions. Actions:
-                             - create [unique_word]: Starts an audit session.
+                             - create [unique_word] [-i "<task>"]: Starts an audit session;
+                               -i sets the default intention for its calls.
                              - end: Ends the active session.
-                             - audit [session_id]: Audits and scores agent compliance & success.
+                             - audit [session_id|word]: Audits and scores agent compliance &
+                               success; a creation word grades all its sessions together.
                              - cleanup: Ends stale sessions of other callers, then moves
                                inactive session logs into .gograph/_to_delete/<time>/.
                              Session IDs and regular files are confined beneath the
