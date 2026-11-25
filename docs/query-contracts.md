@@ -5,7 +5,7 @@
 `path/to/file.go:Name` and `path/to/file.go:Receiver.Method` select indexed
 declarations, as do the import-qualified forms printed by an ambiguous `source`
 answer. CLI and MCP support them in query, node, source, context, callers,
-callees, impact, explain, explore, plan, review, risk, identity, fields,
+callees, impact, path, explain, explore, plan, review, risk, identity, fields,
 interfaces, implementers, mocks, tests (direct and transitive), and coverage.
 `file.go:Name` selects only a function, type, variable or constant, never a
 method, so the selector printed for a function stays unique when the same file
@@ -40,7 +40,12 @@ exact spellings first, so `search.Callers` never also selects `CallersDepth`;
 (`json.Marshal` is not `json.MarshalIndent`), and `callees` falls back to a
 substring match only for a name that matches nothing exactly.
 
-Named limits: embeds, constructors, literals, returnusage, mutate, path and
+`path` accepts a file, package-path or ID selector at either end: the walk
+starts from, or ends at, that one declaration, and on AST graphs the
+destination is matched with the same per-declaration rule as `callers`, so a
+same-named function in another package does not stand in for it.
+
+Named limits: embeds, constructors, literals, returnusage, mutate and
 endpoint reject file-qualified selectors. Their relationship records use
 lexical names and cannot reliably bind that file's declaration; use the
 documented name/type/field/route form. `usages` supports file-qualified variables

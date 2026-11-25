@@ -46,6 +46,25 @@ func isFullyQualifiedID(s string) bool {
 // substrings so partial names work; package-qualified names like "cli.Run" are
 // normalized to just "Run".
 func Path(g *graph.Graph, from, to string, includeTests bool) []Result {
+	// File, package-path and ID selectors name one declaration: walk from or
+	// to its stable ID. AST call edges carry no callee IDs, so the destination
+	// also matches through the same per-symbol matcher callers uses.
+	var toMatcher *callTargetMatcher
+	if pathDeclarationSelector(from) {
+		symbol, ok := pathSelectorSymbol(g, from)
+		if !ok {
+			return nil
+		}
+		from = symbol.ID
+	}
+	if pathDeclarationSelector(to) {
+		symbol, ok := pathSelectorSymbol(g, to)
+		if !ok {
+			return nil
+		}
+		to = symbol.ID
+		toMatcher = newSymbolCallMatcher(g, symbol)
+	}
 	fl := normalizeSymbolName(from)
 	tl := normalizeSymbolName(to)
 	fromFQ := isFullyQualifiedID(from)
@@ -74,6 +93,12 @@ func Path(g *graph.Graph, from, to string, includeTests bool) []Result {
 		return strings.Contains(strings.ToLower(s), tl)
 	}
 	matchesToID := func(id string) bool { return toFQ && id != "" && id == to }
+	matchesToEdge := func(edge graph.CallEdge) bool {
+		if matchesToID(edge.CalleeSymbolID) {
+			return true
+		}
+		return toMatcher != nil && edge.CalleeSymbolID == "" && toMatcher.matches(edge, edge.CallerSymbolID)
+	}
 
 	// Build adjacency keyed by caller NAME (legacy) and by CallerSymbolID
 	// (precise). The BFS below walks both maps so an edge is reachable
@@ -178,6 +203,12 @@ func Path(g *graph.Graph, from, to string, includeTests bool) []Result {
 		}
 		nextRank := rank.Extend(certainty, !edge.Synthetic, isTestFile(edge.File), edge.Resolution == "", false, edgeKey(edge))
 		nodes := []string{nextNode, edge.CalleeRaw, edge.CalleeSymbolID}
+		if toFQ && matchesToEdge(edge) {
+			// Name-keyed nodes conflate same-named functions; an edge into the
+			// selected destination is also queued under its ID so a longer
+			// path to it is not discarded behind a shorter one to a namesake.
+			nodes = append(nodes, to)
+		}
 		seen := make(map[string]bool, len(nodes))
 		for _, node := range nodes {
 			if node == "" || seen[node] {
@@ -204,7 +235,7 @@ func Path(g *graph.Graph, from, to string, includeTests bool) []Result {
 		matched := matchesToName(cur.node)
 		if !matched && len(cur.path) > 0 {
 			last := cur.path[len(cur.path)-1]
-			if matchesToID(last.CalleeSymbolID) {
+			if matchesToEdge(last) {
 				matched = true
 			}
 		}
@@ -225,7 +256,9 @@ func Path(g *graph.Graph, from, to string, includeTests bool) []Result {
 			}
 			last := cur.path[len(cur.path)-1]
 			destinationFile, destinationLine := last.File, last.Line
-			if last.CalleeSymbolID != "" {
+			if last.CalleeSymbolID == "" && toMatcher != nil && len(toMatcher.targets) == 1 {
+				destinationFile, destinationLine = toMatcher.targets[0].File, toMatcher.targets[0].Line
+			} else if last.CalleeSymbolID != "" {
 				for _, symbol := range g.Symbols {
 					if symbol.ID == last.CalleeSymbolID {
 						destinationFile, destinationLine = symbol.File, symbol.Line
@@ -688,4 +721,19 @@ func GodObjects(g *graph.Graph, p GodObjectParams) []GodObjectCandidate {
 		candidates = candidates[:p.Top]
 	}
 	return candidates
+}
+
+// pathDeclarationSelector reports a selector that names one declaration: a
+// file selector, a package-path selector or a stable ID.
+func pathDeclarationSelector(query string) bool {
+	return strings.Contains(query, ".go:") || strings.Contains(query, "/") || strings.Contains(query, "::")
+}
+
+// pathSelectorSymbol resolves a declaration selector to its single symbol.
+func pathSelectorSymbol(g *graph.Graph, query string) (graph.SymbolNode, bool) {
+	targets, err := sourceTargets(g, query)
+	if err != nil || len(targets) != 1 {
+		return graph.SymbolNode{}, false
+	}
+	return targets[0], true
 }

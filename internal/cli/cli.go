@@ -633,7 +633,8 @@ CALL GRAPH — two different depths:
   impact <sym>                         unbounded: full BFS to ALL transitive callers — can be large on hotspots
   Call-graph symbol selectors accept short names ("Validate"), pkg.Name (package-level
     symbols only), Recv.Method or (*Recv).Method, file selectors (dir/file.go:Name,
-    dir/file.go:Recv.Method, or file.go:Name by file name alone), and fully-qualified IDs.
+    dir/file.go:Recv.Method, or file.go:Name by file name alone), package-path selectors
+    (internal/app::Name, internal/app.Name), and fully-qualified IDs; path accepts them too.
     Exact spellings win: callers/callees never also select longer names (Validate is not
     ValidateAll); a short name matching nothing exactly falls back to a substring match.
     Selectors work on AST graphs too; --precise also resolves chained calls

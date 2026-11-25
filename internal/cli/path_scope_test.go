@@ -225,3 +225,39 @@ func TestReviewSinceReviewsCommittedChanges(t *testing.T) {
 		t.Fatal("review --since without a ref must fail")
 	}
 }
+
+func TestPathAcceptsDeclarationSelectors(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":          "module example.com/paths\n\ngo 1.22\n",
+		"main.go":         "package main\n\nimport \"example.com/paths/lib\"\n\nfunc resolve() int { return 0 }\n\nfunc Run() int { return resolve() + lib.Entry() }\n\nfunc main() { _ = Run() }\n",
+		"lib/lib.go":      "package lib\n\nfunc Entry() int { return resolve() }\n\nfunc resolve() int { return 2 }\n",
+		"lib/lib_test.go": "package lib\n\nimport \"testing\"\n\nfunc TestEntry(t *testing.T) { _ = Entry() }\n",
+	}
+	for name, body := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, stderr, code := runCLIParityInDir(t, root, func() int { return Run([]string{"build", "."}) }); code != 0 {
+		t.Fatalf("build failed: %s", stderr)
+	}
+	for _, args := range [][]string{
+		{"path", "Run", "lib/lib.go:resolve"},
+		{"path", "main.go:Run", "lib::resolve"},
+		{"path", "Run", "example.com/paths/lib::resolve"},
+	} {
+		out, stderr, code := runCLIParityInDir(t, root, func() int { return Run(args) })
+		if code != 0 || !strings.Contains(out, "calls lib.Entry") || !strings.Contains(out, "lib/lib.go:5") {
+			t.Errorf("%v must reach lib's resolve through Entry: code=%d out=%s err=%s", args, code, out, stderr)
+		}
+	}
+	out, _, _ := runCLIParityInDir(t, root, func() int { return Run([]string{"path", "TestEntry", "main.go:resolve"}) })
+	if !strings.Contains(out, "No call path") {
+		t.Errorf("lib's resolve must not stand in for main's: %s", out)
+	}
+}

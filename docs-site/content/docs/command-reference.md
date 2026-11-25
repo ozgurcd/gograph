@@ -301,7 +301,7 @@ substring match only when neither finds anything.
 
 File-qualified selectors also work with the declaration tools listed in
 [the query contract](https://github.com/ozgurcd/gograph/blob/main/docs/query-contracts.md#file-qualified-selectors).
-Embeds, constructors, literals, returnusage, mutate, path and endpoint report a
+Embeds, constructors, literals, returnusage, mutate and endpoint report a
 named file-selector limit. Usages supports file-qualified variables/constants,
 but reports that limit for types. Capabilities lists these exceptions.
 ```bash
@@ -379,6 +379,9 @@ Calculates the best indexed call chain between two symbols. Competing paths are
 ranked deterministically by exact before possible, then shorter paths,
 production before tests, typed resolution before heuristics, and a canonical
 relationship key. CLI and `gograph_path` use the same implementation.
+Either end may be a file selector (`internal/app/run.go:Run`), a package-path
+selector (`internal/app::Run`) or a stable ID; the chain then starts from, or
+ends at, exactly that declaration, also on AST graphs.
 
 ### orphans
 ```bash
