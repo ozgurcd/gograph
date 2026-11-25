@@ -825,8 +825,8 @@ node <sym>           : AST metadata for one symbol (kind, file, line, signature,
 orphans              : symbols unreachable via BFS from main/init, test, route, and eligible public roots
 path <from> <to>     : best ranked call chain between two symbols
 public <pkg>         : exported symbols only
-query <term...> [--no-tests] [--path DIR] : broad OR search — symbols, struct fields, files, packages, imports, call sites, routes
-strings <term...> [--no-tests] [--path DIR] : Go string literals containing a term, with enclosing function
+query <term...> [--no-tests] [--path DIR|FILE] : broad OR search — symbols, struct fields, files, packages, imports, call sites, routes
+strings <term...> [--no-tests] [--path DIR|FILE] : Go string literals containing a term, with enclosing function
 routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor CURSOR]
                      : deterministic HTTP route pages. Production only by default;
                        term matches method/path, handler, or file; module accepts
@@ -1766,14 +1766,14 @@ func termsAndPath(command string, args []string) (terms []string, path string, n
 			noTests = true
 		case arg == "--path":
 			if index+1 >= len(args) || args[index+1] == "" {
-				return nil, "", false, fmt.Errorf("--path requires a directory")
+				return nil, "", false, fmt.Errorf("--path requires a directory or file")
 			}
 			index++
 			path, explicit = args[index], true
 		case strings.HasPrefix(arg, "--path="):
 			path, explicit = strings.TrimPrefix(arg, "--path="), true
 			if path == "" {
-				return nil, "", false, fmt.Errorf("--path requires a directory")
+				return nil, "", false, fmt.Errorf("--path requires a directory or file")
 			}
 		case strings.HasPrefix(arg, "-"):
 			return nil, "", false, fmt.Errorf("unknown flag: %s", arg)
@@ -1790,14 +1790,49 @@ func termsAndPath(command string, args []string) (terms []string, path string, n
 		}
 	}
 	if len(terms) == 0 {
-		return nil, "", false, fmt.Errorf("usage: gograph %s <term...> [--path DIR] [--no-tests]", command)
+		return nil, "", false, fmt.Errorf("usage: gograph %s <term...> [--path DIR|FILE] [--no-tests]", command)
 	}
 	if explicit {
-		if info, statErr := os.Stat(path); statErr != nil || !info.IsDir() {
-			return nil, "", false, fmt.Errorf("--path %q is not a directory", path)
+		if info, statErr := os.Stat(path); statErr != nil || (!info.IsDir() && !info.Mode().IsRegular()) {
+			return nil, "", false, fmt.Errorf("--path %q is not a directory or file", path)
 		}
 	}
 	return terms, path, noTests, nil
+}
+
+// pathScope resolves a query/strings --path. The graph comes from the project
+// that contains path; a path below that project's root also limits results to
+// that file or directory subtree, returned as a slash-separated
+// repository-relative scope ("" for the whole project).
+func pathScope(path string) (root, scope string) {
+	if path == "." {
+		return ".", ""
+	}
+	root = projectRoot(path)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return root, ""
+	}
+	rel, err := filepath.Rel(root, abs)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return root, ""
+	}
+	return root, filepath.ToSlash(rel)
+}
+
+// resultsUnder keeps results whose file is scope or lies below it.
+func resultsUnder(results []search.Result, scope string) []search.Result {
+	if scope == "" {
+		return results
+	}
+	kept := results[:0:0]
+	for _, result := range results {
+		file := filepath.ToSlash(result.File)
+		if file == scope || strings.HasPrefix(file, scope+"/") {
+			kept = append(kept, result)
+		}
+	}
+	return kept
 }
 
 func loadGraphAt(path string) (*graph.Graph, error) {
@@ -1812,11 +1847,12 @@ func runQuery(args []string) int {
 	if err != nil {
 		return failCommand("query", err.Error())
 	}
-	g, err := loadGraphAt(path)
+	root, scope := pathScope(path)
+	g, err := loadGraphAt(root)
 	if err != nil {
 		return failCommand("query", err.Error())
 	}
-	results := search.Query(g, terms)
+	results := resultsUnder(search.Query(g, terms), scope)
 	if noTests {
 		results = search.WithoutTestResults(results)
 	}
@@ -1828,7 +1864,8 @@ func runStrings(args []string) int {
 	if err != nil {
 		return failCommand("strings", err.Error())
 	}
-	g, err := loadGraphAt(path)
+	root, scope := pathScope(path)
+	g, err := loadGraphAt(root)
 	if err != nil {
 		return failCommand("strings", err.Error())
 	}
@@ -1843,6 +1880,7 @@ func runStrings(args []string) int {
 	if err != nil {
 		return failCommand("strings", err.Error())
 	}
+	results = resultsUnder(results, scope)
 	if diagnostic != "" {
 		fmt.Fprintln(os.Stderr, "WARNING: "+diagnostic)
 	}
@@ -3669,19 +3707,21 @@ SEARCH & NAVIGATION
                              overrides mode defaults and clamps to 1-100; response modes
                              are mutually exclusive. --exact disables promotion
                              of a fuzzy lexical match into selected-symbol context.
-  query <term...> [--no-tests] [--path DIR]
+  query <term...> [--no-tests] [--path DIR|FILE]
                              Search across symbols, struct fields, packages, files, imports,
                              call sites, and HTTP route patterns. Case-insensitive, OR logic
                              across terms. Route paths match any parameter spelling
                              (:id, {id}, *id). A trailing directory argument (., .., or a
-                             path with /) or --path DIR selects another repository.
-  strings <term...> [--no-tests] [--path DIR]
+                             path with /) or --path selects another repository; a
+                             --path file or subdirectory also keeps only results in it.
+  strings <term...> [--no-tests] [--path DIR|FILE]
                              Search Go string literals in indexed source files, with the
                              enclosing function. Use for raw route strings, URLs, SQL
                              fragments, and messages that are not symbols. Route-shaped
                              terms match any parameter spelling. On a stale graph it also
                              searches Go files added since the build and names indexed
-                             files that were deleted or unreadable. Supports --json and
+                             files that were deleted or unreadable. --path FILE or a
+                             subdirectory keeps only literals in it. Supports --json and
                              --files-only.
   focus <package>           Show all symbols, imports, and call edges for one
                              package. Token-efficient alternative to reading files.

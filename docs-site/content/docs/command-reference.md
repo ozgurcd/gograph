@@ -273,7 +273,7 @@ bounded impact section. Use focused `impact` for broader fallback traversal.
 
 ### query
 ```bash
-gograph query <term...> [--no-tests]
+gograph query <term...> [--no-tests] [--path DIR|FILE]
 ```
 Performs a broad, case-insensitive substring search across multiple entities.
 - **Scans**: Symbol names, struct fields, file paths, package names, import paths, and call sites.
@@ -414,7 +414,7 @@ Finds factory and constructor functions that return the named struct (e.g., `New
 ### strings
 
 ```bash
-gograph strings <term...> [--no-tests] [--path DIR]
+gograph strings <term...> [--no-tests] [--path DIR|FILE]
 ```
 
 Searches Go string literals in the indexed source files and reports each
@@ -432,7 +432,9 @@ an enclosing function. `--json` and `--files-only` are supported. MCP:
 
 `query` also matches registered HTTP route patterns with the same parameter
 normalization, and both `query` and `strings` accept a repository path as
-`--path DIR` or as a trailing directory argument (`gograph query org-link .`).
+`--path` or as a trailing directory argument (`gograph query org-link .`).
+A `--path` file or subdirectory inside the repository also keeps only results
+in that file or subtree (`gograph query Run --path internal/app/manager.go`).
 
 ### literals
 ```bash
