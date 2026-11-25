@@ -112,6 +112,12 @@ func Path(g *graph.Graph, from, to string, includeTests bool) []Result {
 		}
 		adj[c.CallerName] = append(adj[c.CallerName], c)
 		adjLower[strings.ToLower(c.CallerName)] = append(adjLower[strings.ToLower(c.CallerName)], c)
+		// A method's edges are recorded under "(*Recv).Name", but an AST hop
+		// into it arrives at the bare callee name; index the bare name too so
+		// the walk can continue through methods.
+		if bare := pathBareCallerName(c.CallerName); bare != c.CallerName {
+			adjLower[strings.ToLower(bare)] = append(adjLower[strings.ToLower(bare)], c)
+		}
 		if c.CallerSymbolID != "" {
 			adjByID[c.CallerSymbolID] = append(adjByID[c.CallerSymbolID], c)
 		}
@@ -736,4 +742,13 @@ func pathSelectorSymbol(g *graph.Graph, query string) (graph.SymbolNode, bool) {
 		return graph.SymbolNode{}, false
 	}
 	return targets[0], true
+}
+
+// pathBareCallerName strips a receiver from a caller name: "(*Recv).Name" and
+// "Recv.Name" give "Name".
+func pathBareCallerName(name string) string {
+	if position := strings.LastIndex(name, "."); position >= 0 {
+		return name[position+1:]
+	}
+	return name
 }

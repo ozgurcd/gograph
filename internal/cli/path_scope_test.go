@@ -327,3 +327,33 @@ func TestQueriesUseRecordedBuildTagsForFreshness(t *testing.T) {
 		t.Errorf("GOFLAGS tags that differ from the recorded ones must report stale: %s", stderr)
 	}
 }
+
+func TestPathWalksThroughMethodsOnASTGraphs(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":              "module example.com/methods\n\ngo 1.22\n",
+		"app/manager.go":      "package app\n\ntype Manager struct{}\n\nfunc (m *Manager) Run() { m.recv() }\n\nfunc (m *Manager) recv() {}\n",
+		"app/manager_test.go": "package app\n\nimport \"testing\"\n\nfunc TestRun(t *testing.T) { (&Manager{}).Run() }\n",
+	}
+	for name, body := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, stderr, code := runCLIParityInDir(t, root, func() int { return Run([]string{"build", "."}) }); code != 0 {
+		t.Fatalf("build failed: %s", stderr)
+	}
+	for _, args := range [][]string{
+		{"path", "TestRun", "app/manager.go:Manager.recv"},
+		{"path", "TestRun", "recv"},
+	} {
+		out, stderr, code := runCLIParityInDir(t, root, func() int { return Run(args) })
+		if code != 0 || !strings.Contains(out, "(*Manager).Run — calls m.recv") {
+			t.Errorf("%v must walk TestRun -> Run -> recv: code=%d out=%s err=%s", args, code, out, stderr)
+		}
+	}
+}
