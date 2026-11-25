@@ -189,3 +189,39 @@ func TestSourceLinesReadsDeclarationAndFileRegions(t *testing.T) {
 		t.Fatalf("a changed file must be refused: code=%d err=%s", code, stderr)
 	}
 }
+
+func TestReviewSinceReviewsCommittedChanges(t *testing.T) {
+	root := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := func(message string) {
+		t.Helper()
+		runGitForJSONTest(t, root, "add", ".")
+		runGitForJSONTest(t, root, "-c", "user.name=gograph test", "-c", "user.email=gograph@example.invalid", "-c", "commit.gpgSign=false", "commit", "-m", message)
+	}
+	write("go.mod", "module example.com/since\n\ngo 1.22\n")
+	write("a.go", "package since\n\nfunc Stable() int { return 1 }\n\nfunc Changed() int { return 1 }\n")
+	runGitForJSONTest(t, root, "init")
+	commit("initial")
+	write("a.go", "package since\n\nfunc Stable() int { return 1 }\n\nfunc Changed() int { return 2 }\n")
+	commit("change")
+	if _, stderr, code := runCLIParityInDir(t, root, func() int { return Run([]string{"build", "."}) }); code != 0 {
+		t.Fatalf("build failed: %s", stderr)
+	}
+
+	out, stderr, code := runCLIParityInDir(t, root, func() int { return Run([]string{"review", "--since", "HEAD~1"}) })
+	if code != 0 || !strings.Contains(out, "Changes since HEAD~1") || !strings.Contains(out, "Changed") || strings.Contains(out, "Stable") {
+		t.Fatalf("review --since HEAD~1: code=%d out=%s err=%s", code, out, stderr)
+	}
+	out, stderr, code = runCLIParityInDir(t, root, func() int { return Run([]string{"review", "--since=HEAD", "--json"}) })
+	if code != 0 || !strings.Contains(out, `"status": "empty"`) {
+		t.Fatalf("review --since=HEAD on a clean tree must be empty: code=%d out=%s err=%s", code, out, stderr)
+	}
+	if _, _, code := runCLIParityInDir(t, root, func() int { return Run([]string{"review", "--since", "--json"}) }); code == 0 {
+		t.Fatal("review --since without a ref must fail")
+	}
+}

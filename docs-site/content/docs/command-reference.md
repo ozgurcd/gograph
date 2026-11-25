@@ -891,8 +891,11 @@ Generates a comprehensive change-impact plan prior to editing.
 ```bash
 gograph review <symbol>
 gograph review --uncommitted
+gograph review --since <ref>
 ```
-Performs post-edit verification.
+Performs post-edit verification. `--since <ref>` reviews every declaration
+changed between the Git ref and the working tree, committed or not (MCP
+`gograph_review` with `since`).
 - **Output**: Code changes, complexity drift, test coverage status, and a risk evaluation.
 
 ### risk

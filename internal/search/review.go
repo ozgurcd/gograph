@@ -97,10 +97,16 @@ func (r *ReviewResult) String() string {
 // ReviewUncommittedContext retains deletion evidence without pretending the
 // current graph has historical call edges. Other traversal tools remain strict.
 func ReviewUncommittedContext(ctx context.Context, g *graph.Graph) (*ReviewResult, error) {
+	return ReviewSinceContext(ctx, g, "HEAD", "Uncommitted Changes")
+}
+
+// ReviewSinceContext reviews every declaration changed between ref and the
+// working tree (committed and uncommitted), as changes --git ref reports them.
+func ReviewSinceContext(ctx context.Context, g *graph.Graph, ref, title string) (*ReviewResult, error) {
 	if g == nil {
 		return nil, fmt.Errorf("graph is unavailable")
 	}
-	changes, err := ChangesByGitRefContext(ctx, g, g.Root, "HEAD")
+	changes, err := ChangesByGitRefContext(ctx, g, g.Root, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -123,15 +129,15 @@ func ReviewUncommittedContext(ctx context.Context, g *graph.Graph) (*ReviewResul
 	if err != nil {
 		return nil, err
 	}
-	report := Review(g, ids, "Uncommitted Changes")
+	report := Review(g, ids, title)
 	if deleted || blank {
-		report.Title, report.Message = "Uncommitted Changes", ""
+		report.Title, report.Message = title, ""
 		report.DeclarationEvidence = changes
 		if deleted {
-			report.Limitations = append(report.Limitations, "Deleted declarations: fallback to changes --git HEAD evidence; historical callers, tests and risk are not evaluated. Surface-area results describe surviving declarations only.")
+			report.Limitations = append(report.Limitations, "Deleted declarations: fallback to changes --git "+ref+" evidence; historical callers, tests and risk are not evaluated. Surface-area results describe surviving declarations only.")
 		}
 		if blank {
-			report.Limitations = append(report.Limitations, "Blank-identifier declarations: retained in changes --git HEAD evidence; omitted from plan/review symbol traversal because they do not bind an addressable identifier.")
+			report.Limitations = append(report.Limitations, "Blank-identifier declarations: retained in changes --git "+ref+" evidence; omitted from plan/review symbol traversal because they do not bind an addressable identifier.")
 		}
 	}
 	return report, nil

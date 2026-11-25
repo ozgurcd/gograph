@@ -128,7 +128,7 @@ new declarations. CLI uses the same rules.
 | `gograph_context` with `symbol=<symbol>` | Node + source + callers + callees + tests in one call |
 | `gograph_source` with `symbol=<symbol>`, optional `lines=START-END` | Verbatim declaration; `lines` reads part of a long body, or any region of an indexed `.go` file (`symbol=internal/app/manager.go`), including its imports |
 | `gograph_plan` with `symbol=<symbol>` | Pre-edit blast radius + callers + tests |
-| `gograph_review` with `uncommitted=true` | Post-edit coverage check |
+| `gograph_review` with `uncommitted=true` or `since=<ref>` | Post-edit coverage check; `since` covers commits after the ref too |
 | `gograph_impact` with `symbol=<symbol>` | Canonical upstream identities with exact/possible labels; `exact_only=true` excludes uncertain paths |
 | `gograph_callers` / `gograph_callees` with `function=<symbol>` | Explicit call-graph traversal |
 | `gograph_implementers` with `interface=<interface>` | Type-checked production implementers plus AST-discovered test fakes; set `test_only=true` for only fakes |

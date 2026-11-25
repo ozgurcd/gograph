@@ -1590,9 +1590,10 @@ func NewServer(
 
 	// Tool: gograph_review
 	reviewTool := mcp.NewTool("gograph_review",
-		mcp.WithDescription("Summarize the scope and risk profile of a change: which symbols changed, which tests cover them, which routes and env vars they touch, and whether SQL is involved. Requires either symbol or uncommitted=true. WHEN TO USE: After editing — as a post-edit verification step before committing; confirms the blast radius matches expectations. Use uncommitted=true to review all current unstaged changes at once. NOT TO USE: For boundary constraint enforcement (use gograph_boundaries); for pre-edit planning (use gograph_plan). RETURNS: JSON with changed_symbols[], tests[], routes[], env[], errors[], and a risk object (public_api, touches_sql, touches_routes, touches_env)."),
+		mcp.WithDescription("Summarize the scope and risk profile of a change: which symbols changed, which tests cover them, which routes and env vars they touch, and whether SQL is involved. Requires symbol, uncommitted=true, or since=<git ref>. WHEN TO USE: After editing — as a post-edit verification step before committing; confirms the blast radius matches expectations. Use uncommitted=true to review all current unstaged changes at once, or since=<ref> to review everything changed after that ref (commits plus uncommitted edits). NOT TO USE: For boundary constraint enforcement (use gograph_boundaries); for pre-edit planning (use gograph_plan). RETURNS: JSON with changed_symbols[], tests[], routes[], env[], errors[], and a risk object (public_api, touches_sql, touches_routes, touches_env)."),
 		mcp.WithString("symbol", mcp.Description("The name of the target symbol to run the design review for (e.g. 'AuthService')")),
 		mcp.WithBoolean("uncommitted", mcp.Description("Set to true to review all uncommitted/modified changes in the repository")),
+		mcp.WithString("since", mcp.Description("Git ref (e.g. 'HEAD~3', 'main'); review every declaration changed between it and the working tree")),
 	)
 	addTool(reviewTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		g := graphForRequest(ctx)
@@ -1603,7 +1604,17 @@ func NewServer(
 		var symbolNames []string
 		var title string
 		var revRes *search.ReviewResult
-		if u, ok := args["uncommitted"].(bool); ok && u {
+		if since, ok := args["since"].(string); ok && since != "" {
+			if err := sanitizeGitRef(since); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			title = "Changes since " + since
+			var err error
+			revRes, err = search.ReviewSinceContext(ctx, g, since, title)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+		} else if u, ok := args["uncommitted"].(bool); ok && u {
 			var err error
 			revRes, err = search.ReviewUncommittedContext(ctx, g)
 			if err != nil {
@@ -1614,7 +1625,7 @@ func NewServer(
 			symbolNames = []string{sym}
 			title = sym
 		} else {
-			return mcp.NewToolResultError("must provide either symbol or set uncommitted to true"), nil
+			return mcp.NewToolResultError("must provide symbol, uncommitted=true, or since=<git ref>"), nil
 		}
 
 		if revRes == nil {

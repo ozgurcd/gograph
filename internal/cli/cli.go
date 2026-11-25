@@ -916,6 +916,7 @@ plan --uncommitted [--with-context]
                      : change plan for all currently uncommitted modified symbols
 review <sym>         : post-edit review — test coverage, complexity, risk profile
 review --uncommitted : post-edit review for all uncommitted changes
+review --since <ref> : review everything changed after a Git ref (commits + edits)
 risk <sym>           : change risk profile — blast radius, complexity, test coverage, SQL/env dependencies
 risk --uncommitted   : change risk profile for all uncommitted changes
 schema <table>       : structs mapped to a DB table via struct tags
@@ -4006,6 +4007,8 @@ CODE QUALITY
                              Generate a change plan for all currently uncommitted modified symbols.
   review <symbol>            Generate a post-edit final review report for a modified symbol.
   review --uncommitted       Generate a post-edit final review report for all uncommitted changes.
+  review --since <ref>       Review every declaration changed after a Git ref (commits plus
+                             uncommitted edits), e.g. review --since HEAD~1.
   risk <symbol>              Evaluate change risk profile (blast radius, complexity, test coverage, SQL/env).
   risk --uncommitted         Evaluate risk profile for all uncommitted changes.
   api --since <ref|graph.json>
@@ -6204,8 +6207,18 @@ func runPlan(args []string) int {
 
 // runReview generates a post-edit checklist for modified symbols.
 func runReview(args []string) int {
-	if len(args) != 1 || args[0] == "" || (strings.HasPrefix(args[0], "-") && args[0] != "--uncommitted") {
-		return failCommand("review", "usage: gograph review <symbol> OR gograph review --uncommitted")
+	const usage = "usage: gograph review <symbol> OR gograph review --uncommitted OR gograph review --since <ref>"
+	sinceRef := ""
+	switch {
+	case len(args) == 2 && args[0] == "--since" && args[1] != "" && !strings.HasPrefix(args[1], "-"):
+		sinceRef = args[1]
+	case len(args) == 1 && strings.HasPrefix(args[0], "--since="):
+		sinceRef = strings.TrimPrefix(args[0], "--since=")
+		if sinceRef == "" || strings.HasPrefix(sinceRef, "-") {
+			return failCommand("review", usage)
+		}
+	case len(args) != 1 || args[0] == "" || (strings.HasPrefix(args[0], "-") && args[0] != "--uncommitted"):
+		return failCommand("review", usage)
 	}
 
 	g, err := loadGraph(".")
@@ -6216,20 +6229,24 @@ func runReview(args []string) int {
 	var symbolNames []string
 	var title string
 
-	if args[0] == "--uncommitted" {
-		report, reviewErr := search.ReviewUncommittedContext(context.Background(), g)
+	if sinceRef != "" || args[0] == "--uncommitted" {
+		title, ref, empty := "Uncommitted Changes", "HEAD", "No uncommitted modified symbols found in the graph."
+		if sinceRef != "" {
+			title, ref, empty = "Changes since "+sinceRef, sinceRef, "No modified symbols since "+sinceRef+" found in the graph."
+		}
+		report, reviewErr := search.ReviewSinceContext(context.Background(), g, ref, title)
 		if reviewErr != nil {
 			return failCommand("review", reviewErr.Error())
 		}
 		if report.Message != "" && report.DeclarationEvidence == nil {
 			if jsonMode {
-				return PrintJSON(okEnvelope("review", "Uncommitted Changes", nil, 0))
+				return PrintJSON(okEnvelope("review", title, nil, 0))
 			}
-			fmt.Println("No uncommitted modified symbols found in the graph.")
+			fmt.Println(empty)
 			return 0
 		}
 		if jsonMode {
-			return PrintJSON(okEnvelope("review", "Uncommitted Changes", report, 1))
+			return PrintJSON(okEnvelope("review", title, report, 1))
 		}
 		fmt.Print(report.String())
 		return 0
