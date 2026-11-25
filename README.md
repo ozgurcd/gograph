@@ -319,7 +319,9 @@ of evidence):*
 Audit sessions belong to an explicit caller. `gograph session create task` prints
 the session ID; pass it on subsequent CLI commands with `--session-id ID` or
 `GOGRAPH_SESSION=ID`. The flag overrides the environment. Selected analytical
-commands retain the `--intention` requirement and existing audit grades. Agent
+commands retain the `--intention` requirement and existing audit grades;
+`session create task -i "<task>"` gives the session a default intention, and
+`session audit task` grades every session created with that word together. Agent
 shells usually do not keep `GOGRAPH_SESSION` between commands, so a CLI command
 without a selector uses the repository's only active session when this host's CLI
 created it; that covers `build`, `plan`, `review`, and `session end`. When
@@ -380,7 +382,7 @@ normal response format.
 | **Stable IDs** | `identity <symbol-or-stable-id> [--package name] [--json]` | Print and re-resolve module/package/receiver/name identity that survives line shifts and file moves inside a package; package disambiguates external-test collisions. |
 | **Reverse Attribution** | `coverage <TestFunc> [--exact-only] [--package name] [--json]` | Transitive product-symbol set for one unambiguous test, with stable-ID paths and exact/possible propagation. Static evidence only—not runtime or branch coverage. |
 | **Tests reaching a symbol** | `tests <symbol> --transitive [--exact-only] [--package name] [--max-depth N] [--limit N] [--cursor T] [--json]` | Versioned reverse attribution: a summary by depth and resolution, then 50 tests per page nearest first, each with a representative stable-ID path to one product symbol. Default `tests` remains direct for compatibility. |
-| **Tests to run** | `tests --uncommitted\|--since <ref> [--format run\|go-test] [--max-depth N] [--exact-only]`, `tests <symbol> --format go-test` | Which tests to run for a change: per package, anchored `-run` patterns and ready `go test` commands with the graph's `-tags`; unselectable declarations are listed, never dropped. |
+| **Tests to run** | `tests --uncommitted\|--since <ref> [--format run\|go-test] [--max-depth N] [--exact-only]`, `tests <symbol> --format go-test` | Which tests to run for a change: per package, anchored `-run` patterns and ready `go test` commands with the graph's `-tags`. Changed types select their users' tests (variables and constants on precise graphs), and main-package tests that run the binary are possible matches; unselectable declarations are listed, never dropped. |
 | **Untested** | `untested [--pkg name] [--top N] [--exclude glob] [--wide] [--exclude-interface-methods] [--coverprofile file] [--json]` | Called production symbols without an exact transitive test path, `none` before `possible`. Precise builds devirtualize only proven concrete receivers; open interface paths remain `test_resolution=possible`. `--exclude-interface-methods` skips Error/String-style methods; `--coverprofile` lists functions a `go test -coverprofile` run never executed. JSON includes `stable_id`; `--wide` prints it without truncation. |
 | **Uncovered changes** | `uncovered --uncommitted\|--since <ref> --coverprofile file [--json]` | Changed lines of non-test Go files that a coverage profile shows were never executed, as exact ranges. |
 | **Doc** | `doc <pkg[.Symbol]> [--json]` | `go doc` wrapper — signature + doc comment for any stdlib or third-party symbol. No graph required. Closes the gap when call chains leave the project. |

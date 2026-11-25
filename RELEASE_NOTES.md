@@ -1,5 +1,47 @@
 # Release Notes
 
+## v1.7.25 — 2026-11-25
+
+Fixes for three remaining reasons agents logged when gograph could not answer:
+a stale graph after edits, sessions that demanded an intention on every call,
+and test selection that ignored changed types and constants.
+
+Behavior changes:
+
+- CLI graph queries rebuild a stale graph before answering: changed packages
+  only, with the graph's recorded precision (`--precise` graphs stay precise),
+  build tags and excluded directories. A one-line note goes to stderr (under
+  `--json`, to the envelope's `warning`; stderr stays empty). `--no-refresh`
+  or `GOGRAPH_NO_REFRESH=1` keeps the old behavior. No rebuild for `--rev`, a
+  different build context (other `--tags` or GOFLAGS tags), another caller's
+  active session, or the `stale`, `stats`, `changes`, `build`, `mcp`,
+  `hook-guard` and `session` commands. The enforcement commands `gate`,
+  `check` and `boundaries` never rebuild either; `gate` still fails on a stale
+  graph, so CI must build first.
+- Test selection (`tests --uncommitted`, `--since`, `--format`, MCP
+  `gograph_tests` with `uncommitted`, `since` or `select`) now follows changed
+  types, variables and constants instead of reporting them as unselected. A
+  type selects the tests of its methods (exact), of functions whose signatures
+  name it and of composite literals of it (possible), and of its field uses on
+  precise graphs (exact). A variable or constant selects the tests of its uses
+  on precise graphs; AST graphs report it unselected with a `--precise` hint.
+  Selection roots report `users`. When a change reaches a main package's
+  `main`, that package's tests that start a process (`exec.Command`,
+  `exec.CommandContext`, directly or through helpers) are added as possible
+  matches. `tests <Type|var|const> --format go-test` and MCP `select=true`
+  accept those declarations; direct and `--transitive` answers point to
+  `--format` for them.
+
+New:
+
+- `gograph session create <word> -i "<task>"` (MCP `gograph_session_create`
+  with `intention`) records a default intention: calls in that session that
+  omit `--intention` use it. Sessions created without one still require it.
+- `gograph session audit <word>` (MCP `gograph_session_audit` with the word as
+  `session_id`) grades every session created with that word together, so a
+  `plan` in one session and a `review` in a later one both count. A
+  single-session audit names the word when other sessions share it.
+
 ## v1.7.24 — 2026-11-25
 
 Fixes for the reasons agents logged when gograph could not answer: reading
