@@ -108,6 +108,11 @@ func Run(args []string) int {
 				printHelp()
 			}
 			return 0
+		case "--":
+			// Arguments after "--" belong to the command verbatim, so a
+			// search term such as --json is not taken as a global flag.
+			filtered = append(filtered, args[i:]...)
+			i = len(args)
 		case "--json":
 			jsonMode = true
 		case "--files-only":
@@ -1759,9 +1764,16 @@ func printResults(cmd, query string, results []search.Result, emptyMsg string) i
 func termsAndPath(command string, args []string) (terms []string, path string, noTests bool, err error) {
 	path = "."
 	explicit := false
+	termsOnly := false
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
+		case termsOnly:
+			// After "--" every argument is a term, so a term may start
+			// with "-" (gograph strings -- --log-file).
+			terms = append(terms, arg)
+		case arg == "--":
+			termsOnly = true
 		case arg == "--no-tests":
 			noTests = true
 		case arg == "--path":
@@ -1790,7 +1802,7 @@ func termsAndPath(command string, args []string) (terms []string, path string, n
 		}
 	}
 	if len(terms) == 0 {
-		return nil, "", false, fmt.Errorf("usage: gograph %s <term...> [--path DIR|FILE] [--no-tests]", command)
+		return nil, "", false, fmt.Errorf("usage: gograph %s [--path DIR|FILE] [--no-tests] [--] <term...>", command)
 	}
 	if explicit {
 		if info, statErr := os.Stat(path); statErr != nil || (!info.IsDir() && !info.Mode().IsRegular()) {
@@ -3714,6 +3726,7 @@ SEARCH & NAVIGATION
                              (:id, {id}, *id). A trailing directory argument (., .., or a
                              path with /) or --path selects another repository; a
                              --path file or subdirectory also keeps only results in it.
+                             Terms after -- may start with "-".
   strings <term...> [--no-tests] [--path DIR|FILE]
                              Search Go string literals in indexed source files, with the
                              enclosing function. Use for raw route strings, URLs, SQL
@@ -3721,8 +3734,9 @@ SEARCH & NAVIGATION
                              terms match any parameter spelling. On a stale graph it also
                              searches Go files added since the build and names indexed
                              files that were deleted or unreadable. --path FILE or a
-                             subdirectory keeps only literals in it. Supports --json and
-                             --files-only.
+                             subdirectory keeps only literals in it. Put -- before a
+                             term that starts with "-" (strings -- --log-file).
+                             Supports --json and --files-only.
   focus <package>           Show all symbols, imports, and call edges for one
                              package. Token-efficient alternative to reading files.
   node <name>                Show indexed AST metadata for a symbol, package, or file.

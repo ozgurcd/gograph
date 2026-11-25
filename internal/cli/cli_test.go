@@ -398,6 +398,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 		"check",
 		"add-claude-plugin",
 		"hook-guard",
+		"--", // end of global flags: later arguments go to the command verbatim
 		"--json",
 		"--files-only",
 		"--mermaid",

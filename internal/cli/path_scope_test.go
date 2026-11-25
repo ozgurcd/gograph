@@ -51,3 +51,36 @@ func TestQueryAndStringsPathScopesToFileOrSubtree(t *testing.T) {
 	check([]string{"strings", "scope-literal", "--path", "internal/app/aux.go"}, []string{"scope-literal aux"}, []string{"scope-literal app", "scope-literal main"})
 	check([]string{"query", "run", "--path", filepath.Join(root, "internal", "app")}, []string{"RunApp", "RunAux"}, []string{"runMain"})
 }
+
+func TestStringsAndQueryAcceptDashTermsAfterSeparator(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":  "module example.com/dash\n\ngo 1.22\n",
+		"main.go": "package main\n\nfunc flags() []string { return []string{\"--log-file\", \"--json\"} }\n\nfunc main() { _ = flags() }\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, stderr, code := runCLIParityInDir(t, root, func() int { return Run([]string{"build", "."}) }); code != 0 {
+		t.Fatalf("build failed: %s", stderr)
+	}
+	for _, args := range [][]string{
+		{"strings", "--", "--log-file"},
+		{"strings", "--no-tests", "--", "--log-file"},
+	} {
+		out, stderr, code := runCLIParityInDir(t, root, func() int { return Run(args) })
+		if code != 0 || !strings.Contains(out, `"--log-file"`) {
+			t.Errorf("%v: code=%d out=%s err=%s", args, code, out, stderr)
+		}
+	}
+	// --json after "--" is a search term, not the global output flag.
+	out, stderr, code := runCLIParityInDir(t, root, func() int { return Run([]string{"strings", "--", "--json"}) })
+	if code != 0 || !strings.Contains(out, `[string] "--json"`) || strings.Contains(out, `"schema_version"`) {
+		t.Errorf("strings -- --json: code=%d out=%s err=%s", code, out, stderr)
+	}
+	if _, _, code := runCLIParityInDir(t, root, func() int { return Run([]string{"strings", "--log-file"}) }); code == 0 {
+		t.Error("an unseparated dash term must still be refused as an unknown flag")
+	}
+}

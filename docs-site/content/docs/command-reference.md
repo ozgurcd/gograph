@@ -435,6 +435,8 @@ normalization, and both `query` and `strings` accept a repository path as
 `--path` or as a trailing directory argument (`gograph query org-link .`).
 A `--path` file or subdirectory inside the repository also keeps only results
 in that file or subtree (`gograph query Run --path internal/app/manager.go`).
+Arguments after `--` are terms, even when they start with `-`
+(`gograph strings -- --log-file`); global flags such as `--json` go before `--`.
 
 ### literals
 ```bash
