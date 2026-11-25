@@ -867,3 +867,24 @@ func FilterUntested(results []UntestedResult, excludes []string) ([]UntestedResu
 	}
 	return filtered, nil
 }
+
+// ResolveTestEntries returns the Test, Benchmark, Fuzz and Example functions
+// that term selects exactly: a case-sensitive spelling first, then a
+// case-insensitive one.
+func ResolveTestEntries(g *graph.Graph, term string) []graph.SymbolNode {
+	if g == nil || strings.TrimSpace(term) == "" {
+		return nil
+	}
+	for _, match := range []func(graph.SymbolNode, string) bool{exactCaseSymbolMatch, matchSymbolExact} {
+		var entries []graph.SymbolNode
+		for _, symbol := range g.Symbols {
+			if isTestEntrySymbol(symbol) && match(symbol, term) {
+				entries = append(entries, symbol)
+			}
+		}
+		if len(entries) > 0 {
+			return entries
+		}
+	}
+	return nil
+}

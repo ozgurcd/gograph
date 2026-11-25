@@ -2252,6 +2252,9 @@ func runTests(args []string) int {
 		switch report.Status {
 		case "not_found":
 			fmt.Printf("Product symbol %q was not found. Use gograph identity <name> to resolve its stable ID.\n", term)
+			if len(search.ResolveTestEntries(g, term)) > 0 {
+				fmt.Printf("%s is a test function: gograph tests %s --format go-test prints its run command; gograph coverage %s lists what it exercises.\n", term, term, term)
+			}
 			return 0
 		case "ambiguous":
 			fmt.Printf("Product symbol %q is ambiguous; retry with a stable ID and, when IDs collide, --package:\n", term)
@@ -2301,7 +2304,27 @@ func runTestSelectionForSymbol(g *graph.Graph, term, packageName, format string,
 	report := snapshot.TransitiveTests(term, packageName, false)
 	switch report.Status {
 	case "not_found":
-		return failCommandf("tests", "product symbol %q was not found; use gograph identity <name> to resolve its stable ID", term)
+		// A test function is not a product symbol, but naming one asks for
+		// that test: select it so --format go-test prints its run command.
+		entries := search.ResolveTestEntries(g, term)
+		if packageName != "" {
+			entries = testEntriesInPackage(entries, packageName)
+		}
+		switch len(entries) {
+		case 0:
+			return failCommandf("tests", "product symbol %q was not found; use gograph identity <name> to resolve its stable ID", term)
+		case 1:
+			entry := entries[0]
+			selection := snapshot.SelectTestsWithin(term, []search.SelectionInput{{StableID: entry.ID, Name: entry.Name, File: entry.File}}, exactOnly, maxDepth)
+			return printTestSelection(selection, format)
+		default:
+			var candidates []string
+			for _, entry := range entries {
+				candidates = append(candidates, fmt.Sprintf("%s [package=%s] %s:%d", entry.ID, entry.PackageName, entry.File, entry.Line))
+			}
+			sort.Strings(candidates)
+			return failCommandf("tests", "test function %q is ambiguous; retry with a file selector or --package: %s", term, strings.Join(candidates, "; "))
+		}
 	case "ambiguous":
 		var candidates []string
 		for _, match := range report.MatchedSymbols {
@@ -4053,7 +4076,8 @@ EXTRACTION
                              reaches the changed (or named) symbols and print, per package,
                              an anchored -run pattern (gograph.test_selection.v1 with --json);
                              --format go-test prints one runnable go test line per package,
-                             with the graph's -tags. --exact-only drops possible paths.
+                             with the graph's -tags. A test function name selects that
+                             test. --exact-only drops possible paths.
                              Direct lookup accepts Receiver.Method, including pointer receivers,
                              as well as a full stable symbol ID.
   coverage <test> [--exact-only] [--package name]
@@ -6717,4 +6741,17 @@ func runWhatsnew(args []string) int {
 		fmt.Println("No release notes in this range.")
 	}
 	return 0
+}
+
+// testEntriesInPackage keeps test functions whose package name or import path
+// is packageName.
+func testEntriesInPackage(entries []graph.SymbolNode, packageName string) []graph.SymbolNode {
+	var kept []graph.SymbolNode
+	for _, entry := range entries {
+		importPath, _, _ := strings.Cut(entry.ID, "::")
+		if entry.PackageName == packageName || importPath == packageName {
+			kept = append(kept, entry)
+		}
+	}
+	return kept
 }

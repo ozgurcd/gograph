@@ -118,3 +118,27 @@ func TestSourceAcceptsSeveralSelectors(t *testing.T) {
 		t.Fatalf("source --json with two selectors: code=%d out=%s err=%s", code, out, stderr)
 	}
 }
+
+func TestTestsSelectionAcceptsATestFunctionName(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":      "module example.com/named\n\ngo 1.22\n",
+		"run.go":      "package named\n\nfunc Run() int { return 1 }\n",
+		"run_test.go": "package named\n\nimport \"testing\"\n\nfunc TestRun(t *testing.T) { _ = Run() }\n\nfunc TestOther(t *testing.T) {}\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, stderr, code := runCLIParityInDir(t, root, func() int { return Run([]string{"build", "."}) }); code != 0 {
+		t.Fatalf("build failed: %s", stderr)
+	}
+	out, stderr, code := runCLIParityInDir(t, root, func() int { return Run([]string{"tests", "TestRun", "--format", "go-test"}) })
+	if code != 0 || strings.TrimSpace(out) != "go test example.com/named -run '^(TestRun)$'" {
+		t.Fatalf("tests <TestName> --format go-test: code=%d out=%q err=%s", code, out, stderr)
+	}
+	if _, _, code := runCLIParityInDir(t, root, func() int { return Run([]string{"tests", "TestMissing", "--format", "go-test"}) }); code == 0 {
+		t.Fatal("an unknown name must still fail")
+	}
+}

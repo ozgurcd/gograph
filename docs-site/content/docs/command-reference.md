@@ -733,8 +733,9 @@ gograph tests <symbol> --format run|go-test [--package name] [--exact-only] [--m
 `HEAD`), `--since <ref>`, or `--format` with one symbol select every test that
 reaches the changed (or named) functions and print, per import path, an anchored
 and regex-escaped `-run` pattern of top-level test names (benchmarks get a
-`-bench` pattern). `--format go-test` prints only runnable commands, one per
-package, with the graph's `-tags`:
+`-bench` pattern). Naming a test function (`gograph tests TestRun --format
+go-test`) selects that test itself. `--format go-test` prints only runnable
+commands, one per package, with the graph's `-tags`:
 
 ```text
 go test -tags=integration example.com/app/calc -run '^(TestMul|TestTotal)$'
