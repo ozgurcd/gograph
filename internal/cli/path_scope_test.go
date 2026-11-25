@@ -84,3 +84,37 @@ func TestStringsAndQueryAcceptDashTermsAfterSeparator(t *testing.T) {
 		t.Error("an unseparated dash term must still be refused as an unknown flag")
 	}
 }
+
+func TestSourceAcceptsSeveralSelectors(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":  "module example.com/multi\n\ngo 1.22\n",
+		"main.go": "package main\n\nfunc slotHostDefault() string { return \"default\" }\n\nfunc slotHostOverride() string { return \"override\" }\n\nfunc main() { _, _ = slotHostDefault(), slotHostOverride() }\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, stderr, code := runCLIParityInDir(t, root, func() int { return Run([]string{"build", "."}) }); code != 0 {
+		t.Fatalf("build failed: %s", stderr)
+	}
+	out, stderr, code := runCLIParityInDir(t, root, func() int {
+		return Run([]string{"source", "slotHostDefault", "slotHostOverride"})
+	})
+	if code != 0 || !strings.Contains(out, `return "default"`) || !strings.Contains(out, `return "override"`) {
+		t.Fatalf("source with two selectors: code=%d out=%s err=%s", code, out, stderr)
+	}
+	out, stderr, code = runCLIParityInDir(t, root, func() int {
+		return Run([]string{"source", "slotHostDefault", "missingSelector"})
+	})
+	if code == 0 || !strings.Contains(out, `return "default"`) || !strings.Contains(stderr, "missingSelector") {
+		t.Fatalf("a failed selector must fail the command after printing the others: code=%d out=%s err=%s", code, out, stderr)
+	}
+	out, stderr, code = runCLIParityInDir(t, root, func() int {
+		return Run([]string{"source", "slotHostDefault", "slotHostOverride", "--json"})
+	})
+	if code != 0 || !strings.Contains(out, `"selector": "slotHostOverride"`) || !strings.Contains(out, `"count": 2`) {
+		t.Fatalf("source --json with two selectors: code=%d out=%s err=%s", code, out, stderr)
+	}
+}

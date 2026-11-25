@@ -52,7 +52,7 @@ gograph callees <function> [--no-tests] [--depth N] # what it calls; --depth 2-1
 gograph implementers <interface> # precise production types plus test-file fakes; add --test-only for only fakes
 gograph interfaces <struct>     # which interfaces a struct satisfies (precise if --precise used)
 gograph fields <struct>         # extract fields and types of a struct
-gograph source <symbol>         # extract the indexed declaration's source block
+gograph source <symbol...>      # extract the indexed declarations' source blocks
 gograph impact <symbol>         # find downstream callers (blast radius)
 gograph impact --uncommitted    # find blast radius of all uncommitted code changes
 gograph impact --since main     # blast radius of all symbols changed since main (PR-level)

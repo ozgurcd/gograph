@@ -842,8 +842,9 @@ routes [term] [--module MODULE] [--include-tests] [--limit N] [--cursor CURSOR]
                        JSON mirrors total/returned/truncated/next_cursor on its envelope.
                        --files-only follows all pages and emits the complete file set,
                        not a complete route-row dump.
-source <sym>         : confined exact source for function/method/struct/interface/
-                       type/variable/constant — USE THIS instead of reading files
+source <sym...>      : confined exact source for function/method/struct/interface/
+                       type/variable/constant — USE THIS instead of reading files;
+                       several selectors in one call
 sql [term] [--table T] [--verb V] [--access read|write|ddl] [--function F]
                      [--module M] [--no-tests] [--limit N] [--cursor C]
                      : bounded gograph.sql.v1 PostgreSQL static SQL census. Direct literals plus
@@ -3743,8 +3744,10 @@ SEARCH & NAVIGATION
                              Constants show their declared value. An exact,
                              case-sensitive name selects only that declaration;
                              substring matching applies only when nothing matches.
-  source <name>              Extract confined raw source for functions, methods,
+  source <name> [name...]    Extract confined raw source for functions, methods,
                              structs, interfaces, types, variables, and constants.
+                             Several selectors print each block; any selector that
+                             fails makes the command fail with its reason.
   public <package>           List only the exported (public) API of a package.
   fields <struct>            List all fields and types of a struct.
   embeds <struct>            Find which structs embed the given struct.
@@ -5108,24 +5111,87 @@ func runChanges(args []string) int {
 
 // runSource extracts the raw source code of a named symbol.
 func runSource(args []string) int {
-	if !hasSingleTarget(args) {
-		return failCommand("source", "usage: gograph source <name>")
+	terms, ok := sourceTargets(args)
+	if !ok {
+		return failCommand("source", "usage: gograph source <name> [name...]")
 	}
 	g, err := loadGraph(".")
 	if err != nil {
 		return failCommand("source", err.Error())
 	}
-	term := args[0]
 	root := graphRoot(g)
-	src, err := search.Source(g, root, term)
-	if err != nil {
-		return failCommandf("source", "source: %v", err)
+	if len(terms) == 1 {
+		src, err := search.Source(g, root, terms[0])
+		if err != nil {
+			return failCommandf("source", "source: %v", err)
+		}
+		if jsonMode {
+			return PrintJSON(okEnvelope("source", terms[0], src, 1))
+		}
+		fmt.Println(src)
+		return 0
+	}
+
+	// Several selectors: each is resolved on its own. Text output prints every
+	// block that resolved; any selector that failed makes the command fail
+	// with its reason, so a partial answer is never mistaken for a full one.
+	var blocks []sourceBlock
+	var failures []string
+	for _, term := range terms {
+		src, err := search.Source(g, root, term)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", term, err))
+			continue
+		}
+		blocks = append(blocks, sourceBlock{Selector: term, Source: src})
+	}
+	query := strings.Join(terms, " ")
+	if len(failures) > 0 {
+		if !jsonMode {
+			printSourceBlocks(blocks)
+		}
+		return failCommandf("source", "source: %d of %d selectors failed: %s", len(failures), len(terms), strings.Join(failures, "; "))
 	}
 	if jsonMode {
-		return PrintJSON(okEnvelope("source", term, src, 1))
+		return PrintJSON(okEnvelope("source", query, blocks, len(blocks)))
 	}
-	fmt.Println(src)
+	printSourceBlocks(blocks)
 	return 0
+}
+
+// sourceBlock is one selector's answer when source is given several.
+type sourceBlock struct {
+	Selector string `json:"selector"`
+	Source   string `json:"source"`
+}
+
+func printSourceBlocks(blocks []sourceBlock) {
+	for i, block := range blocks {
+		if i > 0 {
+			fmt.Print("\n---\n\n")
+		}
+		fmt.Println(block.Source)
+	}
+}
+
+// sourceTargets returns the distinct selectors given to source, refusing
+// flags and empty arguments.
+func sourceTargets(args []string) ([]string, bool) {
+	if len(args) == 0 {
+		return nil, false
+	}
+	seen := make(map[string]bool, len(args))
+	var terms []string
+	for _, arg := range args {
+		if arg == "" || strings.HasPrefix(arg, "-") {
+			return nil, false
+		}
+		if !seen[arg] {
+			seen[arg] = true
+			terms = append(terms, arg)
+		}
+	}
+	return terms, true
 }
 
 // runPublic lists only the exported (public) API of a package.

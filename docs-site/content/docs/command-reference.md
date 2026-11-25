@@ -305,7 +305,7 @@ Embeds, constructors, literals, returnusage, mutate, path and endpoint report a
 named file-selector limit. Usages supports file-qualified variables/constants,
 but reports that limit for types. Capabilities lists these exceptions.
 ```bash
-gograph source <name>
+gograph source <name> [name...]
 ```
 Extracts exact raw source blocks for a function, method, struct, interface,
 type, variable, or constant using the graph's location data. Reads are rooted
@@ -314,6 +314,10 @@ path components. An ambiguous name prints exact selectors, such as
 `internal/auth/auth.go:Verifier.Verify`; the full import path plus file name is
 also accepted, and so is a package path with the symbol, as a full import path
 or repository-relative (`internal/auth::Verifier.Verify`, `internal/auth.Verify`). The command errors when no matching block can be read safely.
+Several selectors (`gograph source slotHostDefault slotHostOverride`) print
+each block in order, separated by `---`; with `--json` the results are
+`{selector, source}` objects. If any selector fails, the blocks that resolved
+are still printed and the command fails naming each failed selector.
 - **Note**: This is the preferred way for AI agents to view symbol declarations and bodies, avoiding reading entire files.
 
 ---
