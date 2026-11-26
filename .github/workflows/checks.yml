@@ -187,9 +187,26 @@ jobs:
           server="$RUNNER_TEMP/server.json"
           go run ./cmd/mcpb-release build --version "$version" --output .release-mcpb
           go run ./cmd/mcpb-release render-server --version "$version" --input .release-mcpb --output "$server"
+          # A release publishes the committed server.json, so it must equal the fresh
+          # render. A version without a tag is the next release: check it before the
+          # merge, not after the tag push.
+          compare=false
           if [[ -n "$RELEASE_VERSION" ]]; then
-            # A release publishes the committed server.json, so it must equal the fresh render.
-            cmp server.json "$server"
+            compare=true
+          else
+            status=0
+            git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null || status=$?
+            case "$status" in
+              0) ;;
+              2) compare=true ;;
+              *) echo "cannot list tags on origin (exit $status)" >&2; exit 1 ;;
+            esac
+          fi
+          if [[ "$compare" == true ]]; then
+            if ! cmp server.json "$server"; then
+              echo "server.json is stale for $version: run mcpb-release build and render-server after the last edit" >&2
+              exit 1
+            fi
             server=server.json
           fi
           go run ./cmd/mcpb-release verify --version "$version" --input .release-mcpb --server "$server"

@@ -150,6 +150,9 @@ func TestGitHubWorkflowsUseTheCurrentInputVulnerabilityGates(t *testing.T) {
 				"grype-version: v0.116.1",
 				"make vulnerability-check",
 				"cmp server.json \"$server\"",
+				// An untagged version is the next release; its server.json is checked before the merge.
+				`git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null || status=$?`,
+				"2) compare=true ;;",
 				"hugo --source docs-site --renderToMemory --minify",
 				// test-proof.yml finds the suite by these names.
 				"\n  verify:\n",
