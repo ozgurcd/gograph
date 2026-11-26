@@ -51,9 +51,13 @@ var hookTextWriters = map[string]bool{
 	"tail": true, "nl": true, "paste": true, "rev": true, "column": true, "fmt": true,
 }
 
+// hookGitEmitsSource are the git subcommands whose output is file content.
+var hookGitEmitsSource = map[string]bool{"show": true, "diff": true, "cat-file": true}
+
 var hookGoEmitters = map[string]bool{
 	"cat": true, "git": true, "sort": true, "uniq": true, "head": true,
 	"tail": true, "sed": true, "awk": true, "cut": true, "tr": true, "nl": true,
+	"strings": true,
 }
 
 // hookGuardOptions selects the opt-in rules and how a denial is delivered.
@@ -112,8 +116,9 @@ func (ctx hookStrictContext) dirInsideRoot() bool {
 func evaluateHookStrictShell(command, cwd string, options hookGuardOptions) string {
 	commands, ok := splitHookShell(command)
 	if !ok {
-		return ""
+		commands = hookQuoteBlindSplit(command)
 	}
+	commands = expandHookCommands(commands)
 	hasReason := hookReasonPattern.MatchString(command)
 	ctx := hookStrictContext{dir: cwd, dirKnown: cwd != ""}
 	for index, current := range commands {
@@ -140,7 +145,7 @@ func evaluateHookStrictShell(command, cwd string, options hookGuardOptions) stri
 		if piped {
 			sink = commands[index+1].name()
 		}
-		if options.denyRegionReads && !options.allowRegionReads {
+		if options.denyRegionReads && !options.allowRegionReads && !hasReason {
 			if reason := hookStrictRegionRead(local, current, argv, sink); reason != "" {
 				return reason
 			}
@@ -373,10 +378,13 @@ func hookStrictRegionRead(ctx hookStrictContext, command hookShellCommand, argv 
 	for _, target := range targets {
 		if ctx.insideRoot(target) {
 			return fmt.Sprintf(`%s .go region read — %s reads %s.
+  To find a declaration: gograph query <Symbol>
   For a declaration body: gograph source <pkg.Symbol>
   For context around a symbol: gograph context <Symbol>
-  For an arbitrary region: the agent's file-read tool with offset/limit.
-  Counts and checksums (| wc, | sha256sum) and git show/diff stay allowed.`, hookStrictPrefix, name, target)
+  For an arbitrary region: the Read tool (the agent's file-read tool) with offset/limit.
+  Counts and checksums (| wc, | sha256sum) and git show/diff stay allowed.
+  If gograph and the Read tool cannot serve it, state why in the command:
+    <command>  # gograph-cannot: <reason>`, hookStrictPrefix, name, target)
 		}
 	}
 	return ""
@@ -396,6 +404,9 @@ func hookEmitsGo(command hookShellCommand) bool {
 	name := command.name()
 	if !hookGoEmitters[name] {
 		return false
+	}
+	if name == "git" && (len(command.argv) < 2 || !hookGitEmitsSource[command.argv[1]]) {
+		return false // git log, blame, status, ... print history, not source
 	}
 	for _, argument := range command.argv[1:] {
 		if strings.HasSuffix(argument, ".go") {
@@ -430,6 +441,9 @@ func hookStrictSearch(command string, ctx hookStrictContext, current hookShellCo
 	if upstreamGo && len(invocation.paths) == 0 {
 		invocation.inputPaths = append(invocation.inputPaths, "stdin.go")
 	}
+	if current.pipeIn && !upstreamGo && len(invocation.paths) == 0 && len(invocation.inputPaths) == 0 {
+		return "" // reads the output of a command that does not print Go source
+	}
 	inside := ctx.dirInsideRoot()
 	if ctx.dirKnown && !upstreamGo {
 		inside = hookSearchesIndexedRepository(invocation, ctx.dir)
@@ -445,9 +459,10 @@ func hookStrictSearch(command string, ctx hookStrictContext, current hookShellCo
 		return ""
 	}
 	return fmt.Sprintf(`%s text search over Go source without a reason.
+  A text search over Go source must be preceded by a one-line statement of why gograph cannot answer it.
   First ask gograph (gograph query/context/callers/usages/strings/literals).
   If gograph cannot answer, state why in the command itself:
-    <command>  # gograph-cannot: <why gograph cannot answer this>`, hookStrictPrefix)
+    <command>  # gograph-cannot: <reason>`, hookStrictPrefix)
 }
 
 // hookSearchArgv maps grep, rg, ag and git grep to a grep/rg argv.
@@ -464,8 +479,18 @@ func hookSearchArgv(current hookShellCommand, argv []string) ([]string, bool, bo
 			out = append([]string{"grep", "-F"}, argv[1:]...)
 		}
 		return out, false, true
-	case "rg", "ag":
+	case "rg":
 		return append([]string{"rg"}, argv[1:]...), false, true
+	case "ag":
+		out := []string{"rg"}
+		for _, argument := range argv[1:] {
+			if argument == "--go" {
+				out = append(out, "-t", "go") // ag's file-type flag
+				continue
+			}
+			out = append(out, argument)
+		}
+		return out, false, true
 	case "git":
 		if len(argv) >= 2 && argv[1] == "grep" {
 			return append([]string{"grep"}, argv[2:]...), true, true

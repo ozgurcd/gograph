@@ -210,8 +210,8 @@ the hook command:
 | Flag | Denies |
 |---|---|
 | `--deny-go-writes` | text tools used as a `.go` editor: `sed -i`, `perl -i`, `awk -i inplace`, and an output redirect or `tee` into a `.go` file fed by a text tool (`echo`, `printf`, `cat`, a heredoc, `sed`, `awk`, `perl`, `tr`, `cut`, `sort`, `head`, `tail`, ...) or a bare redirect. `mv`, `cp`, `install`, `ln`, `dd`, `truncate` and program output (`go run ./gen > x.go`, `git show HEAD:x.go > x.go`) are allowed; a `# gograph-cannot: <reason>` comment allows the call |
-| `--deny-region-reads` | `cat`, `head`, `tail`, `less`, `more`, `nl`, `sed`, `awk`, `perl -n` of working-tree `.go` files, unless piped into `wc` or a checksum; `git show rev:x.go` and `git diff` stay allowed. Not applied to Codex, which has no separate file-read tool |
-| `--require-reason` | `grep`/`rg`/`ag`/`git grep` text searches over Go source without a `# gograph-cannot: <reason>` comment (counts and `-l` listings pass) |
+| `--deny-region-reads` | `cat`, `head`, `tail`, `less`, `more`, `nl`, `sed`, `awk`, `perl -n` of working-tree `.go` files, unless piped into `wc` or a checksum or the command carries a `# gograph-cannot: <reason>` comment; `git show rev:x.go` and `git diff` stay allowed. Not applied to Codex, which has no separate file-read tool |
+| `--require-reason` | `grep`/`rg`/`ag`/`git grep` text searches over Go source without a `# gograph-cannot: <reason>` comment (counts and `-l` listings pass). Lowercase snake_case patterns (an SQL table, a JSON key) are literals that need a reason, not symbol questions; a declaration head (`func X`, `type X`) or a call site (`X(`) is a symbol question even with a reason. A search with no path that reads a pipe from a command not printing Go source (`go test ./... \| rg X`, `git status \| grep X`, `git log/blame x.go \| grep X`) is allowed |
 | `--require-session` | edits of `.go` files while no gograph session is open (`gograph session create`) |
 | `--strict` | all four |
 
@@ -222,7 +222,14 @@ user, not the model.
 
 It follows `cd` and `git -C`; a `cd` into `$VAR`, `cd -`, `popd`, or a `cd`
 in a pipe, subshell or background job makes the directory unknown, and an
-unknown directory keeps the blocking judgement. Heredoc bodies are data.
+unknown directory keeps the blocking judgement. Heredoc bodies are data,
+except a shell's own heredoc program. Commands hidden behind shell syntax are
+judged too: bodies of `for`/`if`/`while`, a `for` variable's words, `sh -c` /
+`bash -c` scripts, `eval`, `xargs <cmd>` and `find ... -exec <cmd> {} +` fed
+by a Go file listing, and the shell commands a `python`/`perl`/`ruby`
+program runs (`subprocess`, `os.system`, `system`, backticks). A line with an
+unbalanced quote is split without regard to quotes, so it cannot hide a
+command.
 
 The same binary serves three agents; it detects the payload format:
 

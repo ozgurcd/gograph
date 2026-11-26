@@ -150,6 +150,10 @@ func hookPatchEvent(event hookEvent, patch string) hookEvent {
 // that suggests it runs commands or writes files is denied as unparsed,
 // any other name is treated as read-only.
 func hookUnknownTool(event hookEvent) hookEvent {
+	if strings.TrimSpace(event.Tool) == "" {
+		event.Kind, event.Unparsed = hookKindShell, "no tool name in its input"
+		return event
+	}
 	name := strings.ToLower(event.Tool)
 	for _, word := range []string{"bash", "shell", "exec", "command", "run", "terminal"} {
 		if strings.Contains(name, word) {

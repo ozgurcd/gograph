@@ -4350,8 +4350,9 @@ AGENT INTEGRATION
                                                     cp and program output allowed;
                                                     "# gograph-cannot: <reason>" allows
                                --deny-region-reads  cat/head/tail/sed/awk/perl -n of
-                                                    .go files; counts, checksums and
-                                                    git show/diff stay allowed; not
+                                                    .go files; counts, checksums,
+                                                    git show/diff and a reason
+                                                    comment stay allowed; not
                                                     applied to Codex (no read tool)
                                --require-reason     Go text searches need a
                                                     "# gograph-cannot: <reason>" comment
@@ -4369,10 +4370,12 @@ AGENT INTEGRATION
                              opencode (opencode) and Antigravity (agy). Reads the
                              agent's tool-call JSON from stdin. Inside a repository
                              with a .gograph index it denies Go symbol searches,
-                             region reads of .go files (cat/head/sed/awk ...) and
-                             Go text searches without a
-                             "# gograph-cannot: <reason>" comment. Editing is not
-                             checked unless asked:
+                             and region reads of .go files (cat/head/sed/awk ...)
+                             and Go text searches without a
+                             "# gograph-cannot: <reason>" comment. It also judges
+                             commands inside loops, sh -c, eval, xargs, find -exec,
+                             shell heredocs and python/perl/ruby shell calls. Editing
+                             is not checked unless asked:
                                --deny-go-writes   text tools editing .go files
                                                   (sed -i, redirects from echo/cat;
                                                   mv, cp and program output are

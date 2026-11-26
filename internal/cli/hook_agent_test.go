@@ -263,7 +263,7 @@ func TestHookFailsClosedForEveryAgent(t *testing.T) {
 		"agy":      {"unknown write tool": `{"toolCall":{"name":"create_file","args":{}}}`, "edit without target": `{"toolCall":{"name":"write_to_file","args":{}}}`},
 	}
 	for _, agent := range hookAgentNames() {
-		for name, input := range map[string]string{"unreadable shell call": shell[agent], "not json": "{"} {
+		for name, input := range map[string]string{"unreadable shell call": shell[agent], "not json": "{", "no tool name": `{}`} {
 			if denied, output := hookRun(t, agent, input); !denied || !strings.Contains(output, "no fixture-backed format for "+agent) {
 				t.Errorf("%s %s: denied=%v output=%s", agent, name, denied, output)
 			}
