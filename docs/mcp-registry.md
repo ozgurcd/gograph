@@ -283,7 +283,10 @@ Until then, bump by hand as for v1.7.15: set `current_version` in
 `.bumpversion.cfg` and `"version"` in `plugin.json`, give the new
 `RELEASE_NOTES.md` section its version and date, then build the four MCPBs
 into a fresh `.release-work/` folder and run `render-server` to write
-`server.json`.
+`server.json`. Render it last: the bundles change with any later edit,
+`RELEASE_NOTES.md` included. Pull-request CI compares `server.json` with a
+fresh render whenever the declared version has no tag yet, so a stale render
+fails before the merge instead of in the tag workflow.
 
 GoReleaser publishes the ordinary archives, four MCPBs, `server.json`, and
 checksums from the verified tag. The workflow then idempotently reconciles the
