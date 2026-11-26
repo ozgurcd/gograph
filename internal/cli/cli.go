@@ -4342,9 +4342,12 @@ AGENT INTEGRATION
                              searched path belongs to a repository with a .gograph
                              index, then suggests the equivalent gograph command.
                              Opt-in rules, each applied only inside such a repository:
-                               --deny-go-writes     shell writes to .go files
-                                                    (redirects, sed -i, perl -i, tee,
-                                                    cp/mv/install/ln/dd/truncate)
+                               --deny-go-writes     text tools editing .go files
+                                                    (sed -i, perl -i, awk -i inplace,
+                                                    redirect/tee from echo, printf,
+                                                    cat, heredoc, sed, awk ...); mv,
+                                                    cp and program output allowed;
+                                                    "# gograph-cannot: <reason>" allows
                                --deny-region-reads  cat/head/tail/sed/awk/perl -n of
                                                     .go files; counts, checksums and
                                                     git show/diff stay allowed; not
@@ -4366,8 +4369,10 @@ AGENT INTEGRATION
                              agent's tool-call JSON from stdin. Inside a repository
                              with a .gograph index it denies Go symbol searches,
                              region reads of .go files, Go text searches without a
-                             "# gograph-cannot: <reason>" comment, shell writes to
-                             .go files, and edits/writes/patches of .go files while
+                             "# gograph-cannot: <reason>" comment, text tools
+                             editing .go files (sed -i, redirects from echo/cat;
+                             mv, cp and program output are allowed; a reason
+                             comment allows), and edits/writes/patches of .go files while
                              no gograph session is open. A shell or write tool whose
                              input cannot be read is denied; an unknown read-only
                              tool is allowed. An unknown --agent exits 2.

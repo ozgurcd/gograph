@@ -181,8 +181,10 @@ Running `gograph add-claude-plugin` performs three installation steps in one com
 `Bash` tool and for its `Edit`, `Write`, `MultiEdit`, `NotebookEdit` and `Read`
 tools. Besides the symbol-search redirect described here, it applies every
 gograph-first rule inside indexed repositories: region reads of `.go` files,
-Go text searches without a `# gograph-cannot: <reason>` comment and shell
-writes to `.go` files are denied, and `.go` edits need an open gograph session.
+Go text searches without a `# gograph-cannot: <reason>` comment and text
+tools editing `.go` files (`sed -i`, redirects from `echo`/`cat`/heredocs) are
+denied, and `.go` edits need an open gograph session. Moves, copies and program
+output (`go run ./gen > x.go`) are allowed.
 
 For a `grep`/`rg` command (the same check `gograph hook-guard` makes) it:
 
@@ -209,7 +211,7 @@ the hook command:
 
 | Flag | Denies |
 |---|---|
-| `--deny-go-writes` | shell writes to `.go` files: output redirects, `sed -i`, `perl -i`, `tee`, `cp`/`mv`/`install`/`ln` onto a `.go` path, `dd of=`, `truncate` |
+| `--deny-go-writes` | text tools used as a `.go` editor: `sed -i`, `perl -i`, `awk -i inplace`, and an output redirect or `tee` into a `.go` file fed by a text tool (`echo`, `printf`, `cat`, a heredoc, `sed`, `awk`, `perl`, `tr`, `cut`, `sort`, `head`, `tail`, ...) or a bare redirect. `mv`, `cp`, `install`, `ln`, `dd`, `truncate` and program output (`go run ./gen > x.go`, `git show HEAD:x.go > x.go`) are allowed; a `# gograph-cannot: <reason>` comment allows the call |
 | `--deny-region-reads` | `cat`, `head`, `tail`, `less`, `more`, `nl`, `sed`, `awk`, `perl -n` of working-tree `.go` files, unless piped into `wc` or a checksum; `git show rev:x.go` and `git diff` stay allowed. Not applied to Codex, which has no separate file-read tool |
 | `--require-reason` | `grep`/`rg`/`ag`/`git grep` text searches over Go source without a `# gograph-cannot: <reason>` comment (counts and `-l` listings pass) |
 | `--require-session` | edits of `.go` files while no gograph session is open (`gograph session create`) |
@@ -273,8 +275,8 @@ answer is written in the agent's own format:
 | `agy` | `run_command`, `write_to_file`, `replace_file_content`, `multi_replace_file_content` | `{"decision":"deny","reason":...}` |
 
 A shell or write-capable tool whose input cannot be read, and a malformed
-patch, are denied; an unknown read-only tool is allowed. A denial of a shell
-write names the agent's own edit tool. `gograph hook --help` prints the exact
+patch, are denied; an unknown read-only tool is allowed. A denial of a text-tool
+edit of a `.go` file names the agent's own edit tool. `gograph hook --help` prints the exact
 registration for each agent, including a minimal opencode plugin.
 
 Agent formats are confirmed from recordings: `gograph hook --agent X --record DIR`

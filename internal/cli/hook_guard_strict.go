@@ -14,8 +14,11 @@ import (
 // Opt-in gograph-first rules for hook-guard. Each rule has its own flag and
 // --strict enables all of them. Inside a gograph root (a module root with a
 // .gograph index) they deny, besides symbol searches:
-//   - --deny-go-writes: shell writes to .go files (redirects, sed -i,
-//     perl -i, tee, cp, mv, install, ln, dd of=, truncate);
+//   - --deny-go-writes: text tools used as a .go editor (sed -i, perl -i,
+//     awk -i inplace, and a redirect or tee into a .go file fed by a text
+//     tool such as echo, printf, cat or a heredoc), unless the command
+//     carries a reason comment; moves, copies and program output
+//     (go run ./gen > x.go) stay allowed;
 //   - --deny-region-reads: region reads of working-tree .go files (cat,
 //     head, tail, less, more, nl, sed, awk, perl -n), unless only counted
 //     or hashed;
@@ -38,6 +41,14 @@ var hookRegionReaders = map[string]bool{
 var hookCountSinks = map[string]bool{
 	"wc": true, "md5": true, "md5sum": true, "shasum": true, "sha1sum": true,
 	"sha256sum": true, "sha512sum": true, "cksum": true, "b2sum": true,
+}
+
+// hookTextWriters are the tools whose output into a .go file is a hand edit
+// (--deny-go-writes). Program output (go run, generators) is not.
+var hookTextWriters = map[string]bool{
+	"echo": true, "printf": true, "cat": true, "sed": true, "awk": true, "gawk": true,
+	"perl": true, "tr": true, "cut": true, "sort": true, "uniq": true, "head": true,
+	"tail": true, "nl": true, "paste": true, "rev": true, "column": true, "fmt": true,
 }
 
 var hookGoEmitters = map[string]bool{
@@ -115,8 +126,12 @@ func evaluateHookStrictShell(command, cwd string, options hookGuardOptions) stri
 		if current.name() == "git" {
 			local, argv = hookStrictGitDir(ctx, argv)
 		}
-		if options.denyGoWrites {
-			if reason := hookStrictWrite(local, current, argv); reason != "" {
+		if options.denyGoWrites && !hasReason {
+			var upstream string
+			if current.pipeIn && index > 0 {
+				upstream = commands[index-1].name()
+			}
+			if reason := hookStrictWrite(local, current, argv, upstream); reason != "" {
 				return reason
 			}
 		}
@@ -238,16 +253,22 @@ func hookGoOperands(argv []string) []string {
 	return paths
 }
 
-func hookStrictWrite(ctx hookStrictContext, command hookShellCommand, argv []string) string {
-	for _, redirect := range command.redirects {
-		if command.isOutputRedirect(redirect) && hookIsGoPath(redirect.target) && ctx.insideRoot(redirect.target) {
-			return hookStrictWriteMessage(redirect.target, "an output redirect")
+// hookStrictWrite denies a text tool used as a .go editor: an in-place
+// sed/perl/awk edit, or a redirect or tee into a .go file whose content comes
+// from a text tool (a bare redirect counts). upstream names the command
+// piping into this one.
+func hookStrictWrite(ctx hookStrictContext, command hookShellCommand, argv []string, upstream string) string {
+	name := command.name()
+	if name == "" || hookTextWriters[name] {
+		for _, redirect := range command.redirects {
+			if command.isOutputRedirect(redirect) && hookIsGoPath(redirect.target) && ctx.insideRoot(redirect.target) {
+				return hookStrictWriteMessage(redirect.target, "an output redirect from "+hookWriterName(name))
+			}
 		}
 	}
 	if len(argv) == 0 {
 		return ""
 	}
-	name := command.name()
 	var targets []string
 	switch name {
 	case "sed":
@@ -258,18 +279,13 @@ func hookStrictWrite(ctx hookStrictContext, command hookShellCommand, argv []str
 		if hookHasInPlaceFlag(argv, true) {
 			targets = hookGoOperands(argv)
 		}
-	case "tee", "truncate":
-		targets = hookGoOperands(argv)
-	case "cp", "mv", "install", "ln":
-		operands := hookNonOptionOperands(argv)
-		if len(operands) >= 2 && hookIsGoPath(operands[len(operands)-1]) {
-			targets = operands[len(operands)-1:]
+	case "awk", "gawk":
+		if hookAwkInPlace(argv) {
+			targets = hookGoOperands(argv)
 		}
-	case "dd":
-		for _, argument := range argv[1:] {
-			if value, ok := strings.CutPrefix(argument, "of="); ok && hookIsGoPath(value) {
-				targets = append(targets, value)
-			}
+	case "tee":
+		if upstream == "" || hookTextWriters[upstream] {
+			targets = hookGoOperands(argv)
 		}
 	}
 	for _, target := range targets {
@@ -278,6 +294,26 @@ func hookStrictWrite(ctx hookStrictContext, command hookShellCommand, argv []str
 		}
 	}
 	return ""
+}
+
+func hookWriterName(name string) string {
+	if name == "" {
+		return "the shell"
+	}
+	return name
+}
+
+// hookAwkInPlace reports gawk's "-i inplace" / "--include=inplace".
+func hookAwkInPlace(argv []string) bool {
+	for index, argument := range argv[1:] {
+		switch {
+		case (argument == "-i" || argument == "--include") && index+2 < len(argv) && strings.HasPrefix(argv[index+2], "inplace"):
+			return true
+		case strings.HasPrefix(argument, "--include=inplace") || strings.HasPrefix(argument, "-iinplace"):
+			return true
+		}
+	}
+	return false
 }
 
 func hookHasInPlaceFlag(argv []string, perl bool) bool {
@@ -308,26 +344,13 @@ func hookHasInPlaceFlag(argv []string, perl bool) bool {
 	return false
 }
 
-func hookNonOptionOperands(argv []string) []string {
-	var operands []string
-	options := true
-	for _, argument := range argv[1:] {
-		if options && argument == "--" {
-			options = false
-			continue
-		}
-		if options && strings.HasPrefix(argument, "-") && argument != "-" {
-			continue
-		}
-		operands = append(operands, argument)
-	}
-	return operands
-}
-
 func hookStrictWriteMessage(target, via string) string {
 	return fmt.Sprintf(`%s .go write — %s writes %s.
-  Edit Go source with the agent's edit tool (Edit/Write, apply_patch,
-  replace_file_content), not a shell writer.`, hookStrictPrefix, via, target)
+  Edit Go source with the agent's edit tool, not a text tool.
+  Moves, copies and program output (go run ./gen > x.go) are allowed.
+  If a text tool is needed (for example one rename across many files),
+  state why in the command itself:
+    <command>  # gograph-cannot: <why the edit tool cannot do this>`, hookStrictPrefix, via, target)
 }
 
 func hookStrictRegionRead(ctx hookStrictContext, command hookShellCommand, argv []string, sink string) string {

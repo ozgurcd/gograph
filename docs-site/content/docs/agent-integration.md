@@ -396,8 +396,10 @@ folder into only unindexed targets is allowed.
 `Bash` tool and for its `Edit`, `Write`, `MultiEdit`, `NotebookEdit` and `Read`
 tools. Besides the symbol-search redirect described here, it applies every
 gograph-first rule inside indexed repositories: region reads of `.go` files,
-Go text searches without a `# gograph-cannot: <reason>` comment and shell
-writes to `.go` files are denied, and `.go` edits need an open gograph session.
+Go text searches without a `# gograph-cannot: <reason>` comment and text
+tools editing `.go` files (`sed -i`, redirects from `echo`/`cat`/heredocs) are
+denied, and `.go` edits need an open gograph session. Moves, copies and program
+output (`go run ./gen > x.go`) are allowed.
 
 **Optional rules and other agents.** The `gograph hook-guard` command
 also works as a Codex and Antigravity `PreToolUse` hook (it detects the
