@@ -396,3 +396,80 @@ func TestHookSelftest(t *testing.T) {
 		t.Fatalf("selftest failures: code=%d stdout=%s", code, stdout.String())
 	}
 }
+
+func TestInstallHookRegistersGographHookAndRemovesLegacyScript(t *testing.T) {
+	home := t.TempDir()
+	hooksDir := filepath.Join(home, ".claude", "hooks")
+	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(hooksDir, "gograph-guard.sh")
+	if err := os.WriteFile(legacy, []byte(legacyHookScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	before := map[string]any{
+		"model": "keep-me",
+		"hooks": map[string]any{"PreToolUse": []any{
+			map[string]any{"matcher": "Bash", "hooks": []any{
+				map[string]any{"type": "command", "command": legacy},
+				map[string]any{"type": "command", "command": "other-hook"},
+			}},
+			map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": legacy}}},
+		}},
+	}
+	if err := os.WriteFile(settingsPath, []byte(hookJSON(t, before)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 { // idempotent
+		if err := installHook(home); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var after struct {
+		Model string `json:"model"`
+		Hooks struct {
+			PreToolUse []struct {
+				Matcher string `json:"matcher"`
+				Hooks   []struct {
+					Command string `json:"command"`
+				} `json:"hooks"`
+			} `json:"PreToolUse"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(raw, &after); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, group := range after.Hooks.PreToolUse {
+		for _, hook := range group.Hooks {
+			got = append(got, group.Matcher+" -> "+hook.Command)
+		}
+	}
+	want := []string{"Bash -> other-hook", "Bash -> gograph hook --agent claude", "Edit|Write|MultiEdit|NotebookEdit|Read -> gograph hook --agent claude"}
+	if after.Model != "keep-me" || !reflect.DeepEqual(got, want) {
+		t.Fatalf("settings: model=%q hooks=%q, want %q", after.Model, got, want)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("unchanged legacy script not removed: %v", err)
+	}
+
+	edited := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(filepath.Join(edited, ".claude", "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	custom := filepath.Join(edited, ".claude", "hooks", "gograph-guard.sh")
+	if err := os.WriteFile(custom, []byte("#!/bin/sh\nexec my-own-check\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := installHook(edited); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(custom); err != nil {
+		t.Fatalf("an edited legacy script must be kept: %v", err)
+	}
+}

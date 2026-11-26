@@ -1028,7 +1028,7 @@ gograph session <action>     : start/end audit sessions (create [word], end, aud
                                Foreign writes/end/cleanup refuse and name the active session.
                                NOTE: MCP tool calls (gograph_plan, gograph_review) are
                                now correctly recorded in session audit counters.
-add-claude-plugin    : install Claude Desktop MCP config + shared rules + Claude Code hook;
+add-claude-plugin    : install Claude Desktop MCP config + shared rules + gograph hook --agent claude;
                        Claude Code MCP registration uses the printed 'claude mcp add' command
 hook-guard [rules]   : PreToolUse hook for Claude Code, Codex and Antigravity — redirects
                        indexed-repository Go symbol greps to gograph. Opt-in rules:
@@ -4330,8 +4330,10 @@ AGENT INTEGRATION
                              NOTE: MCP gograph_plan/gograph_review calls are now
                              counted correctly in audit totals.
   add-claude-plugin          Install gograph as a Claude MCP plugin. Also injects
-                             CLAUDE.md steering rules and a smart PreToolUse hook
-                             that redirects Go symbol greps to gograph tools.
+                             CLAUDE.md steering rules and registers the PreToolUse
+                             hook "gograph hook --agent claude" in settings.json
+                             (Bash and Edit|Write|MultiEdit|NotebookEdit|Read),
+                             replacing the former gograph-guard.sh entry.
                              Claude Code MCP registration still requires the printed
                              'claude mcp add' command. Partial installation exits non-zero.
   hook-guard [rules] [--ask] PreToolUse hook for Claude Code, Codex and Antigravity.

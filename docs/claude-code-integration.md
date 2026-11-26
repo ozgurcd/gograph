@@ -148,13 +148,20 @@ This single command performs **three installation steps**:
 |---|---|---|
 | **MCP server** | Registers gograph in `claude_desktop_config.json` | macOS: `~/Library/Application Support/Claude/` |
 | **CLAUDE.md rules** | Injects steering rules Claude reads at every session start | `~/.claude/CLAUDE.md` |
-| **PreToolUse hook** | Smart hook that intercepts `grep`/`rg` on Go symbols in indexed repositories | `~/.claude/hooks/gograph-guard.sh` + `~/.claude/settings.json` |
+| **PreToolUse hook** | `gograph hook --agent claude` for `Bash` and `Edit\|Write\|MultiEdit\|NotebookEdit\|Read`: every gograph-first rule in indexed repositories (replaces the former `~/.claude/hooks/gograph-guard.sh` entry) | `~/.claude/settings.json` |
 
 The installer exits non-zero if any step fails. Restart Claude Desktop / Claude Code after successful installation. Claude Code MCP registration is still per project, as shown below.
 
 #### What the PreToolUse hook does
 
-The hook (`gograph hook-guard`) runs automatically before every `Bash` tool call Claude makes. When Claude tries to `grep` for a Go symbol, the hook:
+`add-claude-plugin` registers `gograph hook --agent claude` for Claude Code's
+`Bash` tool and for its `Edit`, `Write`, `MultiEdit`, `NotebookEdit` and `Read`
+tools. Besides the symbol-search redirect described here, it applies every
+gograph-first rule inside indexed repositories: region reads of `.go` files,
+Go text searches without a `# gograph-cannot: <reason>` comment and shell
+writes to `.go` files are denied, and `.go` edits need an open gograph session.
+
+When Claude tries to `grep` for a Go symbol, the hook:
 
 1. Resolves parsed search targets against the tool call's `cwd` and checks for a real `.gograph` ancestor
 2. Detects it is a Go symbol search (every non-exempt pattern branch is a valid identifier or an identifier-only alternation, with each branch matching `[A-Za-z_][a-zA-Z0-9_]{2,}`)

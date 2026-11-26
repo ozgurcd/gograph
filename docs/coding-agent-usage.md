@@ -145,7 +145,7 @@ gograph mcp [path] [--persist-refresh] [--tags=integration[,tag...]] [--exclude-
                                  # memory options match CLI build/refresh semantics; use the
                                  # same GOWORK/GOFLAGS/tags as the persisted graph
 gograph httpcalls [term]         # net/http calls + possible request construction; bounded pages, method/URL/base/function filter
-gograph add-claude-plugin        # install MCP server + CLAUDE.md rules + PreToolUse hook (Claude Desktop & Claude Code)
+gograph add-claude-plugin        # install MCP server + CLAUDE.md rules + register `gograph hook --agent claude` (Claude Desktop & Claude Code)
 gograph hook-guard [rules]       # PreToolUse hook for Claude Code, Codex, Antigravity — blocks indexed-repository Go symbol greps; opt-in rules enforce gograph-first
 gograph hook --agent <A>         # PreToolUse hook with every gograph-first rule for claude, codex, opencode, agy; --record DIR, --selftest DIR; --help prints registrations
 # --- CI ENFORCEMENT ---
@@ -173,11 +173,18 @@ Running `gograph add-claude-plugin` performs three installation steps in one com
 |---|---|---|
 | **MCP server** | Registers gograph so Claude has native tool access | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) |
 | **CLAUDE.md rules** | Injects steering instructions Claude reads at session start | `~/.claude/CLAUDE.md` |
-| **PreToolUse hook** | Intercepts broad `grep`/`rg` Go-symbol searches in indexed repositories and suggests structural tools | `~/.claude/hooks/gograph-guard.sh` + `~/.claude/settings.json` |
+| **PreToolUse hook** | `gograph hook --agent claude` for `Bash` and `Edit\|Write\|MultiEdit\|NotebookEdit\|Read`: every gograph-first rule in indexed repositories (replaces the former `~/.claude/hooks/gograph-guard.sh` entry) | `~/.claude/settings.json` |
 
 ### How the hook works
 
-The hook (`gograph hook-guard`) is invoked automatically by Claude Code before every `Bash` tool call. It:
+`add-claude-plugin` registers `gograph hook --agent claude` for Claude Code's
+`Bash` tool and for its `Edit`, `Write`, `MultiEdit`, `NotebookEdit` and `Read`
+tools. Besides the symbol-search redirect described here, it applies every
+gograph-first rule inside indexed repositories: region reads of `.go` files,
+Go text searches without a `# gograph-cannot: <reason>` comment and shell
+writes to `.go` files are denied, and `.go` edits need an open gograph session.
+
+For a `grep`/`rg` command (the same check `gograph hook-guard` makes) it:
 
 1. Reads the tool call JSON from stdin.
 2. Checks if the command is `grep` or `rg`.

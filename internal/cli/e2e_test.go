@@ -402,13 +402,16 @@ func TestE2E_ClaudePluginInstall(t *testing.T) {
 	wantFiles := []string{
 		desktopConfig,
 		filepath.Join(home, ".claude", "CLAUDE.md"),
-		filepath.Join(home, ".claude", "hooks", "gograph-guard.sh"),
 		filepath.Join(home, ".claude", "settings.json"),
 	}
 	for _, path := range wantFiles {
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("expected installer output %s: %v", path, err)
 		}
+	}
+	settings, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil || !strings.Contains(string(settings), `"gograph hook --agent claude"`) {
+		t.Errorf("settings.json does not register gograph hook --agent claude: %v\n%s", err, settings)
 	}
 }
 

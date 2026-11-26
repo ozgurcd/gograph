@@ -1484,7 +1484,7 @@ inspect another owner's session metadata. Raw query results are not logged.
 ```bash
 gograph add-claude-plugin
 ```
-Registers Claude Desktop MCP configuration, injects shared `~/.claude/CLAUDE.md` rules, and installs `~/.claude/hooks/gograph-guard.sh`. Claude Code MCP registration still requires the `claude mcp add` command printed by the installer. Partial installation exits non-zero.
+Registers Claude Desktop MCP configuration, injects shared `~/.claude/CLAUDE.md` rules, and registers `gograph hook --agent claude` in `~/.claude/settings.json` for the `Bash` and `Edit|Write|MultiEdit|NotebookEdit|Read` tool groups. It removes the entry of the former `~/.claude/hooks/gograph-guard.sh` (a `gograph hook-guard` wrapper) and deletes that script when it is unchanged. Claude Code MCP registration still requires the `claude mcp add` command printed by the installer. Partial installation exits non-zero.
 
 ### hook
 ```bash
