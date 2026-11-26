@@ -64,7 +64,7 @@ func TestCLIAndMCPQueryAnalysisParity(t *testing.T) {
 	intentionalCLIOnly := map[string]bool{
 		"build": true, "validate": true, "doctor": true, "gate": true, "snapshot": true, "mcp": true,
 		"workspace":         true, // namespace with its own four-tool workspace MCP server
-		"add-claude-plugin": true, "hook-guard": true,
+		"add-claude-plugin": true, "hook-guard": true, "hook": true,
 		"help": true, "--help": true, "-h": true,
 		"version": true, "--version": true, "-v": true, "whatsnew": true,
 	}

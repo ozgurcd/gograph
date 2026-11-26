@@ -595,7 +595,7 @@ func NewServer(
 				},
 				"workspace_server_tools": []string{"gograph_workspace_status", "gograph_workspace_query", "gograph_workspace_path", "gograph_workspace_impact"},
 				"workspace_server_note":  "The four workspace tools are exposed by `gograph workspace mcp`, not this project-scoped server; they share native result implementations with CLI workspace status/query/path/impact.",
-				"cli_only_operations":    []string{"build", "validate", "doctor", "gate", "snapshot", "add-claude-plugin", "hook-guard", "mcp startup", "workspace build/member refresh", "workspace mcp startup", "whatsnew", "help"},
+				"cli_only_operations":    []string{"build", "validate", "doctor", "gate", "snapshot", "add-claude-plugin", "hook-guard", "hook", "mcp startup", "workspace build/member refresh", "workspace mcp startup", "whatsnew", "help"},
 				"version_source":         "The top-level version field records the running MCP server binary; the standalone CLI version command has no separate MCP tool.",
 				"presentation":           "CLI flags/envelopes and typed MCP arguments/content may differ; paired operations share functional semantics.",
 			},

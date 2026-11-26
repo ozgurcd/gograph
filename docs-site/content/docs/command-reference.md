@@ -1282,8 +1282,8 @@ four exact pairs:
 
 The only CLI operations without callable MCP equivalents are process-, host-,
 CI-, or artifact-lifecycle operations: `build`, `validate`, `doctor`, `gate`,
-`snapshot`, `add-claude-plugin`, `hook-guard`, project/workspace MCP startup,
-`workspace build`/member refresh, and help. The standalone `version` command
+`snapshot`, `add-claude-plugin`, `hook-guard`, `hook`, project/workspace MCP
+startup, `workspace build`/member refresh, and help. The standalone `version` command
 has no dedicated MCP tool, but `gograph_capabilities` exposes the running server
 version. CLI flags/envelopes and typed MCP arguments/content are transport-specific; paired operations share
 their functional implementation and documented filters, ordering, evidence,
@@ -1485,6 +1485,14 @@ inspect another owner's session metadata. Raw query results are not logged.
 gograph add-claude-plugin
 ```
 Registers Claude Desktop MCP configuration, injects shared `~/.claude/CLAUDE.md` rules, and installs `~/.claude/hooks/gograph-guard.sh`. Claude Code MCP registration still requires the `claude mcp add` command printed by the installer. Partial installation exits non-zero.
+
+### hook
+```bash
+gograph hook [--agent claude|codex|opencode|agy] [--record DIR] [--selftest DIR]
+```
+`PreToolUse` hook that applies every gograph-first rule, the same way for every agent: Claude Code (`claude`, the default), Codex (`codex`), opencode (`opencode`) and Antigravity (`agy`). Each agent's tool-call JSON is read into one event (`shell`, `edit`, `write`, `multi_edit`, `patch`, `read`, `other`); one shared rule set decides; the verdict is written in the agent's format. Inside a repository with a `.gograph` index it denies Go symbol searches, region reads of `.go` files, Go text searches without a `# gograph-cannot: <reason>` comment, shell writes to `.go` files (pointing at the agent's own edit tool), and edits, writes, multi-edits and patches of `.go` files while no gograph session is open (every path of a Codex/opencode `apply_patch` is checked). A shell or write-capable tool whose input cannot be read, and a malformed patch, are denied; an unknown read-only tool is allowed. An unknown `--agent` exits 2.
+
+Output: `claude` allows with exit 0 and no output (Claude Code's own permission rules still apply) and denies with a `hookSpecificOutput.permissionDecision` of `deny`; `codex` denies with exit 2 and the reason on stderr; `opencode` and `agy` get `{"decision":"allow"}` or `{"decision":"deny","reason":...}` on stdout. Until an agent's input format is backed by recorded fixtures, every denial says `no fixture-backed format for <agent>`. `--record DIR` writes the raw input to `DIR/<agent>-<time>.json` (directory 0700, file 0600, strings cut to 4 KiB) and allows the call. `--selftest DIR` replays `DIR/verdicts.tsv` (`<agent>/<file>`, `allow`|`deny`, optional reason text) and fails on a mismatch or a fixture without a row. `gograph hook --help` prints the registration for each agent, including a minimal opencode plugin. Never logged to session telemetry.
 
 ### hook-guard
 ```bash

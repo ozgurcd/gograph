@@ -147,6 +147,7 @@ gograph mcp [path] [--persist-refresh] [--tags=integration[,tag...]] [--exclude-
 gograph httpcalls [term]         # net/http calls + possible request construction; bounded pages, method/URL/base/function filter
 gograph add-claude-plugin        # install MCP server + CLAUDE.md rules + PreToolUse hook (Claude Desktop & Claude Code)
 gograph hook-guard [rules]       # PreToolUse hook for Claude Code, Codex, Antigravity — blocks indexed-repository Go symbol greps; opt-in rules enforce gograph-first
+gograph hook --agent <A>         # PreToolUse hook with every gograph-first rule for claude, codex, opencode, agy; --record DIR, --selftest DIR; --help prints registrations
 # --- CI ENFORCEMENT ---
 gograph gate                     # read regular non-linked project-root .gograph.yml and fail CI on threshold violations
 # --- SNAPSHOTS ---
@@ -248,6 +249,32 @@ The hook is steering, not a correctness boundary. If graph precision is
 verify with `gopls` or a targeted source/text search and disclose that fallback.
 Literal, comment, generated/non-indexed, and non-Go searches belong in text
 search from the start.
+
+### One hook for every agent: `gograph hook --agent`
+
+`gograph hook --agent claude|codex|opencode|agy` applies all of the rules
+above (as `hook-guard --strict` does) with no flags, the same way for every
+agent. Each agent's input is read into one common event (tool kind, command,
+paths, working directory, session), one shared rule set decides, and the
+answer is written in the agent's own format:
+
+| Agent | Tools checked | Deny signal |
+|---|---|---|
+| `claude` (default) | `Bash`, `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, `Read` | exit 0, `hookSpecificOutput.permissionDecision` = `deny` |
+| `codex` | shell (`Bash`, `shell`, `local_shell`, `exec_command`), `apply_patch` (every `*** Add/Update/Delete File:` and `*** Move to:` path) | exit 2, reason on stderr |
+| `opencode` | `bash`, `edit`, `write`, `multiedit`, `apply_patch`, `read`, called from a plugin | `{"decision":"deny","reason":...}`; the plugin throws |
+| `agy` | `run_command`, `write_to_file`, `replace_file_content`, `multi_replace_file_content` | `{"decision":"deny","reason":...}` |
+
+A shell or write-capable tool whose input cannot be read, and a malformed
+patch, are denied; an unknown read-only tool is allowed. A denial of a shell
+write names the agent's own edit tool. `gograph hook --help` prints the exact
+registration for each agent, including a minimal opencode plugin.
+
+Agent formats are confirmed from recordings: `gograph hook --agent X --record DIR`
+writes each raw input to `DIR/<agent>-<time>.json` (strings cut to 4 KiB) and
+allows the call. Until an agent has recorded fixtures, its denials say
+`no fixture-backed format for <agent>`. `gograph hook --selftest DIR` replays
+recorded inputs against `DIR/verdicts.tsv`.
 
 ## Concrete agent workflows
 
@@ -1127,7 +1154,7 @@ its CLI operation:
 - **`gograph_workspace_path`** ↔ `gograph workspace path`
 - **`gograph_workspace_impact`** ↔ `gograph workspace impact`
 
-> **CLI/MCP parity:** Every repository query, analysis, and workflow command, including boundary baseline creation, has a project-MCP equivalent. The normal mapping is `<command>` → `gograph_<command>`; `contract`, `boundaries --create`, and session actions use the special mappings in the [complete transport matrix](../docs-site/content/docs/command-reference.md#cli--mcp-transport-matrix). The intentional CLI-only surface is `build`, `validate`, `doctor`, `gate`, `snapshot`, `add-claude-plugin`, `hook-guard`, project/workspace MCP startup, workspace build/member refresh, and `help`; these publish artifacts, inspect/configure the host installation, enforce process exit status, or start the host integration. The standalone `version` command has no MCP tool, but `gograph_capabilities` exposes the running server version. Presentation remains transport-specific: CLI output flags map to MCP parameters or JSON text rather than byte-identical output.
+> **CLI/MCP parity:** Every repository query, analysis, and workflow command, including boundary baseline creation, has a project-MCP equivalent. The normal mapping is `<command>` → `gograph_<command>`; `contract`, `boundaries --create`, and session actions use the special mappings in the [complete transport matrix](../docs-site/content/docs/command-reference.md#cli--mcp-transport-matrix). The intentional CLI-only surface is `build`, `validate`, `doctor`, `gate`, `snapshot`, `add-claude-plugin`, `hook-guard`, `hook`, project/workspace MCP startup, workspace build/member refresh, and `help`; these publish artifacts, inspect/configure the host installation, enforce process exit status, or start the host integration. The standalone `version` command has no MCP tool, but `gograph_capabilities` exposes the running server version. Presentation remains transport-specific: CLI output flags map to MCP parameters or JSON text rather than byte-identical output.
 
 ## Recommended project setup
 
@@ -1197,7 +1224,7 @@ Each agent shell command is a new process, so `GOGRAPH_SESSION` is often not set
 A forgotten session expires on its own. Before anything else, every CLI command and MCP call ends other callers' CLI sessions that recorded no activity for `GOGRAPH_SESSION_IDLE_LIMIT` (default `2h`; `0` or `off` disables), and sessions of MCP servers that have exited on this host. Each ended session gets a `stale` end record, and the command names it on stderr. Refused calls, such as a missing `--intention`, do not count as activity. A call's own selected session is never ended; if it was ended while its owner was away, the owner's next call says so.
 
 ### 4. Telemetry Log Architecture (Append-Only JSONL)
-CLI and MCP analysis invocations during an active session are logged inside `.gograph/sessions/session_<session_id>.jsonl`. Session lifecycle/MCP startup calls and successful `hook-guard` checks are excluded.
+CLI and MCP analysis invocations during an active session are logged inside `.gograph/sessions/session_<session_id>.jsonl`. Session lifecycle/MCP startup calls, successful `hook-guard` checks and every `hook` call are excluded.
 To ensure architectural cleanliness and avoid heavy I/O operations or disk bloat, **raw query results are never logged**. Only telemetry metadata is captured:
 - Command name and arguments
 - Technical intention (`-i` / `--intention`)

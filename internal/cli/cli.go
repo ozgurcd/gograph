@@ -136,6 +136,8 @@ func Run(args []string) int {
 					return 0
 				} else if args[0] == "workspace" {
 					printWorkspaceHelp()
+				} else if args[0] == "hook" {
+					printHookHelp(os.Stdout)
 				} else {
 					printCommandHelp(args[0])
 				}
@@ -216,7 +218,7 @@ func Run(args []string) int {
 	// A forgotten session must not block or absorb later callers. End other
 	// callers' abandoned sessions before any session is adopted or enforced;
 	// the explicitly selected session is never ended.
-	if args[0] != "mcp" && args[0] != "hook-guard" {
+	if args[0] != "mcp" && args[0] != "hook-guard" && args[0] != "hook" {
 		expired, _ := session.ExpireAbandonedSessionsAt(callerCommandRoot(args), callerSessionID)
 		for _, ended := range expired {
 			fmt.Fprintf(os.Stderr, "gograph: ended abandoned session %q: %s\n", ended.ID, ended.Reason)
@@ -246,6 +248,7 @@ func Run(args []string) int {
 		"build":             true,
 		"add-claude-plugin": true,
 		"hook-guard":        true,
+		"hook":              true,
 		"version":           true,
 		"doctor":            true,
 		"validate":          true,
@@ -291,7 +294,7 @@ func Run(args []string) int {
 	warnIfStaleGraph(args[0])
 
 	// Log command telemetry
-	if args[0] != "session" && args[0] != "--session" && args[0] != "mcp" {
+	if args[0] != "session" && args[0] != "--session" && args[0] != "mcp" && args[0] != "hook" {
 		status := commandTelemetryStatus(args[0], exitCode)
 		if invocationError {
 			status = "invocation_error"
@@ -468,6 +471,8 @@ func dispatch(args []string) int {
 		return 0
 	case "hook-guard":
 		return runHookGuard(args[1:])
+	case "hook":
+		return runHook(args[1:])
 	case "httpcalls":
 		return runHTTPCalls(args[1:])
 	case "help", "--help", "-h":
@@ -636,7 +641,7 @@ gograph_session_create/end/audit/cleanup. That project server exposes 70 tools:
 Workspace status, query, path, and impact use the separate four-tool workspace
 MCP server described above. CLI-only process, host, CI, and artifact operations
 are build, validate, doctor, gate, snapshot, add-claude-plugin, hook-guard,
-project/workspace MCP startup, workspace build/member refresh, and help. The
+hook, project/workspace MCP startup, workspace build/member refresh, and help. The
 standalone version and whatsnew commands remain CLI-only, while gograph_capabilities
 exposes the running MCP server version directly.
 These boundaries describe callable functionality; output presentation remains
@@ -1028,7 +1033,10 @@ add-claude-plugin    : install Claude Desktop MCP config + shared rules + Claude
 hook-guard [rules]   : PreToolUse hook for Claude Code, Codex and Antigravity — redirects
                        indexed-repository Go symbol greps to gograph. Opt-in rules:
                        --deny-go-writes, --deny-region-reads, --require-reason,
-                       --require-session (--strict = all); --ask prompts instead of denying`)
+                       --require-session (--strict = all); --ask prompts instead of denying
+hook --agent A       : PreToolUse hook with every gograph-first rule for claude (default),
+                       codex, opencode and agy; fails closed on unreadable shell/write
+                       calls; --record DIR, --selftest DIR; --help prints registrations`)
 	fmt.Println("\nCHANGE SELECTION\n" + search.CurrentChangeSelectionContract)
 	return 0
 }
@@ -3865,8 +3873,8 @@ CLI / MCP TRANSPORT COVERAGE
   Workspace server           status, query, path, and impact map exactly to the four
                              gograph_workspace_* tools listed under WORKSPACES.
   CLI-only operations        build, validate, doctor, gate, snapshot,
-                             add-claude-plugin, hook-guard, project/workspace MCP
-                             startup, workspace build/member refresh, and help.
+                             add-claude-plugin, hook-guard, hook, project/workspace
+                             MCP startup, workspace build/member refresh, and help.
                              The standalone version and whatsnew commands have no MCP tool;
                              gograph_capabilities reports the running server version.
                              CLI envelopes/flags and MCP typed content may differ, but
@@ -4349,6 +4357,24 @@ AGENT INTEGRATION
                              Claude Code/Codex: exit 0 = allow, exit 2 = block
                              (reason on stderr); ask = JSON on stdout. Antigravity:
                              exit 0 with {"decision":"allow"|"deny"|"ask"} on stdout.
+                             Not intended for direct human use.
+  hook [--agent A]           PreToolUse hook that applies every gograph-first rule
+                             to Claude Code (claude, default), Codex (codex),
+                             opencode (opencode) and Antigravity (agy). Reads the
+                             agent's tool-call JSON from stdin. Inside a repository
+                             with a .gograph index it denies Go symbol searches,
+                             region reads of .go files, Go text searches without a
+                             "# gograph-cannot: <reason>" comment, shell writes to
+                             .go files, and edits/writes/patches of .go files while
+                             no gograph session is open. A shell or write tool whose
+                             input cannot be read is denied; an unknown read-only
+                             tool is allowed. An unknown --agent exits 2.
+                             --record DIR: write the raw input to
+                             DIR/<agent>-<time>.json (dir 0700, file 0600, strings
+                             cut to 4 KiB) and allow the call.
+                             --selftest DIR: replay DIR/verdicts.tsv
+                             (<agent>/<file>, allow|deny, optional reason text).
+                             --help prints each agent's registration.
                              Not intended for direct human use.
 
 OTHER

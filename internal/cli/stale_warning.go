@@ -13,7 +13,7 @@ import (
 // exists to compare the working tree with the persisted graph.
 func commandWarnsWhenStale(command string) bool {
 	switch command {
-	case "stale", "stats", "changes", "build", "mcp", "hook-guard", "session", "--session":
+	case "stale", "stats", "changes", "build", "mcp", "hook-guard", "hook", "session", "--session":
 		return false
 	}
 	return true

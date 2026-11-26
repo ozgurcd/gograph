@@ -186,6 +186,9 @@ repositories: `--deny-go-writes`, `--deny-region-reads`, `--require-reason`
 `--strict` for all four; `--ask` asks the user instead of denying where the
 agent supports it. See
 [coding-agent usage](coding-agent-usage.md#optional-rules-and-other-agents).
+`gograph hook --agent claude|codex|opencode|agy` applies all four rules to
+each agent's shell, edit, write and patch tools, and `gograph hook --help`
+prints each agent's registration.
 
 ### Claude Code (CLI) — Per-Project Registration
 
