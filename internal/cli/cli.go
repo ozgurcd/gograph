@@ -4422,6 +4422,9 @@ func printHelp() {
 	fmt.Println("\nCHANGE SELECTION\n  " + search.CurrentChangeSelectionContract)
 }
 
+// helpDescColumn is where descriptions start in helpText command entries.
+const helpDescColumn = 29
+
 func printCommandHelp(cmd string) {
 	defer fmt.Println("\nCALLER SESSION\n  --session-id ID or GOGRAPH_SESSION selects the session printed by create.\n  Without a selector, the repository's only active session is used when this host's CLI created it.\n  Sessions idle past GOGRAPH_SESSION_IDLE_LIMIT (default 2h) are ended as abandoned by the next command.\n  Selected analytical calls require --intention; unselected readers are not logged.\n  Writes refuse while another caller owns an active session.")
 	defer printExcludeDirsHelp(cmd)
@@ -4441,6 +4444,10 @@ func printCommandHelp(cmd string) {
 			found = true
 			fmt.Println("USAGE")
 			descStart := strings.Index(line[2:], "  ")
+			if descStart == -1 && len(line) > helpDescColumn && line[helpDescColumn-1] == ' ' && !strings.ContainsRune(" [-<", rune(line[helpDescColumn])) {
+				// A long usage separated from its description by one space.
+				descStart = helpDescColumn - 3
+			}
 			if descStart != -1 {
 				usagePart := line[2 : 2+descStart]
 				descPart := strings.TrimSpace(line[2+descStart:])
@@ -4449,7 +4456,10 @@ func printCommandHelp(cmd string) {
 				fmt.Printf("  gograph %s\n\nDESCRIPTION\n", strings.TrimSpace(line))
 			}
 		} else if found {
-			if strings.HasPrefix(line, "                             ") || strings.HasPrefix(line, "    ") {
+			if strings.HasPrefix(line, strings.Repeat(" ", helpDescColumn)) {
+				// Keep nested option lists indented relative to the description.
+				fmt.Printf("  %s\n", strings.TrimRight(line[helpDescColumn:], " "))
+			} else if strings.HasPrefix(line, "    ") {
 				fmt.Printf("  %s\n", strings.TrimSpace(line))
 			} else {
 				break

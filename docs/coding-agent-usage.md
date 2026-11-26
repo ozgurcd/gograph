@@ -147,6 +147,7 @@ gograph mcp [path] [--persist-refresh] [--tags=integration[,tag...]] [--exclude-
 gograph httpcalls [term]         # net/http calls + possible request construction; bounded pages, method/URL/base/function filter
 gograph add-claude-plugin        # install MCP server + CLAUDE.md rules + register `gograph hook --agent claude` (Claude Desktop & Claude Code)
 gograph hook-guard [rules]       # PreToolUse hook for Claude Code, Codex, Antigravity — blocks indexed-repository Go symbol greps; opt-in rules enforce gograph-first
+gograph hook --agent A [rules]   # PreToolUse hook for claude, codex, opencode, agy — steers Go navigation (symbol searches, .go region reads, unexplained Go text searches) to gograph; editing rules opt-in
 gograph hook --agent <A>         # PreToolUse hook steering Go navigation for claude, codex, opencode, agy; opt-in --deny-go-writes, --require-session; --record DIR, --selftest DIR
 # --- CI ENFORCEMENT ---
 gograph gate                     # read regular non-linked project-root .gograph.yml and fail CI on threshold violations
