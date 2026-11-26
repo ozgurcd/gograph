@@ -149,26 +149,33 @@ func TestHookFixtureBackedMatchesTestdata(t *testing.T) {
 func TestHookDecideLayer(t *testing.T) {
 	root := newHookStrictRoot(t)
 	goFile := filepath.Join(root, "a.go")
+	editing := hookRules{denyGoWrites: true, requireSession: true}
 	cases := []struct {
 		name  string
+		rules hookRules
 		event hookEvent
 		want  string // "" allows
 		edit  bool
 	}{
-		{"symbol search", hookEvent{Kind: hookKindShell, Command: `grep -rn Decide .`}, "Go symbol search", false},
-		{"region read", hookEvent{Kind: hookKindShell, Command: `cat a.go`}, ".go region read", false},
-		{"literal without reason", hookEvent{Kind: hookKindShell, Command: `grep -rn "a b" --include=*.go .`}, "without a reason", false},
-		{"shell write", hookEvent{Kind: hookKindShell, Command: `sed -i 's/a/b/' a.go`}, ".go write", true},
-		{"count", hookEvent{Kind: hookKindShell, Command: `grep -c Decide a.go`}, "", false},
-		{"literal with reason", hookEvent{Kind: hookKindShell, Command: `grep -rn "a b" --include=*.go . # gograph-cannot: comments`}, "", false},
-		{"edit without session", hookEvent{Kind: hookKindEdit, Paths: []string{goFile}}, "gograph session create", false},
-		{"write without session", hookEvent{Kind: hookKindWrite, Paths: []string{"sub/new.go"}}, "gograph session create", false},
-		{"multi edit without session", hookEvent{Kind: hookKindMultiEdit, Paths: []string{goFile}}, "gograph session create", false},
-		{"patch with one go path", hookEvent{Kind: hookKindPatch, Paths: []string{"notes.txt", "sub/b.go"}}, "gograph session create", false},
-		{"edit of non-go", hookEvent{Kind: hookKindEdit, Paths: []string{filepath.Join(root, "README.md")}}, "", false},
-		{"read", hookEvent{Kind: hookKindRead, Paths: []string{goFile}}, "", false},
-		{"other", hookEvent{Kind: hookKindOther}, "", false},
-		{"unparsed", hookEvent{Tool: "X", Unparsed: "no command"}, "cannot read its input", false},
+		{"symbol search", hookRules{}, hookEvent{Kind: hookKindShell, Command: `grep -rn Decide .`}, "Go symbol search", false},
+		{"region read", hookRules{}, hookEvent{Kind: hookKindShell, Command: `cat a.go`}, ".go region read", false},
+		{"literal without reason", hookRules{}, hookEvent{Kind: hookKindShell, Command: `grep -rn "a b" --include=*.go .`}, "without a reason", false},
+		{"count", hookRules{}, hookEvent{Kind: hookKindShell, Command: `grep -c Decide a.go`}, "", false},
+		{"literal with reason", hookRules{}, hookEvent{Kind: hookKindShell, Command: `grep -rn "a b" --include=*.go . # gograph-cannot: comments`}, "", false},
+		{"unparsed shell", hookRules{}, hookEvent{Kind: hookKindShell, Tool: "X", Unparsed: "no command"}, "cannot read its input", false},
+		{"shell write by default", hookRules{}, hookEvent{Kind: hookKindShell, Command: `sed -i 's/a/b/' a.go`}, "", false},
+		{"edit by default", hookRules{}, hookEvent{Kind: hookKindEdit, Paths: []string{goFile}}, "", false},
+		{"patch by default", hookRules{}, hookEvent{Kind: hookKindPatch, Paths: []string{"a.go"}}, "", false},
+		{"unparsed write by default", hookRules{}, hookEvent{Kind: hookKindPatch, Tool: "apply_patch", Unparsed: "bad patch"}, "", false},
+		{"read", hookRules{}, hookEvent{Kind: hookKindRead, Paths: []string{goFile}}, "", false},
+		{"other", hookRules{}, hookEvent{Kind: hookKindOther}, "", false},
+		{"shell write, editing", editing, hookEvent{Kind: hookKindShell, Command: `sed -i 's/a/b/' a.go`}, ".go write", true},
+		{"edit without session", editing, hookEvent{Kind: hookKindEdit, Paths: []string{goFile}}, "gograph session create", false},
+		{"write without session", editing, hookEvent{Kind: hookKindWrite, Paths: []string{"sub/new.go"}}, "gograph session create", false},
+		{"multi edit without session", editing, hookEvent{Kind: hookKindMultiEdit, Paths: []string{goFile}}, "gograph session create", false},
+		{"patch with one go path", editing, hookEvent{Kind: hookKindPatch, Paths: []string{"notes.txt", "sub/b.go"}}, "gograph session create", false},
+		{"unparsed write, editing", editing, hookEvent{Kind: hookKindPatch, Tool: "apply_patch", Unparsed: "bad patch"}, "cannot read its input", false},
+		{"edit of non-go", editing, hookEvent{Kind: hookKindEdit, Paths: []string{filepath.Join(root, "README.md")}}, "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -176,7 +183,7 @@ func TestHookDecideLayer(t *testing.T) {
 			for index, agent := range hookAgentNames() {
 				event := tc.event
 				event.Agent, event.CWD = agent, root
-				verdict := decideHookEvent(event)
+				verdict := decideHookEvent(event, tc.rules)
 				if index == 0 {
 					first = verdict
 				} else if verdict != first {
@@ -192,7 +199,7 @@ func TestHookDecideLayer(t *testing.T) {
 	if _, err := session.StartSessionAt(root, ""); err != nil {
 		t.Fatal(err)
 	}
-	if verdict := decideHookEvent(hookEvent{Kind: hookKindPatch, CWD: root, Paths: []string{"a.go"}}); verdict.Deny {
+	if verdict := decideHookEvent(hookEvent{Kind: hookKindPatch, CWD: root, Paths: []string{"a.go"}}, editing); verdict.Deny {
 		t.Fatalf("patch with an open session denied: %q", verdict.Reason)
 	}
 }
@@ -230,10 +237,10 @@ func TestHookWriteLayer(t *testing.T) {
 }
 
 // hookRun runs the command with input and returns whether it denied.
-func hookRun(t *testing.T, agent, input string) (bool, string) {
+func hookRun(t *testing.T, agent, input string, flags ...string) (bool, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := runHookWith([]string{"--agent", agent}, strings.NewReader(input), &stdout, &stderr)
+	code := runHookWith(append([]string{"--agent", agent}, flags...), strings.NewReader(input), &stdout, &stderr)
 	output := stdout.String() + stderr.String()
 	denied := code == 2 || strings.Contains(output, `"deny"`)
 	if !denied && code != 0 {
@@ -243,17 +250,30 @@ func hookRun(t *testing.T, agent, input string) (bool, string) {
 }
 
 func TestHookFailsClosedForEveryAgent(t *testing.T) {
-	inputs := map[string]map[string]string{
-		"claude":   {"unknown write tool": `{"tool_name":"FileWriter","tool_input":{}}`, "bash without command": `{"tool_name":"Bash","tool_input":{}}`},
+	shell := map[string]string{
+		"claude":   `{"tool_name":"Bash","tool_input":{}}`,
+		"codex":    `{"tool_name":"run_terminal","tool_input":{}}`,
+		"opencode": `{"tool":"bash","args":{}}`,
+		"agy":      `{"toolCall":{"name":"run_command","args":{}}}`,
+	}
+	write := map[string]map[string]string{
+		"claude":   {"unknown write tool": `{"tool_name":"FileWriter","tool_input":{}}`},
 		"codex":    {"unknown write tool": `{"tool_name":"write_file","tool_input":{}}`, "malformed patch": `{"tool_name":"apply_patch","tool_input":{"command":"*** Update File: a.go"}}`},
 		"opencode": {"unknown write tool": `{"tool":"file_write","args":{}}`, "malformed patch": `{"tool":"apply_patch","args":{"patchText":"nonsense"}}`},
 		"agy":      {"unknown write tool": `{"toolCall":{"name":"create_file","args":{}}}`, "edit without target": `{"toolCall":{"name":"write_to_file","args":{}}}`},
 	}
-	for agent, cases := range inputs {
-		cases["not json"] = "{"
-		for name, input := range cases {
+	for _, agent := range hookAgentNames() {
+		for name, input := range map[string]string{"unreadable shell call": shell[agent], "not json": "{"} {
 			if denied, output := hookRun(t, agent, input); !denied || !strings.Contains(output, "no fixture-backed format for "+agent) {
 				t.Errorf("%s %s: denied=%v output=%s", agent, name, denied, output)
+			}
+		}
+		for name, input := range write[agent] {
+			if denied, output := hookRun(t, agent, input); denied {
+				t.Errorf("%s %s denied without an editing rule: %s", agent, name, output)
+			}
+			if denied, output := hookRun(t, agent, input, "--require-session"); !denied {
+				t.Errorf("%s %s allowed with --require-session: %s", agent, name, output)
 			}
 		}
 	}
@@ -263,44 +283,50 @@ func TestHookFailsClosedForEveryAgent(t *testing.T) {
 		"opencode": `{"tool":"lsp_hover","args":{}}`,
 		"agy":      `{"toolCall":{"name":"view_file","args":{}}}`,
 	} {
-		if denied, output := hookRun(t, agent, input); denied {
+		if denied, output := hookRun(t, agent, input, "--require-session", "--deny-go-writes"); denied {
 			t.Errorf("%s unknown read-only tool denied: %s", agent, output)
 		}
 	}
 }
 
 // TestHookCrossAgentParity sends the same logical call in each agent's
-// format and requires the same verdict.
+// format and requires the same verdict, with the default (navigation) rules
+// and with both editing rules.
 func TestHookCrossAgentParity(t *testing.T) {
 	root := newHookStrictRoot(t)
 	t.Chdir(root)
+	editing := []string{"--deny-go-writes", "--require-session"}
 	cases := []struct {
-		name   string
-		kind   hookToolKind
-		value  string
-		denied bool
+		name                    string
+		kind                    hookToolKind
+		value                   string
+		denied, deniedIfEditing bool
 	}{
-		{"symbol search", hookKindShell, `grep -rn Decide .`, true},
-		{"region read", hookKindShell, `sed -n '1,20p' a.go`, true},
-		{"literal without reason", hookKindShell, `rg -t go 'error: x'`, true},
-		{"literal with reason", hookKindShell, `rg -t go 'error: x' # gograph-cannot: comment text`, false},
-		{"shell write", hookKindShell, `echo x > a.go`, true},
-		{"git diff", hookKindShell, `git diff -- a.go`, false},
-		{"edit .go", hookKindEdit, filepath.Join(root, "a.go"), true},
-		{"write new .go", hookKindWrite, filepath.Join(root, "sub", "n.go"), true},
-		{"multi edit .go", hookKindMultiEdit, filepath.Join(root, "a.go"), true},
-		{"edit .md", hookKindEdit, filepath.Join(root, "README.md"), false},
-		{"patch .go", hookKindPatch, hookTestPatch, true},
-		{"read .go", hookKindRead, filepath.Join(root, "a.go"), false},
+		{"symbol search", hookKindShell, `grep -rn Decide .`, true, true},
+		{"region read", hookKindShell, `sed -n '1,20p' a.go`, true, true},
+		{"literal without reason", hookKindShell, `rg -t go 'error: x'`, true, true},
+		{"literal with reason", hookKindShell, `rg -t go 'error: x' # gograph-cannot: comment text`, false, false},
+		{"text-tool write", hookKindShell, `echo x > a.go`, false, true},
+		{"move", hookKindShell, `mv a.go sub/c.go`, false, false},
+		{"git diff", hookKindShell, `git diff -- a.go`, false, false},
+		{"edit .go", hookKindEdit, filepath.Join(root, "a.go"), false, true},
+		{"write new .go", hookKindWrite, filepath.Join(root, "sub", "n.go"), false, true},
+		{"multi edit .go", hookKindMultiEdit, filepath.Join(root, "a.go"), false, true},
+		{"edit .md", hookKindEdit, filepath.Join(root, "README.md"), false, false},
+		{"patch .go", hookKindPatch, hookTestPatch, false, true},
+		{"read .go", hookKindRead, filepath.Join(root, "a.go"), false, false},
 	}
 	for _, tc := range cases {
 		for _, agent := range hookAgentNames() {
 			if !hookAgentHasKind(agent, tc.kind) {
 				continue
 			}
-			denied, output := hookRun(t, agent, hookCallFor(t, agent, tc.kind, tc.value, root))
-			if denied != tc.denied {
+			input := hookCallFor(t, agent, tc.kind, tc.value, root)
+			if denied, output := hookRun(t, agent, input); denied != tc.denied {
 				t.Errorf("%s / %s: denied=%v, want %v: %s", tc.name, agent, denied, tc.denied, output)
+			}
+			if denied, output := hookRun(t, agent, input, editing...); denied != tc.deniedIfEditing {
+				t.Errorf("%s / %s with editing rules: denied=%v, want %v: %s", tc.name, agent, denied, tc.deniedIfEditing, output)
 			}
 		}
 	}
@@ -416,6 +442,7 @@ func TestInstallHookRegistersGographHookAndRemovesLegacyScript(t *testing.T) {
 				map[string]any{"type": "command", "command": "other-hook"},
 			}},
 			map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": legacy}}},
+			map[string]any{"matcher": "Edit|Write|MultiEdit|NotebookEdit|Read", "hooks": []any{map[string]any{"type": "command", "command": claudeHookCommand}}},
 		}},
 	}
 	if err := os.WriteFile(settingsPath, []byte(hookJSON(t, before)), 0o644); err != nil {
@@ -450,7 +477,7 @@ func TestInstallHookRegistersGographHookAndRemovesLegacyScript(t *testing.T) {
 			got = append(got, group.Matcher+" -> "+hook.Command)
 		}
 	}
-	want := []string{"Bash -> other-hook", "Bash -> gograph hook --agent claude", "Edit|Write|MultiEdit|NotebookEdit|Read -> gograph hook --agent claude"}
+	want := []string{"Bash -> other-hook", "Bash -> gograph hook --agent claude"}
 	if after.Model != "keep-me" || !reflect.DeepEqual(got, want) {
 		t.Fatalf("settings: model=%q hooks=%q, want %q", after.Model, got, want)
 	}

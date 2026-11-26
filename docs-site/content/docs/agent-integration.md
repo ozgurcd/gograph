@@ -343,7 +343,7 @@ This single command performs three critical setup steps:
 
 1. **Claude Desktop Configuration**: Registers `gograph mcp <absolute-project-path>` in Claude Desktop's config.
 2. **Shared Steering**: Adds rules to `~/.claude/CLAUDE.md`.
-3. **Claude Code Hook**: Registers `gograph hook --agent claude` in `~/.claude/settings.json` for the `Bash` and `Edit|Write|MultiEdit|NotebookEdit|Read` tools, replacing the former `~/.claude/hooks/gograph-guard.sh` entry.
+3. **Claude Code Hook**: Registers `gograph hook --agent claude` in `~/.claude/settings.json` for the `Bash` tool, replacing the former `~/.claude/hooks/gograph-guard.sh` entry.
 
 Claude Code MCP registration is separate; run the `claude mcp add gograph -- gograph mcp .` command printed by the installer. The installer exits non-zero if any of its three file/configuration steps fail.
 
@@ -393,13 +393,11 @@ folder into an indexed sibling is still steered, while a search from an indexed
 folder into only unindexed targets is allowed.
 
 `add-claude-plugin` registers `gograph hook --agent claude` for Claude Code's
-`Bash` tool and for its `Edit`, `Write`, `MultiEdit`, `NotebookEdit` and `Read`
-tools. Besides the symbol-search redirect described here, it applies every
-gograph-first rule inside indexed repositories: region reads of `.go` files,
-Go text searches without a `# gograph-cannot: <reason>` comment and text
-tools editing `.go` files (`sed -i`, redirects from `echo`/`cat`/heredocs) are
-denied, and `.go` edits need an open gograph session. Moves, copies and program
-output (`go run ./gen > x.go`) are allowed.
+`Bash` tool. It checks navigation only: besides the symbol-search redirect
+described here, region reads of `.go` files and Go text searches without a
+`# gograph-cannot: <reason>` comment are denied inside indexed repositories.
+Editing is not checked unless the opt-in `--deny-go-writes` or
+`--require-session` flags are added (see `gograph hook --help`).
 
 **Optional rules and other agents.** The `gograph hook-guard` command
 also works as a Codex and Antigravity `PreToolUse` hook (it detects the

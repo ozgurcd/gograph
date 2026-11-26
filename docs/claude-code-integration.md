@@ -148,20 +148,18 @@ This single command performs **three installation steps**:
 |---|---|---|
 | **MCP server** | Registers gograph in `claude_desktop_config.json` | macOS: `~/Library/Application Support/Claude/` |
 | **CLAUDE.md rules** | Injects steering rules Claude reads at every session start | `~/.claude/CLAUDE.md` |
-| **PreToolUse hook** | `gograph hook --agent claude` for `Bash` and `Edit\|Write\|MultiEdit\|NotebookEdit\|Read`: every gograph-first rule in indexed repositories (replaces the former `~/.claude/hooks/gograph-guard.sh` entry) | `~/.claude/settings.json` |
+| **PreToolUse hook** | `gograph hook --agent claude` for `Bash`: steers Go navigation (symbol searches, `.go` region reads, unexplained Go text searches) to gograph in indexed repositories (replaces the former `~/.claude/hooks/gograph-guard.sh` entry) | `~/.claude/settings.json` |
 
 The installer exits non-zero if any step fails. Restart Claude Desktop / Claude Code after successful installation. Claude Code MCP registration is still per project, as shown below.
 
 #### What the PreToolUse hook does
 
 `add-claude-plugin` registers `gograph hook --agent claude` for Claude Code's
-`Bash` tool and for its `Edit`, `Write`, `MultiEdit`, `NotebookEdit` and `Read`
-tools. Besides the symbol-search redirect described here, it applies every
-gograph-first rule inside indexed repositories: region reads of `.go` files,
-Go text searches without a `# gograph-cannot: <reason>` comment and text
-tools editing `.go` files (`sed -i`, redirects from `echo`/`cat`/heredocs) are
-denied, and `.go` edits need an open gograph session. Moves, copies and program
-output (`go run ./gen > x.go`) are allowed.
+`Bash` tool. It checks navigation only: besides the symbol-search redirect
+described here, region reads of `.go` files and Go text searches without a
+`# gograph-cannot: <reason>` comment are denied inside indexed repositories.
+Editing is not checked unless the opt-in `--deny-go-writes` or
+`--require-session` flags are added (see `gograph hook --help`).
 
 When Claude tries to `grep` for a Go symbol, the hook:
 
@@ -195,9 +193,11 @@ repositories: `--deny-go-writes`, `--deny-region-reads`, `--require-reason`
 `--strict` for all four; `--ask` asks the user instead of denying where the
 agent supports it. See
 [coding-agent usage](coding-agent-usage.md#optional-rules-and-other-agents).
-`gograph hook --agent claude|codex|opencode|agy` applies all four rules to
-each agent's shell, edit, write and patch tools, and `gograph hook --help`
-prints each agent's registration.
+`gograph hook --agent claude|codex|opencode|agy` applies the navigation rules
+(symbol searches, region reads, reasons on Go text searches) to each agent's
+shell tool, adds the editing rules only with `--deny-go-writes` /
+`--require-session`, and `gograph hook --help` prints each agent's
+registration.
 
 ### Claude Code (CLI) — Per-Project Registration
 

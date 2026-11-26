@@ -1034,9 +1034,10 @@ hook-guard [rules]   : PreToolUse hook for Claude Code, Codex and Antigravity â€
                        indexed-repository Go symbol greps to gograph. Opt-in rules:
                        --deny-go-writes, --deny-region-reads, --require-reason,
                        --require-session (--strict = all); --ask prompts instead of denying
-hook --agent A       : PreToolUse hook with every gograph-first rule for claude (default),
-                       codex, opencode and agy; fails closed on unreadable shell/write
-                       calls; --record DIR, --selftest DIR; --help prints registrations`)
+hook --agent A       : PreToolUse hook steering Go navigation (symbol searches, .go region
+                       reads, unexplained Go text searches) for claude (default), codex,
+                       opencode and agy; opt-in --deny-go-writes, --require-session;
+                       --record DIR, --selftest DIR; --help prints registrations`)
 	fmt.Println("\nCHANGE SELECTION\n" + search.CurrentChangeSelectionContract)
 	return 0
 }
@@ -4331,9 +4332,9 @@ AGENT INTEGRATION
                              counted correctly in audit totals.
   add-claude-plugin          Install gograph as a Claude MCP plugin. Also injects
                              CLAUDE.md steering rules and registers the PreToolUse
-                             hook "gograph hook --agent claude" in settings.json
-                             (Bash and Edit|Write|MultiEdit|NotebookEdit|Read),
-                             replacing the former gograph-guard.sh entry.
+                             hook "gograph hook --agent claude" for Bash in
+                             settings.json, replacing the former gograph-guard.sh
+                             entry.
                              Claude Code MCP registration still requires the printed
                              'claude mcp add' command. Partial installation exits non-zero.
   hook-guard [rules] [--ask] PreToolUse hook for Claude Code, Codex and Antigravity.
@@ -4363,19 +4364,24 @@ AGENT INTEGRATION
                              (reason on stderr); ask = JSON on stdout. Antigravity:
                              exit 0 with {"decision":"allow"|"deny"|"ask"} on stdout.
                              Not intended for direct human use.
-  hook [--agent A]           PreToolUse hook that applies every gograph-first rule
-                             to Claude Code (claude, default), Codex (codex),
+  hook [--agent A] [rules]   PreToolUse hook that steers Go navigation to gograph
+                             for Claude Code (claude, default), Codex (codex),
                              opencode (opencode) and Antigravity (agy). Reads the
                              agent's tool-call JSON from stdin. Inside a repository
                              with a .gograph index it denies Go symbol searches,
-                             region reads of .go files, Go text searches without a
-                             "# gograph-cannot: <reason>" comment, text tools
-                             editing .go files (sed -i, redirects from echo/cat;
-                             mv, cp and program output are allowed; a reason
-                             comment allows), and edits/writes/patches of .go files while
-                             no gograph session is open. A shell or write tool whose
-                             input cannot be read is denied; an unknown read-only
-                             tool is allowed. An unknown --agent exits 2.
+                             region reads of .go files (cat/head/sed/awk ...) and
+                             Go text searches without a
+                             "# gograph-cannot: <reason>" comment. Editing is not
+                             checked unless asked:
+                               --deny-go-writes   text tools editing .go files
+                                                  (sed -i, redirects from echo/cat;
+                                                  mv, cp and program output are
+                                                  allowed; a reason comment allows)
+                               --require-session  .go edits/writes/patches need an
+                                                  open gograph session
+                             A shell call whose input cannot be read is denied (a
+                             write call too, under an editing rule); an unknown
+                             read-only tool is allowed. An unknown --agent exits 2.
                              --record DIR: write the raw input to
                              DIR/<agent>-<time>.json (dir 0700, file 0600, strings
                              cut to 4 KiB) and allow the call.

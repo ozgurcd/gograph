@@ -147,7 +147,7 @@ gograph mcp [path] [--persist-refresh] [--tags=integration[,tag...]] [--exclude-
 gograph httpcalls [term]         # net/http calls + possible request construction; bounded pages, method/URL/base/function filter
 gograph add-claude-plugin        # install MCP server + CLAUDE.md rules + register `gograph hook --agent claude` (Claude Desktop & Claude Code)
 gograph hook-guard [rules]       # PreToolUse hook for Claude Code, Codex, Antigravity — blocks indexed-repository Go symbol greps; opt-in rules enforce gograph-first
-gograph hook --agent <A>         # PreToolUse hook with every gograph-first rule for claude, codex, opencode, agy; --record DIR, --selftest DIR; --help prints registrations
+gograph hook --agent <A>         # PreToolUse hook steering Go navigation for claude, codex, opencode, agy; opt-in --deny-go-writes, --require-session; --record DIR, --selftest DIR
 # --- CI ENFORCEMENT ---
 gograph gate                     # read regular non-linked project-root .gograph.yml and fail CI on threshold violations
 # --- SNAPSHOTS ---
@@ -173,18 +173,16 @@ Running `gograph add-claude-plugin` performs three installation steps in one com
 |---|---|---|
 | **MCP server** | Registers gograph so Claude has native tool access | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) |
 | **CLAUDE.md rules** | Injects steering instructions Claude reads at session start | `~/.claude/CLAUDE.md` |
-| **PreToolUse hook** | `gograph hook --agent claude` for `Bash` and `Edit\|Write\|MultiEdit\|NotebookEdit\|Read`: every gograph-first rule in indexed repositories (replaces the former `~/.claude/hooks/gograph-guard.sh` entry) | `~/.claude/settings.json` |
+| **PreToolUse hook** | `gograph hook --agent claude` for `Bash`: steers Go navigation (symbol searches, `.go` region reads, unexplained Go text searches) to gograph in indexed repositories (replaces the former `~/.claude/hooks/gograph-guard.sh` entry) | `~/.claude/settings.json` |
 
 ### How the hook works
 
 `add-claude-plugin` registers `gograph hook --agent claude` for Claude Code's
-`Bash` tool and for its `Edit`, `Write`, `MultiEdit`, `NotebookEdit` and `Read`
-tools. Besides the symbol-search redirect described here, it applies every
-gograph-first rule inside indexed repositories: region reads of `.go` files,
-Go text searches without a `# gograph-cannot: <reason>` comment and text
-tools editing `.go` files (`sed -i`, redirects from `echo`/`cat`/heredocs) are
-denied, and `.go` edits need an open gograph session. Moves, copies and program
-output (`go run ./gen > x.go`) are allowed.
+`Bash` tool. It checks navigation only: besides the symbol-search redirect
+described here, region reads of `.go` files and Go text searches without a
+`# gograph-cannot: <reason>` comment are denied inside indexed repositories.
+Editing is not checked unless the opt-in `--deny-go-writes` or
+`--require-session` flags are added (see `gograph hook --help`).
 
 For a `grep`/`rg` command (the same check `gograph hook-guard` makes) it:
 
@@ -261,23 +259,28 @@ search from the start.
 
 ### One hook for every agent: `gograph hook --agent`
 
-`gograph hook --agent claude|codex|opencode|agy` applies all of the rules
-above (as `hook-guard --strict` does) with no flags, the same way for every
-agent. Each agent's input is read into one common event (tool kind, command,
-paths, working directory, session), one shared rule set decides, and the
-answer is written in the agent's own format:
+`gograph hook --agent claude|codex|opencode|agy` steers Go navigation to
+gograph, the same way for every agent: inside indexed repositories it denies
+Go symbol searches, region reads of `.go` files and Go text searches without a
+`# gograph-cannot: <reason>` comment (`hook-guard --deny-region-reads
+--require-reason` with the symbol redirect). Editing is not checked unless
+asked: `--deny-go-writes` adds the text-tool edit rule and `--require-session`
+the session rule for `.go` edits, writes and patches. Each agent's input is
+read into one common event (tool kind, command, paths, working directory,
+session), one shared rule set decides, and the answer is written in the
+agent's own format:
 
-| Agent | Tools checked | Deny signal |
-|---|---|---|
-| `claude` (default) | `Bash`, `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, `Read` | exit 0, `hookSpecificOutput.permissionDecision` = `deny` |
-| `codex` | shell (`Bash`, `shell`, `local_shell`, `exec_command`), `apply_patch` (every `*** Add/Update/Delete File:` and `*** Move to:` path) | exit 2, reason on stderr |
-| `opencode` | `bash`, `edit`, `write`, `multiedit`, `apply_patch`, `read`, called from a plugin | `{"decision":"deny","reason":...}`; the plugin throws |
-| `agy` | `run_command`, `write_to_file`, `replace_file_content`, `multi_replace_file_content` | `{"decision":"deny","reason":...}` |
+| Agent | Tools checked | With `--require-session` also | Deny signal |
+|---|---|---|---|
+| `claude` (default) | `Bash` | `Edit`, `Write`, `MultiEdit`, `NotebookEdit` | exit 0, `hookSpecificOutput.permissionDecision` = `deny` |
+| `codex` | shell (`Bash`, `shell`, `local_shell`, `exec_command`) | `apply_patch` (every `*** Add/Update/Delete File:` and `*** Move to:` path) | exit 2, reason on stderr |
+| `opencode` | `bash`, called from a plugin | `edit`, `write`, `multiedit`, `apply_patch` | `{"decision":"deny","reason":...}`; the plugin throws |
+| `agy` | `run_command` | `write_to_file`, `replace_file_content`, `multi_replace_file_content` | `{"decision":"deny","reason":...}` |
 
-A shell or write-capable tool whose input cannot be read, and a malformed
-patch, are denied; an unknown read-only tool is allowed. A denial of a text-tool
-edit of a `.go` file names the agent's own edit tool. `gograph hook --help` prints the exact
-registration for each agent, including a minimal opencode plugin.
+A shell call whose input cannot be read is denied, and under an editing rule
+so is an unreadable write call or a malformed patch; an unknown read-only tool
+is allowed. `gograph hook --help` prints the exact registration for each
+agent, including a minimal opencode plugin.
 
 Agent formats are confirmed from recordings: `gograph hook --agent X --record DIR`
 writes each raw input to `DIR/<agent>-<time>.json` (strings cut to 4 KiB) and

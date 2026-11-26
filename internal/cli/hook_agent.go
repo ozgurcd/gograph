@@ -18,9 +18,12 @@ import (
 //   - read (per agent): the agent's tool-call JSON -> one hookEvent;
 //   - decide (shared): hookEvent -> hookVerdict; it never looks at the agent;
 //   - write (per agent): hookVerdict -> the agent's output and exit code.
-// Agent formats live only in read and write. A shell or write-capable tool
-// whose input cannot be parsed is denied (fail closed); an unknown read-only
-// tool is allowed.
+// Agent formats live only in read and write. By default only navigation is
+// checked (symbol searches, region reads, Go text searches without a reason);
+// --deny-go-writes and --require-session add the editing rules. A shell tool
+// whose input cannot be parsed is denied (fail closed), and so is a
+// write-capable one while an editing rule is on; an unknown read-only tool is
+// allowed.
 
 type hookToolKind string
 
@@ -148,9 +151,15 @@ func hookPatchEvent(event hookEvent, patch string) hookEvent {
 // any other name is treated as read-only.
 func hookUnknownTool(event hookEvent) hookEvent {
 	name := strings.ToLower(event.Tool)
-	for _, word := range []string{"bash", "shell", "exec", "command", "run", "terminal", "write", "edit", "patch", "replace", "create", "delete", "remove", "move", "rename"} {
+	for _, word := range []string{"bash", "shell", "exec", "command", "run", "terminal"} {
 		if strings.Contains(name, word) {
-			event.Unparsed = "unknown tool that may run commands or write files"
+			event.Kind, event.Unparsed = hookKindShell, "unknown tool that may run commands"
+			return event
+		}
+	}
+	for _, word := range []string{"write", "edit", "patch", "replace", "create", "delete", "remove", "move", "rename"} {
+		if strings.Contains(name, word) {
+			event.Kind, event.Unparsed = hookKindWrite, "unknown tool that may write files"
 			return event
 		}
 	}
@@ -391,21 +400,33 @@ func parseHookPatch(patch string) ([]string, error) {
 
 // ---------------------------------------------------------------- decide
 
-var hookAllStrictRules = hookGuardOptions{denyGoWrites: true, denyRegionReads: true, requireReason: true, requireSession: true}
+// hookRules selects the opt-in editing rules; the navigation rules are
+// always on.
+type hookRules struct {
+	denyGoWrites   bool // text tools editing .go files
+	requireSession bool // .go edits, writes and patches need a gograph session
+}
+
+func (rules hookRules) shellOptions() hookGuardOptions {
+	return hookGuardOptions{denyRegionReads: true, requireReason: true, denyGoWrites: rules.denyGoWrites}
+}
 
 // decideHookEvent applies the gograph-first rules. It never reads
 // event.Agent.
-func decideHookEvent(event hookEvent) hookVerdict {
+func decideHookEvent(event hookEvent, rules hookRules) hookVerdict {
+	editKind := event.Kind == hookKindEdit || event.Kind == hookKindWrite || event.Kind == hookKindMultiEdit || event.Kind == hookKindPatch
 	if event.Unparsed != "" {
+		if editKind && !rules.requireSession && !rules.denyGoWrites {
+			return hookVerdict{}
+		}
 		return hookVerdict{Deny: true, Reason: fmt.Sprintf("%s %s call — cannot read its input (%s). A tool that can run commands or write files is denied when its input cannot be checked.", hookStrictPrefix, event.Tool, event.Unparsed)}
 	}
-	cwd := event.CWD
-	switch event.Kind {
-	case hookKindShell:
-		reason := evaluateHookStrictShell(event.Command, cwd, hookAllStrictRules)
+	switch {
+	case event.Kind == hookKindShell:
+		reason := evaluateHookStrictShell(event.Command, event.CWD, rules.shellOptions())
 		return hookVerdict{Deny: reason != "", Reason: reason, UseEditTool: strings.HasPrefix(reason, hookStrictPrefix+" .go write")}
-	case hookKindEdit, hookKindWrite, hookKindMultiEdit, hookKindPatch:
-		reason := evaluateHookStrictEdit(event.Paths, cwd)
+	case editKind && rules.requireSession:
+		reason := evaluateHookStrictEdit(event.Paths, event.CWD)
 		return hookVerdict{Deny: reason != "", Reason: reason}
 	}
 	return hookVerdict{}
@@ -471,8 +492,17 @@ func runHook(args []string) int {
 
 func runHookWith(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	agentName, recordDir, selftestDir := "claude", "", ""
+	var rules hookRules
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
+		switch arg {
+		case "--deny-go-writes":
+			rules.denyGoWrites = true
+			continue
+		case "--require-session":
+			rules.requireSession = true
+			continue
+		}
 		name, value, hasValue := strings.Cut(arg, "=")
 		switch name {
 		case "--agent", "--record", "--selftest":
@@ -503,7 +533,7 @@ func runHookWith(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if selftestDir != "" {
-		return runHookSelftest(selftestDir, stdout, stderr)
+		return runHookSelftest(selftestDir, rules, stdout, stderr)
 	}
 	raw, err := io.ReadAll(io.LimitReader(stdin, 64<<20))
 	if err != nil {
@@ -515,21 +545,22 @@ func runHookWith(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return spec.write(hookVerdict{}, stdout, stderr)
 	}
-	return spec.write(evaluateHookInput(spec, raw), stdout, stderr)
+	return spec.write(evaluateHookInput(spec, raw, rules), stdout, stderr)
 }
 
 // evaluateHookInput runs read and decide for one agent's raw input.
-func evaluateHookInput(spec hookAgentSpec, raw []byte) hookVerdict {
+func evaluateHookInput(spec hookAgentSpec, raw []byte, rules hookRules) hookVerdict {
 	event, err := spec.read(raw)
 	if err != nil {
-		event = hookEvent{Agent: spec.name, Tool: "unknown", Unparsed: err.Error()}
+		// Unreadable input may be a shell call: fail closed.
+		event = hookEvent{Agent: spec.name, Kind: hookKindShell, Tool: "unknown", Unparsed: err.Error()}
 	}
 	if event.CWD == "" {
 		if wd, err := os.Getwd(); err == nil {
 			event.CWD = wd
 		}
 	}
-	decision := decideHookEvent(event)
+	decision := decideHookEvent(event, rules)
 	if decision.Deny {
 		decision.Reason = hookReasonFor(spec, decision)
 		decision.UseEditTool = false
@@ -590,7 +621,7 @@ func truncateHookStrings(value any) any {
 // runHookSelftest replays dir/verdicts.tsv: each line is
 // "<agent>/<file>\t<allow|deny>[\t<reason substring>]", the file relative
 // to dir. Every *.json under dir/<agent>/ must have a row.
-func runHookSelftest(dir string, stdout, stderr io.Writer) int {
+func runHookSelftest(dir string, rules hookRules, stdout, stderr io.Writer) int {
 	table, err := os.Open(filepath.Join(dir, "verdicts.tsv"))
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "gograph hook: selftest: %v\n", err)
@@ -622,7 +653,7 @@ func runHookSelftest(dir string, stdout, stderr io.Writer) int {
 		} else if raw, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(fixture))); err != nil {
 			detail = err.Error()
 		} else {
-			decision := evaluateHookInput(spec, raw)
+			decision := evaluateHookInput(spec, raw, rules)
 			got, detail = "allow", ""
 			if decision.Deny {
 				got, detail = "deny", decision.Reason
@@ -667,31 +698,41 @@ func printHookHelp(stdout io.Writer) {
 }
 
 const hookRegistrationHelp = `
+EDITING RULES (opt-in; navigation is always checked)
+  --deny-go-writes   deny text tools editing .go files (sed -i, perl -i,
+                     awk -i inplace, a redirect or tee fed by echo, printf,
+                     cat, a heredoc, sed, awk ...); mv, cp and program
+                     output stay allowed; "# gograph-cannot: <reason>" allows
+  --require-session  deny edits, writes and patches of .go files while no
+                     gograph session is open; register the edit tools too
+                     (the matchers marked "with --require-session" below)
+
 REGISTRATION
   Claude Code (~/.claude/settings.json):
     {
       "hooks": {
         "PreToolUse": [
           {"matcher": "Bash",
-           "hooks": [{"type": "command", "command": "gograph hook --agent claude"}]},
-          {"matcher": "Edit|Write|MultiEdit|NotebookEdit|Read",
            "hooks": [{"type": "command", "command": "gograph hook --agent claude"}]}
         ]
       }
     }
+    with --require-session, add the group
+          {"matcher": "Edit|Write|MultiEdit|NotebookEdit", ...}
 
   Codex (~/.codex/config.toml):
     [[hooks.PreToolUse]]
-    matcher = "^(Bash|shell|local_shell|exec_command|apply_patch)$"
+    matcher = "^(Bash|shell|local_shell|exec_command)$"
     [[hooks.PreToolUse.hooks]]
     type = "command"
     command = "gograph hook --agent codex"
+    with --require-session, match "^(Bash|shell|local_shell|exec_command|apply_patch)$"
 
   opencode (plugin, e.g. ~/.config/opencode/plugin/gograph-hook.js):
     export const GographHook = async ({ $, directory }) => ({
       "tool.execute.before": async (input, output) => {
-        // bash, edit, write, multiedit, apply_patch and read are checked;
-        // other tools are allowed by the hook.
+        // bash is checked; with --require-session also edit, write,
+        // multiedit and apply_patch. Other tools are allowed by the hook.
         const event = JSON.stringify({ tool: input.tool, sessionID: input.sessionID,
                                        cwd: directory, args: output.args });
         const run = await $` + "`" + `gograph hook --agent opencode < ${new Response(event)}` + "`" + `.quiet().nothrow();
@@ -704,10 +745,12 @@ REGISTRATION
   Antigravity (~/.gemini/config/hooks.json):
     {
       "PreToolUse": [
-        {"matcher": "run_command|write_to_file|replace_file_content|multi_replace_file_content",
+        {"matcher": "run_command",
          "hooks": [{"type": "command", "command": "gograph hook --agent agy"}]}
       ]
     }
+    with --require-session, match
+      "run_command|write_to_file|replace_file_content|multi_replace_file_content"
 
 OUTPUT
   claude: allow = exit 0, no output; deny = exit 0 with

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -167,13 +168,14 @@ func installCLAUDEmd(home string) error {
 // registers.
 const claudeHookCommand = "gograph hook --agent claude"
 
-// claudeHookMatchers are the tool groups the hook is registered for.
-var claudeHookMatchers = []string{"Bash", "Edit|Write|MultiEdit|NotebookEdit|Read"}
+// claudeHookMatchers are the tool groups the hook is registered for. The
+// default hook checks navigation only, which runs through Bash.
+var claudeHookMatchers = []string{"Bash"}
 
 // installHook registers `gograph hook --agent claude` in
-// ~/.claude/settings.json for the shell group and the edit/write/read group.
-// It removes the entry of the former ~/.claude/hooks/gograph-guard.sh and
-// deletes that script when it is unchanged, so no call is checked twice.
+// ~/.claude/settings.json for the Bash group, and drops it from any other
+// group. It removes the entry of the former ~/.claude/hooks/gograph-guard.sh
+// and deletes that script when it is unchanged, so no call is checked twice.
 func installHook(home string) error {
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
 	var settings map[string]interface{}
@@ -192,7 +194,9 @@ func installHook(home string) error {
 	}
 	preToolUse, _ := hooks["PreToolUse"].([]interface{})
 	legacyScript := filepath.Join(home, ".claude", "hooks", "gograph-guard.sh")
-	preToolUse = removeClaudeHookCommand(preToolUse, legacyScript)
+	preToolUse = removeClaudeHooks(preToolUse, func(matcher, command string) bool {
+		return command == legacyScript || command == claudeHookCommand && !slices.Contains(claudeHookMatchers, matcher)
+	})
 
 	registered := map[string]bool{}
 	for _, entry := range preToolUse {
@@ -235,9 +239,9 @@ func installHook(home string) error {
 	return nil
 }
 
-// removeClaudeHookCommand drops every hook that runs command, and groups
-// left with no hook.
-func removeClaudeHookCommand(groups []interface{}, command string) []interface{} {
+// removeClaudeHooks drops every hook for which drop(matcher, command) is
+// true, and groups left with no hook.
+func removeClaudeHooks(groups []interface{}, drop func(matcher, command string) bool) []interface{} {
 	kept := groups[:0]
 	for _, entry := range groups {
 		group, ok := entry.(map[string]interface{})
@@ -246,9 +250,12 @@ func removeClaudeHookCommand(groups []interface{}, command string) []interface{}
 			kept = append(kept, entry)
 			continue
 		}
+		matcher, _ := group["matcher"].(string)
 		remaining := make([]interface{}, 0, len(inner))
 		for _, hook := range inner {
-			if fields, _ := hook.(map[string]interface{}); fields["command"] != command {
+			fields, _ := hook.(map[string]interface{})
+			command, _ := fields["command"].(string)
+			if !drop(matcher, command) {
 				remaining = append(remaining, hook)
 			}
 		}
