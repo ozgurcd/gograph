@@ -14,8 +14,11 @@ import (
 // Opt-in gograph-first rules for hook-guard. Each rule has its own flag and
 // --strict enables all of them. Inside a gograph root (a module root with a
 // .gograph index) they deny, besides symbol searches:
-//   - --deny-go-writes: shell writes to .go files (redirects, sed -i,
-//     perl -i, tee, cp, mv, install, ln, dd of=, truncate);
+//   - --deny-go-writes: text tools used as a .go editor (sed -i, perl -i,
+//     awk -i inplace, and a redirect or tee into a .go file fed by a text
+//     tool such as echo, printf, cat or a heredoc), unless the command
+//     carries a reason comment; moves, copies and program output
+//     (go run ./gen > x.go) stay allowed;
 //   - --deny-region-reads: region reads of working-tree .go files (cat,
 //     head, tail, less, more, nl, sed, awk, perl -n), unless only counted
 //     or hashed;
@@ -40,9 +43,21 @@ var hookCountSinks = map[string]bool{
 	"sha256sum": true, "sha512sum": true, "cksum": true, "b2sum": true,
 }
 
+// hookTextWriters are the tools whose output into a .go file is a hand edit
+// (--deny-go-writes). Program output (go run, generators) is not.
+var hookTextWriters = map[string]bool{
+	"echo": true, "printf": true, "cat": true, "sed": true, "awk": true, "gawk": true,
+	"perl": true, "tr": true, "cut": true, "sort": true, "uniq": true, "head": true,
+	"tail": true, "nl": true, "paste": true, "rev": true, "column": true, "fmt": true,
+}
+
+// hookGitEmitsSource are the git subcommands whose output is file content.
+var hookGitEmitsSource = map[string]bool{"show": true, "diff": true, "cat-file": true}
+
 var hookGoEmitters = map[string]bool{
 	"cat": true, "git": true, "sort": true, "uniq": true, "head": true,
 	"tail": true, "sed": true, "awk": true, "cut": true, "tr": true, "nl": true,
+	"strings": true,
 }
 
 // hookGuardOptions selects the opt-in rules and how a denial is delivered.
@@ -101,8 +116,9 @@ func (ctx hookStrictContext) dirInsideRoot() bool {
 func evaluateHookStrictShell(command, cwd string, options hookGuardOptions) string {
 	commands, ok := splitHookShell(command)
 	if !ok {
-		return ""
+		commands = hookQuoteBlindSplit(command)
 	}
+	commands = expandHookCommands(commands)
 	hasReason := hookReasonPattern.MatchString(command)
 	ctx := hookStrictContext{dir: cwd, dirKnown: cwd != ""}
 	for index, current := range commands {
@@ -115,8 +131,12 @@ func evaluateHookStrictShell(command, cwd string, options hookGuardOptions) stri
 		if current.name() == "git" {
 			local, argv = hookStrictGitDir(ctx, argv)
 		}
-		if options.denyGoWrites {
-			if reason := hookStrictWrite(local, current, argv); reason != "" {
+		if options.denyGoWrites && !hasReason {
+			var upstream string
+			if current.pipeIn && index > 0 {
+				upstream = commands[index-1].name()
+			}
+			if reason := hookStrictWrite(local, current, argv, upstream); reason != "" {
 				return reason
 			}
 		}
@@ -125,7 +145,7 @@ func evaluateHookStrictShell(command, cwd string, options hookGuardOptions) stri
 		if piped {
 			sink = commands[index+1].name()
 		}
-		if options.denyRegionReads && !options.allowRegionReads {
+		if options.denyRegionReads && !options.allowRegionReads && !hasReason {
 			if reason := hookStrictRegionRead(local, current, argv, sink); reason != "" {
 				return reason
 			}
@@ -238,16 +258,22 @@ func hookGoOperands(argv []string) []string {
 	return paths
 }
 
-func hookStrictWrite(ctx hookStrictContext, command hookShellCommand, argv []string) string {
-	for _, redirect := range command.redirects {
-		if command.isOutputRedirect(redirect) && hookIsGoPath(redirect.target) && ctx.insideRoot(redirect.target) {
-			return hookStrictWriteMessage(redirect.target, "an output redirect")
+// hookStrictWrite denies a text tool used as a .go editor: an in-place
+// sed/perl/awk edit, or a redirect or tee into a .go file whose content comes
+// from a text tool (a bare redirect counts). upstream names the command
+// piping into this one.
+func hookStrictWrite(ctx hookStrictContext, command hookShellCommand, argv []string, upstream string) string {
+	name := command.name()
+	if name == "" || hookTextWriters[name] {
+		for _, redirect := range command.redirects {
+			if command.isOutputRedirect(redirect) && hookIsGoPath(redirect.target) && ctx.insideRoot(redirect.target) {
+				return hookStrictWriteMessage(redirect.target, "an output redirect from "+hookWriterName(name))
+			}
 		}
 	}
 	if len(argv) == 0 {
 		return ""
 	}
-	name := command.name()
 	var targets []string
 	switch name {
 	case "sed":
@@ -258,18 +284,13 @@ func hookStrictWrite(ctx hookStrictContext, command hookShellCommand, argv []str
 		if hookHasInPlaceFlag(argv, true) {
 			targets = hookGoOperands(argv)
 		}
-	case "tee", "truncate":
-		targets = hookGoOperands(argv)
-	case "cp", "mv", "install", "ln":
-		operands := hookNonOptionOperands(argv)
-		if len(operands) >= 2 && hookIsGoPath(operands[len(operands)-1]) {
-			targets = operands[len(operands)-1:]
+	case "awk", "gawk":
+		if hookAwkInPlace(argv) {
+			targets = hookGoOperands(argv)
 		}
-	case "dd":
-		for _, argument := range argv[1:] {
-			if value, ok := strings.CutPrefix(argument, "of="); ok && hookIsGoPath(value) {
-				targets = append(targets, value)
-			}
+	case "tee":
+		if upstream == "" || hookTextWriters[upstream] {
+			targets = hookGoOperands(argv)
 		}
 	}
 	for _, target := range targets {
@@ -278,6 +299,26 @@ func hookStrictWrite(ctx hookStrictContext, command hookShellCommand, argv []str
 		}
 	}
 	return ""
+}
+
+func hookWriterName(name string) string {
+	if name == "" {
+		return "the shell"
+	}
+	return name
+}
+
+// hookAwkInPlace reports gawk's "-i inplace" / "--include=inplace".
+func hookAwkInPlace(argv []string) bool {
+	for index, argument := range argv[1:] {
+		switch {
+		case (argument == "-i" || argument == "--include") && index+2 < len(argv) && strings.HasPrefix(argv[index+2], "inplace"):
+			return true
+		case strings.HasPrefix(argument, "--include=inplace") || strings.HasPrefix(argument, "-iinplace"):
+			return true
+		}
+	}
+	return false
 }
 
 func hookHasInPlaceFlag(argv []string, perl bool) bool {
@@ -308,26 +349,13 @@ func hookHasInPlaceFlag(argv []string, perl bool) bool {
 	return false
 }
 
-func hookNonOptionOperands(argv []string) []string {
-	var operands []string
-	options := true
-	for _, argument := range argv[1:] {
-		if options && argument == "--" {
-			options = false
-			continue
-		}
-		if options && strings.HasPrefix(argument, "-") && argument != "-" {
-			continue
-		}
-		operands = append(operands, argument)
-	}
-	return operands
-}
-
 func hookStrictWriteMessage(target, via string) string {
 	return fmt.Sprintf(`%s .go write — %s writes %s.
-  Edit Go source with the agent's edit tool (Edit/Write, apply_patch,
-  replace_file_content), not a shell writer.`, hookStrictPrefix, via, target)
+  Edit Go source with the agent's edit tool, not a text tool.
+  Moves, copies and program output (go run ./gen > x.go) are allowed.
+  If a text tool is needed (for example one rename across many files),
+  state why in the command itself:
+    <command>  # gograph-cannot: <why the edit tool cannot do this>`, hookStrictPrefix, via, target)
 }
 
 func hookStrictRegionRead(ctx hookStrictContext, command hookShellCommand, argv []string, sink string) string {
@@ -350,10 +378,13 @@ func hookStrictRegionRead(ctx hookStrictContext, command hookShellCommand, argv 
 	for _, target := range targets {
 		if ctx.insideRoot(target) {
 			return fmt.Sprintf(`%s .go region read — %s reads %s.
+  To find a declaration: gograph query <Symbol>
   For a declaration body: gograph source <pkg.Symbol>
   For context around a symbol: gograph context <Symbol>
-  For an arbitrary region: the agent's file-read tool with offset/limit.
-  Counts and checksums (| wc, | sha256sum) and git show/diff stay allowed.`, hookStrictPrefix, name, target)
+  For an arbitrary region: the Read tool (the agent's file-read tool) with offset/limit.
+  Counts and checksums (| wc, | sha256sum) and git show/diff stay allowed.
+  If gograph and the Read tool cannot serve it, state why in the command:
+    <command>  # gograph-cannot: <reason>`, hookStrictPrefix, name, target)
 		}
 	}
 	return ""
@@ -373,6 +404,9 @@ func hookEmitsGo(command hookShellCommand) bool {
 	name := command.name()
 	if !hookGoEmitters[name] {
 		return false
+	}
+	if name == "git" && (len(command.argv) < 2 || !hookGitEmitsSource[command.argv[1]]) {
+		return false // git log, blame, status, ... print history, not source
 	}
 	for _, argument := range command.argv[1:] {
 		if strings.HasSuffix(argument, ".go") {
@@ -407,6 +441,9 @@ func hookStrictSearch(command string, ctx hookStrictContext, current hookShellCo
 	if upstreamGo && len(invocation.paths) == 0 {
 		invocation.inputPaths = append(invocation.inputPaths, "stdin.go")
 	}
+	if current.pipeIn && !upstreamGo && len(invocation.paths) == 0 && len(invocation.inputPaths) == 0 {
+		return "" // reads the output of a command that does not print Go source
+	}
 	inside := ctx.dirInsideRoot()
 	if ctx.dirKnown && !upstreamGo {
 		inside = hookSearchesIndexedRepository(invocation, ctx.dir)
@@ -422,9 +459,10 @@ func hookStrictSearch(command string, ctx hookStrictContext, current hookShellCo
 		return ""
 	}
 	return fmt.Sprintf(`%s text search over Go source without a reason.
+  A text search over Go source must be preceded by a one-line statement of why gograph cannot answer it.
   First ask gograph (gograph query/context/callers/usages/strings/literals).
   If gograph cannot answer, state why in the command itself:
-    <command>  # gograph-cannot: <why gograph cannot answer this>`, hookStrictPrefix)
+    <command>  # gograph-cannot: <reason>`, hookStrictPrefix)
 }
 
 // hookSearchArgv maps grep, rg, ag and git grep to a grep/rg argv.
@@ -441,8 +479,18 @@ func hookSearchArgv(current hookShellCommand, argv []string) ([]string, bool, bo
 			out = append([]string{"grep", "-F"}, argv[1:]...)
 		}
 		return out, false, true
-	case "rg", "ag":
+	case "rg":
 		return append([]string{"rg"}, argv[1:]...), false, true
+	case "ag":
+		out := []string{"rg"}
+		for _, argument := range argv[1:] {
+			if argument == "--go" {
+				out = append(out, "-t", "go") // ag's file-type flag
+				continue
+			}
+			out = append(out, argument)
+		}
+		return out, false, true
 	case "git":
 		if len(argv) >= 2 && argv[1] == "grep" {
 			return append([]string{"grep"}, argv[2:]...), true, true

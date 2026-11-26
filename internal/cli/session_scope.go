@@ -22,7 +22,7 @@ func callerCommandRoot(args []string) string {
 // per-tool-call hook guard never adopt.
 func callerAdoptsImplicitSession(args []string) bool {
 	switch args[0] {
-	case "mcp", "hook-guard":
+	case "mcp", "hook-guard", "hook":
 		return false
 	case "session", "--session":
 		if len(args) < 2 {

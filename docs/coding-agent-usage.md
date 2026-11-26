@@ -145,8 +145,10 @@ gograph mcp [path] [--persist-refresh] [--tags=integration[,tag...]] [--exclude-
                                  # memory options match CLI build/refresh semantics; use the
                                  # same GOWORK/GOFLAGS/tags as the persisted graph
 gograph httpcalls [term]         # net/http calls + possible request construction; bounded pages, method/URL/base/function filter
-gograph add-claude-plugin        # install MCP server + CLAUDE.md rules + PreToolUse hook (Claude Desktop & Claude Code)
+gograph add-claude-plugin        # install MCP server + CLAUDE.md rules + register `gograph hook --agent claude` (Claude Desktop & Claude Code)
 gograph hook-guard [rules]       # PreToolUse hook for Claude Code, Codex, Antigravity — blocks indexed-repository Go symbol greps; opt-in rules enforce gograph-first
+gograph hook --agent A [rules]   # PreToolUse hook for claude, codex, opencode, agy — steers Go navigation (symbol searches, .go region reads, unexplained Go text searches) to gograph; editing rules opt-in
+gograph hook --agent <A>         # PreToolUse hook steering Go navigation for claude, codex, opencode, agy; opt-in --deny-go-writes, --require-session; --record DIR, --selftest DIR
 # --- CI ENFORCEMENT ---
 gograph gate                     # read regular non-linked project-root .gograph.yml and fail CI on threshold violations
 # --- SNAPSHOTS ---
@@ -172,11 +174,18 @@ Running `gograph add-claude-plugin` performs three installation steps in one com
 |---|---|---|
 | **MCP server** | Registers gograph so Claude has native tool access | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) |
 | **CLAUDE.md rules** | Injects steering instructions Claude reads at session start | `~/.claude/CLAUDE.md` |
-| **PreToolUse hook** | Intercepts broad `grep`/`rg` Go-symbol searches in indexed repositories and suggests structural tools | `~/.claude/hooks/gograph-guard.sh` + `~/.claude/settings.json` |
+| **PreToolUse hook** | `gograph hook --agent claude` for `Bash`: steers Go navigation (symbol searches, `.go` region reads, unexplained Go text searches) to gograph in indexed repositories (replaces the former `~/.claude/hooks/gograph-guard.sh` entry) | `~/.claude/settings.json` |
 
 ### How the hook works
 
-The hook (`gograph hook-guard`) is invoked automatically by Claude Code before every `Bash` tool call. It:
+`add-claude-plugin` registers `gograph hook --agent claude` for Claude Code's
+`Bash` tool. It checks navigation only: besides the symbol-search redirect
+described here, region reads of `.go` files and Go text searches without a
+`# gograph-cannot: <reason>` comment are denied inside indexed repositories.
+Editing is not checked unless the opt-in `--deny-go-writes` or
+`--require-session` flags are added (see `gograph hook --help`).
+
+For a `grep`/`rg` command (the same check `gograph hook-guard` makes) it:
 
 1. Reads the tool call JSON from stdin.
 2. Checks if the command is `grep` or `rg`.
@@ -201,9 +210,9 @@ the hook command:
 
 | Flag | Denies |
 |---|---|
-| `--deny-go-writes` | shell writes to `.go` files: output redirects, `sed -i`, `perl -i`, `tee`, `cp`/`mv`/`install`/`ln` onto a `.go` path, `dd of=`, `truncate` |
-| `--deny-region-reads` | `cat`, `head`, `tail`, `less`, `more`, `nl`, `sed`, `awk`, `perl -n` of working-tree `.go` files, unless piped into `wc` or a checksum; `git show rev:x.go` and `git diff` stay allowed. Not applied to Codex, which has no separate file-read tool |
-| `--require-reason` | `grep`/`rg`/`ag`/`git grep` text searches over Go source without a `# gograph-cannot: <reason>` comment (counts and `-l` listings pass) |
+| `--deny-go-writes` | text tools used as a `.go` editor: `sed -i`, `perl -i`, `awk -i inplace`, and an output redirect or `tee` into a `.go` file fed by a text tool (`echo`, `printf`, `cat`, a heredoc, `sed`, `awk`, `perl`, `tr`, `cut`, `sort`, `head`, `tail`, ...) or a bare redirect. `mv`, `cp`, `install`, `ln`, `dd`, `truncate` and program output (`go run ./gen > x.go`, `git show HEAD:x.go > x.go`) are allowed; a `# gograph-cannot: <reason>` comment allows the call |
+| `--deny-region-reads` | `cat`, `head`, `tail`, `less`, `more`, `nl`, `sed`, `awk`, `perl -n` of working-tree `.go` files, unless piped into `wc` or a checksum or the command carries a `# gograph-cannot: <reason>` comment; `git show rev:x.go` and `git diff` stay allowed. Not applied to Codex, which has no separate file-read tool |
+| `--require-reason` | `grep`/`rg`/`ag`/`git grep` text searches over Go source without a `# gograph-cannot: <reason>` comment (counts and `-l` listings pass). Lowercase snake_case patterns (an SQL table, a JSON key) are literals that need a reason, not symbol questions; a declaration head (`func X`, `type X`) or a call site (`X(`) is a symbol question even with a reason. A search with no path that reads a pipe from a command not printing Go source (`go test ./... \| rg X`, `git status \| grep X`, `git log/blame x.go \| grep X`) is allowed |
 | `--require-session` | edits of `.go` files while no gograph session is open (`gograph session create`) |
 | `--strict` | all four |
 
@@ -214,7 +223,14 @@ user, not the model.
 
 It follows `cd` and `git -C`; a `cd` into `$VAR`, `cd -`, `popd`, or a `cd`
 in a pipe, subshell or background job makes the directory unknown, and an
-unknown directory keeps the blocking judgement. Heredoc bodies are data.
+unknown directory keeps the blocking judgement. Heredoc bodies are data,
+except a shell's own heredoc program. Commands hidden behind shell syntax are
+judged too: bodies of `for`/`if`/`while`, a `for` variable's words, `sh -c` /
+`bash -c` scripts, `eval`, `xargs <cmd>` and `find ... -exec <cmd> {} +` fed
+by a Go file listing, and the shell commands a `python`/`perl`/`ruby`
+program runs (`subprocess`, `os.system`, `system`, backticks). A line with an
+unbalanced quote is split without regard to quotes, so it cannot hide a
+command.
 
 The same binary serves three agents; it detects the payload format:
 
@@ -248,6 +264,37 @@ The hook is steering, not a correctness boundary. If graph precision is
 verify with `gopls` or a targeted source/text search and disclose that fallback.
 Literal, comment, generated/non-indexed, and non-Go searches belong in text
 search from the start.
+
+### One hook for every agent: `gograph hook --agent`
+
+`gograph hook --agent claude|codex|opencode|agy` steers Go navigation to
+gograph, the same way for every agent: inside indexed repositories it denies
+Go symbol searches, region reads of `.go` files and Go text searches without a
+`# gograph-cannot: <reason>` comment (`hook-guard --deny-region-reads
+--require-reason` with the symbol redirect). Editing is not checked unless
+asked: `--deny-go-writes` adds the text-tool edit rule and `--require-session`
+the session rule for `.go` edits, writes and patches. Each agent's input is
+read into one common event (tool kind, command, paths, working directory,
+session), one shared rule set decides, and the answer is written in the
+agent's own format:
+
+| Agent | Tools checked | With `--require-session` also | Deny signal |
+|---|---|---|---|
+| `claude` (default) | `Bash` | `Edit`, `Write`, `MultiEdit`, `NotebookEdit` | exit 0, `hookSpecificOutput.permissionDecision` = `deny` |
+| `codex` | shell (`Bash`, `shell`, `local_shell`, `exec_command`) | `apply_patch` (every `*** Add/Update/Delete File:` and `*** Move to:` path) | exit 2, reason on stderr |
+| `opencode` | `bash`, called from a plugin | `edit`, `write`, `multiedit`, `apply_patch` | `{"decision":"deny","reason":...}`; the plugin throws |
+| `agy` | `run_command` | `write_to_file`, `replace_file_content`, `multi_replace_file_content` | `{"decision":"deny","reason":...}` |
+
+A shell call whose input cannot be read is denied, and under an editing rule
+so is an unreadable write call or a malformed patch; an unknown read-only tool
+is allowed. `gograph hook --help` prints the exact registration for each
+agent, including a minimal opencode plugin.
+
+Agent formats are confirmed from recordings: `gograph hook --agent X --record DIR`
+writes each raw input to `DIR/<agent>-<time>.json` (strings cut to 4 KiB) and
+allows the call. Until an agent has recorded fixtures, its denials say
+`no fixture-backed format for <agent>`. `gograph hook --selftest DIR` replays
+recorded inputs against `DIR/verdicts.tsv`.
 
 ## Concrete agent workflows
 
@@ -1127,7 +1174,7 @@ its CLI operation:
 - **`gograph_workspace_path`** ↔ `gograph workspace path`
 - **`gograph_workspace_impact`** ↔ `gograph workspace impact`
 
-> **CLI/MCP parity:** Every repository query, analysis, and workflow command, including boundary baseline creation, has a project-MCP equivalent. The normal mapping is `<command>` → `gograph_<command>`; `contract`, `boundaries --create`, and session actions use the special mappings in the [complete transport matrix](../docs-site/content/docs/command-reference.md#cli--mcp-transport-matrix). The intentional CLI-only surface is `build`, `validate`, `doctor`, `gate`, `snapshot`, `add-claude-plugin`, `hook-guard`, project/workspace MCP startup, workspace build/member refresh, and `help`; these publish artifacts, inspect/configure the host installation, enforce process exit status, or start the host integration. The standalone `version` command has no MCP tool, but `gograph_capabilities` exposes the running server version. Presentation remains transport-specific: CLI output flags map to MCP parameters or JSON text rather than byte-identical output.
+> **CLI/MCP parity:** Every repository query, analysis, and workflow command, including boundary baseline creation, has a project-MCP equivalent. The normal mapping is `<command>` → `gograph_<command>`; `contract`, `boundaries --create`, and session actions use the special mappings in the [complete transport matrix](../docs-site/content/docs/command-reference.md#cli--mcp-transport-matrix). The intentional CLI-only surface is `build`, `validate`, `doctor`, `gate`, `snapshot`, `add-claude-plugin`, `hook-guard`, `hook`, project/workspace MCP startup, workspace build/member refresh, and `help`; these publish artifacts, inspect/configure the host installation, enforce process exit status, or start the host integration. The standalone `version` command has no MCP tool, but `gograph_capabilities` exposes the running server version. Presentation remains transport-specific: CLI output flags map to MCP parameters or JSON text rather than byte-identical output.
 
 ## Recommended project setup
 
@@ -1197,7 +1244,7 @@ Each agent shell command is a new process, so `GOGRAPH_SESSION` is often not set
 A forgotten session expires on its own. Before anything else, every CLI command and MCP call ends other callers' CLI sessions that recorded no activity for `GOGRAPH_SESSION_IDLE_LIMIT` (default `2h`; `0` or `off` disables), and sessions of MCP servers that have exited on this host. Each ended session gets a `stale` end record, and the command names it on stderr. Refused calls, such as a missing `--intention`, do not count as activity. A call's own selected session is never ended; if it was ended while its owner was away, the owner's next call says so.
 
 ### 4. Telemetry Log Architecture (Append-Only JSONL)
-CLI and MCP analysis invocations during an active session are logged inside `.gograph/sessions/session_<session_id>.jsonl`. Session lifecycle/MCP startup calls and successful `hook-guard` checks are excluded.
+CLI and MCP analysis invocations during an active session are logged inside `.gograph/sessions/session_<session_id>.jsonl`. Session lifecycle/MCP startup calls, successful `hook-guard` checks and every `hook` call are excluded.
 To ensure architectural cleanliness and avoid heavy I/O operations or disk bloat, **raw query results are never logged**. Only telemetry metadata is captured:
 - Command name and arguments
 - Technical intention (`-i` / `--intention`)

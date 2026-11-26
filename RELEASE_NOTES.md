@@ -1,5 +1,49 @@
 # Release Notes
 
+## v1.7.26 — 2026-11-26
+
+One hook for every coding agent, steering Go navigation to gograph.
+
+New:
+
+- `gograph hook --agent claude|codex|opencode|agy` is a `PreToolUse` hook that
+  applies one rule set to Claude Code, Codex, opencode and Antigravity. Inside
+  a repository with a `.gograph` index it denies Go symbol searches, region
+  reads of `.go` files and Go text searches without a
+  `# gograph-cannot: <reason>` comment. Commands inside loops, `sh -c`,
+  `eval`, `xargs`, `find -exec`, shell heredocs and `python`/`perl`/`ruby`
+  shell calls are judged too. Editing is checked only with `--deny-go-writes`
+  or `--require-session`. A shell call whose input cannot be read is denied.
+  `--record DIR` saves raw agent input, `--selftest DIR` replays verdicts, and
+  `gograph hook --help` prints each agent's registration. Until an agent's
+  input format is backed by recorded fixtures, its denials say
+  `no fixture-backed format for <agent>`.
+
+Behavior changes:
+
+- `gograph add-claude-plugin` now registers `gograph hook --agent claude` for
+  the `Bash` tool in `~/.claude/settings.json`, removes the entry for the
+  former `~/.claude/hooks/gograph-guard.sh` (a `hook-guard` wrapper) and
+  deletes that script when it is unchanged.
+- `hook-guard --deny-go-writes` is narrowed to text tools used as a `.go`
+  editor (`sed -i`, `perl -i`, `awk -i inplace`, a redirect or `tee` fed by
+  `echo`, `printf`, `cat`, a heredoc, `sed`, `awk` ...). `mv`, `cp`,
+  `install`, `ln`, `dd`, `truncate` and program output are allowed, and a
+  `# gograph-cannot: <reason>` comment allows the call.
+- `hook-guard --deny-region-reads` allows a region read that carries a
+  `# gograph-cannot: <reason>` comment.
+- `hook-guard` treats a declaration-head or call-site search (for example
+  `grep "func Name"`) as a symbol search even with a
+  `# gograph-cannot: <reason>` comment. With `--deny-go-writes`,
+  `--deny-region-reads` or `--require-reason` it also judges commands inside
+  loops, `sh -c`, `eval`, `xargs`, `find -exec` and shell heredocs.
+
+Fixed:
+
+- Per-command `--help` keeps the indentation of option lists nested under a
+  description, and separates usage from description when a long usage is
+  followed by a single space (`hook-guard`, `errors`).
+
 ## v1.7.25 — 2026-11-25
 
 Fixes for three remaining reasons agents logged when gograph could not answer:

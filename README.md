@@ -196,7 +196,7 @@ gograph mcp . --tags=integration                  # retain build tags on every r
 gograph mcp . --memory-mode=low --max-memory=1GiB # low-memory refresh policy
 ```
 
-- **Claude Desktop & Claude Code:** Run `gograph add-claude-plugin` to register Claude Desktop MCP, install shared rules, and set up the `PreToolUse` hook guard (`gograph hook-guard` also supports Codex and Antigravity). For Claude Code MCP, run `claude mcp add gograph -- gograph mcp .`, or install via the plugin marketplace (`/plugin marketplace add ozgurcd/gograph` then `/plugin install gograph@gograph`).
+- **Claude Desktop & Claude Code:** Run `gograph add-claude-plugin` to register Claude Desktop MCP, install shared rules, and register the `PreToolUse` hook `gograph hook --agent claude` (`gograph hook --agent codex|opencode|agy` serves the other agents; `gograph hook --help` prints each registration). For Claude Code MCP, run `claude mcp add gograph -- gograph mcp .`, or install via the plugin marketplace (`/plugin marketplace add ozgurcd/gograph` then `/plugin install gograph@gograph`).
 - **Official MCP Registry (preview):** MCPB-capable clients can discover `io.github.ozgurcd/gograph` in the [official MCP Registry](https://registry.modelcontextprotocol.io). See [docs/mcp-registry.md](docs/mcp-registry.md) for platform asset selection and limitations.
 - **Codex & other agents:** See [docs/codex-integration.md](docs/codex-integration.md) and [docs/coding-agent-usage.md](docs/coding-agent-usage.md).
 - **Generated `llm-wiki/`:** Run `gograph wiki` to emit machine-readable overview, architecture, hotspot, route, and per-package markdown pages.

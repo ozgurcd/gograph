@@ -343,7 +343,7 @@ This single command performs three critical setup steps:
 
 1. **Claude Desktop Configuration**: Registers `gograph mcp <absolute-project-path>` in Claude Desktop's config.
 2. **Shared Steering**: Adds rules to `~/.claude/CLAUDE.md`.
-3. **Claude Code Hook**: Installs `~/.claude/hooks/gograph-guard.sh` and registers it in `~/.claude/settings.json`.
+3. **Claude Code Hook**: Registers `gograph hook --agent claude` in `~/.claude/settings.json` for the `Bash` tool, replacing the former `~/.claude/hooks/gograph-guard.sh` entry.
 
 Claude Code MCP registration is separate; run the `claude mcp add gograph -- gograph mcp .` command printed by the installer. The installer exits non-zero if any of its three file/configuration steps fail.
 
@@ -361,10 +361,7 @@ gograph solves this structurally with the **Hook Guard**:
 [Agent wants to run grep]
            │
            ▼
-   ~/.claude/hooks/gograph-guard.sh
-           │
-           ▼
-   gograph hook-guard  ◄── Intercepts symbol query
+   gograph hook --agent claude  ◄── Intercepts symbol query
            │
  ┌─────────┴─────────┐
  │                   │
@@ -373,7 +370,7 @@ gograph solves this structurally with the **Hook Guard**:
 "Use gograph instead"
 ```
 
-If the agent tries to run `grep -rn "MyStruct" .`, the hook guard blocks the command with exit code `2` and returns a helpful message:
+If the agent tries to run `grep -rn "MyStruct" .`, the hook blocks the command and returns a helpful message:
 > *Blocked: This looks like a Go symbol search. Start with `gograph query
 > MyStruct` or `gograph callers MyStruct`. If precision fell back or a known
 > call is missing, verify with `gopls` or targeted source/text search.*
@@ -395,7 +392,14 @@ falls back to the hook process working directory. A search from an unindexed
 folder into an indexed sibling is still steered, while a search from an indexed
 folder into only unindexed targets is allowed.
 
-**Optional rules and other agents.** The same `gograph hook-guard` binary
+`add-claude-plugin` registers `gograph hook --agent claude` for Claude Code's
+`Bash` tool. It checks navigation only: besides the symbol-search redirect
+described here, region reads of `.go` files and Go text searches without a
+`# gograph-cannot: <reason>` comment are denied inside indexed repositories.
+Editing is not checked unless the opt-in `--deny-go-writes` or
+`--require-session` flags are added (see `gograph hook --help`).
+
+**Optional rules and other agents.** The `gograph hook-guard` command
 also works as a Codex and Antigravity `PreToolUse` hook (it detects the
 payload format). Opt-in flags add gograph-first rules inside indexed
 repositories: `--deny-go-writes`, `--deny-region-reads`, `--require-reason`

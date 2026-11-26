@@ -135,7 +135,7 @@ recorded precision, build tags and excluded directories) and reports that on
 stderr, or in the JSON envelope's `warning`. `--no-refresh` or
 `GOGRAPH_NO_REFRESH=1` disables it. It never runs for `--rev`, for a different
 build context, when another caller's session refuses writes, or for `stale`,
-`stats`, `changes`, `build`, `mcp`, `hook-guard`, `session` and the enforcement
+`stats`, `changes`, `build`, `mcp`, `hook-guard`, `hook`, `session` and the enforcement
 commands `gate`, `check` and `boundaries` (which judge the persisted graph;
 `gate` still fails closed on a stale one).
 

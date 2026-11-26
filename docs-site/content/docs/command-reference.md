@@ -1282,8 +1282,8 @@ four exact pairs:
 
 The only CLI operations without callable MCP equivalents are process-, host-,
 CI-, or artifact-lifecycle operations: `build`, `validate`, `doctor`, `gate`,
-`snapshot`, `add-claude-plugin`, `hook-guard`, project/workspace MCP startup,
-`workspace build`/member refresh, and help. The standalone `version` command
+`snapshot`, `add-claude-plugin`, `hook-guard`, `hook`, project/workspace MCP
+startup, `workspace build`/member refresh, and help. The standalone `version` command
 has no dedicated MCP tool, but `gograph_capabilities` exposes the running server
 version. CLI flags/envelopes and typed MCP arguments/content are transport-specific; paired operations share
 their functional implementation and documented filters, ordering, evidence,
@@ -1484,13 +1484,21 @@ inspect another owner's session metadata. Raw query results are not logged.
 ```bash
 gograph add-claude-plugin
 ```
-Registers Claude Desktop MCP configuration, injects shared `~/.claude/CLAUDE.md` rules, and installs `~/.claude/hooks/gograph-guard.sh`. Claude Code MCP registration still requires the `claude mcp add` command printed by the installer. Partial installation exits non-zero.
+Registers Claude Desktop MCP configuration, injects shared `~/.claude/CLAUDE.md` rules, and registers `gograph hook --agent claude` in `~/.claude/settings.json` for the `Bash` tool (and drops it from any other tool group). It removes the entry of the former `~/.claude/hooks/gograph-guard.sh` (a `gograph hook-guard` wrapper) and deletes that script when it is unchanged. Claude Code MCP registration still requires the `claude mcp add` command printed by the installer. Partial installation exits non-zero.
+
+### hook
+```bash
+gograph hook [--agent claude|codex|opencode|agy] [--deny-go-writes] [--require-session] [--record DIR] [--selftest DIR]
+```
+`PreToolUse` hook that steers Go navigation to gograph, the same way for every agent: Claude Code (`claude`, the default), Codex (`codex`), opencode (`opencode`) and Antigravity (`agy`). Each agent's tool-call JSON is read into one event (`shell`, `edit`, `write`, `multi_edit`, `patch`, `read`, `other`); one shared rule set decides; the verdict is written in the agent's format. Inside a repository with a `.gograph` index it denies Go symbol searches (a declaration head or call site even with a reason), region reads of `.go` files and Go text searches without a `# gograph-cannot: <reason>` comment (a reason allows both). Commands hidden behind loops, `sh -c`, `eval`, `xargs`, `find -exec`, a shell heredoc or a `python`/`perl`/`ruby` shell call are judged too; a search with no path over the output of a command that does not print Go source is allowed. Editing is checked only on request: `--deny-go-writes` denies text tools editing `.go` files (`sed -i`, `perl -i`, `awk -i inplace`, redirects or `tee` fed by a text tool; moves, copies and program output such as `go run ./gen > x.go` are allowed; a `# gograph-cannot: <reason>` comment allows; the denial points at the agent's own edit tool), and `--require-session` denies edits, writes, multi-edits and patches of `.go` files while no gograph session is open (every path of a Codex/opencode `apply_patch` is checked). A shell call whose input cannot be read is denied, and under an editing rule so is an unreadable write call or a malformed patch; an unknown read-only tool is allowed. An unknown `--agent` exits 2.
+
+Output: `claude` allows with exit 0 and no output (Claude Code's own permission rules still apply) and denies with a `hookSpecificOutput.permissionDecision` of `deny`; `codex` denies with exit 2 and the reason on stderr; `opencode` and `agy` get `{"decision":"allow"}` or `{"decision":"deny","reason":...}` on stdout. Until an agent's input format is backed by recorded fixtures, every denial says `no fixture-backed format for <agent>`. `--record DIR` writes the raw input to `DIR/<agent>-<time>.json` (directory 0700, file 0600, strings cut to 4 KiB) and allows the call. `--selftest DIR` replays `DIR/verdicts.tsv` (`<agent>/<file>`, `allow`|`deny`, optional reason text) with the given rules and fails on a mismatch or a fixture without a row. `gograph hook --help` prints the registration for each agent, including a minimal opencode plugin. Never logged to session telemetry.
 
 ### hook-guard
 ```bash
 gograph hook-guard [--deny-go-writes] [--deny-region-reads] [--require-reason] [--require-session] [--strict] [--ask]
 ```
-`PreToolUse` hook for Claude Code, Codex and Antigravity; the payload format is detected. Claude Code and Codex receive exit 2 with the reason on stderr; Antigravity receives `{"decision":"allow"|"deny"}` on stdout. Opt-in rules, applied only inside indexed repositories: `--deny-go-writes` (shell writes to `.go` files), `--deny-region-reads` (`cat`/`head`/`sed`/... of `.go` files; counts, checksums and `git show`/`git diff` stay allowed; not applied to Codex), `--require-reason` (Go text searches need a `# gograph-cannot: <reason>` comment), `--require-session` (`.go` edits need an open gograph session); `--strict` enables all four. `--ask` asks the user instead of denying in Claude Code and Antigravity; Codex still denies.
+`PreToolUse` hook for Claude Code, Codex and Antigravity; the payload format is detected. Claude Code and Codex receive exit 2 with the reason on stderr; Antigravity receives `{"decision":"allow"|"deny"}` on stdout. Opt-in rules, applied only inside indexed repositories: `--deny-go-writes` (text tools editing `.go` files: `sed -i`, `perl -i`, `awk -i inplace`, redirects or `tee` fed by a text tool; moves, copies and program output are allowed; a `# gograph-cannot: <reason>` comment allows), `--deny-region-reads` (`cat`/`head`/`sed`/... of `.go` files; counts, checksums, `git show`/`git diff` and commands with a `# gograph-cannot: <reason>` comment stay allowed; not applied to Codex), `--require-reason` (Go text searches need a `# gograph-cannot: <reason>` comment), `--require-session` (`.go` edits need an open gograph session); `--strict` enables all four. `--ask` asks the user instead of denying in Claude Code and Antigravity; Codex still denies.
 
 Called by the Claude Code `PreToolUse` hook. Intercepts incoming tool-call JSON over `stdin`; resolves effective search paths against the payload's `cwd`; and blocks likely `grep`/`rg` Go-symbol searches with exit code 2 only when at least one target has a real `.gograph` ancestor. An omitted `cwd` falls back to the hook process working directory. Unindexed, non-Go, and comment-only searches are allowed. Identifier-only alternations are recognized according to grep/ripgrep regex mode; literal-pipe patterns in fixed-string mode and escaped pipes in extended grep/ripgrep remain allowed.
 

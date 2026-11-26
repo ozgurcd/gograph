@@ -54,6 +54,26 @@ type hookDecision struct {
 }
 
 var hookIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{2,}$`)
+
+var (
+	hookDeclarationPattern = regexp.MustCompile(`(?:^|[^\w])(?:func|type|var|const)\s+(?:\\?\([^)]*\\?\)\s*)?([A-Za-z_]\w*)`)
+	hookCallPattern        = regexp.MustCompile(`^\^?(?:\\b)?(?:[A-Za-z_]\w*\.)*([A-Za-z_]\w*)\\?\((?:\\?\))?(?:\\b)?$`)
+	hookSnakeLiteral       = regexp.MustCompile(`^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$`)
+)
+
+// hookDeclarationOrCallSymbol returns the name a declaration-head pattern
+// ("func Decide", "type Store ", "func (s *S) Run") or a call-site pattern
+// ("Decide(", "pkg.Decide\\(") asks about, or "".
+func hookDeclarationOrCallSymbol(pattern string) string {
+	if match := hookDeclarationPattern.FindStringSubmatch(pattern); match != nil {
+		return match[1]
+	}
+	if match := hookCallPattern.FindStringSubmatch(pattern); match != nil {
+		return match[1]
+	}
+	return ""
+}
+
 var hookGoValuePattern = regexp.MustCompile(`\.go(?:$|[,}])`)
 
 var hookCommentMarkers = map[string]struct{}{
@@ -104,12 +124,23 @@ func classifyHookSearchInvocation(invocation hookSearchInvocation) hookDecision 
 	seen := make(map[string]struct{})
 	var symbols []string
 	for _, pattern := range invocation.patterns {
+		// A declaration head (func X, type X) or a call site (X() is a
+		// symbol question whatever else the pattern holds.
+		if symbol := hookDeclarationOrCallSymbol(pattern); symbol != "" {
+			if _, exists := seen[symbol]; !exists {
+				seen[symbol] = struct{}{}
+				symbols = append(symbols, symbol)
+			}
+			continue
+		}
 		patternSymbols, pure := pureHookSymbolAlternatives(pattern, invocation.mode)
 		if !pure {
 			return hookDecision{}
 		}
 		for _, symbol := range patternSymbols {
-			if hookSymbolExempt(symbol) {
+			// Lowercase snake_case (an SQL table, a JSON key) is a literal
+			// Go never spells as an identifier.
+			if hookSymbolExempt(symbol) || hookSnakeLiteral.MatchString(symbol) {
 				continue
 			}
 			if _, exists := seen[symbol]; exists {

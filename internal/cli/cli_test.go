@@ -398,6 +398,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 		"check",
 		"add-claude-plugin",
 		"hook-guard",
+		"hook",
 		"--", // end of global flags: later arguments go to the command verbatim
 		"--json",
 		"--no-refresh",
@@ -610,7 +611,7 @@ func TestHelpDocumentsEveryCanonicalCommand(t *testing.T) {
 		"coupling", "context", "explain", "hotspot", "summary", "untested", "endpoint",
 		"deps", "dependents", "changes", "godobj", "plan", "review", "risk", "api",
 		"routes", "sql", "httpcalls", "errorflow", "flow", "errors", "envs", "concurrency", "tests",
-		"capabilities", "wiki", "doc", "mcp", "session", "add-claude-plugin", "hook-guard",
+		"capabilities", "wiki", "doc", "mcp", "session", "add-claude-plugin", "hook-guard", "hook",
 		"version", "validate", "doctor", "help", "workspace",
 	}
 	for _, name := range want {

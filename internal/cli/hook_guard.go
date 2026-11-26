@@ -202,18 +202,19 @@ func hookSymbolSearchReason(command, cwd string) string {
 func hookSymbolSearchMessage(command, pattern string) string {
 	return fmt.Sprintf(`gograph-guard: blocked grep — this looks like a Go symbol search.
   Blocked:  %s
-  Start with gograph's AST-derived structural tools:
-    gograph_query "%s"          search symbols, files, packages
-    gograph_context "%s"        node + source + callers + callees + tests
-    gograph_callers "%s"        who calls this symbol
-    gograph_impact "%s"         downstream blast radius
+  Start with gograph's AST-derived structural tools (CLI / MCP):
+    gograph query "%[2]s"   / gograph_query "%[2]s"     declarations: symbols, files, packages
+    gograph callers "%[2]s" / gograph_callers "%[2]s"   call sites
+    gograph usages "%[2]s"  / gograph_usages "%[2]s"    every use of the name
+    gograph context "%[2]s" / gograph_context "%[2]s"   node + source + callers + callees + tests
+    gograph impact "%[2]s"  / gograph_impact "%[2]s"    downstream blast radius
 
   If precision is ast/precise_fallback, a result is ambiguous, or a known
   source call is missing, verify with gopls or a targeted source/text search.
   For raw text search (comments, strings) target files explicitly:
     grep -r "..." --include="*.md"
     grep -r "..." --include="*.yaml"
-`, command, pattern, pattern, pattern, pattern)
+`, command, pattern)
 }
 
 func hookSearchesIndexedRepository(invocation hookSearchInvocation, cwd string) bool {
