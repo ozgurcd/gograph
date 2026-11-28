@@ -3199,6 +3199,7 @@ func runMCP(args []string) int {
 // newMCPScopeHandlers loads or builds the graph for options.Root and returns a
 // complete single-graph tool set bound to that checkout.
 func newMCPScopeHandlers(options mcpOptions, controller *memorylimit.Controller) (mcp.ScopeHandlers, error) {
+	options = adoptRecordedMCPSelection(options)
 	g, absRoot, initialState, err := prepareMCPGraphWithState(options)
 	if err != nil {
 		return nil, fmt.Errorf("preparing MCP graph: %w", err)

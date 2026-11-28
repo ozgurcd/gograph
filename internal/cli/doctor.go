@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/ozgurcd/gograph/internal/rootfind"
+	"github.com/ozgurcd/gograph/internal/search"
 	"github.com/ozgurcd/gograph/internal/validation"
 	"golang.org/x/mod/semver"
 )
@@ -30,7 +31,10 @@ type doctorDocument struct {
 }
 
 type doctorRepository struct {
-	ExcludeDirs         []string `json:"exclude_dirs,omitempty"`
+	ExcludeDirs []string `json:"exclude_dirs,omitempty"`
+	// BuildTags are the tags doctor judged the graph with: --tags, else
+	// GOFLAGS -tags, else the tags the graph was built with.
+	BuildTags           []string `json:"build_tags,omitempty"`
 	Root                string   `json:"root"`
 	GraphAvailable      bool     `json:"graph_available"`
 	Freshness           string   `json:"freshness"`
@@ -230,9 +234,21 @@ func inspectDoctorRepository(start string, findings []doctorFinding) (*doctorRep
 	snapshot, err := (validation.RepositoryLoader{AllowCheckoutSourceAuthority: true}).Load(context.Background(), root)
 	// Doctor describes the artifact's declared selection, unlike machine
 	// validation, which must retain its independently requested scope.
-	if snapshot.Graph != nil && snapshot.Graph.Build != nil && snapshot.Graph.Build.Selection != nil && len(snapshot.Graph.Build.Selection.ExcludeDirs) > 0 {
-		repository.ExcludeDirs = append([]string(nil), snapshot.Graph.Build.Selection.ExcludeDirs...)
-		snapshot, err = (validation.RepositoryLoader{ExcludeDirs: repository.ExcludeDirs, AllowCheckoutSourceAuthority: true}).Load(context.Background(), root)
+	// Like graph queries, doctor judges freshness in the build context the
+	// graph was built with unless --tags or GOFLAGS -tags select another.
+	tags := queryBuildTags
+	if snapshot.Graph != nil && snapshot.Graph.Build != nil && snapshot.Graph.Build.Selection != nil {
+		selection := snapshot.Graph.Build.Selection
+		repository.ExcludeDirs = append([]string(nil), selection.ExcludeDirs...)
+		if len(tags) == 0 && !search.GOFLAGSSetsBuildTags(os.Getenv("GOFLAGS")) {
+			tags = append([]string(nil), selection.BuildTags...)
+		}
+	}
+	if len(tags) > 0 {
+		repository.BuildTags = tags
+	}
+	if len(repository.ExcludeDirs) > 0 || len(tags) > 0 {
+		snapshot, err = (validation.RepositoryLoader{BuildTags: tags, ExcludeDirs: repository.ExcludeDirs, AllowCheckoutSourceAuthority: true}).Load(context.Background(), root)
 	}
 	repository.GraphAvailable = snapshot.Graph != nil
 	if snapshot.Freshness != "" {

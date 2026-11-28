@@ -134,3 +134,46 @@ func TestBuildLockMakesQueriesAndBuildsWaitForARunningBuild(t *testing.T) {
 		t.Fatalf("GOGRAPH_BUILD_WAIT=0 must fail at once: code=%d err=%s", code, stderr)
 	}
 }
+
+func TestDoctorJudgesTheGraphWithItsRecordedBuildTags(t *testing.T) {
+	root := t.TempDir()
+	for name, body := range map[string]string{
+		"go.mod": "module example.com/doctortags\n\ngo 1.22\n",
+		"a.go":   "package doctortags\n\nfunc A() {}\n",
+		"t.go":   "//go:build integration\n\npackage doctortags\n\nfunc T() {}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run := func(args ...string) (string, string, int) {
+		return runCLIParityInDir(t, root, func() int { return Run(args) })
+	}
+	if _, stderr, code := run("build", ".", "--tags=integration"); code != 0 {
+		t.Fatal(stderr)
+	}
+	out, stderr, _ := run("doctor", "--json")
+	if !strings.Contains(out, `"build_tags":["integration"]`) || !strings.Contains(out, `"freshness":"current"`) {
+		t.Fatalf("doctor must use the graph's tags: out=%s err=%s", out, stderr)
+	}
+	// Run resets the global query tags on entry only; keep later direct
+	// callers of doctor helpers in this test binary unaffected.
+	t.Cleanup(func() { queryBuildTags = nil })
+	out, _, _ = run("--tags", "other", "doctor", "--json")
+	if !strings.Contains(out, `"freshness":"stale"`) {
+		t.Fatalf("an explicit --tags still selects another context: %s", out)
+	}
+
+	t.Setenv("GOFLAGS", "")
+	adopted := adoptRecordedMCPSelection(mcpOptions{Root: root})
+	if strings.Join(adopted.Tags, ",") != "integration" {
+		t.Fatalf("MCP without --tags must adopt the graph's tags: %v", adopted.Tags)
+	}
+	if kept := adoptRecordedMCPSelection(mcpOptions{Root: root, Tags: []string{"other"}}); strings.Join(kept.Tags, ",") != "other" {
+		t.Fatalf("explicit MCP --tags win: %v", kept.Tags)
+	}
+	t.Setenv("GOFLAGS", "-tags=other")
+	if viaFlags := adoptRecordedMCPSelection(mcpOptions{Root: root}); len(viaFlags.Tags) != 0 {
+		t.Fatalf("GOFLAGS -tags wins over recorded tags: %v", viaFlags.Tags)
+	}
+}
