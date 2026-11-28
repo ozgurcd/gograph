@@ -14,6 +14,7 @@ import (
 
 	"github.com/ozgurcd/gograph/internal/cli"
 	"github.com/ozgurcd/gograph/internal/graphstore"
+	"github.com/ozgurcd/gograph/internal/testmemory"
 )
 
 var (
@@ -34,6 +35,10 @@ func TestMain(m *testing.M) {
 	testRepositoryRoot = root
 	// Tests never share precise graphs through the user's store; store tests
 	// select their own directory.
+	if err := os.Setenv(testmemory.DirEnv, "off"); err != nil {
+		fmt.Fprintf(os.Stderr, "prepare CLI tests: %v\n", err)
+		os.Exit(1)
+	}
 	if err := os.Setenv(graphstore.DirEnv, "off"); err != nil {
 		fmt.Fprintf(os.Stderr, "prepare CLI tests: %v\n", err)
 		os.Exit(1)

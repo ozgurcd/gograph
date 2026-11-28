@@ -30,6 +30,9 @@ type TestSelection struct {
 	ExactCount         int                          `json:"exact_count"`
 	PossibleCount      int                          `json:"possible_count"`
 	Limitations        []string                     `json:"limitations"`
+	// PreviouslyPassed lists selected tests left out because they already
+	// passed on identical inputs (tests --skip-passed).
+	PreviouslyPassed []PreviouslyPassedTest `json:"previously_passed,omitempty"`
 }
 
 // SelectionRoot is one changed or requested symbol whose tests were selected.

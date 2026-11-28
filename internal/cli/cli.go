@@ -2219,7 +2219,9 @@ func runConcurrency(args []string) int {
 
 const testsUsage = "usage: gograph tests [symbol] [--transitive [--package name] [--exact-only]]\n" +
 	"       gograph tests <symbol> --format run|go-test [--package name] [--exact-only]\n" +
-	"       gograph tests --uncommitted|--since <ref> [--format run|go-test] [--exact-only]"
+	"       gograph tests --uncommitted|--since <ref> [--format run|go-test] [--exact-only]\n" +
+	"       add --skip-passed [--go-flags '<flags>'] [--input <path>] to leave out tests that passed on identical inputs\n" +
+	"       gograph tests --record <go-test-json-file|-> [--go-flags '<flags>'] [--input <path>]"
 
 func runTests(args []string) int {
 	transitive := false
@@ -2231,7 +2233,15 @@ func runTests(args []string) int {
 	pageOptions := search.TestsPageOptions{}
 	pageFlags := false
 	var targets []string
+	memory := testMemoryRequest{}
+	testMemory = nil
 	for index := 0; index < len(args); index++ {
+		if consumed, err := memory.parse(args, &index); consumed || err != nil {
+			if err != nil {
+				return failCommand("tests", err.Error())
+			}
+			continue
+		}
 		switch argument := args[index]; argument {
 		case "--max-depth", "--limit":
 			value, err := parseIntegerFlag(args, &index)
@@ -2289,6 +2299,24 @@ func runTests(args []string) int {
 		}
 	}
 	changeMode := uncommitted || sinceRef != ""
+	if memory.record != "" {
+		if changeMode || transitive || format != "" || len(targets) > 0 || packageName != "" || memory.skipPassed {
+			return failCommand("tests", "--record takes only --go-flags and --input: gograph tests --record <go-test-json-file|->")
+		}
+		g, err := loadGraph(".")
+		if err != nil {
+			return failCommandf("tests", "failed to load graph: %v", err)
+		}
+		return runTestRecord(g, memory)
+	}
+	if memory.skipPassed {
+		if format == "" || filesOnlyMode {
+			return failCommand("tests", "--skip-passed filters a selection: add --format go-test (or run), or --json")
+		}
+		testMemory = &memory
+	} else if memory.goFlags != "" || len(memory.inputs) > 0 {
+		return failCommand("tests", "--go-flags and --input key test memory: use them with --skip-passed or --record")
+	}
 	switch {
 	case uncommitted && sinceRef != "":
 		return failCommand("tests", "use either --uncommitted or --since <ref>, not both")
@@ -2308,6 +2336,9 @@ func runTests(args []string) int {
 	g, err := loadGraph(".")
 	if err != nil {
 		return failCommandf("tests", "failed to load graph: %v", err)
+	}
+	if testMemory != nil {
+		testMemory.graph = g
 	}
 	if changeMode {
 		return runTestSelectionForChanges(g, uncommitted, sinceRef, format, exactOnly, pageOptions.MaxDepth)
@@ -2498,6 +2529,11 @@ func runTestSelectionForChanges(g *graph.Graph, uncommitted bool, sinceRef, form
 // printTestSelection prints a runnable selection. "go-test" prints only
 // commands so the output can be executed line by line.
 func printTestSelection(selection search.TestSelection, format string) int {
+	if testMemory != nil {
+		if code := skipPassedTests(&selection, *testMemory); code != 0 {
+			return code
+		}
+	}
 	if filesOnlyMode {
 		seen := make(map[string]bool)
 		var files []string
@@ -4285,7 +4321,8 @@ EXTRACTION
                              its release (unlock lines, deferred until return, or not
                              released) and the calls between lock and release (lexical;
                              a call after an unlock in the same block is not listed).
-  tests [symbol] [--transitive] [--exact-only] [--package name] [--max-depth N] [--limit N] [--cursor T] [--uncommitted|--since <ref>] [--format run|go-test]
+  tests [symbol] [--transitive] [--exact-only] [--package name] [--max-depth N] [--limit N] [--cursor T] [--uncommitted|--since <ref>] [--format run|go-test] [--skip-passed]
+  tests --record <go-test-json-file|-> [--go-flags '<flags>'] [--input <path>]...
                              Which tests to run for a symbol or a change. Direct attributed
                              test calls by default. --transitive requires one product symbol
                              and returns gograph.tests.v1: a summary of every reaching test
@@ -4306,6 +4343,20 @@ EXTRACTION
                              --exact-only drops possible paths.
                              Direct lookup accepts Receiver.Method, including pointer receivers,
                              as well as a full stable symbol ID.
+                             Test memory: go test -json ... | gograph tests --record -
+                             remembers each top-level test that passed (and forgets each
+                             that failed); a selection with --skip-passed leaves out tests
+                             that already passed on identical inputs, in any worktree or
+                             clone, and lists them on stderr (JSON: previously_passed).
+                             Inputs: every file in the test package's directory and in each
+                             in-module package it imports, transitively (testdata and other
+                             non-Go files included), go.mod/go.sum/vendor, Go version, build
+                             tags and environment, env vars the closure reads by name,
+                             --go-flags '<go test flags>' and --input <path> (repeatable;
+                             files the tests read elsewhere). Both commands must pass the
+                             same --go-flags and --input. Refused for a stale graph, go.work,
+                             or local replace directives. Network services are not inputs.
+                             GOGRAPH_TEST_MEMORY_DIR picks the store (off disables).
   coverage <test> [--exact-only] [--package name]
                              Reverse test attribution with exact/possible transitive paths.
   uncovered --uncommitted|--since <ref> --coverprofile <file>
