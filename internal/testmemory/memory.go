@@ -60,20 +60,38 @@ type Options struct {
 	GoFlags string
 	// Inputs are extra repository-relative files or directories the tests read.
 	Inputs []string
+	// BuildTags, when set, are the tags of the run (gograph --tags); otherwise
+	// the graph's recorded tags, which gograph's printed commands pass.
+	BuildTags []string
+	// TrustEnv accepts environment reads the key cannot name (os.Environ,
+	// os.ExpandEnv, os.Getenv with a computed name). Without it such a
+	// package has no memory.
+	TrustEnv bool
+}
+
+// unnamedEnvAccessors read environment the key cannot name; os.Getenv and
+// os.LookupEnv are unnamed only when the graph recorded no literal key there.
+var unnamedEnvAccessors = map[string]bool{
+	"os.Environ": true, "syscall.Environ": true, "os.ExpandEnv": true,
+}
+
+var namedEnvAccessors = map[string]bool{
+	"os.Getenv": true, "os.LookupEnv": true, "syscall.Getenv": true,
 }
 
 // Memory computes keys over one graph and reads and writes the shared store.
 type Memory struct {
-	root      string
-	g         *graph.Graph
-	options   Options
-	dir       string
-	byImport  map[string]string   // import path -> package dir
-	imports   map[string][]string // package dir -> imported in-module dirs
-	packages  map[string]bool     // package dirs
-	digests   map[string]string   // dir -> content digest (memoized)
-	goVersion string
-	base      string // digest of module files, environment, flags, inputs
+	root       string
+	g          *graph.Graph
+	options    Options
+	dir        string
+	byImport   map[string]string   // import path -> package dir
+	imports    map[string][]string // package dir -> imported in-module dirs
+	packages   map[string]bool     // package dirs
+	digests    map[string]string   // dir -> content digest (memoized)
+	goVersion  string
+	modulePath string
+	base       string // digest of module files, environment, flags, inputs
 }
 
 // Open prepares test memory for g rooted at root, or ok=false when it is
@@ -98,6 +116,11 @@ func Open(root string, g *graph.Graph, options Options) (*Memory, bool, error) {
 		root: root, g: g, options: options, dir: dir,
 		byImport: map[string]string{}, imports: map[string][]string{},
 		packages: map[string]bool{}, digests: map[string]string{},
+	}
+	for _, module := range g.Modules {
+		if module.Dir == "." || module.Dir == "" {
+			m.modulePath = module.Path
+		}
 	}
 	for _, pkg := range g.Packages {
 		m.packages[pkg.Dir] = true
@@ -154,12 +177,17 @@ func (m *Memory) prepareBase() error {
 			_, _ = h.Write([]byte{0})
 		}
 	}
-	write(schemaVersion, version, strings.TrimSpace(m.options.GoFlags))
+	write(schemaVersion, version, strings.TrimSpace(m.options.GoFlags), fmt.Sprint(m.options.TrustEnv))
 	if m.g.Build != nil && m.g.Build.Selection != nil {
 		selection := m.g.Build.Selection
 		tags := append([]string(nil), selection.BuildTags...)
+		if len(m.options.BuildTags) > 0 {
+			tags = append([]string(nil), m.options.BuildTags...)
+		}
 		sort.Strings(tags)
 		write("tags", strings.Join(tags, ","), selection.GOOS, selection.GOARCH, fmt.Sprint(selection.CgoEnabled))
+	} else {
+		return errors.New("the graph records no build selection")
 	}
 	for _, name := range buildEnvironment {
 		value, set := os.LookupEnv(name)
@@ -233,6 +261,36 @@ func (m *Memory) Key(importPath, dir string) (string, error) {
 	inClosure := map[string]bool{}
 	for _, d := range dirs {
 		inClosure[d] = true
+	}
+	// An in-module import the graph does not hold (an ignored, generated or
+	// excluded directory) is code the key cannot see.
+	if m.modulePath == "" {
+		return "", errors.New("the graph records no main module, so in-module imports cannot be checked")
+	}
+	for _, edge := range m.g.Imports {
+		if !inClosure[path.Dir(filepath.ToSlash(edge.FromFile))] {
+			continue
+		}
+		if edge.ImportPath != m.modulePath && !strings.HasPrefix(edge.ImportPath, m.modulePath+"/") {
+			continue
+		}
+		if _, ok := m.byImport[edge.ImportPath]; !ok {
+			return "", fmt.Errorf("%s imports %s, which is not in the graph", edge.FromFile, edge.ImportPath)
+		}
+	}
+	if !m.options.TrustEnv {
+		named := map[string]bool{}
+		for _, read := range m.g.EnvReads {
+			named[fmt.Sprintf("%s:%d", read.File, read.Line)] = true
+		}
+		for _, call := range m.g.Calls {
+			if !inClosure[path.Dir(filepath.ToSlash(call.File))] {
+				continue
+			}
+			if unnamedEnvAccessors[call.CalleeRaw] || (namedEnvAccessors[call.CalleeRaw] && !named[fmt.Sprintf("%s:%d", call.File, call.Line)]) {
+				return "", fmt.Errorf("%s:%d reads the environment through %s, which the key cannot name (--trust-env accepts it)", call.File, call.Line, call.CalleeRaw)
+			}
+		}
 	}
 	h := sha256.New()
 	write := func(parts ...string) {

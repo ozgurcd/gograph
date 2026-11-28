@@ -164,3 +164,56 @@ func TestTestMemoryRefusesUnboundedLayoutsAndStaleGraphs(t *testing.T) {
 		}
 	}
 }
+
+func TestTestMemoryRefusesInputsTheKeyCannotSee(t *testing.T) {
+	t.Setenv(testmemory.DirEnv, t.TempDir())
+	root := t.TempDir()
+	writeTestMemoryFixture(t, root)
+	events := filepath.Join(t.TempDir(), "events.json")
+	if err := os.WriteFile(events, []byte(testMemoryEvents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) (string, string, int) {
+		return runCLIParityInDir(t, root, func() int { return Run(args) })
+	}
+	// An environment read without a literal name in the closure of a.
+	if err := os.WriteFile(filepath.Join(root, "b", "env.go"), []byte("package b\n\nimport \"os\"\n\nfunc All() []string { return os.Environ() }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, code := run("tests", "--record", events)
+	if code != 0 || !strings.Contains(stderr, "not recorded: example.com/tm/a") || !strings.Contains(stderr, "os.Environ") {
+		t.Fatalf("a's closure reads the whole environment, so a is not recorded: code=%d out=%s err=%s", code, out, stderr)
+	}
+	if !strings.Contains(out, "in 1 package(s)") {
+		t.Fatalf("c is still recorded: %s", out)
+	}
+	if out, _, code = run("tests", "--record", events, "--trust-env"); code != 0 || !strings.Contains(out, "in 2 package(s)") {
+		t.Fatalf("--trust-env accepts unnamed reads: code=%d out=%s", code, out)
+	}
+	if out, _, _ = run("tests", "b.B", "--format", "go-test", "--skip-passed"); strings.Contains(out, "-run '^(TestA2)$'") {
+		t.Fatalf("a pass recorded with --trust-env is not used without it: %s", out)
+	}
+	if out, _, _ = run("tests", "b.B", "--format", "go-test", "--skip-passed", "--trust-env"); !strings.Contains(out, "-run '^(TestA2)$'") {
+		t.Fatalf("a pass recorded with --trust-env is used with it: %s", out)
+	}
+
+	// An in-module import of a package the graph does not hold.
+	if err := os.Remove(filepath.Join(root, "b", "env.go")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "gen"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "gen", "gen.go"), []byte("package gen\n\nfunc G() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "c", "c.go"), []byte("package c\n\nimport \"example.com/tm/gen\"\n\nfunc C() int { return gen.G() }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, stderr, code := run("build", ".", "--exclude-dirs=gen"); code != 0 {
+		t.Fatal(stderr)
+	}
+	if _, stderr, _ = run("tests", "--record", events); !strings.Contains(stderr, "not recorded: example.com/tm/c") || !strings.Contains(stderr, "not in the graph") {
+		t.Fatalf("an import of an excluded in-module package refuses memory: %s", stderr)
+	}
+}

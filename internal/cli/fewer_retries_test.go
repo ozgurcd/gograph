@@ -14,9 +14,10 @@ func writeFewerRetriesFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	files := map[string]string{
-		"go.mod": "module example.com/retries\n\ngo 1.22\n",
-		"a/a.go": "package a\n\n// State is shared.\ntype State struct {\n\t// Deadlines lists due times.\n\tDeadlines []int // sorted\n\tName      string\n}\n\nfunc Load() int { return helper() }\n\nfunc helper() int { return 1 }\n",
-		"b/b.go": "package b\n\ntype State struct {\n\tDeadlines []string\n}\n\nfunc Load() int { return 2 }\n\nfunc Use() int { return Load() }\n",
+		"go.mod":         "module example.com/retries\n\ngo 1.22\n",
+		"a/a.go":         "package a\n\n// State is shared.\ntype State struct {\n\t// Deadlines lists due times.\n\tDeadlines []int // sorted\n\tName      string\n}\n\nfunc Load() int { return helper() }\n\nfunc helper() int { return 1 }\n",
+		"b/b.go":         "package b\n\ntype State struct {\n\tDeadlines []string\n}\n\nfunc Load() int { return 2 }\n\nfunc Use() int { return Load() }\n",
+		"store/store.go": "package store\n\nconst DirEnv = \"D\"\n\ntype Store struct {\n\tDir string\n}\n",
 	}
 	for name, body := range files {
 		path := filepath.Join(root, filepath.FromSlash(name))
@@ -74,6 +75,9 @@ func TestSourceFileOutlineFieldSelectorsAndSeveralRanges(t *testing.T) {
 	if _, stderr, code = run("source", "State.Deadlines"); code == 0 || !strings.Contains(stderr, "a/a.go:State.Deadlines") || !strings.Contains(stderr, "b/b.go:State.Deadlines") {
 		t.Fatalf("an ambiguous field names each selector: code=%d err=%s", code, stderr)
 	}
+	if out, stderr, code = run("source", "Store.Dir"); code != 0 || !strings.Contains(out, "store::Store.Dir (store/store.go:6-6)") {
+		t.Fatalf("an exact Type.Field wins over a fuzzy declaration match (DirEnv): code=%d out=%s err=%s", code, out, stderr)
+	}
 	if out, stderr, code = run("source", "a.State.Name"); code != 0 || !strings.Contains(out, "Name      string") {
 		t.Fatalf("package-qualified field: code=%d out=%s err=%s", code, out, stderr)
 	}
@@ -98,15 +102,22 @@ func TestBuildLockMakesQueriesAndBuildsWaitForARunningBuild(t *testing.T) {
 		t.Fatalf("lock: %v %v", locked, err)
 	}
 	graphPath := filepath.Join(root, graphFile)
+	published, err := os.ReadFile(graphPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(graphPath); err != nil {
 		t.Fatal(err)
 	}
+	// The "running build" (another process, here the held lock) publishes
+	// the graph and then releases the lock; only file operations happen
+	// concurrently with the query, never a second Run.
 	unlockAfter := func(publish bool) {
 		time.Sleep(300 * time.Millisecond)
 		if publish {
-			heldBuildLocks[root]++ // this process plays the running build
-			_, _, _ = runCLIParityInDir(t, root, func() int { return Run([]string{"build", "."}) })
-			delete(heldBuildLocks, root)
+			if err := os.WriteFile(graphPath, published, 0o640); err != nil {
+				t.Error(err)
+			}
 		}
 		_ = lock.Unlock()
 	}

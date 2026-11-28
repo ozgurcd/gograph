@@ -1150,15 +1150,18 @@ func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
 // sourceTargets resolves the declarations a source selector names, preferring
 // exact and then case-sensitive matches. It fails when nothing matches.
 // sourceTargetsOrField resolves symbolName like sourceTargets and, when it
-// names no declaration, as Type.Field: a struct selector plus one field.
+// names no declaration exactly, as Type.Field: a struct selector plus one
+// field. An exact Type.Field wins over a fuzzy (substring) declaration match.
 func sourceTargetsOrField(g *graph.Graph, rootDir, symbolName string) ([]graph.SymbolNode, error) {
 	targets, err := sourceTargets(g, symbolName)
-	if err == nil || len(FindSymbols(g, symbolName)) > 0 {
-		return targets, err
+	for _, candidate := range FindSymbols(g, symbolName) {
+		if matchSymbolExact(candidate, symbolName) {
+			return targets, err
+		}
 	}
 	field, ok, fieldErr := fieldTarget(g, rootDir, symbolName)
 	if !ok {
-		return nil, err
+		return targets, err
 	}
 	if fieldErr != nil {
 		return nil, fieldErr

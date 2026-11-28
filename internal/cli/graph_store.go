@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/ozgurcd/gograph/internal/buildctx"
+	"github.com/ozgurcd/gograph/internal/gitenv"
 	"github.com/ozgurcd/gograph/internal/graph"
 	"github.com/ozgurcd/gograph/internal/graphstore"
 	"github.com/ozgurcd/gograph/internal/search"
@@ -22,10 +26,14 @@ func preciseFromStore(absRoot string, ast *graph.Graph, config buildctx.Config, 
 	if !ok || configErr != nil {
 		return ast, false, enrich()
 	}
+	toolchain, shareable := storeToolchain(absRoot)
+	if !shareable {
+		return ast, false, enrich()
+	}
 	if err := refreshCompleteGraphSourceFingerprint(absRoot, ast, config); err != nil {
 		return ast, false, enrich()
 	}
-	analyzer := graphstore.AnalyzerIdentity(Version)
+	analyzer := graphstore.AnalyzerIdentity(Version) + " toolchain=" + toolchain
 	key, ok := graphstore.Key(ast, graph.PrecisionPrecise, analyzer)
 	if !ok {
 		return ast, false, enrich()
@@ -62,6 +70,41 @@ func preciseFromStore(absRoot string, ast *graph.Graph, config buildctx.Config, 
 		}
 	}
 	return ast, false, nil
+}
+
+// storeToolchain returns the exact Go version the precise analysis type-checks
+// with (the standard library comes from that toolchain), and whether the
+// checkout's types depend only on inputs the source fingerprint covers. With
+// an active go.work or a go.mod replace that points at a local directory,
+// types come from source outside the fingerprint, so the graph is not shared.
+func storeToolchain(absRoot string) (string, bool) {
+	cmd := exec.Command("go", "env", "GOVERSION", "GOWORK")
+	cmd.Dir = absRoot
+	cmd.Env = gitenv.Clean(os.Environ())
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 1 || strings.TrimSpace(lines[0]) == "" {
+		return "", false
+	}
+	if len(lines) > 1 && strings.TrimSpace(lines[1]) != "" {
+		return "", false
+	}
+	modData, err := os.ReadFile(filepath.Join(absRoot, "go.mod"))
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(modData), "\n") {
+		if _, target, ok := strings.Cut(line, "=>"); ok {
+			target = strings.TrimSpace(target)
+			if strings.HasPrefix(target, ".") || strings.HasPrefix(target, "/") || filepath.IsAbs(target) {
+				return "", false
+			}
+		}
+	}
+	return strings.TrimSpace(lines[0]), true
 }
 
 // loadStoredGraph loads key and accepts it only when it is a complete, current

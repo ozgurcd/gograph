@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -28,7 +29,24 @@ const (
 // heldBuildLocks names the checkouts whose build lock this process holds. A
 // build reads its own previous graph; on Linux a second flock of the same file
 // from this process would block on itself.
-var heldBuildLocks = map[string]int{}
+var (
+	heldBuildLocksMu sync.Mutex
+	heldBuildLocks   = map[string]int{}
+)
+
+func holdsBuildLock(absRoot string) bool {
+	heldBuildLocksMu.Lock()
+	defer heldBuildLocksMu.Unlock()
+	return heldBuildLocks[absRoot] > 0
+}
+
+func adjustHeldBuildLock(absRoot string, delta int) {
+	heldBuildLocksMu.Lock()
+	defer heldBuildLocksMu.Unlock()
+	if heldBuildLocks[absRoot] += delta; heldBuildLocks[absRoot] <= 0 {
+		delete(heldBuildLocks, absRoot)
+	}
+}
 
 func buildWaitLimit() time.Duration {
 	value := strings.TrimSpace(os.Getenv(buildWaitEnv))
@@ -57,7 +75,7 @@ func acquireBuildLock(absRoot string) (unlock func(), waited bool, err error) {
 	if err := validateArtifactLock(path); err != nil {
 		return nil, false, err
 	}
-	if heldBuildLocks[absRoot] > 0 {
+	if holdsBuildLock(absRoot) {
 		// Nested build in this process (a query's quiet refresh inside a
 		// build): the outer build already serializes this checkout.
 		return func() {}, false, nil
@@ -81,11 +99,9 @@ func acquireBuildLock(absRoot string) (unlock func(), waited bool, err error) {
 		}
 		waited = true
 	}
-	heldBuildLocks[absRoot]++
+	adjustHeldBuildLock(absRoot, 1)
 	return func() {
-		if heldBuildLocks[absRoot]--; heldBuildLocks[absRoot] <= 0 {
-			delete(heldBuildLocks, absRoot)
-		}
+		adjustHeldBuildLock(absRoot, -1)
 		_ = lock.Unlock()
 	}, waited, nil
 }
@@ -94,7 +110,7 @@ func acquireBuildLock(absRoot string) (unlock func(), waited bool, err error) {
 // absRoot that another process is running. It reports whether one was
 // running and has finished, so the caller should read the graph again.
 func waitForRunningBuild(absRoot string) bool {
-	if heldBuildLocks[absRoot] > 0 {
+	if holdsBuildLock(absRoot) {
 		return false
 	}
 	path := buildLockPath(absRoot)

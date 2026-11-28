@@ -10,7 +10,8 @@ New:
 - Shared precise graphs. A complete `gograph build . --precise` graph is kept
   in `<user cache>/gograph/graphs`, keyed by the exact selected source and
   build selection, not the checkout path. Another worktree or clone with the
-  same content and tags reuses it after checking it against its own files;
+  same content, tags and Go toolchain version reuses it after checking it
+  against its own files (not with an active `go.work` or a local `replace`);
   checkouts building the same content at the same time analyze it once.
   `GOGRAPH_CACHE_DIR` picks the directory (`off` disables it) and
   `GOGRAPH_CACHE_MAX` caps it (default 4GiB, least recently used entries are
@@ -25,7 +26,11 @@ New:
   and in each in-module package it imports, transitively (testdata included),
   `go.mod`/`go.sum`/`vendor`, the Go version, build tags and environment, env
   vars the closure reads by name, `--go-flags` and `--input` paths. Memory is
-  refused for a stale graph, `go.work` or a local `replace`.
+  refused for a stale graph, `go.work`, a local `replace`, an import of an
+  in-module package the graph does not hold, and (without `--trust-env`)
+  environment reads the key cannot name (`os.Environ`, `os.ExpandEnv`, a
+  computed `os.Getenv` name). Record only runs of the printed commands with
+  whole top-level tests.
 - `gograph source path/file.go` prints the file's outline: every declaration
   with its line range. `path/file.go:START-END` reads a region, several
   regions and selectors may be mixed, and `--lines` applies to several

@@ -2220,8 +2220,8 @@ func runConcurrency(args []string) int {
 const testsUsage = "usage: gograph tests [symbol] [--transitive [--package name] [--exact-only]]\n" +
 	"       gograph tests <symbol> --format run|go-test [--package name] [--exact-only]\n" +
 	"       gograph tests --uncommitted|--since <ref> [--format run|go-test] [--exact-only]\n" +
-	"       add --skip-passed [--go-flags '<flags>'] [--input <path>] to leave out tests that passed on identical inputs\n" +
-	"       gograph tests --record <go-test-json-file|-> [--go-flags '<flags>'] [--input <path>]"
+	"       add --skip-passed [--go-flags '<flags>'] [--input <path>] [--trust-env] to leave out tests that passed on identical inputs\n" +
+	"       gograph tests --record <go-test-json-file|-> [--go-flags '<flags>'] [--input <path>] [--trust-env]"
 
 func runTests(args []string) int {
 	transitive := false
@@ -2314,8 +2314,8 @@ func runTests(args []string) int {
 			return failCommand("tests", "--skip-passed filters a selection: add --format go-test (or run), or --json")
 		}
 		testMemory = &memory
-	} else if memory.goFlags != "" || len(memory.inputs) > 0 {
-		return failCommand("tests", "--go-flags and --input key test memory: use them with --skip-passed or --record")
+	} else if memory.goFlags != "" || len(memory.inputs) > 0 || memory.trustEnv {
+		return failCommand("tests", "--go-flags, --input and --trust-env key test memory: use them with --skip-passed or --record")
 	}
 	switch {
 	case uncommitted && sinceRef != "":
@@ -3235,6 +3235,8 @@ func runMCP(args []string) int {
 // newMCPScopeHandlers loads or builds the graph for options.Root and returns a
 // complete single-graph tool set bound to that checkout.
 func newMCPScopeHandlers(options mcpOptions, controller *memorylimit.Controller) (mcp.ScopeHandlers, error) {
+	// Adopted tags are the selection every MCP freshness check and refresh
+	// uses, so they are reported (and applied) as the requested tags.
 	options = adoptRecordedMCPSelection(options)
 	g, absRoot, initialState, err := prepareMCPGraphWithState(options)
 	if err != nil {
@@ -3856,7 +3858,9 @@ INDEXING
                              and build selection (not the checkout path), so any worktree
                              or clone with the same content and tags reuses it after
                              verifying it against its own files. Concurrent builds of the
-                             same content analyze once. GOGRAPH_CACHE_DIR picks the
+                             same content analyze once. The exact Go toolchain version is
+                             part of the key; with an active go.work or a local replace
+                             directive the graph is not shared. GOGRAPH_CACHE_DIR picks the
                              directory (off disables); GOGRAPH_CACHE_MAX caps its size
                              (default 4GiB, least recently used entries are removed).
                              One build runs per checkout: a second build waits for it and
@@ -4322,7 +4326,7 @@ EXTRACTION
                              released) and the calls between lock and release (lexical;
                              a call after an unlock in the same block is not listed).
   tests [symbol] [--transitive] [--exact-only] [--package name] [--max-depth N] [--limit N] [--cursor T] [--uncommitted|--since <ref>] [--format run|go-test] [--skip-passed]
-  tests --record <go-test-json-file|-> [--go-flags '<flags>'] [--input <path>]...
+  tests --record <go-test-json-file|-> [--go-flags '<flags>'] [--input <path>]... [--trust-env]
                              Which tests to run for a symbol or a change. Direct attributed
                              test calls by default. --transitive requires one product symbol
                              and returns gograph.tests.v1: a summary of every reaching test
@@ -4354,8 +4358,14 @@ EXTRACTION
                              tags and environment, env vars the closure reads by name,
                              --go-flags '<go test flags>' and --input <path> (repeatable;
                              files the tests read elsewhere). Both commands must pass the
-                             same --go-flags and --input. Refused for a stale graph, go.work,
-                             or local replace directives. Network services are not inputs.
+                             same --go-flags, --input, --trust-env and --tags. Record only
+                             runs of the printed commands (the graph's -tags, or --tags) with
+                             whole top-level tests: a -run 'TestX/sub' filter passes TestX
+                             without its other subtests. Refused for a stale graph, go.work,
+                             local replace directives, an import of an in-module package the
+                             graph does not hold, or (without --trust-env) environment reads
+                             the key cannot name: os.Environ, os.ExpandEnv, a computed
+                             os.Getenv name. Network services are not inputs.
                              GOGRAPH_TEST_MEMORY_DIR picks the store (off disables).
   coverage <test> [--exact-only] [--package name]
                              Reverse test attribution with exact/possible transitive paths.

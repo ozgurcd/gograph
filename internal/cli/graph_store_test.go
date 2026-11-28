@@ -89,6 +89,22 @@ func TestPreciseGraphIsSharedAcrossCheckoutsOfTheSameContent(t *testing.T) {
 	}
 }
 
+func TestPreciseGraphIsNotSharedWhenTypesComeFromOutsideTheFingerprint(t *testing.T) {
+	storeDir := t.TempDir()
+	t.Setenv(graphstore.DirEnv, storeDir)
+	root := t.TempDir()
+	writeStoreFixture(t, root)
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/store\n\ngo 1.22\n\nreplace example.com/other => ../other\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, stderr, code := runCLIParityInDir(t, root, func() int { return Run([]string{"build", ".", "--precise"}) }); code != 0 {
+		t.Fatal(stderr)
+	}
+	if entries, _ := filepath.Glob(filepath.Join(storeDir, "*.json")); len(entries) != 0 {
+		t.Fatalf("a local replace directive must keep the graph out of the store: %v", entries)
+	}
+}
+
 func TestStoredGraphIsRejectedWhenItDoesNotMatchTheCheckout(t *testing.T) {
 	storeDir := t.TempDir()
 	t.Setenv(graphstore.DirEnv, storeDir)

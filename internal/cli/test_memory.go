@@ -20,6 +20,7 @@ type testMemoryRequest struct {
 	record     string // go test -json file, or "-" for stdin
 	goFlags    string
 	inputs     []string
+	trustEnv   bool
 	graph      *graph.Graph // the graph the selection was made from
 }
 
@@ -39,11 +40,15 @@ func (r *testMemoryRequest) parse(args []string, index *int) (bool, error) {
 	argument := args[*index]
 	name, inline, hasInline := strings.Cut(argument, "=")
 	switch name {
-	case "--skip-passed":
+	case "--skip-passed", "--trust-env":
 		if hasInline {
-			return true, fmt.Errorf("--skip-passed takes no value")
+			return true, fmt.Errorf("%s takes no value", name)
 		}
-		r.skipPassed = true
+		if name == "--trust-env" {
+			r.trustEnv = true
+		} else {
+			r.skipPassed = true
+		}
 	case "--record", "--go-flags", "--input":
 		v := inline
 		if !hasInline {
@@ -78,7 +83,10 @@ func openTestMemory(g *graph.Graph, request testMemoryRequest) (*testmemory.Memo
 	if stale := loadedGraphStale(g); stale.IsStale {
 		return nil, "the graph is stale, so the import closure of each test may be out of date; run gograph build . first"
 	}
-	memory, ok, err := testmemory.Open(graphRoot(g), g, testmemory.Options{GoFlags: request.goFlags, Inputs: request.inputs})
+	memory, ok, err := testmemory.Open(graphRoot(g), g, testmemory.Options{
+		GoFlags: request.goFlags, Inputs: request.inputs, TrustEnv: request.trustEnv,
+		BuildTags: append([]string(nil), queryBuildTags...),
+	})
 	if !ok {
 		return nil, testmemory.DirEnv + "=off disables test memory"
 	}
