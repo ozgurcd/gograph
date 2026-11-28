@@ -1,5 +1,57 @@
 # Release Notes
 
+## Unreleased
+
+Cheaper builds for many parallel checkouts, test-result memory, and fewer
+selector retries.
+
+New:
+
+- Shared precise graphs. A complete `gograph build . --precise` graph is kept
+  in `<user cache>/gograph/graphs`, keyed by the exact selected source and
+  build selection, not the checkout path. Another worktree or clone with the
+  same content and tags reuses it after checking it against its own files;
+  checkouts building the same content at the same time analyze it once.
+  `GOGRAPH_CACHE_DIR` picks the directory (`off` disables it) and
+  `GOGRAPH_CACHE_MAX` caps it (default 4GiB, least recently used entries are
+  removed). On this repository a fresh worktree's precise build went from
+  13.3 s to 2.7 s of CPU; three concurrent fresh worktrees from 41.7 s to
+  18.8 s.
+- Test memory. `go test -json ... | gograph tests --record -` remembers each
+  top-level test that passed and forgets each that failed. `gograph tests
+  ... --format go-test --skip-passed` leaves out tests that already passed on
+  identical inputs, in any checkout, and names them on stderr (JSON:
+  `previously_passed`). Inputs are every file in the test package's directory
+  and in each in-module package it imports, transitively (testdata included),
+  `go.mod`/`go.sum`/`vendor`, the Go version, build tags and environment, env
+  vars the closure reads by name, `--go-flags` and `--input` paths. Memory is
+  refused for a stale graph, `go.work` or a local `replace`.
+- `gograph source path/file.go` prints the file's outline: every declaration
+  with its line range. `path/file.go:START-END` reads a region, several
+  regions and selectors may be mixed, and `--lines` applies to several
+  selectors.
+- `gograph source Type.Field` prints one struct field with its comments.
+
+Behavior changes:
+
+- One build runs per checkout. A second `gograph build` waits for it and
+  reuses its graph when it fits; a query that finds no graph waits for a
+  running build instead of failing. `GOGRAPH_BUILD_WAIT` bounds the wait (Go
+  duration, default 10m; `0` fails at once).
+- `.gograph/revs` is kept under `GOGRAPH_REVS_MAX` (default 2GiB; `0` = no cap)
+  by removing the least recently used revision trees.
+- Ambiguity errors from `identity`, `explain`, `tests`, `coverage` and
+  `source` print each candidate's exact file selector. `callers`, `callees`
+  and `impact` name every merged exact match, with its selector, on stderr.
+
+Fixed:
+
+- `gograph doctor` judged a `--tags=integration` graph against the default
+  build context and reported it stale. It now uses `--tags`, else
+  `GOFLAGS -tags`, else the graph's recorded tags, and reports `build_tags`.
+- An MCP server started without `--tags` adopts the persisted graph's tags
+  instead of rebuilding a tagged graph without its tagged files.
+
 ## v1.7.26 — 2026-11-26
 
 One hook for every coding agent, steering Go navigation to gograph.
