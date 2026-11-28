@@ -65,6 +65,10 @@ func validateQualifiedSelector(query string) error {
 	return nil
 }
 
+// FileSelector returns the copy-ready file selector of s: dir/file.go:Name,
+// or dir/file.go:Recv.Method for a method.
+func FileSelector(s graph.SymbolNode) string { return fileSelector(s) }
+
 func fileSelector(s graph.SymbolNode) string {
 	name := s.Name
 	if s.Receiver != "" {

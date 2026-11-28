@@ -1137,7 +1137,10 @@ func receiverMethodSelector(value string) (string, bool) {
 // safe and unreadable matches, the safe matches are returned; it fails only
 // when no matching source block can be read safely.
 func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
-	targets, err := sourceTargets(g, symbolName)
+	if _, ok := indexedGoFile(g, symbolName); ok {
+		return FileOutline(g, rootDir, symbolName)
+	}
+	targets, err := sourceTargetsOrField(g, rootDir, symbolName)
 	if err != nil {
 		return "", err
 	}
@@ -1146,6 +1149,23 @@ func Source(g *graph.Graph, rootDir, symbolName string) (string, error) {
 
 // sourceTargets resolves the declarations a source selector names, preferring
 // exact and then case-sensitive matches. It fails when nothing matches.
+// sourceTargetsOrField resolves symbolName like sourceTargets and, when it
+// names no declaration, as Type.Field: a struct selector plus one field.
+func sourceTargetsOrField(g *graph.Graph, rootDir, symbolName string) ([]graph.SymbolNode, error) {
+	targets, err := sourceTargets(g, symbolName)
+	if err == nil || len(FindSymbols(g, symbolName)) > 0 {
+		return targets, err
+	}
+	field, ok, fieldErr := fieldTarget(g, rootDir, symbolName)
+	if !ok {
+		return nil, err
+	}
+	if fieldErr != nil {
+		return nil, fieldErr
+	}
+	return []graph.SymbolNode{field}, nil
+}
+
 func sourceTargets(g *graph.Graph, symbolName string) ([]graph.SymbolNode, error) {
 	if err := validateQualifiedSelector(symbolName); err != nil {
 		return nil, err

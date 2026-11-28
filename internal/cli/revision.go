@@ -99,6 +99,7 @@ func revisionRoot(projectRoot, ref string) (string, error) {
 	if err := ensureStandaloneRepository(treeDir); err != nil {
 		return "", err
 	}
+	markRevisionUsed(treeDir)
 
 	tags, excludes := queryBuildTags, []string(nil)
 	if working, err := loadGraphIgnoringRev(projectRoot); err == nil && working.Build != nil && working.Build.Selection != nil {
@@ -115,6 +116,7 @@ func revisionRoot(projectRoot, ref string) (string, error) {
 		return "", fmt.Errorf("build graph for %s (%s): %w", ref, commit, err)
 	}
 	revisionRoots[key] = root
+	capRevisionCache(cacheRoot, commit)
 	return root, nil
 }
 

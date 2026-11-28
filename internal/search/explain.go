@@ -80,7 +80,7 @@ func Explain(g *graph.Graph, term string) *ExplainResult {
 	if sym == nil {
 		candidates := explanationCandidates(g, term)
 		if len(candidates) > 1 {
-			result := &ExplainResult{SchemaVersion: "gograph.explain.v1", Status: "ambiguous", Narrative: "Several symbols match. Retry with one of the fully qualified candidate IDs."}
+			result := &ExplainResult{SchemaVersion: "gograph.explain.v1", Status: "ambiguous", Narrative: "Several symbols match. Retry with one of the fully qualified candidate IDs or file selectors."}
 			for _, candidate := range candidates {
 				result.Candidates = append(result.Candidates, symbolIdentity(candidate))
 			}

@@ -1161,6 +1161,12 @@ func runBuild(args []string) int {
 		return 1
 	}
 
+	unlockBuild, waitedForBuild, err := acquireBuildLock(absRoot)
+	if err != nil {
+		return failCommandf("build", "%v", err)
+	}
+	defer unlockBuild()
+
 	fmt.Printf("gograph build: scanning %s\n", absRoot)
 	if err := buildctx.ValidateExcludeDirs(absRoot, options.ExcludeDirs); err != nil {
 		return failCommandf("build", "invalid --exclude-dirs: %v", err)
@@ -1177,6 +1183,11 @@ func runBuild(args []string) int {
 		fmt.Printf("  excluded directories: %s\n", strings.Join(options.ExcludeDirs, ","))
 	}
 	previous, _ := loadGraph(absRoot)
+	if waitedForBuild && configErr == nil && previous != nil &&
+		concurrentBuildFits(previous, options.Precise, search.StaleWithConfig(previous, absRoot, buildConfig).IsStale) {
+		fmt.Printf("  reused the graph the concurrent build just published: %s\n", filepath.Join(absRoot, graphFile))
+		return 0
+	}
 	g, err := buildGraphWithConfig(absRoot, buildConfig, configErr, previous)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error building graph: %v\n", err)
@@ -1185,8 +1196,15 @@ func runBuild(args []string) int {
 	var preciseErr error
 	if options.Precise {
 		controller.Reclaim()
-		fmt.Println("  running type-checked precision analysis (this may take a moment)...")
-		if preciseErr = enrichGraphPreciselyWithMemory(absRoot, g, buildConfig, configErr, options.Memory); preciseErr != nil {
+		var reused bool
+		g, reused, preciseErr = preciseFromStore(absRoot, g, buildConfig, configErr, func() error {
+			fmt.Println("  running type-checked precision analysis (this may take a moment)...")
+			return enrichGraphPreciselyWithMemory(absRoot, g, buildConfig, configErr, options.Memory)
+		})
+		if reused {
+			fmt.Println("  reused the precise graph stored for this exact source and build context")
+		}
+		if preciseErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: precise enrichment failed: %v\n", preciseErr)
 		}
 		controller.Reclaim()
@@ -2031,6 +2049,7 @@ func runCallers(args []string) int {
 	if err != nil {
 		return failCommand("callers", err.Error())
 	}
+	noteMergedTargets("callers", g, term)
 	if mermaidMode {
 		fmt.Println(search.CallersToMermaid(g, term, depth, includeTests, exactMatch))
 		return 0
@@ -2081,6 +2100,7 @@ func runCallees(args []string) int {
 	if err != nil {
 		return failCommand("callees", err.Error())
 	}
+	noteMergedTargets("callees", g, term)
 	if mermaidMode {
 		fmt.Println(search.CalleesToMermaid(g, term, depth, includeTests))
 		return 0
@@ -2354,7 +2374,7 @@ func runTests(args []string) int {
 		case "ambiguous":
 			fmt.Printf("Product symbol %q is ambiguous; retry with a stable ID and, when IDs collide, --package:\n", term)
 			for _, match := range report.MatchedSymbols {
-				fmt.Printf("  %s  [%s package=%s] %s:%d\n", match.StableID, match.Kind, match.Package, match.File, match.Line)
+				fmt.Printf("  %s  [%s package=%s] %s:%d  selector %s\n", match.StableID, match.Kind, match.Package, match.File, match.Line, match.Selector)
 			}
 			return 0
 		}
@@ -2429,7 +2449,7 @@ func runTestSelectionForSymbol(g *graph.Graph, term, packageName, format string,
 			} else if len(declarations) > 1 {
 				var candidates []string
 				for _, declaration := range declarations {
-					candidates = append(candidates, fmt.Sprintf("%s [package=%s] %s:%d", declaration.ID, declaration.PackageName, declaration.File, declaration.Line))
+					candidates = append(candidates, fmt.Sprintf("%s [package=%s] %s:%d selector %s", declaration.ID, declaration.PackageName, declaration.File, declaration.Line, search.FileSelector(declaration)))
 				}
 				sort.Strings(candidates)
 				return failCommandf("tests", "%q is ambiguous; retry with a stable ID, a file selector or --package: %s", term, strings.Join(candidates, "; "))
@@ -2442,7 +2462,7 @@ func runTestSelectionForSymbol(g *graph.Graph, term, packageName, format string,
 		default:
 			var candidates []string
 			for _, entry := range entries {
-				candidates = append(candidates, fmt.Sprintf("%s [package=%s] %s:%d", entry.ID, entry.PackageName, entry.File, entry.Line))
+				candidates = append(candidates, fmt.Sprintf("%s [package=%s] %s:%d selector %s", entry.ID, entry.PackageName, entry.File, entry.Line, search.FileSelector(entry)))
 			}
 			sort.Strings(candidates)
 			return failCommandf("tests", "test function %q is ambiguous; retry with a file selector or --package: %s", term, strings.Join(candidates, "; "))
@@ -2450,7 +2470,7 @@ func runTestSelectionForSymbol(g *graph.Graph, term, packageName, format string,
 	case "ambiguous":
 		var candidates []string
 		for _, match := range report.MatchedSymbols {
-			candidates = append(candidates, fmt.Sprintf("%s [package=%s] %s:%d", match.StableID, match.Package, match.File, match.Line))
+			candidates = append(candidates, fmt.Sprintf("%s [package=%s] %s:%d selector %s", match.StableID, match.Package, match.File, match.Line, match.Selector))
 		}
 		return failCommandf("tests", "product symbol %q is ambiguous; retry with a stable ID and, when IDs collide, --package: %s", term, strings.Join(candidates, "; "))
 	}
@@ -2579,7 +2599,7 @@ func runCoverage(args []string) int {
 	case "ambiguous":
 		fmt.Printf("Test function %q is ambiguous; retry with a stable ID and, when IDs collide across test packages, --package:\n", targets[0])
 		for _, match := range report.MatchedTests {
-			fmt.Printf("  %s  [package=%s] (%s:%d)\n", match.StableID, match.Package, match.File, match.Line)
+			fmt.Printf("  %s  [package=%s] (%s:%d)  selector %s\n", match.StableID, match.Package, match.File, match.Line, match.Selector)
 		}
 		return 0
 	}
@@ -2634,7 +2654,7 @@ func runIdentity(args []string) int {
 		fmt.Printf("Symbol %q is ambiguous; retry with a stable ID and, when IDs collide across test packages, --package:\n", targets[0])
 	}
 	for _, match := range report.Matches {
-		fmt.Printf("%s  [%s package=%s] %s:%d\n", match.StableID, match.Kind, match.Package, match.File, match.Line)
+		fmt.Printf("%s  [%s package=%s] %s:%d  selector %s\n", match.StableID, match.Kind, match.Package, match.File, match.Line, match.Selector)
 	}
 	return 0
 }
@@ -3268,6 +3288,9 @@ func loadGraphIgnoringRev(root string) (*graph.Graph, error) {
 	}
 	defer func() { _ = reader.Close() }()
 	data, err := reader.ReadRegularFileLimit(graphFile, graph.MaxArtifactBytes)
+	if err != nil && waitForRunningBuild(absRoot) {
+		data, err = reader.ReadRegularFileLimit(graphFile, graph.MaxArtifactBytes)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("cannot read %s — run `gograph build` first: %w", jsonPath, err)
 	}
@@ -3744,8 +3767,9 @@ OUTPUT FLAGS
                              into .gograph/revs/<commit>/ and builds an AST graph there
                              (working graph's recorded tags unless --tags/GOFLAGS);
                              later queries reuse it. Not with --uncommitted or --since.
-                             CLI only; delete .gograph/revs to reclaim space.
-  --no-refresh               Answer from a stale graph (with a warning) instead of
+                             CLI only. The least recently used trees are removed to keep
+                             .gograph/revs under GOGRAPH_REVS_MAX (default 2GiB; 0 = no cap).
+  --no-refresh              Answer from a stale graph (with a warning) instead of
                              rebuilding it first. By default a graph query rebuilds a
                              stale graph (changed packages; recorded precision, tags and
                              excluded dirs) and notes it on stderr. GOGRAPH_NO_REFRESH=1
@@ -3790,6 +3814,18 @@ INDEXING
                              sources, go.mod ignore paths, AI worktrees, and Git-ignored
                              paths are automatically skipped. The path resolves to its
                              project root (nearest .git or go.mod).
+                             Shared precise graphs: a complete --precise graph is kept in
+                             <user cache>/gograph/graphs keyed by the exact selected source
+                             and build selection (not the checkout path), so any worktree
+                             or clone with the same content and tags reuses it after
+                             verifying it against its own files. Concurrent builds of the
+                             same content analyze once. GOGRAPH_CACHE_DIR picks the
+                             directory (off disables); GOGRAPH_CACHE_MAX caps its size
+                             (default 4GiB, least recently used entries are removed).
+                             One build runs per checkout: a second build waits for it and
+                             reuses its graph when it fits; a query that finds no graph
+                             waits for a running build. GOGRAPH_BUILD_WAIT bounds the wait
+                             (Go duration, default 10m; 0 fails at once).
   stale [--tags=<tag[,tag...]>] [--exclude-dirs=<dir1,dir2>]
                              Check selected files, build context, and content digests.
                              Exit 0 when current, 2 when stale, and 1 on error;
@@ -3929,10 +3965,19 @@ SEARCH & NAVIGATION
                              structs, interfaces, types, variables, and constants.
                              Several selectors print each block; any selector that
                              fails makes the command fail with its reason.
-                             --lines START-END prints only those file lines of one
-                             declaration (for bodies over the 64 KiB budget), or of
-                             an indexed file given as path/file.go (imports, any
-                             region). Stale files are refused.
+                             Type.Field (any struct selector plus .Field) prints that
+                             field's declaration with its comments.
+                             path/file.go alone prints the file's outline: every
+                             declaration with its line range.
+                             path/file.go:START-END prints that region of the file;
+                             several regions and selectors may be mixed.
+                             --lines START-END prints only those file lines of each
+                             declaration (clamped to it; for bodies over the 64 KiB
+                             budget), or of an indexed file given as path/file.go
+                             (imports, any region). Stale files are refused.
+                             An ambiguous name fails with each candidate's exact
+                             selector; callers, callees and impact answer for every
+                             exact match and name each selector on stderr.
   public <package>           List only the exported (public) API of a package.
   fields <struct>            List all fields and types of a struct.
   embeds <struct>            Find which structs embed the given struct.
@@ -5369,7 +5414,7 @@ func runChanges(args []string) int {
 
 // runSource extracts the raw source code of a named symbol.
 func runSource(args []string) int {
-	const usage = "usage: gograph source <name> [name...] | gograph source <name|file.go> --lines START-END"
+	const usage = "usage: gograph source <name|file.go|file.go:START-END> [...] [--lines START-END]"
 	args, lines, err := sourceLineRange(args)
 	if err != nil {
 		return failCommand("source", err.Error()+"\n"+usage)
@@ -5378,27 +5423,22 @@ func runSource(args []string) int {
 	if !ok {
 		return failCommand("source", usage)
 	}
-	if lines != nil && len(terms) != 1 {
-		return failCommand("source", "--lines takes exactly one selector or file\n"+usage)
-	}
 	g, err := loadGraph(".")
 	if err != nil {
 		return failCommand("source", err.Error())
 	}
 	root := graphRoot(g)
-	if lines != nil {
-		src, err := search.SourceLines(g, root, terms[0], lines[0], lines[1])
-		if err != nil {
-			return failCommandf("source", "source: %v", err)
+	read := func(term string) (string, error) {
+		if file, start, end, ok := search.FileLineSelector(term); ok {
+			return search.SourceLines(g, root, file, start, end)
 		}
-		if jsonMode {
-			return PrintJSON(okEnvelope("source", terms[0], src, 1))
+		if lines != nil {
+			return search.SourceLines(g, root, term, lines[0], lines[1])
 		}
-		fmt.Println(src)
-		return 0
+		return search.Source(g, root, term)
 	}
 	if len(terms) == 1 {
-		src, err := search.Source(g, root, terms[0])
+		src, err := read(terms[0])
 		if err != nil {
 			return failCommandf("source", "source: %v", err)
 		}
@@ -5409,13 +5449,15 @@ func runSource(args []string) int {
 		return 0
 	}
 
-	// Several selectors: each is resolved on its own. Text output prints every
-	// block that resolved; any selector that failed makes the command fail
-	// with its reason, so a partial answer is never mistaken for a full one.
+	// Several selectors: each is resolved on its own (one --lines range
+	// applies to each, clamped to its declaration; file.go:START-END carries
+	// its own). Text output prints every block that resolved; any selector
+	// that failed makes the command fail with its reason, so a partial answer
+	// is never mistaken for a full one.
 	var blocks []sourceBlock
 	var failures []string
 	for _, term := range terms {
-		src, err := search.Source(g, root, term)
+		src, err := read(term)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", term, err))
 			continue
@@ -5600,6 +5642,7 @@ func runImpact(args []string) int {
 	}
 
 	term := args[0]
+	noteMergedTargets("impact", g, term)
 	if mermaidMode {
 		fmt.Println(search.NewSnapshot(g).ImpactMermaid([]string{term}, options))
 		return 0
@@ -6563,7 +6606,7 @@ func runExplain(args []string) int {
 	if result.Status == "ambiguous" {
 		fmt.Println(result.Narrative)
 		for _, candidate := range result.Candidates {
-			fmt.Printf("  %s (%s:%d)\n", candidate.StableID, candidate.File, candidate.Line)
+			fmt.Printf("  %s (%s:%d)  selector %s\n", candidate.StableID, candidate.File, candidate.Line, candidate.Selector)
 		}
 		return 0
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ozgurcd/gograph/internal/cli"
+	"github.com/ozgurcd/gograph/internal/graphstore"
 )
 
 var (
@@ -31,6 +32,12 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	testRepositoryRoot = root
+	// Tests never share precise graphs through the user's store; store tests
+	// select their own directory.
+	if err := os.Setenv(graphstore.DirEnv, "off"); err != nil {
+		fmt.Fprintf(os.Stderr, "prepare CLI tests: %v\n", err)
+		os.Exit(1)
+	}
 
 	code := m.Run()
 	if err := cli.RemoveSharedTestFixtures(); err != nil {

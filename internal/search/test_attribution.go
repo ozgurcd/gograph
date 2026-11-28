@@ -29,6 +29,9 @@ type SymbolIdentity struct {
 	File      string           `json:"file"`
 	Line      int              `json:"line"`
 	Signature string           `json:"signature,omitempty"`
+	// Selector is a copy-ready file selector (dir/file.go:Name or
+	// dir/file.go:Recv.Method) that selects this declaration alone.
+	Selector string `json:"selector,omitempty"`
 }
 
 // IdentityReport resolves a canonical symbol ID or an exact user-facing
@@ -51,6 +54,7 @@ func symbolIdentity(s graph.SymbolNode) SymbolIdentity {
 		File:      s.File,
 		Line:      s.Line,
 		Signature: s.Signature,
+		Selector:  fileSelector(s),
 	}
 }
 

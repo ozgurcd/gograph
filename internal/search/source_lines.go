@@ -32,7 +32,7 @@ func SourceLines(g *graph.Graph, rootDir, term string, start, end int) (string, 
 	if indexed, ok := indexedGoFile(g, term); ok {
 		label, file = indexed, indexed
 	} else {
-		targets, err := sourceTargets(g, term)
+		targets, err := sourceTargetsOrField(g, rootDir, term)
 		if err != nil {
 			return "", err
 		}
@@ -87,6 +87,25 @@ func indexedGoFile(g *graph.Graph, term string) (string, bool) {
 }
 
 // ParseLineRange parses START-END, 1-based and inclusive.
+// FileLineSelector reports whether term is path/file.go:START-END, a file
+// region selector. A Go identifier cannot start with a digit, so this never
+// shadows the file.go:Name declaration selector.
+func FileLineSelector(term string) (string, int, int, bool) {
+	position := strings.LastIndex(term, ".go:")
+	if position < 0 {
+		return "", 0, 0, false
+	}
+	file, rest := term[:position+3], term[position+4:]
+	if rest == "" || rest[0] < '0' || rest[0] > '9' {
+		return "", 0, 0, false
+	}
+	start, end, err := ParseLineRange(rest)
+	if err != nil {
+		return "", 0, 0, false
+	}
+	return file, start, end, true
+}
+
 func ParseLineRange(value string) (int, int, error) {
 	first, last, ok := strings.Cut(value, "-")
 	start, startErr := strconv.Atoi(strings.TrimSpace(first))
